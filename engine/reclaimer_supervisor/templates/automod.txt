@@ -1,0 +1,28 @@
+# automod's word list: one rule per line, in four parts.
+#
+#   words | timers | chances | name
+#
+# words    The words, separated by commas.
+# timers   How long each offence keeps them out, in order: 30m, 1h, 1d, 2w.
+#          The last one repeats. Blank: a plain kick.
+# chances  How many times they're removed and let back. The next time is a ban.
+#          Blank: never banned. 0: zero tolerance, banned the first time.
+# name     One word players see, and moderators type in !strike. Optional.
+#
+# Examples, and what a player gets each time:
+#
+#   badword, otherword | 1h, 1d, 7d | 3 | slurs
+#     1st: out 1 hour    2nd: out 1 day    3rd: out 1 week    4th: banned for good
+#
+#   kickword
+#     every time: kicked, never banned
+#
+#   worstword | | 0 | threats
+#     1st: banned for good
+#
+# Disguised words (b4dw0rd, b a d w o r d, badwords) are caught without listing them.
+# word* also catches longer words that start with it. -word is never caught.
+# Edits apply within a few seconds.
+#
+# Your rules go below.
+

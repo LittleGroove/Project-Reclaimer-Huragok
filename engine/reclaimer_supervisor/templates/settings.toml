@@ -1,0 +1,132 @@
+# Reclaimer Supervisor: how it runs.
+#
+# The other files in this folder:
+#   commands.toml   who's who, and which in-game commands each role can use
+#   automod.txt     automod's word list
+# Both apply edits within seconds. Edits to this file apply when the supervisor
+# starts again; with backend windows the servers keep running meanwhile.
+# Check everything without starting anything: start.cmd check (Linux: ./start.sh check)
+#
+# Relative paths are from this folder.
+
+# The server folder: the one holding dedicated.toml. ".." is the folder this one
+# sits in. The supervisor reads dedicated.toml (and each server's
+# data/<server>/instance.json) to find the servers and their RCON password, but
+# never changes it. RCON must be on: set [rcon] password in dedicated.toml.
+server_folder = "{server_folder}"
+
+# Who starts the servers:
+#   windows  the supervisor: it runs each server and restarts it when needed, so
+#            start.cmd is how your servers start from now on. Windows only.
+#   docker   the official Docker setup: the supervisor runs `docker compose` for
+#            each server's container (see [docker] below).
+#   command  your own commands, such as systemd units (see [command] below).
+#   attach   something else (a startup task, a window you opened). The supervisor
+#            watches and moderates, but can't restart them.
+backend = "{backend}"
+
+# Which servers, by name as in dedicated.toml. Empty: every enabled server.
+servers = []
+
+# The name players read when the supervisor itself acts ("restarting…").
+name = "Supervisor"
+
+# true: record every moderation action as "would have…" without doing it.
+dry_run = false
+
+# Its records (every player seen, every action with who and why) and its log.
+database = "records/supervisor.sqlite3"
+log_file = "logs/supervisor.log"
+
+
+[automod]
+# Removes players for the words in automod.txt, said in chat or used in a name.
+# Each line there has the words, how long each offence keeps a player out, and
+# how many chances they get before a ban: see docs/automod.md.
+# It starts in dry run: watch logs/supervisor.log for what it would do, then set
+# dry_run = false.
+enabled = true
+dry_run = true
+words = "automod.txt"
+forget_after_days = 0                # strikes older than this stop counting; 0: never
+name = "AutoMod"                     # players read "removed by AutoMod"
+exempt_roles = ["admin", "owner"]    # never acted on (roles as in commands.toml; "player" is everyone)
+check_names = true                   # check names as players join
+cooldown_seconds = 10                # lines this close together count as one strike
+split_seconds = 10                   # a word split over lines this close together is caught
+
+[watchdog]
+# Notices a server struggling (slow frames, stuck on the scoreboard after a game,
+# most of its players dropped at once).
+#   watch  log what it would do; leave it here a few nights to see what it thinks
+#   act    restart a struggling server after the game (not with backend attach)
+enabled = true
+mode = "watch"
+report_minutes = 15                  # a health line in the log this often; 0: never
+
+[keepalive]
+# A server that has stopped responding: status.json not rewritten (normally every
+# 5 seconds) AND RCON silent, both for this long. The game's own supervisor
+# waits five minutes without frames before acting.
+hang_seconds = 180
+check_seconds = 10
+act = true                           # restart it (not with backend attach); false: only report
+
+[eventlog]
+# Every event as a line of JSON, one file per UTC day: what the server sends.
+# Player IPs are in it: keep the folder private.
+enabled = false
+folder = "logs/events"
+
+
+[updates]
+# New versions of the supervisor (not the game server), from its GitHub releases.
+# It never installs one unless you say so: when one is out, its window says what's
+# new; type update there and press Enter, or run start.cmd update (Linux:
+# ./start.sh update). Your servers keep running while it updates, and only the
+# program is replaced: your settings, commands, word list and records stay.
+check = true
+check_hours = 6
+# true: install a new version by itself the next time a server restarts.
+install_on_server_restart = false
+repository = "LittleGroove/Project-Reclaimer-Server-Supervisor"
+
+# How each backend runs the servers ---------------------------------------------
+
+[windows]
+# The server program, in the server folder.
+executable = "{executable}"
+# Seconds to wait for a clean stop (Ctrl+Break) before ending the process.
+stop_timeout = 30
+# false: closing the supervisor leaves the servers running, so players aren't
+# disturbed, and starting it again picks them up. start.cmd stop stops both.
+# true: closing the supervisor stops the servers too.
+stop_servers_on_exit = false
+# Start servers with RECLAIMER_DEDICATED_AUTO_UPDATE=false: the built-in updater
+# restarts every server the moment a release downloads, mid-game.
+disable_auto_update = true
+
+[docker]
+# In the server folder. Each server's service name is set in its [[server]]
+# block below (service = "server-1"); otherwise server-1, server-2… in order.
+compose_file = "{compose_file}"
+
+[command]
+# {name}, {slug} (the data folder name), {service}, {port} and {folder} are filled in.
+# start = "systemctl start reclaimer@{slug}"
+# stop = "systemctl stop reclaimer@{slug}"
+# restart = "systemctl restart reclaimer@{slug}"
+
+[rcon]
+# Sign in on the console spot each server keeps for its own machine, so
+# moderators keep all 4 normal spots. Needs the supervisor on the same machine.
+use_host_key = true
+command_timeout = 10
+
+# Settings for one server, by name as in dedicated.toml, when needed:
+# [[server]]
+# name = "Reclaimer Slayer"
+# service = "server-1"            # its docker compose service
+# data = "data/reclaimer-slayer"  # its data folder, when it isn't found by itself
+# rcon_host = "127.0.0.1"
+# rcon_port = 49176

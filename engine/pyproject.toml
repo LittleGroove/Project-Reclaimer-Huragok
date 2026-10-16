@@ -1,0 +1,50 @@
+# The engine as a Python package. Hosts don't need this: start.cmd / start.sh
+# install what the engine needs (requirements.txt) and run it from this folder.
+# Developers: pip install -e "engine[test]" from the repository's top folder.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reclaimer-supervisor"
+dynamic = ["version"]  # from reclaimer_supervisor/__init__.py
+description = "Starts Project Reclaimer dedicated servers and keeps them up, with automod and in-game commands for the roles you pick."
+requires-python = ">=3.11"
+authors = [{ name = "LittleGroove" }]
+keywords = ["halo", "halo-3", "project-reclaimer", "dedicated-server", "rcon", "moderation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: First Person Shooters",
+]
+# Keep in step with requirements.txt, which the start scripts install.
+dependencies = [
+    "websockets>=13",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+reclaimer-supervisor = "reclaimer_supervisor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["reclaimer_supervisor*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "reclaimer_supervisor.__version__" }
+
+[tool.setuptools.package-data]
+reclaimer_supervisor = ["templates/*.toml", "templates/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

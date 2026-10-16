@@ -1,0 +1,24 @@
+# The supervisor in a container, next to the official Project Reclaimer Docker setup.
+# A sketch: add the `supervisor` service to the compose.yaml that runs your servers.
+#
+# Simpler, and it can restart servers: put the supervisor's folder in your server
+# folder and run ./start.sh on the host (backend docker, picked by itself).
+#
+# In a container it watches and moderates only (backend attach); restarting
+# sibling containers from inside one needs the Docker API, which isn't built in yet.
+#
+# 1. Write its files once:
+#      mkdir supervisor
+#      docker run --rm -v ./supervisor:/supervisor -v ./server:/server:ro \
+#        reclaimer-supervisor init /server --backend attach
+# 2. docker compose up -d supervisor
+services:
+  supervisor:
+    build: ../engine                # or image: <published image>
+    restart: unless-stopped
+    network_mode: host              # RCON listens on 127.0.0.1, like the servers
+    volumes:
+      - ${SERVER_DIR:-./server}:/server:ro   # dedicated.toml, data/<server>/…
+      - ./supervisor:/supervisor             # settings.toml, commands.toml, automod.txt, records, logs
+    stop_signal: SIGTERM
+    stop_grace_period: 30s

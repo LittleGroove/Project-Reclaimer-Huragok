@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e "engine[test]"
+      - run: python -m pytest engine
+
+  start-script:
+    name: start.sh sets itself up
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p /tmp/server && printf '[rcon]\npassword = "x"\n[[server]]\nname = "Test"\nport = 49176\n' > /tmp/server/dedicated.toml
+          cp -r . /tmp/server/reclaimer-supervisor
+          cd /tmp/server/reclaimer-supervisor
+          sh start.sh || test $? -eq 3     # first start: writes the files, exit code 3
+          sh start.sh check
+
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t reclaimer-supervisor engine
+      - run: docker run --rm reclaimer-supervisor --version
