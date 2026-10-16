@@ -39,6 +39,9 @@ and RCON switched on in your server: set `[rcon] password` in `dedicated.toml`.
    ```
 2. **Start it** (Windows: double-click `start.cmd`; Linux: `./start.sh`). The first
    time, it installs what it needs, writes three files for you and stops:
+   (Windows may first warn that the publisher couldn't be verified, because the
+   file came from the internet: choose **Run**. To skip that, right-click the
+   zip, Properties, tick **Unblock**, then unzip it.)
 
    | File | What it's for |
    | --- | --- |

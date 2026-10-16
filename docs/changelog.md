@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1
+- The README says what to do when Windows warns that a downloaded `start.cmd`
+  comes from an unknown publisher.
+
+## 0.1.0
 First version, tested against Project Reclaimer v0.9.18.
 
 - **One folder you put in your server folder.** `start.cmd` (Windows) or
