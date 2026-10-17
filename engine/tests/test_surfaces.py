@@ -904,9 +904,10 @@ def test_the_watchdog_reports_and_says_what_it_would_do(tmp_path: Path, caplog, 
         await watchdog.setup()
         watchdog.last_report = -1e9  # the report is due
         await watchdog.evaluate()
-        await watchdog._act("Alpha", "degraded", ["under 60 fps for 3 of 5 minutes"])
-        watchdog.config["mode"] = "act"
-        await watchdog._act("Alpha", "critical", ["stuck on the scoreboard"])
+        await watchdog._act("Alpha", "degraded", ["slow in 3 of the last 5 minutes"])  # acts, but not for slow frames
+        await watchdog._act("Alpha", "critical", ["stuck on the scoreboard"])  # acts: attach can't restart
+        watchdog.config["mode"] = "watch"
+        await watchdog._act("Alpha", "degraded", ["slow in 3 of the last 5 minutes"])
         await watchdog.roster_lost(Event("log.roster_lost", "Alpha", {"lost": 70, "of": 73, "present": 3}))
 
     with caplog.at_level(logging.INFO):
@@ -915,6 +916,7 @@ def test_the_watchdog_reports_and_says_what_it_would_do(tmp_path: Path, caplog, 
     assert "[Alpha] healthy · 0 players" in text
     assert "[Alpha] the server dropped 70 of 73 players at once (3 now present)" in text
     assert "[Alpha] players are still on, so it's left to recover by itself" in text
+    assert "[Alpha] slow, not restarted: slow_frames is watch (a restart doesn't make a busy server faster)" in text
     assert "[Alpha] would restart (after game) — mode is watch" in text
     assert "[Alpha] can't restart: backend = attach can't restart servers" in text
 

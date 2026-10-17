@@ -89,14 +89,19 @@ cooldown_seconds = 10                # lines this close together count as one st
 split_seconds = 10                   # a word split over lines this close together is caught
 
 [watchdog]
-# Notices a server struggling (slow frames, stuck on the scoreboard after a game)
-# or dead: every player dropped at once after a game, and nobody can join again.
-#   watch  log what it would do; leave it here a few nights to see what it thinks
-#   act    restart a struggling server after the game, and a dead one at once
-#          (not with backend attach). In watch, a dead server waits for the
-#          server program's own rule, which restarts it after five minutes.
+# Restarts a server at once when it has died (every player dropped at once after a
+# game, and nobody can join again) or is stuck on the scoreboard after a game with
+# players waiting. Without it, a dead server waits for the server program's own rule,
+# which restarts it after five minutes. (Not with backend attach: it can't restart.)
+#   act    restart them (the default)
+#   watch  only log what it would do
 enabled = true
-mode = "watch"
+mode = "act"
+# Slow frames (under 60 a second for most of several minutes) are logged and shown in
+# the window. "act" restarts for them too: after the game, or at once when it's barely
+# running. A full server is slow anyway and a restart doesn't make it faster: on the
+# live server's log this would have restarted it mid-game hundreds of times.
+slow_frames = "watch"
 report_minutes = 15                  # a health line in the log this often; 0: never
 
 [keepalive]

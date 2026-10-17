@@ -1,20 +1,23 @@
-"""watchdog: notice a server getting worse, and restart it at a good moment.
+"""watchdog: restart a server that has died or got stuck, and notice one running slowly.
 
-The core's keepalive handles a server that has stopped; this handles one that
-runs badly. Each minute it sorts every server into:
+The core's keepalive handles a server that has stopped answering; this handles one
+that answers but is broken, or runs badly. Each minute it sorts every server into:
 
   healthy
-  degraded  under 60 frames a second for a good share of several recent minutes:
-            restart after this game
+  degraded  under 60 frames a second for a good share of several recent minutes
   critical  barely running for minutes on end, stuck on the scoreboard after a
             game with players waiting, or every player dropped at once ("Host
             roster lost 28 of 28 players in one update (0 now present)"; seen on
             the main server ~38 s after a game ended, after which it lets nobody
-            back in): restart now. A drop that leaves players on is only logged:
-            the one seen mid-game (70 of 73) recovered by itself.
+            back in). A drop that leaves players on is only logged: the one seen
+            mid-game (70 of 73) recovered by itself.
 
-The thresholds are first guesses. Leave mode = "watch" (the default) for a few
-nights: it logs what it would do, so the numbers can be tuned before it acts.
+With mode = "act" (the default) a dead or stuck server is restarted at once. Slow
+frames alone restart nothing unless slow_frames = "act" (after the game when
+degraded, now when critical): a full server is slow anyway, and restarting doesn't
+make it faster. Replayed against the live server's log (27 starts, 100+ players on
+a 2 GB map), the frame rules would have restarted it mid-game 372 times, faulting it
+in 22 different hours, while the drop rule fired exactly on its 6 post-game deaths.
 """
 
 from __future__ import annotations
@@ -39,10 +42,12 @@ class Sample:
 
 class Watchdog(Part):
     name = "watchdog"
-    description = "Notices a struggling server and, in act mode, restarts it at the end of a game"
+    description = "Restarts a server that died or got stuck after a game; notices a slow one"
     enabled_by_default = True
     defaults = {
-        "mode": "watch",            # watch | act
+        "mode": "act",              # act | watch (only log what it would do)
+        "slow_frames": "watch",     # watch | act: restart for slow frames too
+
         "report_minutes": 15,       # a health line in the log this often (0: never)
         "window_minutes": 5,
         "degraded_share": 0.25,     # a minute counts as bad when this share of it was slow…
@@ -56,8 +61,9 @@ class Watchdog(Part):
     }
 
     def check_config(self) -> None:
-        if self.config["mode"] not in ("watch", "act"):
-            raise ValueError("mode must be watch or act")
+        for key in ("mode", "slow_frames"):
+            if self.config[key] not in ("watch", "act"):
+                raise ValueError(f"{key} must be watch or act")
 
     async def setup(self) -> None:
         self.samples: dict[str, deque[Sample]] = {name: deque(maxlen=120) for name in self.ctx.servers}
@@ -139,12 +145,19 @@ class Watchdog(Part):
     async def _update(self, server: str) -> None:
         level, reasons = self.assess(server)
         previous = self.level.get(server, "healthy")
+        # A full server is critical for slow frames all game; dying or sticking then must still count.
+        newly_broken = self.broken(reasons) and not self.broken(self.reasons.get(server, []))
         self.level[server], self.reasons[server] = level, reasons
         if level != previous:
             self.log.warning("[%s] %s → %s%s", server, previous, level, f": {'; '.join(reasons)}" if reasons else "")
             self.ctx.emit("health", server, level=level, previous=previous, reasons=reasons)
-            if level != "healthy":
-                await self._act(server, level, reasons)
+        if level != "healthy" and (level != previous or newly_broken):
+            await self._act(server, level, reasons)
+
+    @staticmethod
+    def broken(reasons: list[str]) -> bool:
+        """Dead or stuck, not just slow: what a restart fixes."""
+        return any("stuck" in r or "dropped" in r for r in reasons)
 
     async def _act(self, server: str, level: str, reasons: list[str]) -> None:
         stuck = any("stuck" in r for r in reasons)
@@ -154,6 +167,10 @@ class Watchdog(Part):
         countdown = 0 if stuck or (dropped and not self.drops[server].get("present")) else 30
         if self.config["mode"] != "act":
             self.log.info("[%s] would restart (%s) — mode is watch", server, when.replace("_", " "))
+            return
+        if not (stuck or dropped) and self.config["slow_frames"] != "act":
+            self.log.info("[%s] slow, not restarted: slow_frames is watch (a restart doesn't make a busy server "
+                          "faster)", server)
             return
         if server in self.ctx.lifecycle.planned or server in self.ctx.lifecycle.busy:
             return

@@ -284,7 +284,9 @@ def _summary(settings: Settings) -> None:
     if automod.enabled:
         on.append("automod" + (" (dry run)" if automod.dry_run or settings.dry_run else ""))
     if parts["watchdog"].enabled:
-        on.append(f"watchdog ({parts['watchdog'].options.get('mode', 'watch')})")
+        from .parts import PARTS
+
+        on.append(f"watchdog ({parts['watchdog'].options.get('mode', PARTS['watchdog'].defaults['mode'])})")
     if parts["eventlog"].enabled:
         on.append("eventlog")
     log.info("Running: %s", ", ".join(on))

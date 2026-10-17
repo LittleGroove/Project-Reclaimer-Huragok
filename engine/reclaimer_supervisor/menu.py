@@ -147,7 +147,7 @@ class LocalController:
             elif part.dry_run or settings.dry_run:
                 label += " (dry run)"
             elif name == "watchdog":
-                label += f" ({part.options.get('mode', 'watch')})"
+                label += f" ({runner.part.config['mode']})"
             parts.append(label)
         where = settings.servers_folder.name if settings.servers_folder else str(settings.single_folder)
         bits = [f"backend {settings.backend}", f"servers in {where}/", "running: " + ", ".join(parts)]

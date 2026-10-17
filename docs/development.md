@@ -8,7 +8,7 @@ server, the event bus, the records). On top of it run its **parts**:
 | --- | --- | --- | --- |
 | `commands` | [parts/commands](../engine/reclaimer_supervisor/parts/commands) | `commands.toml` | The in-game commands. Always on. |
 | `automod` | [parts/automod](../engine/reclaimer_supervisor/parts/automod) | `[automod]`, `automod.txt` | The word list |
-| `watchdog` | [parts/watchdog.py](../engine/reclaimer_supervisor/parts/watchdog.py) | `[watchdog]` | Restarts a struggling server at a good moment |
+| `watchdog` | [parts/watchdog.py](../engine/reclaimer_supervisor/parts/watchdog.py) | `[watchdog]` | Restarts a server that died or got stuck after a game; notices a slow one |
 | `eventlog` | [parts/eventlog.py](../engine/reclaimer_supervisor/parts/eventlog.py) | `[eventlog]` | Every event as JSON |
 
 Parts are a way to keep the code apart, not something hosts install: everything

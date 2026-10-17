@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1
+**The watchdog acts by default.** A server that dies after a game (every player
+dropped at once, nobody can join again) or sits stuck on the scoreboard with
+players waiting is restarted at once, instead of waiting five minutes for the
+server program's own rule. `mode = "watch"` still only logs.
+
+- **Slow frames alone restart nothing** unless `slow_frames = "act"`: they're
+  logged and shown in the window. Replayed against the live server's log (27
+  starts, 100+ players on a 2 GB map), the frame rules would have restarted it
+  mid-game 372 times and faulted it in 22 different hours; a full server is slow
+  anyway, and a restart doesn't make it faster. The drop rule fired exactly on the
+  six post-game deaths in the same log.
+- A server already shown as critical for slow frames is still restarted when it
+  then dies or gets stuck.
+- Existing installs keep what their `settings.toml` says: one written by 0.2.0 says
+  `mode = "watch"`; change it to `"act"`.
+
 ## 0.2.0
 **The window, and one folder per server.** The supervisor is now a live dashboard
 with single-key control, and the layout follows the servers: the supervisor at

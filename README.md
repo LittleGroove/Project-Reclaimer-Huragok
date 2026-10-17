@@ -39,7 +39,7 @@ command).
 ```text
  RECLAIMER SUPERVISOR 0.2.0   (supervising)
  Fri 16 Oct 2026  21:04:12      C:\reclaimer
- backend process  |  servers in SERVERS/  |  running: commands, automod (dry run), watchdog (watch)
+ backend process  |  servers in SERVERS/  |  running: commands, automod (dry run), watchdog (act)
  --------------------------------------------------------------------------------------------
   #  SERVER            PORT   AUTO STATUS                               PLAYERS            GAME
   1  Big Team Battle   49176  yes  RUNNING  up 5h 12m                   14/16 Alice, Bo... playing Valhalla Slayer
@@ -180,10 +180,11 @@ on anything else:
 - **Daily restart:** `daily_restart = "04:00"`, for all servers or one, once a day
   within half an hour of that time, after `min_uptime_seconds`.
 - **Hangs:** `status.json` not rewritten and RCON silent for `[keepalive]
-  hang_seconds` means a restart right away. With `[watchdog] mode = "act"`, the
-  watchdog restarts a *struggling* server (slow frames, stuck after a game) after
-  the game, and a dead one (every player dropped at once after a game, nobody can
-  join again) right away.
+  hang_seconds` means a restart right away. The watchdog restarts a *dead* server
+  (every player dropped at once after a game, nobody can join again) or one *stuck*
+  on the scoreboard after a game right away. Slow frames are logged and shown in the
+  window; `[watchdog] slow_frames = "act"` restarts for those too (a full server is
+  slow anyway, so it's off by default).
 - **A folder that can't be read:** a `dedicated.toml` with a mistake in it, or two
   folders with the same server name, leave out that one folder; every other server
   runs as usual, and the window and `check` say what to fix.

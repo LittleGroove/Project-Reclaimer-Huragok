@@ -174,8 +174,15 @@ def test_restart_after_the_game_that_was_played(tmp_path: Path, run) -> None:
 
 def test_watchdog_restarts_after_a_mass_drop(tmp_path: Path, run) -> None:
     async def scenario() -> None:
-        body = _marker_backend(tmp_path) + '[watchdog]\nmode = "act"\n'
+        body = _marker_backend(tmp_path)  # the watchdog acts by default
         async with running(tmp_path, body) as (sup, _, seen):
+            # A full server is slow all game: by default that restarts nothing (shown as critical, only logged).
+            watchdog = sup.runners["watchdog"].part
+            for _ in range(3):
+                sup.bus.emit("log.falling_behind", SERVER, fps=60, behind=60, window=60, longest_ms=133, players=127)
+            await asyncio.sleep(0.3)
+            await watchdog._update(SERVER)
+            assert watchdog.level[SERVER] == "critical"
             sup.bus.emit("log.roster_lost", SERVER, lost=3, of=20, present=17)  # a few players: not a collapse
             # The live server's mid-game drop: most went, three stayed, and they all came back by themselves.
             sup.bus.emit("log.roster_lost", SERVER, lost=70, of=73, present=3)
