@@ -1,8 +1,9 @@
-"""What the host types into the supervisor's window: update, check, status, stop, help.
+"""What the host types into the supervisor's window when it has no dashboard (--no-menu):
+status, start/stop/restart <server>, say, update, check, stop, quit.
 
-Only when the window is a real console (a double-clicked start.cmd, a terminal);
-under Task Scheduler or systemd there's nothing to read, and `start.cmd update` /
-`start.cmd stop` do the same from outside.
+Only when the window is a real console; under Task Scheduler, systemd or Docker
+there's nothing to read, and `start.cmd stop`, `restart`, `say`, `status` do the
+same from outside.
 """
 
 from __future__ import annotations
@@ -13,7 +14,8 @@ import sys
 import threading
 from typing import Callable
 
-HELP = "Type here: update (install a new version), check (look for one), status, stop (with the servers), help"
+HELP = ("Type here: status · start|stop|restart|cancel <server|all> [--now] · say <server|all> <text> · "
+        "update · check · stop (everything) · close (servers keep running)")
 
 
 def interactive() -> bool:

@@ -15,7 +15,7 @@ PASSWORD = "correct horse battery staple"
 
 class FakeRcon:
     def __init__(self, password: str = PASSWORD, *, full: bool = False,
-                 rotate_key: Path | None = None) -> None:
+                 rotate_key: Path | None = None, port: int = 0) -> None:
         self.password = password
         self.full = full
         self.rotate_key = rotate_key  # rewrite this key file during the first sign-in
@@ -27,11 +27,11 @@ class FakeRcon:
         self.status: dict[str, Any] = {"name": "LG Test Server", "phase": "no_game", "map": "Guardian",
                                        "mode": "Slayer", "players": 0, "max_players": 16}
         self.connections: set[ServerConnection] = set()
-        self.port = 0
+        self.port = port  # 0: any free port
         self._server: Any = None
 
     async def __aenter__(self) -> FakeRcon:
-        self._server = await serve(self._handle, "127.0.0.1", 0, subprotocols=["reclaimer-rcon"])
+        self._server = await serve(self._handle, "127.0.0.1", self.port, subprotocols=["reclaimer-rcon"])
         self.port = next(iter(self._server.sockets)).getsockname()[1]
         return self
 

@@ -1,7 +1,7 @@
 # How the supervisor is built
 
-The supervisor is one program. Its core keeps the servers up and holds the
-pieces everything shares (one RCON connection per server, the live state of each
+The supervisor is one program. Its core runs the servers and holds the pieces
+everything shares (one RCON connection per server, the live state of each
 server, the event bus, the records). On top of it run its **parts**:
 
 | Part | Folder | Settings | |
@@ -15,6 +15,43 @@ Parts are a way to keep the code apart, not something hosts install: everything
 ships together, and new work comes as a pull request. Every command shares one
 set of names, and [tests/test_parts.py](../engine/tests/test_parts.py) fails if
 two parts claim the same one.
+
+## The core, module by module
+| Module | |
+| --- | --- |
+| `config.py` | `settings.toml`, and the servers: every `SERVERS/<folder>/dedicated.toml` (plus `server_folder`), checked against each other (unique names and ports; RCON on). `discover_servers()` re-reads them for folders added while running. |
+| `manager.py` | **One `ServerManager` per server**: the state machine below, ticked once a second by the `Fleet`. The `Fleet` also writes `records/live.json`, answers requests from `records/requests/`, and is what the window's keys call. `Lifecycle` is the thin view parts get (`restart`, `cancel`, `planned`, `busy`). |
+| `lifecycle.py` | The **backends**: `process` (one `dedicated` per server, Windows or Linux), `docker`, `command`, `attach`. A backend only starts, stops and watches processes; it decides nothing. `Keepalive` restarts a hung server. |
+| `menu.py`, `tui.py` | The **window**: the dashboard, its screens, the keyboard (Windows `msvcrt`, Linux `termios`), colours and in-place redraw, the recent-events log handler. `RemoteController` is the second window, fed by `live.json`. |
+| `mailbox.py` | Requests from outside (`start.cmd stop`, a second window) and their replies, as files. |
+| `rcon.py`, `state.py`, `files.py` | One RCON connection per server; the live picture of each server; `server.log`, `status.json` and the console output as events. |
+| `moderation.py`, `permissions.py`, `chat.py` | One ledger for every warn/mute/kick/ban; `commands.toml`; `!` commands in chat. |
+| `storage.py`, `updates.py`, `desktop.py`, `watch.py`, `tomledit.py` | SQLite; new versions from GitHub; opening folders, editors, log windows, start at boot; following a log; editing `settings.toml` and `dedicated.toml` in place (keys, tables, `[[server]]` blocks), keeping comments. |
+| `dedicated.py`, `newserver.py`, `packages.py` | **Setting servers up**: running the server program's own `dedicated` commands (exe on Windows, wine on Linux) and reading their listings; making a server folder from a package with the root's shared `game/`, `content/` and `bans.json`; packages (`PACKAGES/`, the starters in `templates/packages`). |
+| `menu_setup.py`, `setupcli.py` | The window's N, G, C and E screens; the `new`, `package`, `content`, `playlist`, `workshop` and `dedicated` commands. Both work without the fleet, so a second window has them too. |
+| `catalogue.py`, `playlists.py`, `steamsetup.py`, `contentimport.py` | What a server can play as one catalogue (the listing, the mods' ModInfo.json and Forge layouts, the Workshop items) with numbered picking; playlist files built and edited from picks; SteamCMD found, installed, signed in and written into every server; MCC's variants imported. |
+| `livesettings.py`, `menu_manage.py` | **Managing a running server**: the settings catalogue (what each setting is, how it's typed, when the server applies it) and the window's A (console with events), D (settings), B (bans, admins, VPN) and U (updates) screens. |
+| `serverupdates.py` | New releases of the server program: found on GitHub, compared with the version each server reports, checked against `SHA256SUMS.txt`, put in place of every copy, servers restarted after their game. |
+| `relay.py` | The console relay: the server's WebSocket console protocol served by the supervisor, one port per server, moderators by password and role, commands gated by `commands.toml`'s lists and forwarded with `by`, events fanned out. |
+| `core.py`, `cli.py` | Wiring; the commands `start`, `status`, `stop`, `restart`, `say`, `rcon`, `watch`, `check`, `update`, `init`. |
+
+### A server's phases
+```text
+idle ──► launch ──► booting ──► running ──► countdown ──► stopping ──► idle | launch
+  ▲                   │                        │  (cancel)                  ▲
+  │                   ▼                        ▼                            │
+  │                backoff ──► faulted      running                   restarting (a backend
+  │                   ▲                                                with only `restart`)
+  └── external (up, but not started from here) · offline (attach: not reachable)
+```
+Up means **RCON answers**, not the process existing. A crash backs off
+(`backoff_seconds`); `max_failures` fast failures in a row, or more than
+`restarts_per_hour` automatic restarts, mean `faulted`, and a person starts it
+again. A countdown says the `warn_seconds` rungs as absolute deadlines (if a
+slow tick lets two fall due at once, the smaller is said), skips itself when
+nobody is on, and ends early once everyone has left. Nothing in a manager
+waits: a stop in progress is a task the next tick looks at. What survives
+closing the window is in `records/servers/<server>.json`.
 
 ## Adding a command
 Most new things are commands. Put one in the file of
@@ -109,14 +146,14 @@ does with its word list.
 ## What `self.ctx` gives a part
 | | |
 | --- | --- |
-| `ctx.servers` | Each server's live picture by name: `players` (by `#number`: `name`, `id`, `ip`, `admin`, `muted`, `team`), `phase`, `map`, `mode`, `max_players`, `admins`, `connected`, `status_age`, `rcon_latency_ms` |
+| `ctx.servers` | Each server's live picture by name: `players` (by `#number`: `name`, `id`, `ip`, `admin`, `muted`, `team`), `phase`, `map`, `mode`, `max_players`, `admins`, `connected`, `status_age`, `rcon_latency_ms`. Servers added while running appear here. |
 | `ctx.server(name)` | One of those |
 | `ctx.say(server, text)` | A `[Server]` line everyone reads |
 | `ctx.tell(server, player, text)` | A `[Server]` line one player reads (a `Player` or a player ID) |
 | `ctx.players.get(id)`, `.find(text)` | Everyone ever seen on this machine: names used, IPs, first and last seen, visits |
 | `ctx.role_of(server, player)` | `player` (everyone), `moderator`, `admin` (the server's own admins) or `owner` |
 | `ctx.moderation` | `warn`, `mute`, `unmute`, `kick`, `ban`, `unban`, `pardon`: recorded with a reason, shown to players as by your part (or the `by=` you pass), and dry-run aware. Use these for anything done to a player |
-| `ctx.lifecycle` | `restart(server, when="now" / "after_game" / "when_empty", reason=…)`, `cancel(server)`, `can_control` |
+| `ctx.lifecycle` | `restart(server, when="now" / "after_game" / "when_empty", reason=…, countdown=…)`, `cancel(server)`, `planned`, `busy`, `can_control`. `countdown=0` means right away; a number is the seconds of notice; none means the host's `warn_seconds` |
 | `ctx.rcon(server)` | The raw console: `await ctx.rcon(server).command("load", "Guardian", "Slayer")`, for what the rest doesn't cover |
 | `ctx.db` | The shared SQLite database. `ctx.db.migrate([...])` creates your tables (prefix them with your part's name); `execute` and `query` run SQL |
 | `ctx.config` | Your section with `defaults` filled in (also `self.config`) |
@@ -154,9 +191,12 @@ The supervisor adds its own:
 
 | Event | Fields |
 | --- | --- |
-| `server.started`, `server.crashed` | from the built-in supervisor's console (backend `windows`): `pid`; `reason`, `kind` (`hang`, `menus`, `error`, `panic`, `engine_exit`, `other`) |
-| `server.starting`, `server.stopping`, `server.stopped`, `server.all_stopped` | `expected` on `stopped` |
+| `server.starting`, `server.ready`, `server.adopted` | the manager started it; its RCON answered after a start; it was found running and taken over (`pid`) |
+| `server.started`, `server.crashed` | from the built-in supervisor's console (backend `process`): `pid`; `reason`, `kind` (`hang`, `menus`, `error`, `panic`, `engine_exit`, `other`) |
+| `server.stopping`, `server.stopped`, `server.all_stopped` | `expected` and `exit_code` on `stopped` |
+| `server.countdown`, `server.countdown_cancelled` | `reason`, `coming_back`, `seconds`, `by` |
 | `server.restart_planned`, `server.restarting`, `server.restarted`, `server.restart_failed` | `when`, `reason`, `by` |
+| `server.faulted` | `reason`: the supervisor gave up starting it |
 | `server.hung`, `server.recovered` | `status_age` |
 | `log.falling_behind` | `fps`, `behind`, `window`, `average`, `longest_ms`, `players` |
 | `log.upload` | `rate`, `unit`, `players` |
@@ -165,6 +205,7 @@ The supervisor adds its own:
 | `moderation.action` | `kind`, `target_id`, `target_name`, `by`, `source` (the part), `reason`, `duration`, `dry_run`, `ok`, `text` |
 | `supervisor.started`, `supervisor.stopping`, `supervisor.part_disabled` | `parts` on `started`; `part`, `reason` on `part_disabled` |
 | `automod.strike`, `automod.pardon` | `player_id`, `player_name`, `rule`, `strike`, `action`, `source` (`chat`, `name`, `manual`), `evidence`, `by`, `dry_run` |
+| `watchdog.health` | `level` (`healthy`, `degraded`, `critical`), `previous`, `reasons`; the dashboard shows it |
 
 Switch on `[eventlog]` to see every event as JSON while you work.
 
@@ -179,21 +220,39 @@ Switch on `[eventlog]` to see every event as JSON while you work.
   with who and why, respects dry run, and shows players who acted.
 - **Never resend a moderation command** after an error: it may have run already.
 - **Never retry a refused RCON password:** five in ten minutes lock out every tool on the machine.
-- **Test against the fake server** in `engine/tests/fake_rcon.py`;
-  `engine/tests/test_supervisor.py` shows how to run the whole supervisor around a part.
+- **A server never depends on the supervisor's process:** the process backend puts
+  each `dedicated` in its own process group (Windows) or session (Linux), with its
+  output in a file, so closing the window never takes a server down.
+- **Test against the fake server:** `engine/tests/fake_rcon.py` is a server's RCON,
+  `engine/tests/fake_dedicated.py` a stand-in `dedicated run` that the process
+  backend really starts, adopts, stops (Ctrl+Break / SIGINT) and sees crash.
+  `test_manager.py` drives the state machine with a clock moved by hand;
+  `test_menu.py` drives the window with a scripted keyboard; `test_surfaces.py`
+  provokes every message the main flows don't reach (refusals, edge cases, the
+  log lines for what goes wrong at run time) and checks the words the host reads.
 
 ## How it fits together
 ```text
+ SERVERS/<folder>/dedicated.toml ──► discovery (10 s) ──► a manager, RCON client and file watcher per server
  servers' RCON ──► one RCON client per server ─┐
  data/<server>/server.log, status.json ──► file watcher ─┼─► event bus ─► live server state
- `dedicated` console (windows backend) ──► backend ─┘          ├─► in-game commands ─┐
+ `dedicated` console (process backend) ──► backend ─┘          ├─► in-game commands ─┐
                                                                └─► each part's queue ◄┘
- keepalive (hung?) · lifecycle (restart now / after the game / when empty) · moderation (one ledger)
- commands.toml (reloaded when edited) · records/ (SQLite) · logs/
+ fleet: one state machine per server, ticked every second ◄── the window's keys · records/requests/
+ keepalive (hung?) · moderation (one ledger) · commands.toml (reloaded when edited) · records/ · logs/
 ```
 
 A server is only called hung when `status.json` (rewritten every 5 seconds) and
 RCON have **both** gone quiet.
+
+## Trying it on Linux
+The process backend runs the server through `wine` on Linux. Without the game,
+the whole suite still runs in a container, fake `dedicated` included:
+
+```sh
+docker run --rm -v "$PWD:/repo:ro" python:3.12-slim sh -c \
+  'cp -r /repo /work && cd /work && pip install -q -e "engine[test]" && python -m pytest -q engine'
+```
 
 ## Releasing
 Hosts get the supervisor, and its updates, from GitHub releases. A release is a

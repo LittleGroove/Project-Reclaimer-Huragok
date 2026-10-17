@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "name": "Infection",
+  "vote_seconds": 20,
+  "games": [
+    {
+      "map": "Last Resort",
+      "game": "Infection",
+      "weight": 2
+    },
+    {
+      "map": "Sandtrap",
+      "game": "Infection"
+    },
+    {
+      "map": "Ghost Town",
+      "game": "Infection"
+    },
+    {
+      "map": "Isolation",
+      "game": "Infection"
+    },
+    {
+      "map": "Foundry",
+      "game": "Infection"
+    },
+    {
+      "map": "Cold Storage",
+      "game": "Infection"
+    },
+    {
+      "map": "Rat's Nest",
+      "game": "Infection"
+    },
+    {
+      "map": "Last Resort",
+      "game": "alpha_zombie",
+      "name": "Alpha Zombies"
+    },
+    {
+      "map": "Ghost Town",
+      "game": "alpha_zombie",
+      "name": "Alpha Zombies"
+    },
+    {
+      "map": "Isolation",
+      "game": "alpha_zombie",
+      "name": "Alpha Zombies"
+    },
+    {
+      "map": "Sandtrap",
+      "game": "Flood Infection"
+    },
+    {
+      "map": "Foundry",
+      "game": "Flood Infection"
+    }
+  ]
+}

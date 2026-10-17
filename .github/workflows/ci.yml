@@ -27,11 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          mkdir -p /tmp/server && printf '[rcon]\npassword = "x"\n[[server]]\nname = "Test"\nport = 49176\n' > /tmp/server/dedicated.toml
-          cp -r . /tmp/server/reclaimer-supervisor
-          cd /tmp/server/reclaimer-supervisor
+          mkdir -p /tmp/reclaimer && cp -r . /tmp/reclaimer/ && cd /tmp/reclaimer
+          mkdir -p "SERVERS/Test"
+          printf '[rcon]\npassword = "x"\n[[server]]\nname = "Test"\nport = 49176\n' > "SERVERS/Test/dedicated.toml"
           sh start.sh || test $? -eq 3     # first start: writes the files, exit code 3
+          sh start.sh init --force --backend attach   # no wine on this runner: watch-only
           sh start.sh check
+          sh start.sh status
 
   docker:
     name: docker image

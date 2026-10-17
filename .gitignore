@@ -9,10 +9,11 @@ dist/
 .pytest_cache/
 
 # What a running supervisor makes in its folder: your settings, your word list,
-# its records and logs. They're yours, not the project's.
+# your servers, its records and logs. They're yours, not the project's.
 /settings.toml
 /commands.toml
 /automod.txt
+/SERVERS/
 /records/
 /logs/
 *.sqlite3

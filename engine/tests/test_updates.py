@@ -14,7 +14,8 @@ from fake_rcon import FakeRcon
 
 from reclaimer_supervisor import __version__, cli, updates
 from reclaimer_supervisor.config import ConfigError, load
-from reclaimer_supervisor.core import UPDATE_REQUEST, Supervisor
+from reclaimer_supervisor import mailbox
+from reclaimer_supervisor.core import Supervisor
 from reclaimer_supervisor.updates import Release, UpdateError, UpdateService, install, is_newer, parse_version
 
 LATEST_RELEASE = updates.latest_release  # the real one: conftest swaps it out so tests stay off the network
@@ -189,8 +190,7 @@ def test_update_asked_from_outside_restarts_with_the_servers_left_running(tmp_pa
             supervisor.updates.can_install = True
             task = asyncio.ensure_future(supervisor.run())
             await wait_for(lambda: supervisor.states["LG Test Server"].connected)
-            (tmp_path / "records").mkdir(exist_ok=True)
-            (tmp_path / "records" / UPDATE_REQUEST).write_text(NEW, encoding="utf-8")
+            mailbox.post(tmp_path / "records", "update", why="a test")
             await asyncio.wait_for(task, 10)
             assert supervisor.relaunch and supervisor.stop_servers is False
 

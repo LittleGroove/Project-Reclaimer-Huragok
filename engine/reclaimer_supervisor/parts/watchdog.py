@@ -7,10 +7,11 @@ runs badly. Each minute it sorts every server into:
   degraded  under 60 frames a second for a good share of several recent minutes:
             restart after this game
   critical  barely running for minutes on end, stuck on the scoreboard after a
-            game with players waiting, or most of its players dropped at once
-            ("Host roster lost 28 of 28 players in one update"; seen on the main
-            server at the end of a game): restart now (with a countdown, unless
-            nobody is left)
+            game with players waiting, or every player dropped at once ("Host
+            roster lost 28 of 28 players in one update (0 now present)"; seen on
+            the main server ~38 s after a game ended, after which it lets nobody
+            back in): restart now. A drop that leaves players on is only logged:
+            the one seen mid-game (70 of 73) recovered by itself.
 
 The thresholds are first guesses. Leave mode = "watch" (the default) for a few
 nights: it logs what it would do, so the numbers can be tuned before it acts.
@@ -50,7 +51,8 @@ class Watchdog(Part):
         "critical_minutes": 3,      # this many minutes in a row at critical_share
         "stuck_end_minutes": 10,    # on the scoreboard this long with players: stuck
         "drop_players": 8,          # a roster loss counts when at least this many players went…
-        "drop_share": 0.5,          # …and at least this share of those who were on
+        "drop_share": 0.5,          # …and at least this share of those who were on…
+        "drop_left": 0,             # …and no more than this many were left
     }
 
     def check_config(self) -> None:
@@ -82,9 +84,13 @@ class Watchdog(Part):
         lost, of = int(event.get("lost", 0)), int(event.get("of", 0))
         self.log.warning("[%s] the server dropped %d of %d players at once (%s now present)%s", server, lost, of,
                          event.get("present", "?"), f": {event.get('details')}" if event.get("details") else "")
-        if lost >= self.config["drop_players"] and lost >= of * self.config["drop_share"]:
-            self.drops[server] = event
-            await self._update(server)
+        if lost < self.config["drop_players"] or lost < of * self.config["drop_share"]:
+            return
+        if int(event.get("present", 0)) > self.config["drop_left"]:
+            self.log.info("[%s] players are still on, so it's left to recover by itself", server)
+            return
+        self.drops[server] = event
+        await self._update(server)
 
     @on("server.restarted", "server.started")
     async def fresh_start(self, event: Event) -> None:
@@ -164,7 +170,7 @@ class Watchdog(Part):
         state = self.ctx.server(server)
         parts = [self.level.get(server, "healthy"),
                  f"{len(state.players)} players",
-                 f"{state.phase or '?'} {state.map or ''}".strip()]
+                 f"{state.phase or 'phase unknown'} {state.map or ''}".strip()]
         if state.rcon_latency_ms is not None:
             parts.append(f"RCON {state.rcon_latency_ms:.0f} ms")
         if state.status_age is not None:

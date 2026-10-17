@@ -43,7 +43,8 @@ include = ["reclaimer_supervisor*"]
 version = { attr = "reclaimer_supervisor.__version__" }
 
 [tool.setuptools.package-data]
-reclaimer_supervisor = ["templates/*.toml", "templates/*.txt"]
+reclaimer_supervisor = ["templates/*.toml", "templates/*.txt", "templates/packages/*/*.toml",
+                        "templates/packages/*/playlists/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

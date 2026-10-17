@@ -1,0 +1,64 @@
+{
+  "version": 2,
+  "name": "Scripted Modes",
+  "vote_seconds": 25,
+  "games": [
+    {
+      "map": "The Pit",
+      "game": "Gun Game",
+      "weight": 2
+    },
+    {
+      "map": "Guardian",
+      "game": "Gun Game"
+    },
+    {
+      "map": "Construct",
+      "game": "Gun Game"
+    },
+    {
+      "map": "Narrows",
+      "game": "Gun Game"
+    },
+    {
+      "map": "Guardian",
+      "game": "One in the Chamber"
+    },
+    {
+      "map": "The Pit",
+      "game": "One in the Chamber"
+    },
+    {
+      "map": "Construct",
+      "game": "Growth"
+    },
+    {
+      "map": "Citadel",
+      "game": "Growth"
+    },
+    {
+      "map": "The Pit",
+      "game": "Zone Control"
+    },
+    {
+      "map": "Rat's Nest",
+      "game": "Zone Control"
+    },
+    {
+      "map": "Valhalla",
+      "game": "Zone Control"
+    },
+    {
+      "map": "Valhalla",
+      "game": "UNSC vs Covenant"
+    },
+    {
+      "map": "Sandtrap",
+      "game": "UNSC vs Covenant"
+    },
+    {
+      "map": "Last Resort",
+      "game": "UNSC vs Covenant"
+    }
+  ]
+}

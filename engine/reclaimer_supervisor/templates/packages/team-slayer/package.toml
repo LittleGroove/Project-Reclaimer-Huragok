@@ -1,0 +1,12 @@
+# A starter package: Halo 3's own team games on the classic 4v4 maps.
+name = "Team Slayer"
+description = "Team Slayer, CTF, King of the Hill and Oddball on the classic 4v4 maps, 16 players"
+version = 1
+needs_maps = ["Guardian", "The Pit", "Construct", "Narrows", "Heretic", "Citadel", "Last Resort", "Valhalla"]
+
+[server]
+playlist = "playlists/team-slayer.playlist.json"
+max_players = 16
+
+[workshop]
+items = []

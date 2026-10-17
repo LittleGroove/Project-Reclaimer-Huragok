@@ -1,9 +1,9 @@
-"""Reclaimer Supervisor: one program for running Project Reclaimer dedicated servers.
+"""Reclaimer Supervisor: one window that runs Project Reclaimer dedicated servers.
 It starts them and keeps them up, removes players for words on a list (automod),
 and gives in-game commands to the roles the host picks (commands.toml). Works the
 same on Windows and Linux."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 from .chat import CommandCall  # noqa: E402
 from .events import Event  # noqa: E402

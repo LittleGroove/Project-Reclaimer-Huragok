@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "name": "Big Team Battle",
+  "vote_seconds": 20,
+  "games": [
+    {
+      "map": "Valhalla",
+      "game": "team_slayer",
+      "name": "Big Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "Sandtrap",
+      "game": "team_slayer",
+      "name": "Big Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "Standoff",
+      "game": "team_slayer",
+      "name": "Big Team Slayer"
+    },
+    {
+      "map": "Avalanche",
+      "game": "team_slayer",
+      "name": "Big Team Slayer"
+    },
+    {
+      "map": "Rat's Nest",
+      "game": "team_slayer",
+      "name": "Big Team Slayer"
+    },
+    {
+      "map": "Last Resort",
+      "game": "team_slayer",
+      "name": "Big Team Slayer"
+    },
+    {
+      "map": "High Ground",
+      "game": "team_slayer",
+      "name": "Big Team Slayer"
+    },
+    {
+      "map": "Valhalla",
+      "game": "multi_flag",
+      "name": "Big Team CTF"
+    },
+    {
+      "map": "Sandtrap",
+      "game": "multi_flag",
+      "name": "Big Team CTF"
+    },
+    {
+      "map": "Avalanche",
+      "game": "multi_flag",
+      "name": "Big Team CTF"
+    },
+    {
+      "map": "Standoff",
+      "game": "multi_flag",
+      "name": "Big Team CTF"
+    },
+    {
+      "map": "Last Resort",
+      "game": "multi_flag",
+      "name": "Big Team CTF"
+    },
+    {
+      "map": "Valhalla",
+      "game": "team_king",
+      "name": "Big Team King"
+    },
+    {
+      "map": "Sandtrap",
+      "game": "team_king",
+      "name": "Big Team King"
+    }
+  ]
+}

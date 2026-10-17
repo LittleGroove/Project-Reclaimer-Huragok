@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "name": "Team Slayer",
+  "vote_seconds": 20,
+  "games": [
+    {
+      "map": "Guardian",
+      "game": "team_slayer",
+      "name": "Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "The Pit",
+      "game": "team_slayer",
+      "name": "Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "Construct",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "Narrows",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "Heretic",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "Citadel",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "Last Resort",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "Valhalla",
+      "game": "team_slayer",
+      "name": "Team Slayer"
+    },
+    {
+      "map": "The Pit",
+      "game": "multi_flag",
+      "name": "Multi Flag CTF"
+    },
+    {
+      "map": "Narrows",
+      "game": "multi_flag",
+      "name": "Multi Flag CTF"
+    },
+    {
+      "map": "Valhalla",
+      "game": "multi_flag",
+      "name": "Multi Flag CTF"
+    },
+    {
+      "map": "Guardian",
+      "game": "team_king",
+      "name": "Team King"
+    },
+    {
+      "map": "Guardian",
+      "game": "team_oddball",
+      "name": "Team Oddball"
+    },
+    {
+      "map": "Construct",
+      "game": "team_oddball",
+      "name": "Team Oddball"
+    }
+  ]
+}

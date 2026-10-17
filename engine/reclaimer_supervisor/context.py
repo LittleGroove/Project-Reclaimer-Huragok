@@ -11,7 +11,7 @@ from .storage import PartStore, PlayerRecord
 
 if TYPE_CHECKING:
     from .core import Supervisor
-    from .lifecycle import Lifecycle
+    from .manager import Lifecycle
     from .rcon import RconClient
 
 

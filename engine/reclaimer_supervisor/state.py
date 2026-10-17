@@ -50,6 +50,8 @@ class ServerState:
     map: str | None = None
     mode: str | None = None
     max_players: int | None = None
+    next_game: str | None = None  # a `nextmap` override, from `status`'s `next`: "Valhalla Slayer"
+    playlist_vote: Any = None  # the playlist ballot under way, as `status` gives it, or None
     players: dict[int, Player] = field(default_factory=dict)
     last_rcon_ok: float | None = None  # monotonic time of the last good reply
     rcon_latency_ms: float | None = None
@@ -89,15 +91,34 @@ class ServerState:
 
 
 class StateTracker:
-    """Keeps every ServerState current from RCON events and periodic refreshes."""
+    """Keeps every ServerState current from RCON events and periodic refreshes. Servers can be added while running."""
 
     def __init__(self, bus: EventBus, clients: dict[str, RconClient], refresh_seconds: float = 30.0) -> None:
         self.bus = bus
         self.clients = clients
         self.refresh_seconds = refresh_seconds
-        self.states = {name: ServerState(name) for name in clients}
-        self._refresh_now = {name: asyncio.Event() for name in clients}
+        self.states: dict[str, ServerState] = {}
+        self._refresh_now: dict[str, asyncio.Event] = {}
+        self._loops: dict[str, asyncio.Task[None]] | None = None  # None until run()
+        for name, client in list(clients.items()):
+            self.add(name, client)
         bus.subscribe("rcon.*", self._on_event)
+
+    def add(self, name: str, client: RconClient) -> ServerState:
+        self.clients[name] = client
+        state = self.states.get(name) or ServerState(name)
+        self.states[name] = state
+        self._refresh_now.setdefault(name, asyncio.Event())
+        if self._loops is not None and name not in self._loops:
+            self._loops[name] = asyncio.ensure_future(self._refresh_loop(name))
+        return state
+
+    def remove(self, name: str) -> None:
+        if self._loops is not None and (task := self._loops.pop(name, None)):
+            task.cancel()
+        self.states.pop(name, None)
+        self._refresh_now.pop(name, None)
+        self.clients.pop(name, None)
 
     def _on_event(self, event: Event) -> None:
         state = self.states.get(event.server or "")
@@ -137,7 +158,13 @@ class StateTracker:
             state.map, state.mode = data.get("map", state.map), data.get("mode", state.mode)
 
     async def run(self) -> None:
-        await asyncio.gather(*(self._refresh_loop(name) for name in self.clients))
+        self._loops = {name: asyncio.ensure_future(self._refresh_loop(name)) for name in self.clients}
+        try:
+            await asyncio.Event().wait()
+        finally:
+            for task in self._loops.values():
+                task.cancel()
+            self._loops = None
 
     async def _refresh_loop(self, name: str) -> None:
         wake = self._refresh_now[name]
@@ -147,7 +174,8 @@ class StateTracker:
             except TimeoutError:
                 pass
             wake.clear()
-            if self.clients[name].connected:
+            client = self.clients.get(name)
+            if client is not None and client.connected:
                 await self.refresh(name)
 
     async def refresh(self, name: str) -> None:
@@ -185,6 +213,18 @@ class StateTracker:
             state.phase, state.phase_since = data["phase"], time.time()
         state.map, state.mode = data.get("map", state.map), data.get("mode", state.mode)
         state.max_players = data.get("max_players", state.max_players)
+        state.next_game = describe_game(data.get("next"))
+        state.playlist_vote = data.get("playlist_vote") or None
+
+
+def describe_game(value: Any) -> str | None:
+    """A game as `status`/`nextmap` describe one ({"map": …, "mode": …, "game": …}, or text) -> "Valhalla Slayer"."""
+    if not value:
+        return None
+    if isinstance(value, dict):
+        words = [str(value.get("map") or ""), str(value.get("game") or value.get("mode") or "")]
+        return " ".join(w for w in words if w) or None
+    return str(value)
 
     @staticmethod
     def _apply_players(state: ServerState, data: dict[str, Any]) -> None:

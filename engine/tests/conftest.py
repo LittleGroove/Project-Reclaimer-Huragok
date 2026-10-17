@@ -22,19 +22,22 @@ ADMIN = "e" * 64
 
 
 def write_server_folder(folder: Path, port: int, *, name: str = "LG Test Server", host_key: str | None = None,
-                        status_age: float | None = None, extra_server: str = "") -> Path:
+                        status_age: float | None = None, extra_server: str = "", exe: bool = False,
+                        rcon_password: str | None = PASSWORD) -> Path:
     """A server folder like `dedicated init` makes, with one server whose RCON is on `port`."""
     folder.mkdir(parents=True, exist_ok=True)
+    rcon = f'[rcon]\npassword = "{rcon_password}"\n' if rcon_password else ""
     (folder / "dedicated.toml").write_text(f"""
 data = "data"
 admins = ["{ADMIN}"]
-[rcon]
-password = "{PASSWORD}"
+{rcon}
 [[server]]
 name = "{name}"
 port = {port}
 {extra_server}
 """, encoding="utf-8")
+    if exe:
+        (folder / "project-reclaimer.exe").write_bytes(b"")
     data = folder / "data" / name.lower().replace(" ", "-")
     data.mkdir(parents=True, exist_ok=True)
     if host_key:
@@ -45,19 +48,32 @@ port = {port}
     return data
 
 
-def write_settings(folder: Path, server_folder: Path, body: str = "", commands: str | None = None) -> Path:
-    """settings.toml (no database or log file), and commands.toml when `commands` is given."""
+def write_settings(folder: Path, server_folder: Path | None = None, body: str = "", commands: str | None = None,
+                   backend: str | None = "attach") -> Path:
+    """settings.toml (no database or log file), and commands.toml when `commands` is given.
+
+    server_folder names one server folder (the 0.1 layout); None means SERVERS/ next to the
+    settings. The backend is attach unless the body sets one, so tests act on nothing real.
+    """
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "settings.toml"
-    path.write_text(f"""
-server_folder = "{server_folder.as_posix()}"
-database = ""
-log_file = ""
-{body}
-""", encoding="utf-8")
+    lines = ['database = ""', 'log_file = ""']
+    if server_folder is not None:
+        lines.append(f'server_folder = "{server_folder.as_posix()}"')
+    if backend and "backend" not in body:
+        lines.append(f'backend = "{backend}"')
+    path.write_text("\n".join(lines) + "\n" + body + "\n", encoding="utf-8")
     if commands is not None:
         (folder / "commands.toml").write_text(commands, encoding="utf-8")
     return path
+
+
+def write_root(root: Path, servers: list[tuple[str, int]], body: str = "", commands: str | None = None,
+               backend: str | None = "attach", exe: bool = False) -> Path:
+    """The 0.2 layout: settings at the root, one folder per server in SERVERS/."""
+    for name, port in servers:
+        write_server_folder(root / "SERVERS" / name, port, name=name, exe=exe)
+    return write_settings(root, None, body, commands, backend)
 
 
 def staff(extra: str = "", cooldown: float = 0) -> str:
@@ -69,6 +85,29 @@ players = ["{OWNER}"]
 [moderator]
 players = ["{MOD}"]
 {extra}"""
+
+
+def free_port() -> int:
+    """A TCP port nothing listens on right now."""
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def free_ports(count: int) -> list[int]:
+    """Several TCP ports nothing listens on right now, all different."""
+    import socket
+
+    sockets = [socket.socket() for _ in range(count)]
+    try:
+        for sock in sockets:
+            sock.bind(("127.0.0.1", 0))
+        return [sock.getsockname()[1] for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 async def wait_for(predicate: Callable[[], Any], timeout: float = 5.0) -> Any:

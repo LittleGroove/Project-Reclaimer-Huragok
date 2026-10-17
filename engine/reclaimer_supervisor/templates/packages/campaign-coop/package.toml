@@ -1,0 +1,13 @@
+# A starter package: campaign co-op from Sierra 117 on Heroic. The server needs the campaign
+# missions in its game folder: `dedicated init --from "<MCC folder>" --maps campaign` (about 4 GB).
+name = "Campaign Co-op"
+description = "Halo 3's campaign from Sierra 117 on Heroic, up to 4 players"
+version = 1
+needs_campaign = true
+
+[server]
+campaign = { mission = 3010, insertion = 0, difficulty = "heroic" }
+max_players = 4
+
+[workshop]
+items = []

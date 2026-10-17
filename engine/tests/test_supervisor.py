@@ -14,6 +14,7 @@ from typing import Any, AsyncIterator
 from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, staff, wait_for, write_server_folder, write_settings
 from fake_rcon import FakeRcon
 
+from reclaimer_supervisor import mailbox
 from reclaimer_supervisor.config import load
 from reclaimer_supervisor.core import Supervisor
 from reclaimer_supervisor.events import Event
@@ -42,6 +43,10 @@ async def running(tmp_path: Path, body: str = "", **folder: Any) -> AsyncIterato
 
 def tells_to(fake: FakeRcon, player_id: str) -> list[str]:
     return [c["args"][1] for c in fake.named("tell") if c.get("args", [None])[0] == player_id]
+
+
+def says(fake: FakeRcon) -> list[str]:
+    return [c["args"][0] for c in fake.named("say") if c.get("args")]
 
 
 async def everyone_joins(fake: FakeRcon) -> None:
@@ -143,21 +148,26 @@ def _marker_backend(tmp_path: Path) -> str:
 
 def test_restart_after_the_game_that_was_played(tmp_path: Path, run) -> None:
     async def scenario() -> None:
-        async with running(tmp_path, _marker_backend(tmp_path)) as (sup, fake, seen):
+        body = _marker_backend(tmp_path) + "[restarts]\nafter_game_seconds = 1\n"
+        async with running(tmp_path, body) as (sup, fake, seen):
             await fake.join(1, "Alice", ALICE)
             await wait_for(lambda: sup.states[SERVER].players)
             await fake.event("phase", phase="playing", map="Valhalla", mode="Slayer")
             await wait_for(lambda: sup.states[SERVER].phase == "playing")
             await sup.lifecycle.restart(SERVER, when="after_game", reason="testing")
-            await wait_for(lambda: any("after this game" in c.get("args", [""])[0] for c in fake.named("say")))
+            assert sup.fleet.managers[SERVER].phase == "running"  # the server is up: noticed at once
+            await wait_for(lambda: any("after this game" in s for s in says(fake)))
             # Seen on 0.9.18: `finished` for the next game before it starts. Not the end of ours.
             await fake.event("phase", phase="finished", map="The Pit", mode="Slayer")
             await asyncio.sleep(0.3)
-            assert not (tmp_path / "restarts.txt").exists()
+            assert not (tmp_path / "restarts.txt").exists() and sup.lifecycle.planned
             await fake.event("phase", phase="finished", map="Valhalla", mode="Slayer")
+            await wait_for(lambda: any("restarting in 1 second" in s for s in says(fake)))
             await wait_for(lambda: (tmp_path / "restarts.txt").exists())
             assert (tmp_path / "restarts.txt").read_text().strip() == "lg-test-server"
-            await wait_for(lambda: any(e.name == "server.restarted" for e in seen))
+            await wait_for(lambda: any(e.name == "server.restarting" for e in seen))
+            await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running")  # RCON still answers: up again
+            assert any(e.name == "server.restarted" for e in seen)
 
     run(scenario())
 
@@ -167,11 +177,13 @@ def test_watchdog_restarts_after_a_mass_drop(tmp_path: Path, run) -> None:
         body = _marker_backend(tmp_path) + '[watchdog]\nmode = "act"\n'
         async with running(tmp_path, body) as (sup, _, seen):
             sup.bus.emit("log.roster_lost", SERVER, lost=3, of=20, present=17)  # a few players: not a collapse
+            # The live server's mid-game drop: most went, three stayed, and they all came back by themselves.
+            sup.bus.emit("log.roster_lost", SERVER, lost=70, of=73, present=3)
             await asyncio.sleep(0.3)
-            assert not any(e.name == "server.restart_planned" for e in seen)
+            assert not any(e.name in ("server.restart_planned", "server.restarting") for e in seen)
             sup.bus.emit("log.roster_lost", SERVER, lost=28, of=28, present=0, details="{}")
-            planned = await wait_for(lambda: next((e for e in seen if e.name == "server.restart_planned"), None))
-            assert planned["when"] == "now" and planned["by"] == "Watchdog" and "dropped" in planned["reason"]
+            planned = await wait_for(lambda: next((e for e in seen if e.name == "server.restarting"), None))
+            assert planned["by"] == "Watchdog" and "dropped" in planned["reason"]
             await wait_for(lambda: (tmp_path / "restarts.txt").exists())
 
     run(scenario())
@@ -182,8 +194,9 @@ def test_keepalive_restarts_a_hung_server(tmp_path: Path, run) -> None:
         body = _marker_backend(tmp_path) + "[keepalive]\nhang_seconds = 1\ncheck_seconds = 0.2\n"
         async with running(tmp_path, body, status_age=600) as (sup, fake, seen):
             await wait_for(lambda: sup.states[SERVER].last_rcon_ok)  # the first refresh is done
+            await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running")
             sup.states[SERVER].last_rcon_ok = time.monotonic() - 60  # RCON quiet too
-            sup.watchers[0].poll_status()
+            sup.watchers[SERVER].poll_status()
             hung = await wait_for(lambda: next((e for e in seen if e.name == "server.hung"), None))
             assert hung.server == SERVER
             await wait_for(lambda: (tmp_path / "restarts.txt").exists())
@@ -195,6 +208,9 @@ def test_attach_mode_cannot_restart(tmp_path: Path, run) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (sup, _, _):
             assert not sup.lifecycle.can_control
+            await wait_for(lambda: sup.fleet.managers[SERVER].phase == "external")
+            row = sup.fleet.rows()[0]
+            assert "watching" in row["status"] and not row["can"]["restart"]
             try:
                 await sup.lifecycle.restart(SERVER)
             except Exception as error:  # noqa: BLE001
@@ -245,16 +261,78 @@ def test_commands_toml_edits_apply_while_running(tmp_path: Path, run) -> None:
     run(scenario())
 
 
-def test_a_stop_request_stops_everything(tmp_path: Path, run) -> None:
+def test_a_stop_request_from_outside_stops_everything(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        async with FakeRcon() as fake:
+            write_server_folder(tmp_path / "server", fake.port)
+            settings = load(write_settings(tmp_path, tmp_path / "server", _marker_backend(tmp_path), commands=staff()))
+            supervisor = Supervisor(settings)
+            task = asyncio.ensure_future(supervisor.run())
+            await wait_for(lambda: supervisor.states[SERVER].connected)
+            await wait_for(lambda: supervisor.fleet.managers[SERVER].phase == "running")
+            request = mailbox.post(tmp_path / "records", "stop_all", immediate=True)
+            await asyncio.wait_for(task, 15)  # the fleet reads it within a second; no stop command: nothing to wait for
+            reply = mailbox.take_reply(tmp_path / "records", request)
+            assert reply is not None and "can't stop" in reply.message  # this backend has only `restart`
+            assert supervisor.stopping and supervisor.stop_servers is False
+
+    run(scenario())
+
+
+def test_requests_from_outside_are_answered(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        async with running(tmp_path) as (sup, fake, _):
+            await fake.join(1, "Alice", ALICE)
+            await wait_for(lambda: sup.states[SERVER].players)
+            await wait_for(lambda: sup.fleet.managers[SERVER].phase == "external")
+            request = mailbox.post(tmp_path / "records", "say", SERVER, text="hello there")
+            reply = await wait_for(lambda: mailbox.take_reply(tmp_path / "records", request))
+            assert reply.ok and "hello there" in says(fake)
+            request = mailbox.post(tmp_path / "records", "rcon", SERVER, text="players")
+            reply = await wait_for(lambda: mailbox.take_reply(tmp_path / "records", request))
+            assert reply.ok and "1 players" in reply.text
+            request = mailbox.post(tmp_path / "records", "restart", "Nope")
+            reply = await wait_for(lambda: mailbox.take_reply(tmp_path / "records", request))
+            assert not reply.ok and "no server called" in reply.message
+            live = json.loads((tmp_path / "records" / "live.json").read_text(encoding="utf-8"))
+            assert live["servers"][0]["name"] == SERVER and live["servers"][0]["players"].startswith("1")
+
+    run(scenario())
+
+
+def test_close_from_outside_leaves_the_servers_running(tmp_path: Path, run) -> None:
     async def scenario() -> None:
         async with FakeRcon() as fake:
             write_server_folder(tmp_path / "server", fake.port)
             supervisor = Supervisor(load(write_settings(tmp_path, tmp_path / "server", commands=staff())))
             task = asyncio.ensure_future(supervisor.run())
             await wait_for(lambda: supervisor.states[SERVER].connected)
-            (tmp_path / "records").mkdir(exist_ok=True)
-            (tmp_path / "records" / "stop-request").write_text("now", encoding="utf-8")
-            await asyncio.wait_for(task, 10)  # the file check sees it within a few seconds
-            assert supervisor.stop_servers and not (tmp_path / "records" / "stop-request").exists()
+            request = mailbox.post(tmp_path / "records", "close")
+            await asyncio.wait_for(task, 15)
+            reply = mailbox.take_reply(tmp_path / "records", request)
+            assert reply is not None and reply.ok and "keep running" in reply.message
+            assert supervisor.stop_servers is False and fake.signed_in() == 0  # our connection closed, nothing stopped
+
+    run(scenario())
+
+
+def test_a_server_folder_added_while_running_is_picked_up(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        async with FakeRcon() as fake, FakeRcon() as second:
+            root = tmp_path / "reclaimer"
+            write_server_folder(root / "SERVERS" / SERVER, fake.port)
+            settings = load(write_settings(root, None, commands=staff()))
+            supervisor = Supervisor(settings)
+            task = asyncio.ensure_future(supervisor.run())
+            try:
+                await wait_for(lambda: supervisor.states[SERVER].connected)
+                write_server_folder(root / "SERVERS" / "Second", second.port, name="Second")
+                supervisor.discover()
+                assert "Second" in supervisor.fleet.managers and "Second" in supervisor.states
+                await wait_for(lambda: supervisor.states["Second"].connected)
+                assert [r["name"] for r in supervisor.fleet.rows()] == [SERVER, "Second"]
+            finally:
+                supervisor.stop()
+                await asyncio.wait_for(task, 10)
 
     run(scenario())

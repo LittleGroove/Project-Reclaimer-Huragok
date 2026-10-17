@@ -57,6 +57,10 @@ CONSOLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("server.reloaded", re.compile(CLOCK + r"Configuration reloaded\.")),
     ("server.all_stopped", re.compile(CLOCK + r"All servers stopped\.")),
     ("server.updating", re.compile(CLOCK + r"Update installed; restarting all servers\.")),
+    # Workshop items being fetched or checked: "Workshop 2984061723: acquiring from Steam" / "ready (…)" /
+    # "installed" / an Error line, and a mod map the server can't use.
+    ("server.workshop", re.compile(CLOCK + r"(?:Error: )?Workshop (?P<item>\d+): (?P<text>.+?)\.?$")),
+    ("server.map_skipped", re.compile(CLOCK + r"Skipped map package (?P<path>.+?): (?P<reason>.+?)\.?$")),
 ]
 
 CRASH_KINDS = [

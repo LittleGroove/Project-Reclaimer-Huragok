@@ -1,0 +1,12 @@
+# A starter package: 8v8 on the big maps.
+name = "Big Team Battle"
+description = "Team Slayer, CTF and King of the Hill on the big maps, 16 players"
+version = 1
+needs_maps = ["Valhalla", "Sandtrap", "Standoff", "Avalanche", "Rat's Nest", "Last Resort", "High Ground"]
+
+[server]
+playlist = "playlists/big-team-battle.playlist.json"
+max_players = 16
+
+[workshop]
+items = []

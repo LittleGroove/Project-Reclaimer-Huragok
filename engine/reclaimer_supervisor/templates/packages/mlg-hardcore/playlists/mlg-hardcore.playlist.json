@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "name": "MLG Hardcore",
+  "vote_seconds": 20,
+  "games": [
+    {
+      "map": "MLG Guardian 8",
+      "game": "HARDCORE TS",
+      "name": "Hardcore Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "MLG Pit 8",
+      "game": "HARDCORE TS",
+      "name": "Hardcore Team Slayer",
+      "weight": 2
+    },
+    {
+      "map": "MLG Construct 8",
+      "game": "HARDCORE TS",
+      "name": "Hardcore Team Slayer"
+    },
+    {
+      "map": "MLG Narrows 8",
+      "game": "HARDCORE TS",
+      "name": "Hardcore Team Slayer"
+    },
+    {
+      "map": "MLG Heretic 8",
+      "game": "HARDCORE TS",
+      "name": "Hardcore Team Slayer"
+    },
+    {
+      "map": "MLG Guardian 8",
+      "game": "HARDCORE BALL",
+      "name": "Hardcore Oddball"
+    },
+    {
+      "map": "MLG Heretic 8",
+      "game": "HARDCORE BALL",
+      "name": "Hardcore Oddball"
+    },
+    {
+      "map": "MLG Amplified 8",
+      "game": "HARDCORE KING",
+      "name": "Hardcore King"
+    },
+    {
+      "map": "MLG Construct 8",
+      "game": "HARDCORE KING",
+      "name": "Hardcore King"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# A starter package: Infection all night.
+name = "Infection"
+description = "Infection, Alpha Zombies and Flood Infection on the maps made for it, 16 players"
+version = 1
+needs_maps = ["Last Resort", "Sandtrap", "Ghost Town", "Isolation", "Foundry", "Cold Storage", "Rat's Nest"]
+
+[server]
+playlist = "playlists/infection.playlist.json"
+max_players = 16
+
+[workshop]
+items = []

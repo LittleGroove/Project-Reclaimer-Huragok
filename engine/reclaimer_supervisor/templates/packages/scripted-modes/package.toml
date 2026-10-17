@@ -1,0 +1,13 @@
+# A starter package: the scripted modes the server writes into content/Game Modes/Project Reclaimer
+# on its first check or start (Gun Game, Growth, One in the Chamber, Zone Control, UNSC vs Covenant).
+name = "Scripted Modes"
+description = "Gun Game, One in the Chamber, Growth, Zone Control and UNSC vs Covenant, 16 players"
+version = 1
+needs_maps = ["The Pit", "Guardian", "Construct", "Narrows", "Citadel", "Rat's Nest", "Valhalla", "Sandtrap", "Last Resort"]
+
+[server]
+playlist = "playlists/scripted-modes.playlist.json"
+max_players = 16
+
+[workshop]
+items = []

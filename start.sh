@@ -1,11 +1,18 @@
 #!/bin/sh
 # Reclaimer Supervisor: the one way to start your servers from now on.
-# Run ./start.sh (or sh start.sh), or have a systemd unit run it at boot.
+# Run ./start.sh: the window opens and starts every server in SERVERS/.
+# Closing the window leaves the servers running; opening it again picks them up.
 # The same script runs the supervisor's other commands:
-#   ./start.sh check          check the settings, servers and commands
-#   ./start.sh stop           stop the supervisor and the servers it runs
-#   ./start.sh update         look for a new version, and install it if you say yes
-#   ./start.sh rcon players   run one console command on the server
+#   ./start.sh status                 what each server is doing
+#   ./start.sh stop [server] [--now]  stop servers (none named: all, then the supervisor)
+#   ./start.sh close                  close the supervisor; the servers keep running
+#   ./start.sh restart <server>       restart a server, warning its players first
+#   ./start.sh say all "text"         a chat line on every server
+#   ./start.sh rcon players           one console command
+#   ./start.sh watch <server>         follow a server's console output
+#   ./start.sh check                  check the settings, servers and commands
+#   ./start.sh update                 look for a new version, and install it if you say yes
+#   ./start.sh start --no-menu        run with no dashboard (for a systemd unit at boot)
 # The first start sets up Python packages in engine/.venv (needs Python 3.11+).
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

@@ -1,11 +1,18 @@
 @echo off
 rem Reclaimer Supervisor: the one way to start your servers from now on.
-rem Double-click it, or have a Task Scheduler task run it at startup.
+rem Double-click it: the window opens and starts every server in SERVERS\.
+rem Closing the window leaves the servers running; opening it again picks them up.
 rem The same script runs the supervisor's other commands:
-rem   start.cmd check          check the settings, servers and commands
-rem   start.cmd stop           stop the supervisor and the servers it runs
-rem   start.cmd update         look for a new version, and install it if you say yes
-rem   start.cmd rcon players   run one console command on the server
+rem   start.cmd status                 what each server is doing
+rem   start.cmd stop [server] [--now]  stop servers (none named: all, then the supervisor)
+rem   start.cmd close                  close the supervisor; the servers keep running
+rem   start.cmd restart <server>       restart a server, warning its players first
+rem   start.cmd say all "text"         a chat line on every server
+rem   start.cmd rcon players           one console command
+rem   start.cmd watch <server>         follow a server's console output
+rem   start.cmd check                  check the settings, servers and commands
+rem   start.cmd update                 look for a new version, and install it if you say yes
+rem   start.cmd start --no-menu        run with no dashboard (for a scheduled task at boot)
 rem The first start sets up Python packages in engine\.venv (needs Python 3.11+).
 setlocal
 cd /d "%~dp0"

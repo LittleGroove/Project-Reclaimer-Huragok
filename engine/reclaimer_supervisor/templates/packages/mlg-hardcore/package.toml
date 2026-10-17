@@ -1,0 +1,12 @@
+# A starter package: Halo 3's own MLG map variants and Hardcore game variants (from game/halo3).
+name = "MLG Hardcore"
+description = "Hardcore Team Slayer, Oddball and King on the MLG map variants, 8 players"
+version = 1
+needs_maps = ["Guardian", "The Pit", "Construct", "Narrows", "Heretic", "Foundry"]
+
+[server]
+playlist = "playlists/mlg-hardcore.playlist.json"
+max_players = 8
+
+[workshop]
+items = []
