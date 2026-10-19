@@ -90,6 +90,25 @@ def test_nothing_past_this_machine_nor_a_real_servers_port_is_reached(run) -> No
         NETWORK.refused.clear()  # refused on purpose: this test mustn't fail for them
 
 
+def test_socketpairs_own_connection_is_let_through() -> None:
+    """socket.socketpair joins its two sockets over loopback on whatever port is free, the real servers' range
+    included (it's in Windows' dynamic ports, and every asyncio loop on Windows makes a pair): that isn't a
+    connection to a server. The same port from anything else is still refused."""
+    namespace: dict[str, object] = {"__name__": "socket", "NETWORK": NETWORK}
+    exec(compile("def _fallback_socketpair():\n    NETWORK.audit('socket.connect', (None, ('127.0.0.1', 49178)))\n",
+                 "socket", "exec"), namespace)
+    try:
+        namespace["_fallback_socketpair"]()  # type: ignore[operator]
+        assert NETWORK.refused == []
+        with pytest.raises(ConnectionRefusedError, match="network guard"):
+            NETWORK.audit("socket.connect", (None, ("127.0.0.1", 49178)))
+        a, b = socket.socketpair()  # the real thing, on whatever port
+        a.close()
+        b.close()
+    finally:
+        NETWORK.refused.clear()
+
+
 def test_this_pcs_own_steamcmd_mcc_and_ports_are_left_alone(tmp_path: Path) -> None:
     from huragok import contentimport, newserver, steamsetup
 

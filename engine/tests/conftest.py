@@ -192,6 +192,20 @@ def _local(host: object) -> bool:
     return address.is_loopback or address.is_unspecified
 
 
+def _in_socketpair() -> bool:
+    """A connect made by socket.socketpair itself. On Windows it joins its two sockets through a listener of its own
+    on a free loopback port (every asyncio loop makes one), and that port can be one of the real servers' range,
+    which sits in Windows' dynamic ports: the guard refused it and failed whatever test made the loop (CI, 0.4.x)."""
+    frame = sys._getframe(2)
+    for _ in range(6):
+        if frame is None:
+            return False
+        if frame.f_code.co_name in ("_fallback_socketpair", "socketpair") and frame.f_globals.get("__name__") == "socket":
+            return True
+        frame = frame.f_back
+    return False
+
+
 class NetworkGuard:
     """Refuses a connection or a name lookup that would leave this machine, and a connection to a real server's
     port; each refusal is remembered so the test fails even when the code under test took it in its stride."""
@@ -213,8 +227,8 @@ class NetworkGuard:
     def audit(self, event: str, args: tuple[Any, ...]) -> None:
         if not event.startswith("socket."):
             return
-        if event == "socket.connect":  # connect and connect_ex: blocking code, and asyncio's loop on Linux
-            self.check_connect(args[1])
+        if event == "socket.connect" and not _in_socketpair():  # connect and connect_ex: blocking code, and
+            self.check_connect(args[1])                          # asyncio's loop on Linux
         elif event == "socket.getaddrinfo" and not _local(args[0]):  # every name looked up: urllib, asyncio
             raise socket.gaierror(socket.EAI_NONAME, self._refuse(f"looking up {args[0]}"))
 
