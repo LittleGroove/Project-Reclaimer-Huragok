@@ -14,14 +14,15 @@ from conftest import free_port
 from test_menu import FakeTerminal
 from test_setup import SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root
 
-from reclaimer_supervisor import cli, steamsetup
-from reclaimer_supervisor.catalogue import install_layouts, installed_mods, load_catalogue, parse_listing, parse_picks
-from reclaimer_supervisor.config import load
-from reclaimer_supervisor.contentimport import content_root_of
-from reclaimer_supervisor.menu import Menu
-from reclaimer_supervisor.playlists import PlaylistError, load_playlist, new_playlist, resolve
-from reclaimer_supervisor.tomledit import read_toml, set_table_key
-from reclaimer_supervisor.tui import RecentLog
+from huragok import cli, steamsetup
+from huragok.catalogue import install_layouts, installed_mods, load_catalogue, parse_listing, parse_picks
+from huragok.config import load
+from huragok.contentimport import _fixed_drives as this_pcs_drives  # the real one: conftest stands in for it
+from huragok.contentimport import content_root_of
+from huragok.menu import Menu
+from huragok.playlists import PlaylistError, load_playlist, new_playlist, resolve
+from huragok.tomledit import read_toml, set_table_key
+from huragok.tui import RecentLog
 
 REAL_LISTING = '''Maps: map = "…" (and base_map), or a playlist game's "map"
   "Assembly"      or "descent"
@@ -100,7 +101,7 @@ def test_mods_and_their_layouts(tmp_path: Path) -> None:
 
 def test_building_and_editing_playlists(tmp_path: Path) -> None:
     folder = tmp_path / "Slayer"
-    make_server_folder(folder, "Slayer", 49190)
+    make_server_folder(folder, "Slayer", free_port())
     playlist = new_playlist(folder, "Friday Night!", vote_seconds=30)
     assert playlist.path == folder / "playlists" / "friday-night.playlist.json"
     assert playlist.add("Guardian", "team_slayer") and not playlist.add("Guardian", "team_slayer")
@@ -198,6 +199,7 @@ def test_steamcmd_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys:
     settings_path = setup_root(tmp_path)
     settings = load(settings_path)
     status = steamsetup.status(settings)
+    assert status.executable is None and status.accounts == [] and "isn't installed" in status.summary()
     program = fake_steamcmd(tmp_path / "reclaimer" / "steamcmd", ["lilgremlin", "other"])
     monkeypatch.setattr(steamsetup, "run", lambda exe, words, timeout=600.0: type("R", (), {
         "returncode": 0, "stdout": "Loading Steam API...OK\nWaiting for user info...OK\n"})())
@@ -257,7 +259,7 @@ Error: 2 of 5 games cannot be played; `dedicated content` lists the names this s
 
 
 def test_the_builder_names_games_the_server_cant_play_and_drops_them(tmp_path: Path, run) -> None:
-    from reclaimer_supervisor.playlists import problems_from_show
+    from huragok.playlists import problems_from_show
 
     problems = problems_from_show(REAL_SHOW)
     assert set(problems) == {2, 3} and problems[2].startswith("This game was made on the mod map")
@@ -288,3 +290,290 @@ def test_the_builder_names_games_the_server_cant_play_and_drops_them(tmp_path: P
     saved = load_playlist(folder / "playlists" / "mixed-bag.playlist.json")
     assert [g["map"] for g in saved.games] == ["Guardian", "The Pit", "Valhalla"]
     assert read_toml(folder / "dedicated.toml")["server"][0]["playlist"] == "playlists/mixed-bag.playlist.json"
+
+
+# The window's screens, fixed after the 2026-10-18 audit -----------------------------------------------------
+
+def screen(settings_path: Path, keys: list[str], terminal: FakeTerminal | None = None) -> tuple[Menu, FakeTerminal]:
+    terminal = terminal or FakeTerminal()
+    return Menu(SetupController(settings_path), terminal, StrictKeyboard(keys), RecentLog()), terminal  # type: ignore[arg-type]
+
+
+def on_the_loop() -> bool:
+    import threading
+
+    return threading.current_thread() is threading.main_thread()  # asyncio.run's loop runs on the main thread
+
+
+def test_the_playlist_a_server_plays_is_checked_before_it_is_replaced(tmp_path: Path, run) -> None:
+    from test_setup import fake_tool as tool
+
+    settings_path = setup_root(tmp_path)
+    server = load(settings_path).servers[0]
+    assert server.plays == "playlist slayer"
+    path = server.folder / "playlists" / "slayer.playlist.json"
+    before = path.read_text(encoding="utf-8")
+    playlist = load_playlist(path)
+    playlist.add("Nowhere Land", "Slayer")  # a map the (fake) server doesn't have
+    menu, terminal = screen(settings_path, ["L"])  # no "Keep it as it is" for the playlist it plays
+    assert run(menu._save_playlist(tool(), server, playlist)) is False
+    printed = "".join(terminal.output)
+    assert "can't play 1 of its games" in printed and "Keep it as it is" not in printed
+    assert "Not saved: Alpha Server plays this playlist, and keeps the one it has" in printed
+    assert path.read_text(encoding="utf-8") == before  # the live file never held the refused draft
+    assert not list(path.parent.glob(".*huragok-draft*"))
+    menu, terminal = screen(settings_path, ["D", "N"])  # drop the game it can't play: checked again, then saved
+    assert run(menu._save_playlist(tool(), server, playlist)) is True
+    assert "Nowhere Land" not in path.read_text(encoding="utf-8") and "Saved playlists/slayer.playlist.json" in \
+        "".join(terminal.output)
+
+
+def test_n_asks_again_for_a_port_or_a_player_count_out_of_range(tmp_path: Path, run, monkeypatch) -> None:
+    from conftest import free_port
+
+    from huragok import menu_setup
+
+    settings_path = setup_root(tmp_path)
+    probed: list[bool] = []
+
+    def next_free_port(settings: Any) -> int:
+        probed.append(on_the_loop())
+        return free_port()
+
+    monkeypatch.setattr(menu_setup, "next_free_port", next_free_port)
+    keys = ["ENTER", *"Zed", "ENTER",  # no package, the name
+            *"70000", "ENTER", *"80", "ENTER", *str(free_port()), "ENTER",  # asked again until it's a port
+            "N", "ENTER",  # not hidden, no join password
+            *"0", "ENTER", *"500", "ENTER", "ESC"]  # players: asked again; Esc leaves
+    menu, terminal = screen(settings_path, keys)
+    run(menu.screen_new())
+    printed = "".join(terminal.output)
+    assert "'70000' isn't a port from 1024 to 65535" in printed and "'80' isn't a port from 1024 to 65535" in printed
+    assert "'0' isn't a player count from 1 to 127" in printed and "'500' isn't a player count" in printed
+    assert "That didn't work" not in printed and not (settings_path.parent / "SERVERS" / "Zed").exists()
+    assert probed == [False]  # the port probe ran in a thread, not on the loop
+
+
+def test_leaving_the_steam_sign_in_writes_nothing(tmp_path: Path, run, monkeypatch) -> None:
+    settings_path = setup_root(tmp_path)
+    fake_steamcmd(settings_path.parent / "steamcmd", ["lilgremlin"])
+    monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (False, ""))
+    monkeypatch.setattr(steamsetup, "login_window", lambda executable, username: "a sign-in window opened")
+    menu, terminal = screen(settings_path, ["ENTER", "ESC", "x"])  # the account offered; Esc at "Press Enter once…"
+    run(menu.screen_steam())
+    printed = "".join(terminal.output)
+    assert "Left as it was: nothing was written" in printed and "Written:" not in printed
+    server = load(settings_path).servers[0]
+    assert "username" not in read_toml(server.config_path).get("workshop", {})
+    assert not load(settings_path).setup.steam_username
+
+
+def test_a_quoted_path_is_the_path(tmp_path: Path, run, monkeypatch) -> None:
+    from huragok import contentimport
+
+    settings_path = setup_root(tmp_path)
+    # I -> "somewhere else": the folder as Explorer's "Copy as path" gives it, quotes and all.
+    folder = tmp_path / "Program Files" / "SteamCMD"
+    program = fake_steamcmd(folder, ["lilgremlin"])
+    real_find = steamsetup.find_steamcmd
+    monkeypatch.setattr(steamsetup, "find_steamcmd", lambda home, hint="": real_find(home, hint) if hint else (None, ""))
+    monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (True, ""))
+    on_path: list[bool] = []  # PowerShell, which waits on every open window: never on the loop
+    monkeypatch.setattr(steamsetup, "add_to_path", lambda folder: on_path.append(on_the_loop()) or "on your PATH")
+    menu, terminal = screen(settings_path, ["3", *f'"{folder}"', "ENTER", "ENTER", "Y", "x"])
+    run(menu.screen_steam())
+    assert "Written: [workshop]" in "".join(terminal.output) and on_path == [False]
+    assert load(settings_path).setup.steamcmd == str(program)
+    # G -> Import variants, from a quoted folder; looking for MCC and reading the folder happen off the loop.
+    source = tmp_path / "My Variants"
+    source.mkdir()
+    (source / "mlg_guardian.mvar").write_bytes(b"mvar")
+    threads: list[bool] = []
+    real_importable = contentimport.importable
+    monkeypatch.setattr(contentimport, "find_mcc", lambda hint=None: threads.append(on_the_loop()))  # None: not found
+    monkeypatch.setattr(contentimport, "importable",
+                        lambda path, words=None: threads.append(on_the_loop()) or real_importable(path, words))
+    settings = load(settings_path)
+    menu, terminal = screen(settings_path, [*f"'{source}'", "ENTER", "ENTER", "Y"])
+    run(menu._import_content(settings, settings.servers[0]))
+    assert "Copied 1" in "".join(terminal.output)
+    assert list(content_root_of(settings.servers[0].folder).rglob("mlg_guardian.mvar"))
+    assert threads == [False, False]
+
+
+def test_a_custom_game_a_server_plays_is_not_deleted(tmp_path: Path, run) -> None:
+    from huragok import gameoptions as go
+    from huragok.livesettings import write_plays
+
+    settings_path = setup_root(tmp_path)
+    server = load(settings_path).servers[0]
+    path = go.new_preset("Snipers", "Slayer").save(go.preset_path(server.content_dir, "Snipers"))
+    write_plays(server.config_path, server.name, {"variant": os.path.relpath(path, server.folder).replace("\\", "/")})
+    number = str([p.path for p in go.list_presets(server.content_dir)].index(path) + 1)
+    settings = load(settings_path)
+    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "ESC"])
+    run(menu._custom_games(settings, None, settings.servers[0]))
+    assert path.is_file() and "Not deleted: Alpha Server plays Game Modes/snipers.json" in "".join(terminal.output)
+    write_plays(server.config_path, server.name, {"playlist": "playlists/slayer.playlist.json"})
+    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "Y", "ESC"])
+    run(menu._custom_games(load(settings_path), None, load(settings_path).servers[0]))
+    assert not path.exists() and "Deleted Game Modes/snipers.json" in "".join(terminal.output)
+
+
+def test_the_workshop_screen_reads_only_the_end_of_the_console_log(tmp_path: Path, run, monkeypatch) -> None:
+    from huragok.catalogue import Catalogue
+    from huragok.menu_setup import CONSOLE_TAIL, SetupScreens, tail_lines
+    from huragok.steamsetup import SteamStatus
+
+    settings_path = setup_root(tmp_path)
+    settings = load(settings_path)
+    server = settings.servers[0]
+    log = settings.logs / f"console-{server.slug}.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    filler = "17:11:29 [Alpha Server] Bravo said something in the chat, status ok\n" * (3 * CONSOLE_TAIL // 60)
+    log.write_text("17:00:00 Workshop 111: an old verdict, long gone\n" + filler
+                   + "17:12:00 Workshop 2984061723: ready\n", encoding="utf-8")
+    lines = tail_lines(log)
+    assert lines[-1].endswith("Workshop 2984061723: ready") and sum(len(line) + 1 for line in lines) <= CONSOLE_TAIL
+    assert not lines[0].startswith("Bravo") and lines[0].startswith("17:11:29")  # the cut first line is dropped
+    threads: list[bool] = []
+
+    def verdicts(self: Any, server: Any, settings: Any) -> list[str]:
+        threads.append(on_the_loop())
+        return SetupScreens._workshop_verdicts(self, server, settings)
+
+    monkeypatch.setattr(Menu, "_workshop_verdicts", verdicts)
+    monkeypatch.setattr(steamsetup, "status", lambda settings: SteamStatus(None, "", "", [], 0, 1))
+    menu, terminal = screen(settings_path, ["ESC"])
+    run(menu._workshop(settings, fake_tool(), server, Catalogue()))
+    printed = "".join(terminal.output)
+    assert "2984061723: ready" in printed and "111" not in printed and threads == [False]
+
+
+def test_odst_progress_from_the_worker_thread_is_printed_on_the_loop(tmp_path: Path, run, monkeypatch) -> None:
+    from huragok import menu_setup
+
+    class Watched(FakeTerminal):
+        threads: list[bool] = []
+
+        def print_parts(self, *args: Any, **options: Any) -> None:
+            self.threads.append(on_the_loop())
+            super().print_parts(*args, **options)
+
+    def add_odst_files(tool: Any, game: Path, mcc: str, stage: Path, say: Any) -> tuple[int, int]:
+        say("copying Halo 3: ODST's files (about 3.5 GB)")  # from the worker thread, as the real one does
+        return 3, 0
+
+    monkeypatch.setattr(menu_setup, "has_odst_files", lambda game: False)
+    monkeypatch.setattr(menu_setup, "odst_mcc", lambda hint: tmp_path / "MCC")
+    monkeypatch.setattr(menu_setup, "add_odst_files", add_odst_files)
+    settings_path = setup_root(tmp_path)
+    terminal = Watched()
+    menu, _ = screen(settings_path, ["Y"], terminal)
+    assert run(menu._offer_odst_files(load(settings_path), tmp_path / "game")) is True
+    printed = "".join(terminal.output)
+    assert "copying Halo 3: ODST's files" in printed and "keys pressed meanwhile are ignored" in printed
+    assert terminal.threads and all(terminal.threads)  # every line printed on the loop, none from the thread
+    assert menu.keyboard.drained == 1  # keys pressed during the copy were dropped
+
+
+# A server's own content is hard links: writing into it never changes the shared copy ----------------
+
+def test_writing_into_an_own_content_folder_leaves_the_shared_file(tmp_path: Path) -> None:
+    from huragok.contentimport import Importable, copy_replacing, import_content
+    from huragok.serverops import own_content
+
+    settings_path = setup_root(tmp_path)
+    root = settings_path.parent
+    shared = root / "content"
+    (shared / "Maps").mkdir(parents=True)
+    (shared / "Maps" / "From MCC").mkdir()
+    (shared / "Maps" / "From MCC" / "pit.mvar").write_bytes(b"SHARED")
+    (shared / "Maps" / "arena.json").write_bytes(b"SHARED")
+    config = root / "SERVERS" / "Alpha Server" / "dedicated.toml"
+    from huragok.tomledit import set_top_key
+
+    set_top_key(config, "content", "../../content")
+    server = load(settings_path).servers[0]
+    own = own_content(load(settings_path), server, lambda _: None)
+    new = tmp_path / "pit.mvar"
+    new.write_bytes(b"NEW FROM MCC")
+    copied, _ = import_content([Importable(new, "Maps")], own, overwrite=True)
+    assert copied[0].read_bytes() == b"NEW FROM MCC"
+    assert (shared / "Maps" / "From MCC" / "pit.mvar").read_bytes() == b"SHARED"
+    copy_replacing(new, own / "Maps" / "arena.json")
+    assert (shared / "Maps" / "arena.json").read_bytes() == b"SHARED"
+    assert not list((own / "Maps").glob(".*huragok-new"))
+
+
+def test_a_broken_mod_info_never_hides_the_other_mods(tmp_path: Path) -> None:
+    content = tmp_path / "content"
+    fake_mod(content / "Mods" / "Good", "Good Mod")
+    for name, info in (("StringTitle", {"Title": "Plain Title", "ModIdentifier": {"HostedModIds": {
+            "SteamWorkshopId": "3014096841"}}}),
+                       ("NotADict", ["a", "list"]), ("BadId", {"Title": {"Neutral": "Bad Id"},
+                                                            "ModIdentifier": {"HostedModIds": {"SteamWorkshopId": "x"}},
+                                                            "GameModContents": {"MultiplayerMaps": "not a list"}})):
+        (content / "Mods" / name).mkdir(parents=True)
+        (content / "Mods" / name / "ModInfo.json").write_text(json.dumps(info), encoding="utf-8")
+    mods = {m.folder.name: m for m in installed_mods(content)}
+    assert sorted(mods) == ["BadId", "Good", "StringTitle"]  # the list one isn't a ModInfo: skipped
+    assert mods["StringTitle"].title == "Plain Title" and mods["StringTitle"].workshop_id == 3014096841
+    assert mods["BadId"].workshop_id is None and mods["BadId"].maps == []
+
+
+def test_layouts_of_a_mod_with_an_odd_title_stay_in_maps(tmp_path: Path) -> None:
+    content = tmp_path / "content"
+    for title in ("..", "CON", "a/../../b", "  .  "):
+        folder = fake_mod(content / "Mods" / f"m{len(title)}{title.count('.')}", title, layouts=1)
+        (folder / "Project Reclaimer Layouts" / "0.json").write_text(json.dumps({"name": ".."}), encoding="utf-8")
+    for mod in installed_mods(content):
+        for path in install_layouts(mod, content, overwrite=True):
+            assert path.resolve().parent.parent == (content / "Maps").resolve(), path
+            assert path.parent.name not in ("", ".", "..", "CON") and path.name not in ("..json", ".json")
+
+
+def test_mcc_is_looked_for_where_steam_says_first_and_never_on_drives_that_can_stall(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from huragok import contentimport
+
+    library = tmp_path / "Games" / "SteamLibrary"
+    mcc = library / "steamapps" / "common" / contentimport.MCC_FOLDER
+    (mcc / "halo3").mkdir(parents=True)
+    steam = tmp_path / "Steam"
+    (steam / "steamapps").mkdir(parents=True)
+    escaped = str(library).replace("\\", "\\\\")
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(
+        f'"libraryfolders"\n{{\n\t"0"\n\t{{\n\t\t"path"\t\t"{escaped}"\n\t}}\n}}\n', encoding="utf-8")
+    monkeypatch.setattr(contentimport, "_steam_roots", lambda: [steam])
+    probed: list[str] = []
+    monkeypatch.setattr(contentimport, "_fixed_drives", lambda: probed.append("drives") or [])
+    assert contentimport.find_mcc() == mcc and probed == []  # found before any drive was walked
+    assert contentimport.find_mcc(f'"{mcc}"') == mcc  # Explorer's "Copy as path" keeps its quotes
+    assert contentimport.clean_path("  '\"C:\\x y\"'  ") == "C:\\x y"
+    if os.name == "nt":  # Windows names its local disks without any of them being touched
+        drives = this_pcs_drives()
+        assert drives and all(len(d) == 3 and d.endswith(":\\") for d in drives)
+
+
+def test_the_steam_sign_in_takes_only_a_steam_account_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    executable = tmp_path / "steam cmd's" / steamsetup.executable_name()
+    executable.parent.mkdir()
+    executable.write_bytes(b"")
+    opened: list[Any] = []
+    monkeypatch.setattr(steamsetup.subprocess, "Popen", lambda *a, **k: opened.append((a, k)))
+    for bad in ("bob & calc", 'bob"', "bob|x", "x", "a;b", "bob's"):
+        assert "isn't a Steam account name" in steamsetup.login_window(executable, bad)
+        assert steamsetup.signed_in(executable, bad)[0] is False
+    assert opened == []
+    assert steamsetup.check_username("Lil_Gremlin42") is None
+    found, _ = steamsetup.find_steamcmd(tmp_path, f'"{executable}"')  # a pasted, quoted path
+    assert found == executable
+    if os.name != "nt":
+        monkeypatch.setattr(steamsetup.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "xterm" else None)
+        monkeypatch.setenv("DISPLAY", ":0")
+        steamsetup.login_window(executable, "bob")
+        import shlex
+
+        script = opened[-1][0][0][-1]
+        assert shlex.split(script)[:2] == ["sh", "-c"] and str(executable) in shlex.split(script)[2]

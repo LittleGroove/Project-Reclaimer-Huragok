@@ -8,16 +8,27 @@
 - exits with code 2 straight away if the server folder holds a file called fake_crash_on_start,
   and with code 3 as soon as a file called fake_crash appears while it runs.
 
-The setup commands, with output shaped like the real program's (v0.9.18):
+The setup commands, with output shaped like the real program's (v0.9.18; ODST's parts v0.9.20):
 - `dedicated init DIR [--from [MCC]] [--maps a,b]`: the folder, its dedicated.toml (the same keys and
   two example [[server]] blocks), playlists/slayer.playlist.json, bans.json, content/, game/
-  (with --from: halo3.dll, shared.map and the 27 maps as empty files; MCC must be a folder when given);
+  (with --from: halo3.dll, shared.map and the 27 maps as empty files; MCC must be a folder when given;
+  `--maps odst` copies Guardian and Halo 3: ODST's halo3odst/ instead, which MCC must have);
 - `dedicated check`: game files, content, bans, each server's playlist (3+ games, every map and game
   known), unique names and ports; writes the scripted modes into content/Game Modes/Project Reclaimer
   on the first check, like the real one; "Everything is ready." or "Error: …" with exit code 2;
 - `dedicated content [words]`, `dedicated playlist [list | show FILE | new NAME --maps --games
   [--vote-seconds N] [--replace]]`, `dedicated mods` (installs [workshop] items as fake folders),
   `dedicated reload`, `dedicated status`.
+
+Workshop items behave as the real program's do (tested 2026-10-18): an installed item (one with a
+reclaimer-workshop-version.json receipt) is kept as it is ("installed"), even when Steam has a newer
+version; a missing one is fetched at Steam's newest version, which the server folder's
+fake-steam.json gives ({"<item>": <updated, Unix seconds>}; 1791857542 otherwise). A file called
+fake_steam_down in the server folder makes every fetch fail the way an expired SteamCMD sign-in does.
+
+A fake never outlives the test session that started it: `run` and `slow` end by themselves (as after
+Ctrl+Break) once the process HURAGOK_TEST_PARENT names is gone (conftest sets it), so a test that failed
+half-way can't leave one running, holding its port.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -141,6 +153,26 @@ def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+_parent: list[Any] = []  # [psutil.Process or None], looked up once
+
+
+def parent_gone() -> bool:
+    """The test session that started this fake (HURAGOK_TEST_PARENT) has ended: no such process any more, or
+    its number now belongs to another one. Without the variable (run by hand), never."""
+    if not _parent:
+        text = os.environ.get("HURAGOK_TEST_PARENT", "")
+        try:
+            import psutil
+
+            _parent.append(psutil.Process(int(text)) if text.isdigit() else None)
+        except ImportError:
+            _parent.append(None)
+        except Exception:  # noqa: BLE001 - psutil.NoSuchProcess: gone before this fake even looked
+            return True
+    parent = _parent[0]
+    return parent is not None and not parent.is_running()  # is_running also compares its start time
+
+
 def option(words: list[str], name: str, default: str | None = None) -> str | None:
     if name in words:
         at = words.index(name)
@@ -164,6 +196,9 @@ class Folder:
 
     def has_game(self) -> bool:
         return (self.game / "halo3" / "halo3.dll").is_file() and (self.game / "halo3" / "maps" / "shared.map").is_file()
+
+    def has_odst(self) -> bool:
+        return (self.game / "halo3odst" / "halo3odst.dll").is_file()
 
     def installed_maps(self) -> list[tuple[str, str]]:
         return [(t, s) for t, s in MAPS if (self.game / "halo3" / "maps" / f"{s}.map").is_file()]
@@ -278,6 +313,13 @@ class Folder:
         return problems
 
 
+ODST_MISSIONS = [(4100, "Prepare to Drop", 0), (5000, "Mombasa Streets", 6), (6100, "Tayari Plaza", 3),
+                 (4200, "Epilogue", 0)]
+ODST_MAPS = [(6100, 4, "Crater"), (5000, 7, "Crater (Night)"), (6110, 4, "Lost Platoon")]
+ODST_TYPES = [("odst_ff_classic", "Ff Classic"), ("odst_ff_floodfight", "Floodfight"),
+              ("odst_ff_standard_1set", "Firefight"), ("odst_ff_floodfight_1set", "Floodfight")]
+
+
 def cmd_init(words: list[str]) -> int:
     mcc = option(words, "--from", None)
     maps = option(words, "--maps", None)
@@ -300,6 +342,20 @@ def cmd_init(words: list[str]) -> int:
             print(f"Created {target}/{name}")
     if mcc is not None:
         wanted = {m.strip().lower() for m in maps.split(",")} if maps else None
+        if wanted and "odst" in wanted:
+            if mcc and not (Path(mcc) / "halo3odst").is_dir():
+                print(f"Error: Halo 3: ODST is not installed in {mcc}")
+                return 2
+            wanted = (wanted - {"odst"}) | {"guardian"}
+            odst = target / "game" / "halo3odst"
+            (odst / "maps").mkdir(parents=True, exist_ok=True)
+            (odst / "game_variants").mkdir(exist_ok=True)
+            (odst / "halo3odst.dll").write_bytes(b"odst dll")
+            for stem in ("shared", "campaign", "c100", "h100", "sc100", "l300"):
+                (odst / "maps" / f"{stem}.map").write_bytes(b"map")
+            for variant in ODST_TYPES:
+                (odst / "game_variants" / f"{variant[0]}.bin").write_bytes(b"variant")
+            print(f"  halo3odst\\halo3odst.dll (11 MB)")
         halo3 = target / "game" / "halo3"
         (halo3 / "maps" / "info").mkdir(parents=True, exist_ok=True)
         (halo3 / "game_variants").mkdir(exist_ok=True)
@@ -359,6 +415,15 @@ def cmd_check(folder: Folder) -> int:
             what = f"playlist {path.name}"
         elif "campaign" in block:
             what = f"campaign {block['campaign'].get('mission', '')}"
+        elif "odst" in block:
+            if not folder.has_odst():
+                problems.append(f"Server '{name}': Halo 3: ODST's files are not in the game folder {folder.game}: "
+                                "copy them from your MCC installation with `dedicated init <server folder> --from "
+                                "\"<MCC folder>\" --maps odst`")
+            players = block.get("max_players", folder.settings.get("defaults", {}).get("max_players", 16))
+            if int(players) > 16:
+                problems.append(f"Server '{name}': Halo 3: ODST supports at most 16 players")
+            what = f"Halo 3: ODST, {block['odst'].get('mission', '')}"
         else:
             what = f"{block.get('game', 'Slayer')} on {block.get('map', 'Guardian')}"
             if "map" in block and not folder.known_map(str(block["map"])):
@@ -373,12 +438,38 @@ def cmd_check(folder: Folder) -> int:
     return 0
 
 
+def print_odst(folder: Folder, keep: Any) -> None:
+    """Halo 3: ODST's sections of `dedicated content` (0.9.19), when its files are in the game folder."""
+    if not folder.has_odst():
+        return
+    print("Halo 3: ODST campaign missions:")
+    for mission, title, high in ODST_MISSIONS:
+        if keep(title, "campaign", "odst"):
+            print(f"  odst = {{ mission = {mission} }}  {title}" + (f" (insertion 0 to {high})" if high else ""))
+    print("Halo 3: ODST Firefight maps:")
+    for mission, insertion, title in ODST_MAPS:
+        if keep(title, "firefight", "odst"):
+            print(f'  odst = {{ mode = "firefight", mission = {mission}, insertion = {insertion} }}  {title}')
+    print("Halo 3: ODST Firefight game types: inside odst = { … }")
+    for variant, title in ODST_TYPES:
+        if keep(variant, title, "firefight", "odst"):
+            print(f'  variant = "{variant}"{" " * max(2, 31 - len(variant))}{title}')
+
+
 def cmd_content(folder: Folder, words: list[str]) -> int:
-    wanted = [w.lower() for w in words]
+    odst_only = bool(words) and words[0].lower() == "odst"
+    wanted = [w.lower() for w in (words[1:] if odst_only else words)]
 
     def keep(*texts: str) -> bool:
         return all(any(w in t.lower() for t in texts) for w in wanted)
 
+    if odst_only:
+        print('Map variants: map = "…"; each plays on its own map')
+        print('Game variants: game = "…"')
+        print_odst(folder, keep)
+        print(f"\nNames ignore case. Put map variants in {folder.content / 'Maps'} and game variants in "
+              f"{folder.content / 'Game Modes'}; Workshop mods appear once installed (dedicated mods).")
+        return 0
     print('Maps: map = "…" (and base_map), or a playlist game\'s "map"')
     for title, stem in folder.installed_maps():
         if keep(title, stem):
@@ -407,6 +498,7 @@ def cmd_content(folder: Folder, words: list[str]) -> int:
         for ref in refs:
             if keep(ref):
                 print(f'  "{ref}"  mod map')
+    print_odst(folder, keep)
     print(f"\nNames ignore case. Put map variants in {folder.content / 'Maps'} and game variants in "
           f"{folder.content / 'Game Modes'}; Workshop mods appear once installed (dedicated mods).")
     return 0
@@ -497,13 +589,38 @@ def cmd_playlist(folder: Folder, words: list[str]) -> int:
     return 2
 
 
+FAKE_STEAM_UPDATED = 1791857542  # 13 Oct 2026
+
+
+def steam_version(folder: Folder, item: int) -> int:
+    try:
+        versions = json.loads((folder.config.parent / "fake-steam.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        versions = {}
+    return int(versions.get(str(item), FAKE_STEAM_UPDATED))
+
+
 def install_items(folder: Folder, items: list[int]) -> list[str]:
+    """Each item's reference; prints what the real program prints. Raises SystemExit(2) when a fetch fails."""
     refs = []
     for item in items:
         target = folder.content / "Mods" / "Workshop" / str(item)
+        if (target / "reclaimer-workshop-version.json").is_file():
+            print(f"Workshop {item}: installed")
+            refs.append(f"workshop:{item}/fake{item}")
+            continue
+        print(f"Workshop {item}: acquiring from Steam")
+        if (folder.config.parent / "fake_steam_down").exists():
+            print(f"Error: Workshop {item}: signing in as host failed: sign in to SteamCMD again")
+            raise SystemExit(2)
+        updated = steam_version(folder, item)
         (target / "maps").mkdir(parents=True, exist_ok=True)
-        (target / "maps" / f"fake{item}.map").write_bytes(b"map")
-        (target / "reclaimer-installed.json").write_text(json.dumps({"item": item}), encoding="utf-8")
+        (target / "maps" / f"fake{item}.map").write_bytes(f"map {updated}".encode())
+        version = {"item": item, "manifest": updated * 7, "updated": updated}
+        (target / "reclaimer-workshop-version.json").write_text(json.dumps(version), encoding="utf-8")
+        (target / "reclaimer-installed.json").write_text(json.dumps({"item": item, "files": [], "version": version}),
+                                                         encoding="utf-8")
+        print(f"Workshop {item}: ready (version of {time.strftime('%d %b %Y', time.gmtime(updated))})")
         refs.append(f"workshop:{item}/fake{item}")
     return refs
 
@@ -514,8 +631,6 @@ def cmd_mods(folder: Folder) -> int:
         print("No mod maps installed. Add Workshop IDs to [workshop] items in dedicated.toml.")
         return 0
     for item, ref in zip(items, install_items(folder, items)):
-        print(f"Workshop {item}: acquiring from Steam")
-        print(f"Workshop {item}: ready (version of 13 Oct 2026)")
         print(f"{ref}  Fake Map {item} · Custom")
     return 0
 
@@ -552,11 +667,49 @@ async def run_server(config: Path) -> int:
             if (folder / "fake_crash").exists():
                 print(f"[{name}] panic", flush=True)
                 os._exit(3)
+            if parent_gone():
+                print(f"[{name}] the test session that started this fake is gone", flush=True)
+                break
             try:
                 await asyncio.wait_for(stopping.wait(), 1.0)
             except TimeoutError:
                 pass
     print("Stopping every server... All servers stopped.", flush=True)
+    return 0
+
+
+MODES = ("CaptureTheFlag", "Slayer", "Forge", "Oddball", "KingOfTheHill", "Vip", "Juggernaut", "Territories",
+         "Assault", "Infection", "EscalationSlayer")
+OPTION_RANGES = {"map.weapons": ("Weapon set", 0, 13), "player.speed": ("Movement speed", 0, 10),
+                 "player.primary_weapon": ("Starting primary weapon", -3, 29), "rounds.minutes":
+                 ("Time limit (minutes; 0 = unlimited)", 0, 60), "mode.flag_type": ("Flag type", 0, 2)}
+
+
+def cmd_mode_check(path: Path) -> int:
+    """`mode-check <file>` as 0.9.18 answers it (tested 2026-10-18): rules required (may be empty), mode an
+    identifier, a script needed for any check, options in range."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}")
+        return 1
+    if "rules" not in data:
+        print("Error: Invalid custom game: missing field `rules`")
+        return 1
+    if data.get("mode") not in MODES:
+        print(f"Error: Invalid custom game: unknown variant `{data.get('mode')}`, expected one of "
+              + ", ".join(f"`{m}`" for m in MODES))
+        return 1
+    if not data.get("script"):
+        print("Error: Preset has no custom game script")
+        return 1
+    for key, value in (data.get("options") or {}).items():
+        if key in OPTION_RANGES:
+            label, low, high = OPTION_RANGES[key]
+            if not isinstance(value, int) or not low <= value <= high:
+                print(f"Error: {label} must be {low}..={high}")
+                return 1
+    print(f"Valid custom mode: {data['script'].get('name', data.get('name'))} (script version 1)")
     return 0
 
 
@@ -567,6 +720,8 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
     words = sys.argv[1:]
+    if words and words[0] == "mode-check":
+        return cmd_mode_check(Path(words[1]))
     if words and words[0] == "dedicated":
         words = words[1:]
     config_name = option(words, "--config", "dedicated.toml") or "dedicated.toml"
@@ -596,6 +751,8 @@ def main() -> int:
         return cmd_mods(folder)
     if sub == "slow":  # for tests: lines over time, until ended
         for number in range(int(rest[0]) if rest else 30):
+            if parent_gone():
+                return 0
             print(f"slow line {number}", flush=True)
             time.sleep(0.5)
         return 0

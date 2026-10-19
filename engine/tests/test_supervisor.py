@@ -3,32 +3,43 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import json
 import os
 import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
 
 from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, staff, wait_for, write_server_folder, write_settings
 from fake_rcon import FakeRcon
 
-from reclaimer_supervisor import mailbox
-from reclaimer_supervisor.config import load
-from reclaimer_supervisor.core import Supervisor
-from reclaimer_supervisor.events import Event
-from reclaimer_supervisor.part import Part, on
-from reclaimer_supervisor.parts import PARTS
+from huragok import mailbox
+from huragok.config import load
+from huragok.core import Supervisor
+from huragok.events import Event
+from huragok.part import Part, on
+from huragok.parts import PARTS
 
 SERVER = "LG Test Server"
 
 
 @asynccontextmanager
-async def running(tmp_path: Path, body: str = "", **folder: Any) -> AsyncIterator[tuple[Supervisor, FakeRcon, list[Event]]]:
+async def running(tmp_path: Path, body: str = "", *, commands: str | None = None,
+                  prepare: Callable[[FakeRcon], None] | None = None,
+                  adjust: Callable[[Any], None] | None = None,
+                  **folder: Any) -> AsyncIterator[tuple[Supervisor, FakeRcon, list[Event]]]:
+    """Huragok on one fake server, with OWNER and MOD listed (or `commands`); `prepare` sets the server up first,
+    `adjust` the settings (to times below what settings.toml allows, so a test runs in seconds)."""
     async with FakeRcon() as fake:
+        if prepare:
+            prepare(fake)
         write_server_folder(tmp_path / "server", fake.port, **folder)
-        settings = load(write_settings(tmp_path, tmp_path / "server", body, commands=staff()))
+        settings = load(write_settings(tmp_path, tmp_path / "server", body,
+                                       commands=staff() if commands is None else commands))
+        if adjust:
+            adjust(settings)
         supervisor = Supervisor(settings)
         seen: list[Event] = []
         supervisor.bus.subscribe("*", seen.append)
@@ -139,6 +150,24 @@ def test_a_broken_part_is_switched_off_alone(tmp_path: Path, run, monkeypatch) -
     run(scenario())
 
 
+async def through_rcon(fake: FakeRcon, seen: list[Event]) -> None:
+    """Everything the fake server sent before now has been dealt with: a marker sent after it has come through."""
+    marker = f"marker {len(seen)} {time.monotonic()}"
+    await fake.chat(ALICE, "Alice", marker)
+    await wait_for(lambda: any(e.name == "rcon.chat" and e.get("text") == marker for e in seen))
+
+
+async def handled(runner: Any) -> None:
+    """Everything queued for this part before now has been handled (its queue runs one job at a time, in order)."""
+    done = asyncio.Event()
+
+    async def mark() -> None:
+        done.set()
+
+    runner.submit("marker", mark)
+    await asyncio.wait_for(done.wait(), 5)
+
+
 def _marker_backend(tmp_path: Path) -> str:
     marker = (tmp_path / "restarts.txt").as_posix()
     python = Path(sys.executable).as_posix()
@@ -159,7 +188,7 @@ def test_restart_after_the_game_that_was_played(tmp_path: Path, run) -> None:
             await wait_for(lambda: any("after this game" in s for s in says(fake)))
             # Seen on 0.9.18: `finished` for the next game before it starts. Not the end of ours.
             await fake.event("phase", phase="finished", map="The Pit", mode="Slayer")
-            await asyncio.sleep(0.3)
+            await through_rcon(fake, seen)  # the phase event has been dealt with
             assert not (tmp_path / "restarts.txt").exists() and sup.lifecycle.planned
             await fake.event("phase", phase="finished", map="Valhalla", mode="Slayer")
             await wait_for(lambda: any("restarting in 1 second" in s for s in says(fake)))
@@ -180,13 +209,13 @@ def test_watchdog_restarts_after_a_mass_drop(tmp_path: Path, run) -> None:
             watchdog = sup.runners["watchdog"].part
             for _ in range(3):
                 sup.bus.emit("log.falling_behind", SERVER, fps=60, behind=60, window=60, longest_ms=133, players=127)
-            await asyncio.sleep(0.3)
+            await wait_for(lambda: len(watchdog.samples.get(SERVER, ())) == 3)
             await watchdog._update(SERVER)
             assert watchdog.level[SERVER] == "critical"
             sup.bus.emit("log.roster_lost", SERVER, lost=3, of=20, present=17)  # a few players: not a collapse
             # The live server's mid-game drop: most went, three stayed, and they all came back by themselves.
             sup.bus.emit("log.roster_lost", SERVER, lost=70, of=73, present=3)
-            await asyncio.sleep(0.3)
+            await handled(sup.runners["watchdog"])
             assert not any(e.name in ("server.restart_planned", "server.restarting") for e in seen)
             sup.bus.emit("log.roster_lost", SERVER, lost=28, of=28, present=0, details="{}")
             planned = await wait_for(lambda: next((e for e in seen if e.name == "server.restarting"), None))
@@ -196,10 +225,49 @@ def test_watchdog_restarts_after_a_mass_drop(tmp_path: Path, run) -> None:
     run(scenario())
 
 
-def test_keepalive_restarts_a_hung_server(tmp_path: Path, run) -> None:
+def test_watchdog_restarts_a_server_nobody_can_join(tmp_path: Path, run, caplog) -> None:
     async def scenario() -> None:
-        body = _marker_backend(tmp_path) + "[keepalive]\nhang_seconds = 1\ncheck_seconds = 0.2\n"
-        async with running(tmp_path, body, status_age=600) as (sup, fake, seen):
+        async with running(tmp_path, _marker_backend(tmp_path)) as (sup, _, seen):
+            watchdog = sup.runners["watchdog"].part
+            now = time.time()
+            for ago in (400, 300, 200):  # three connected, each over two minutes ago, and nobody joined
+                await watchdog.connected(Event("log.connected", SERVER, {"name": "x"}, now - ago))
+            await watchdog._update(SERVER)
+            restarting = await wait_for(lambda: next((e for e in seen if e.name == "server.restarting"), None))
+            assert restarting["reason"] == "nobody can join"
+            await wait_for(lambda: (tmp_path / "restarts.txt").exists())
+
+    with caplog.at_level(logging.WARNING):
+        run(scenario())
+    # actnow is the Superintendent's emergency, in its own words
+    assert any(r.name == "part.watchdog" and "METROPOLITAN EMERGENCY! Restarting it now: nobody can join" in r.getMessage()
+               for r in caplog.records)
+
+
+def test_watchdog_cases_follow_their_own_settings(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        body = _marker_backend(tmp_path) + '[watchdog]\ndead = "watch"\nmemory = "act"\nmemory_mb = 1000\n'
+        async with running(tmp_path, body) as (sup, _, seen):
+            watchdog = sup.runners["watchdog"].part
+            sup.bus.emit("log.roster_lost", SERVER, lost=28, of=28, present=0)  # dead, but dead is watch
+            await wait_for(lambda: watchdog.level[SERVER] == "critical")
+            await handled(sup.runners["watchdog"])
+            assert not any(e.name in ("server.restart_planned", "server.restarting") for e in seen)
+            watchdog.memory[SERVER] = 4096.0  # as measured; act: after the game, and nobody is playing
+            await watchdog._update(SERVER)
+            planned = await wait_for(lambda: next((e for e in seen if e.name == "server.restart_planned"), None))
+            assert planned["when"] == "after_game" and planned["reason"] == "the server is using too much memory"
+            await wait_for(lambda: (tmp_path / "restarts.txt").exists())
+
+    run(scenario())
+
+
+def test_keepalive_restarts_a_hung_server(tmp_path: Path, run) -> None:
+    def quick(settings: Any) -> None:  # below what settings.toml allows
+        settings.keepalive.hang_seconds, settings.keepalive.check_seconds = 1.0, 0.2
+
+    async def scenario() -> None:
+        async with running(tmp_path, _marker_backend(tmp_path), status_age=600, adjust=quick) as (sup, fake, seen):
             await wait_for(lambda: sup.states[SERVER].last_rcon_ok)  # the first refresh is done
             await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running")
             sup.states[SERVER].last_rcon_ok = time.monotonic() - 60  # RCON quiet too
@@ -340,6 +408,99 @@ def test_a_server_folder_added_while_running_is_picked_up(tmp_path: Path, run) -
                 assert [r["name"] for r in supervisor.fleet.rows()] == [SERVER, "Second"]
             finally:
                 supervisor.stop()
+                await asyncio.wait_for(task, 10)
+
+    run(scenario())
+
+
+def test_a_restart_planned_for_when_its_empty_happens_as_the_last_player_leaves(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        async with running(tmp_path, _marker_backend(tmp_path)) as (sup, fake, seen):
+            await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running")
+            await fake.join(1, "Alice", ALICE)
+            await fake.join(2, "Bravo", BRAVO)
+            await wait_for(lambda: len(sup.states[SERVER].players) == 2)
+            await sup.lifecycle.restart(SERVER, when="when_empty", reason="testing")
+            assert sup.lifecycle.planned
+            await fake.leave(1)
+            await through_rcon(fake, seen)
+            assert sup.lifecycle.planned and not (tmp_path / "restarts.txt").exists()  # Bravo is still on
+            await fake.leave(2)
+            await wait_for(lambda: (tmp_path / "restarts.txt").exists())
+            assert any(e.name == "server.restarting" for e in seen) and not sup.lifecycle.planned
+
+    run(scenario())
+
+
+def test_a_new_version_waits_for_a_restart_in_progress(tmp_path: Path, run, monkeypatch, caplog) -> None:
+    """Huragok restarting on its new version straight away lost what the servers were doing: a countdown players
+    had been warned of, a planned restart, the jobs before one."""
+    from huragok import core
+
+    monkeypatch.setattr(core, "RELAUNCH_POLL", 0.05)
+
+    async def planned(sup: Supervisor, fake: FakeRcon) -> None:
+        await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running")
+        await fake.join(1, "Alice", ALICE)
+        await wait_for(lambda: sup.states[SERVER].players)
+        await sup.lifecycle.restart(SERVER, when="after_game", reason="testing")
+        sup.relaunch_now()
+        await asyncio.sleep(0.2)
+        assert not sup.stopping and not sup.relaunch
+
+    async def scenario() -> None:
+        async with running(tmp_path / "a", _marker_backend(tmp_path)) as (sup, fake, _):
+            await planned(sup, fake)
+            assert sup.lifecycle.cancel(SERVER)  # nothing in progress now
+            await wait_for(lambda: sup.stopping)
+            assert sup.relaunch and sup.stop_servers is False
+        monkeypatch.setattr(core, "RELAUNCH_WAIT", 0.4)
+        async with running(tmp_path / "b", _marker_backend(tmp_path)) as (sup, fake, _):
+            await planned(sup, fake)
+            await wait_for(lambda: sup.stopping)  # not for ever
+            assert sup.relaunch
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert f"Huragok's new version is installed; it restarts on it once {SERVER} is done" in caplog.text
+    assert f"Huragok restarts on its new version now, after waiting 0 minutes: {SERVER} is still busy" in caplog.text
+
+
+def test_the_fleet_restarted_after_a_failure_carries_on_without_booting_again(tmp_path: Path, run,
+                                                                              monkeypatch) -> None:
+    from huragok import core
+
+    monkeypatch.setattr(core, "RESTART_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        async with FakeRcon() as fake:
+            write_server_folder(tmp_path / "server", fake.port)
+            settings = load(write_settings(tmp_path, tmp_path / "server", _marker_backend(tmp_path),
+                                           commands=staff()))
+            sup = Supervisor(settings)
+            boots: list[int] = []
+            ticks: list[int] = []
+            real_boot, real_tick = sup.fleet.boot, sup.fleet.tick
+
+            def boot() -> None:
+                boots.append(1)
+                real_boot()
+
+            def tick(now: float | None = None) -> None:
+                ticks.append(1)
+                if len(ticks) == 1:
+                    raise RuntimeError("one bad tick")
+                real_tick(now)
+
+            sup.fleet.boot, sup.fleet.tick = boot, tick  # type: ignore[method-assign]
+            task = asyncio.ensure_future(sup.run())
+            try:
+                await wait_for(lambda: sup.fleet.managers[SERVER].phase == "running", 10)
+                assert boots == [1] and len(ticks) > 1
+                # A part's handler gets longer than one RCON command ([rcon] command_timeout, 10 s).
+                assert sup.runners["commands"].handler_timeout == 15
+            finally:
+                sup.stop()
                 await asyncio.wait_for(task, 10)
 
     run(scenario())

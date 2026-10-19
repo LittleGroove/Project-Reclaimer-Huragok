@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import re
+import shutil
+import tempfile
+import threading
+import time
+import weakref
 from pathlib import Path
 from typing import Any
 
-from reclaimer_supervisor.manager import Result
-from reclaimer_supervisor.menu import Menu, render
-from reclaimer_supervisor.tui import Keyboard, RecentLog, Terminal, without_quick_edit
+from huragok.manager import Result
+from huragok.menu import Menu, render
+from huragok.tui import Keyboard, RecentLog, Terminal, without_quick_edit
 
 
 def row(name: str, index: int = 1, **over: Any) -> dict[str, Any]:
@@ -29,10 +36,10 @@ def test_render_fits_the_width_and_shows_every_server() -> None:
             "rows": [row("Alpha Server"), row("Beta Server", 2, phase="idle", status="stopped", color="gray",
                                              players="", names="", game="", detail="", autostart=False)],
             "startup": False, "events": [(20, "00:15:01 INFO    hello"), (30, "00:15:02 WARNING careful")],
-            "log_name": "logs/supervisor.log"}
+            "log_name": "logs/huragok.log"}
     lines = render(view, 100, 30)
     text = "\n".join(t for t, _ in lines)
-    assert "RECLAIMER SUPERVISOR 0.2.0   (supervising)" in text
+    assert "HURAGOK 0.2.0   (supervising)" in text
     assert "Beta: project-reclaimer.exe is not in" in text
     assert "Alpha Server" in text and "Beta Server" in text and "3/16 Alice, Bo..." in text  # cut to its column
     assert "daily restart 04:00" in text and "stopped" in text
@@ -53,6 +60,7 @@ def test_render_fits_the_width_and_shows_every_server() -> None:
 class FakeKeyboard(Keyboard):
     def __init__(self, keys: list[str]) -> None:
         self.queue = asyncio.Queue()  # type: ignore[assignment]
+        self.drained = 0
         for key in keys:
             self.queue.put_nowait(key)
 
@@ -61,6 +69,9 @@ class FakeKeyboard(Keyboard):
 
     def stop(self) -> None:
         pass
+
+    def drain(self) -> None:
+        self.drained += 1  # the script is every key the test presses, none pressed "meanwhile": keep them
 
     async def read(self, timeout: float | None = None) -> str | None:
         if timeout is not None and timeout < 1:  # a screen polling for Esc while a command runs: nobody presses it
@@ -80,7 +91,7 @@ class FakeTerminal(Terminal):
     def size(self) -> tuple[int, int]:
         return 100, 30
 
-    def _write(self, text: str) -> None:
+    def _write(self, text: str, frame: bool = False) -> None:
         self.output.append(text)
 
     def draw(self, lines: list[tuple[str, str | None]]) -> None:
@@ -101,10 +112,14 @@ class FakeTerminal(Terminal):
 
 class FakeController:
     supervising = True
-    home = Path("H:/reclaimer")
     launcher = "start.cmd"
 
-    def __init__(self) -> None:
+    def __init__(self, home: Path | None = None) -> None:
+        # A folder of its own: the window writes logs/window.log there (never into a real install).
+        if home is None:
+            home = Path(tempfile.mkdtemp(prefix="huragok-window-"))
+            weakref.finalize(self, shutil.rmtree, home, True)
+        self.home = home
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
         self.quit = False
         self._rows = [row("Alpha Server"), row("Beta Server", 2, phase="idle", status="stopped", color="gray",
@@ -164,7 +179,7 @@ def test_keys_drive_the_screens(run) -> None:
     ]
     printed = "".join(terminal.output)
     assert "Alpha Server: done" in printed and "3 players" in printed and "These keep running: Alpha Server" in printed
-    assert terminal.frames and "RECLAIMER SUPERVISOR" in terminal.frames[0][0][0]
+    assert terminal.frames and "HURAGOK" in terminal.frames[0][0][0]
 
 
 def test_prompts_cancel_and_time_out(run) -> None:
@@ -180,6 +195,41 @@ def test_prompts_cancel_and_time_out(run) -> None:
     assert run(menu.prompt_yes_no("sure?", True)) is True
 
 
+def test_ctrl_c_asks_before_the_window_closes(run) -> None:
+    controller = FakeController()
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, FakeKeyboard(["CTRL_C", "N", "CTRL_C", "Y"]))  # type: ignore[arg-type]
+    assert run(menu.run()) == "quit" and controller.quit
+    assert "".join(terminal.output).count("Close the window?") == 2  # the first one answered no
+
+
+def test_one_ctrl_c_press_is_one_key(run) -> None:
+    async def presses() -> list[str]:
+        keyboard = Keyboard(asyncio.get_running_loop())
+        keyboard.ctrl_c()
+        keyboard.ctrl_c()  # the launcher passing the same press on
+        await asyncio.sleep(0)
+        return [keyboard.queue.get_nowait() for _ in range(keyboard.queue.qsize())]
+
+    assert run(presses()) == ["CTRL_C"]
+
+
+def test_a_frame_that_cannot_be_drawn_keeps_the_window(run) -> None:
+    class Breaks(FakeController):
+        broken = True
+
+        def rows(self) -> list[dict[str, Any]]:
+            if self.broken:
+                self.broken = False
+                raise ValueError("a bad row")
+            return super().rows()
+
+    controller = Breaks()
+    terminal = FakeTerminal()
+    assert run(Menu(controller, terminal, FakeKeyboard(["Q", "Y"])).run()) == "quit"  # type: ignore[arg-type]
+    assert "couldn't be drawn" in terminal.frames[0][0][0]
+
+
 def test_key_names() -> None:
     assert Keyboard.name_of("\r") == "ENTER" and Keyboard.name_of("\x1b") == "ESC"
     assert Keyboard.name_of("\x7f") == "BACKSPACE" and Keyboard.name_of("\x03") == "CTRL_C"
@@ -192,17 +242,17 @@ def test_quick_edit_is_switched_off_and_nothing_else() -> None:
 
 
 def test_a_second_window_shows_log_lines_the_way_the_first_shows_its_events(tmp_path: Path) -> None:
-    from reclaimer_supervisor.menu import RemoteController
+    from huragok.menu import RemoteController
 
-    log = tmp_path / "supervisor.log"
+    log = tmp_path / "huragok.log"
     log.write_text("2026-10-16 06:45:19,685 INFO    relay: [LG Test Server] console relay listening on 127.0.0.1:50176\n"
                    "2026-10-16 06:45:20,001 WARNING manager: [LG Test Server] trying again in 5 s (failure 1 of 5)\n"
-                   "a line that isn't the supervisor's format\n", encoding="utf-8")
+                   "a line that isn't Huragok's format\n", encoding="utf-8")
     settings = type("S", (), {"home": tmp_path, "records": tmp_path, "log_file": log, "backend": "process"})()
     events = RemoteController(settings, lambda: None).events(10)  # type: ignore[arg-type]
-    assert events[0] == (logging.INFO, "06:45:19 INFO    [LG Test Server] console relay listening on 127.0.0.1:50176")
-    assert events[1][0] == logging.WARNING and events[1][1].startswith("06:45:20 WARNING [LG Test Server] trying again")
-    assert events[2] == (logging.INFO, "a line that isn't the supervisor's format")
+    assert events[0] == (logging.INFO, "06:45:19 VRGL INFO    [LG Test Server] console relay listening on 127.0.0.1:50176")
+    assert events[1][0] == logging.WARNING and events[1][1].startswith("06:45:20 SUPT WARNING [LG Test Server] trying again")
+    assert events[2] == (logging.INFO, "a line that isn't Huragok's format")
 
 
 def plain(terminal: FakeTerminal) -> str:
@@ -290,3 +340,271 @@ def test_a_menu_block_is_laid_out_in_columns_and_drawn_again_after_held_lines(ru
     menu = Menu(FakeController(), narrow, FakeKeyboard(["4"]), RecentLog())  # type: ignore[arg-type]
     assert run(menu.choose("Which?", options)) == "4"
     assert not [line for line in plain(narrow).splitlines() if "[1] Browse" in line and "[2] Playlists" in line]
+
+
+# The console: never waited on, never fed what a player typed as commands, lined up by columns ------------------
+
+SEQUENCES = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # the window's own: colours, cursor moves, clearing
+
+
+class PausedConsole(io.StringIO):
+    """A classic console window with text selected in it: every write waits until the selection ends."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.selection_ends = threading.Event()
+
+    def write(self, text: str) -> int:
+        self.selection_ends.wait(10)
+        return super().write(text)
+
+
+def test_a_paused_console_never_holds_up_the_loop(run) -> None:
+    console = PausedConsole()
+    terminal = Terminal(console)
+    terminal.size = lambda: (80, 24)  # type: ignore[method-assign]
+
+    async def supervising() -> int:
+        ticks = 0
+        for n in range(30):  # the dashboard, drawn again and again while the window takes nothing
+            terminal.draw([(f"frame {n}", None)])
+            await asyncio.sleep(0.01)
+            ticks += 1
+        for n in range(5):  # then a screen's lines
+            terminal.print(f"line {n}")
+            ticks += 1
+        return ticks
+
+    started = time.monotonic()
+    assert run(supervising()) == 35
+    assert time.monotonic() - started < 3  # the loop went on: nothing waited for the console
+    assert terminal.writer is not None and terminal.writer.pending() >= 2
+    assert not terminal.flush(0.1)  # still held: flush says so rather than wait for ever
+    console.selection_ends.set()
+    assert terminal.flush(5)
+    shown = console.getvalue()
+    assert "frame 29" in shown and "frame 15" not in shown  # frames that waited: only the newest is drawn
+    lines = [shown.index(f"line {n}") for n in range(5)]
+    assert lines == sorted(lines) and shown.index("frame 29") < lines[0]  # the screen's lines, in order, after it
+
+
+def test_what_a_paused_console_cannot_hold_is_dropped_and_said() -> None:
+    console = PausedConsole()
+    terminal = Terminal(console)
+    assert terminal.writer is not None
+    terminal.writer.LIMIT = 200
+    for n in range(50):
+        terminal.print(f"line {n:02}")
+    console.selection_ends.set()
+    assert terminal.flush(5)
+    shown = console.getvalue()
+    assert "were dropped while it took none" in shown and "logs/window.log has what the screens showed" in shown
+    assert "line 49" in shown and "line 10" not in shown
+
+
+def hostile_row() -> dict[str, Any]:
+    return row("Evil\x1b]52;c;cm0gLXJmIC8=\x07Server", names="Bob\x1b[2J\x9b31m\r\x00Cy",
+               game="playing\tSlayer")
+
+
+def test_control_characters_from_players_and_servers_never_reach_the_terminal(run) -> None:
+    terminal = FakeTerminal()
+    terminal.transcript = io.StringIO()
+    menu = Menu(FakeController(), terminal, FakeKeyboard([]))  # type: ignore[arg-type]
+    chat = "12:00:00 Bob\x1b]0;owned\x07: hi\x1b[31m"
+    menu.note(chat)
+    menu.server_rows([hostile_row()])
+    menu.held.push(f"    {chat}")
+    menu.held.flush()
+    printed = SEQUENCES.sub("", "".join(terminal.output))
+    assert not re.search("[\x00-\x09\x0b-\x1f\x7f-\x9f]", printed)  # nothing but the window's own sequences
+    assert "Bob?]0;owned?: hi?[31m" in printed and "Evil?]52;c;cm0gLXJmIC8=?Server" in printed
+    assert "Bob?[2J?31m??Cy" in printed and "playing Slayer" in printed  # a tab is a space
+    transcript = terminal.transcript.getvalue()
+    assert "\x1b" not in transcript and "\x07" not in transcript and "Bob?]0;owned?: hi" in transcript
+    # The dashboard too: a name in the table and a chat line among the events.
+    frames = Terminal(io.StringIO(), threaded=False)
+    frames.size = lambda: (100, 30)  # type: ignore[method-assign]
+    view = {"version": "x", "supervising": True, "rows": [hostile_row()], "events": [(20, chat), (20, "two\nlines")]}
+    frames.draw(render(view, 100, 30))
+    drawn = SEQUENCES.sub("", frames.out.getvalue())
+    assert not re.search("[\x00-\x09\x0b-\x1f\x7f-\x9f]", drawn.replace("\n", ""))
+    assert "Evil?]52;c" in drawn and "two lines" in drawn
+
+
+def drawn_lines(terminal: Terminal) -> list[str]:
+    return SEQUENCES.sub("", terminal.out.getvalue()).split("\n")[:-1]
+
+
+def test_wide_names_keep_one_row_per_line_and_the_columns_lined_up() -> None:
+    from huragok.tui import cells, cut, format_listing, pad
+
+    assert cells("サーバー東京") == 12 and cells("🎮gamer") == 7 and cells("e\u0301") == 1 and cells("plain") == 5
+    assert cut("サーバー東京", 7) == "サーバ…" and cells(cut("サーバー東京", 7)) == 7 and pad("東京", 6) == "東京  "
+    terminal = Terminal(io.StringIO(), threaded=False)
+    terminal.size = lambda: (100, 30)  # type: ignore[method-assign]
+    view = {"version": "x", "supervising": True, "when": "", "home": "H:/r", "header": [], "problems": [],
+            "rows": [row("サーバー東京", names="ゆうき, 太郎, 🎮gamer", game="playing 守護者 Slayer " * 3)],
+            "events": [(20, "12:00:00 VRGL INFO    [サーバー東京] ゆうき: こんにちは皆さん" * 2)]}
+    terminal.draw(render(view, 100, 30))
+    lines = drawn_lines(terminal)
+    assert lines and all(cells(line) == 100 for line in lines)  # each exactly the window's width: none wraps
+    table = next(line for line in lines if "サーバー" in line and "49176" in line)
+    header = next(line for line in lines if "SERVER" in line and "PORT" in line)
+    assert cells(table[:table.index("49176")]) == cells(header[:header.index("PORT")])  # PORT lines up
+    block = format_listing([("サーバー東京", "running", "a"), ("Alpha", "stopped", "b")], 60)
+    starts = [cells("".join(text for text, _ in parts[:3])) for parts in block]
+    assert starts[0] == starts[1]  # the second column starts at the same place on both rows
+
+
+def test_a_name_cut_inside_an_emoji_or_a_console_without_the_characters_still_gets_its_frame() -> None:
+    for encoding in ("utf-8", "cp1252"):
+        stream = io.TextIOWrapper(io.BytesIO(), encoding=encoding)
+        terminal = Terminal(stream, threaded=False)
+        terminal.size = lambda: (80, 24)  # type: ignore[method-assign]
+        terminal.draw([("Bob\ud83d cut inside an emoji · サーバー", None)])
+        stream.flush()
+        shown = stream.buffer.getvalue().decode(encoding, errors="replace")  # type: ignore[attr-defined]
+        assert "Bob? cut inside an emoji" in shown  # the frame was written, not dropped
+
+
+def test_a_second_window_keeps_the_last_good_live_file(tmp_path: Path) -> None:
+    import json
+
+    from huragok.menu import RemoteController
+
+    settings = type("S", (), {"home": tmp_path, "records": tmp_path, "log_file": None, "backend": "process"})()
+    remote = RemoteController(settings, lambda: 1234)  # type: ignore[arg-type]
+    live = tmp_path / "live.json"
+
+    def again() -> None:
+        remote._live_read = 0.0  # as if a second had passed
+
+    assert remote.problems() == ["no word from the supervising window yet (it writes records/live.json every "
+                                 "second or two)"]  # not "hasn't updated for 1792375343 s"
+    assert remote.rows() == [] and not remote.answering()
+    live.write_text(json.dumps({"updated": time.time(), "servers": [row("Alpha"), "junk", {"no": "name"}]}),
+                    encoding="utf-8")
+    again()
+    assert [r["name"] for r in remote.rows()] == ["Alpha"] and remote.problems() == []
+    for bad in ("", "{not json", '{"updated": "soon", "servers": []}', "[1, 2]", '{"updated": true}'):
+        live.write_text(bad, encoding="utf-8")
+        again()
+        assert [r["name"] for r in remote.rows()] == ["Alpha"] and remote.problems() == [], bad
+    live.unlink()
+    live.mkdir()  # can't be read (on Windows a file being replaced can't be opened for a moment either)
+    again()
+    assert [r["name"] for r in remote.rows()] == ["Alpha"] and remote.answering()
+    live.rmdir()
+    live.write_text(json.dumps({"updated": time.time() - 100, "servers": [row("Alpha")]}), encoding="utf-8")
+    again()
+    assert remote.rows() == [] and remote.problems()[0].startswith("the supervising window hasn't updated for 10")
+
+
+def test_a_grave_is_typed_and_an_arrow_types_nothing() -> None:
+    # Windows: msvcrt gave "\xe0" first for an arrow and for "à" alike; key events tell them apart.
+    assert Keyboard.windows_char(True, "\xe0") == "à" and Keyboard.name_of("à") == "à"
+    assert Keyboard.windows_char(True, "\x00") is None  # an arrow, a function key, Shift alone
+    assert Keyboard.windows_char(False, "a") is None  # a key let go
+    assert Keyboard.windows_char(True, "\r") == "\r" and Keyboard.windows_char(True, "\x1b") == "\x1b"
+
+
+class BusyKeyboard(Keyboard):
+    """Keys pressed while long work runs land in the queue (and are drained for real); the answers come after."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self.queue = asyncio.Queue()  # type: ignore[assignment]
+        self.answers = list(answers)
+
+    async def read(self, timeout: float | None = None) -> str | None:
+        await asyncio.sleep(0)
+        if not self.queue.empty():
+            return self.queue.get_nowait()
+        return self.answers.pop(0) if self.answers else None
+
+
+def test_keys_pressed_during_long_work_never_answer_the_next_question(run) -> None:
+    keyboard = BusyKeyboard(["Y"])
+    terminal = FakeTerminal()
+    menu = Menu(FakeController(), terminal, keyboard)  # type: ignore[arg-type]
+
+    async def scenario() -> tuple[str, bool]:
+        loop = asyncio.get_running_loop()
+
+        def copy_the_game_files() -> str:
+            for key in ("ESC", "Q", "Y"):  # pressed while it ran
+                loop.call_soon_threadsafe(keyboard.queue.put_nowait, key)
+            time.sleep(0.1)
+            return "copied"
+
+        done = await menu.slow(copy_the_game_files)
+        return done, await menu.prompt_yes_no("  Start it now?", False)
+
+    assert run(scenario()) == ("copied", True)  # the Esc pressed meanwhile didn't say no
+    assert "keys pressed meanwhile are ignored until it's done" in plain(terminal)
+
+
+def test_a_second_window_waits_as_long_as_the_work_takes(tmp_path: Path, run, monkeypatch) -> None:
+    import json
+
+    from conftest import wait_for
+
+    from huragok import mailbox
+    from huragok import menu as menu_module
+    from huragok.menu import RemoteController, remote_wait
+
+    assert remote_wait("update_program") >= 600 and remote_wait("update") >= 300 and remote_wait("check_workshop") >= 120
+    assert remote_wait("check_update") >= 60 and 20 <= remote_wait("rcon") <= 30 and remote_wait("start") >= 10
+    settings = type("S", (), {"home": tmp_path, "records": tmp_path, "log_file": None, "backend": "process"})()
+    remote = RemoteController(settings, lambda: 1)  # type: ignore[arg-type]
+    monkeypatch.setitem(menu_module.REMOTE_WAITS, "check_update", 0.6)
+    requests = tmp_path / "requests"
+
+    def waiting() -> list[Path]:
+        return [f for f in requests.glob("*.json") if not f.name.endswith(".reply.json")]
+
+    [(_, result)] = run(remote.verb("check_update"))  # nobody picks it up: taken back
+    assert not result.ok and "didn't take the request" in result.message and "nothing was done" in result.message
+    assert not waiting()
+
+    async def picked_up_then_quiet() -> Any:
+        task = asyncio.ensure_future(remote.verb("check_update"))
+        for file in await wait_for(waiting):
+            file.unlink()  # the supervising window reads (and removes) it, and works on it
+        return await task
+
+    [(_, result)] = run(picked_up_then_quiet())
+    assert not result.ok and "no answer yet after 1 s: it may still be doing it (the supervising window's events " \
+                             "will say)" in result.message
+
+    async def answered() -> Any:
+        task = asyncio.ensure_future(remote.verb("rcon", "Alpha", text="players"))
+        file = (await wait_for(waiting))[0]
+        request = json.loads(file.read_text(encoding="utf-8"))
+        file.unlink()
+        assert request["options"] == {"text": "players"}
+        mailbox.reply(tmp_path, request["id"], True, "ok", "3 players")
+        return await task
+
+    assert run(answered()) == [("Alpha", Result(True, "ok", "3 players"))]
+
+
+def test_start_at_boot_is_switched_off_the_loop(run, monkeypatch) -> None:
+    from huragok import desktop
+
+    threads: list[bool] = []
+    monkeypatch.setattr(desktop, "startup_enabled", lambda: False)
+    monkeypatch.setattr(desktop, "enable_startup",  # on Linux it runs systemctl, which answers when it will
+                        lambda home: threads.append(threading.current_thread() is threading.main_thread()) or "on")
+    terminal = FakeTerminal()
+    run(Menu(FakeController(), terminal, FakeKeyboard(["Y", "x"])).screen_startup())  # type: ignore[arg-type]
+    assert threads == [False] and "  on" in "".join(terminal.output)
+
+
+def test_the_window_writes_its_transcript_into_its_own_folder(run) -> None:
+    controller = FakeController()  # T16: it used to be H:/reclaimer, so tests wrote into a real install's log
+    assert controller.home != Path("H:/reclaimer") and controller.home.is_dir()
+    menu = Menu(controller, FakeTerminal(), FakeKeyboard(["O", "Q", "Y"]))  # type: ignore[arg-type]
+    menu.actions["O"] = lambda: asyncio.sleep(0)  # type: ignore[assignment]  # no folder opened on the desktop
+    assert run(menu.run()) == "quit"
+    assert "key O =====" in (controller.home / "logs" / "window.log").read_text(encoding="utf-8")

@@ -6,16 +6,17 @@ import asyncio
 import logging
 from pathlib import Path
 
+from conftest import free_port, wait_for
 from test_setup import fake_tool, make_server_folder
 
-from reclaimer_supervisor.core import one_line
-from reclaimer_supervisor.files import CONSOLE_PATTERNS, parse_console_line
-from reclaimer_supervisor.tui import RecentLog
+from huragok.core import one_line
+from huragok.files import CONSOLE_PATTERNS, parse_console_line
+from huragok.tui import RecentLog
 
 
 def test_streaming_a_command_and_cancelling_it(tmp_path: Path, run) -> None:
     folder = tmp_path / "Slayer"
-    make_server_folder(folder, "Slayer", 49190)
+    make_server_folder(folder, "Slayer", free_port())
     tool = fake_tool()
     seen: list[str] = []
 
@@ -25,8 +26,8 @@ def test_streaming_a_command_and_cancelling_it(tmp_path: Path, run) -> None:
         seen.clear()
         cancel = asyncio.Event()
         task = asyncio.ensure_future(tool.stream(folder, "slow", "40", on_line=seen.append, cancel=cancel, timeout=60))
-        while len(seen) < 2:
-            await asyncio.sleep(0.05)
+        await wait_for(lambda: len(seen) >= 2 or task.done(), 30)
+        assert not task.done(), task.result()
         cancel.set()
         result = await asyncio.wait_for(task, 15)
         assert not result.ok and result.code == 130 and "(cancelled)" in result.text and len(seen) < 10
@@ -60,9 +61,9 @@ def test_lines_are_coloured_by_what_they_say_everywhere(tmp_path: Path, monkeypa
     import io
     import sys
 
-    from reclaimer_supervisor.menu import render
-    from reclaimer_supervisor.tui import content_colour, event_colour
-    from reclaimer_supervisor.watch import follow, parts_for
+    from huragok.menu import render
+    from huragok.tui import content_colour, event_colour
+    from huragok.watch import follow, parts_for
 
     assert content_colour("[Alpha] started `dedicated` (process 5)") == "green"
     assert content_colour("[Alpha] + Alice joined (#2)") == "cyan"
@@ -79,10 +80,10 @@ def test_lines_are_coloured_by_what_they_say_everywhere(tmp_path: Path, monkeypa
     assert colours[next(t for t in colours if "started `dedicated`" in t)] == "green"
     assert colours[next(t for t in colours if "careful" in t)] == "yellow"
     assert colours[next(t for t in colours if "Bob joined" in t)] == "cyan"
-    # watch: a supervisor.log line keeps a gray time and level; a session marker is white; appended lines follow
+    # watch: a huragok.log line keeps a gray time and level; a session marker is white; appended lines follow
     parts = parts_for("2026-10-16 06:02:29,655 INFO    rcon: [Alpha] RCON connected (server 0.9.18)")
     assert parts[0] == ("2026-10-16 06:02:29 ", "gray") and parts[1][1] == "gray" and parts[-1][1] == "green"
-    assert parts_for("──── 2026-10-16 12:04:59 UTC · started by the supervisor · x ────")[0][1] == "white"
+    assert parts_for("──── 2026-10-16 12:04:59 UTC · started by the Superintendent · x ────")[0][1] == "white"
     assert parts_for("12:04:40 [Alpha] restarting for the new version")[1][1] == "magenta"
     path = tmp_path / "console.log"
     path.write_text("first line\n", encoding="utf-8")

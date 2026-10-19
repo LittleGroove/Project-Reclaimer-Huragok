@@ -1,0 +1,349 @@
+# Probe output behind plans/game-variants.md (re-probed against server program 0.9.20)
+
+## mode-check: one candidate option per game type at 99999 -> label and range, or unknown
+
+### generic keys (mode Slayer)
+rounds.teams                             Error: Teams enabled must be 0..=1
+rounds.team_changing                     Error: Team changing must be 0..=2
+rounds.friendly_fire                     Error: Friendly fire must be 0..=1
+rounds.betrayal_booting                  Error: Betrayal booting must be 0..=1
+rounds.reset_players                     Error: Reset players each round must be 0..=1
+rounds.reset_map                         Error: Reset map each round must be 0..=1
+rounds.minutes                           Error: Time limit (minutes; 0 = unlimited) must be 0..=60
+rounds.limit                             Error: Round limit must be 1..=10
+rounds.early_victory                     Error: Wins for early victory (0 = disabled) must be 0..=5
+respawn.lives                            Error: Lives per round (0 = unlimited) must be 0..=50
+respawn.team_lives                       Error: Team lives (0 = unlimited) must be 0..=100
+respawn.seconds                          Error: Respawn delay (seconds) must be 0..=240
+respawn.suicide                          Error: Suicide penalty (seconds) must be 0..=240
+respawn.betrayal                         Error: Betrayal penalty (seconds) must be 0..=240
+respawn.growth                           Error: Respawn growth (seconds) must be 0..=15
+respawn.traits_duration                  Error: Respawn traits duration (seconds) must be 0..=60
+respawn.synchronize                      Error: Synchronize with team must be 0..=1
+respawn.on_kills                         Error: Respawn on kills must be 0..=1
+powerups.red_duration                    Error: Red powerup duration must be 0..=120
+powerups.blue_duration                   Error: Blue powerup duration must be 0..=120
+powerups.yellow_duration                 Error: Yellow powerup duration must be 0..=120
+map.weapons                              Error: Weapon set must be 0..=13
+map.vehicles                             Error: Vehicle set must be 0..=9
+map.grenades                             Error: Grenades on map must be 0..=1
+map.indestructible_vehicles              Error: Indestructible vehicles must be 0..=1
+teams.red_character_set                  Error: Red team's character set must be 0..=18
+teams.red_character                      Error: Red team's character must be 0..=17
+teams.blue_character_set                 Error: Blue team's character set must be 0..=18
+teams.blue_character                     Error: Blue team's character must be 0..=17
+teams.green_character_set                Error: Green team's character set must be 0..=18
+teams.green_character                    Error: Green team's character must be 0..=17
+teams.orange_character_set               Error: Orange team's character set must be 0..=18
+teams.orange_character                   Error: Orange team's character must be 0..=17
+teams.purple_character_set               Error: Purple team's character set must be 0..=18
+teams.purple_character                   Error: Purple team's character must be 0..=17
+teams.gold_character_set                 Error: Gold team's character set must be 0..=18
+teams.gold_character                     Error: Gold team's character must be 0..=17
+teams.brown_character_set                Error: Brown team's character set must be 0..=18
+teams.brown_character                    Error: Brown team's character must be 0..=17
+teams.pink_character_set                 Error: Pink team's character set must be 0..=18
+teams.pink_character                     Error: Pink team's character must be 0..=17
+rules.score_to_win                       Error: Unknown game option for Slayer: rules.score_to_win
+rules.kill_points                        Error: Unknown game option for Slayer: rules.kill_points
+### trait keys on player.* (Slayer)
+player.primary_weapon                    Error: Starting primary weapon must be -3..=29
+player.secondary_weapon                  Error: Starting secondary weapon must be -3..=29
+player.resistance                        Error: Damage resistance must be 0..=12
+player.recharge                          Error: Shield recharge must be 0..=9
+player.vampirism                         Error: Vampirism must be 0..=5
+player.headshots                         Error: Headshot immunity must be 0..=2
+player.shields                           Error: Shields must be 0..=5
+player.damage                            Error: Damage dealt must be 0..=12
+player.grenades                          Error: Starting grenades must be 0..=2
+player.grenade_regeneration              Error: Grenade regeneration must be 0..=3
+player.ammo                              Error: Ammunition must be 0..=3
+player.pickup                            Error: Weapon pickup must be 0..=2
+player.speed                             Error: Movement speed must be 0..=10
+player.gravity                           Error: Player gravity must be 0..=5
+player.vehicles                          Error: Vehicle use must be 0..=3
+player.camouflage                        Error: Camouflage must be 0..=4
+player.waypoint                          Error: Waypoint must be 0..=3
+player.aura                              Error: Aura must be 0..=4
+player.forced_color                      Error: Forced color must be 0..=12
+player.radar                             Error: Motion tracker must be 0..=4
+player.radar_range                       Error: Motion tracker range must be 0..=7
+player.character_set                     Error: Character set must be 0..=18
+player.character                         Error: Character must be 0..=17
+player.camera                            Error: Camera must be 0..=2
+player.health                            Error: Unknown game option for Slayer: player.health
+### one trait (speed) on every set, per a mode where it applies
+respawn_traits.speed                     [Slayer] Error: Movement speed must be 0..=10
+red_powerup.speed                        [Slayer] Error: Movement speed must be 0..=10
+blue_powerup.speed                       [Slayer] Error: Movement speed must be 0..=10
+yellow_powerup.speed                     [Slayer] Error: Movement speed must be 0..=10
+flag_carrier.speed                       [CaptureTheFlag] Error: Movement speed must be 0..=10
+leader.speed                             [Slayer] Error: Movement speed must be 0..=10
+editor.speed                             [Forge] Error: Scripted modes require an unpacked multiplayer game variant (not Forge or campaign)
+ball_carrier.speed                       [Oddball] Error: Movement speed must be 0..=10
+hill_occupant.speed                      [KingOfTheHill] Error: Movement speed must be 0..=10
+vip_team.speed                           [Vip] Error: Movement speed must be 0..=10
+vip_proximity.speed                      [Vip] Error: Movement speed must be 0..=10
+vip.speed                                [Vip] Error: Movement speed must be 0..=10
+juggernaut.speed                         [Juggernaut] Error: Movement speed must be 0..=10
+defender.speed                           [Territories] Error: Movement speed must be 0..=10
+attacker.speed                           [Territories] Error: Movement speed must be 0..=10
+bomb_carrier.speed                       [Assault] Error: Movement speed must be 0..=10
+bomb_arming.speed                        [Assault] Error: Movement speed must be 0..=10
+infected.speed                           [Infection] Error: Movement speed must be 0..=10
+initial_infected.speed                   [Infection] Error: Movement speed must be 0..=10
+safe_haven.speed                         [Infection] Error: Movement speed must be 0..=10
+last_survivor.speed                      [Infection] Error: Movement speed must be 0..=10
+### mode.* keys on every mode (only accepted ones printed)
+Slayer             mode.kill                         Error: Kill points must be -10..=10
+Slayer             mode.team_scoring                 Error: Team scoring must be 0..=2
+Slayer             mode.leader_kill                  Error: Leader kill bonus must be -10..=10
+Slayer             mode.elimination                  Error: Elimination bonus must be -10..=10
+Slayer             mode.assassination                Error: Assassination bonus must be -10..=10
+Slayer             mode.headshot                     Error: Headshot bonus must be -10..=10
+Slayer             mode.beatdown                     Error: Beatdown bonus must be -10..=10
+Slayer             mode.sticky                       Error: Sticky bonus must be -10..=10
+Slayer             mode.splatter                     Error: Splatter bonus must be -10..=10
+Slayer             mode.spree                        Error: Spree bonus must be -10..=10
+Slayer             mode.assist                       Error: Assist points must be -10..=10
+Slayer             mode.death                        Error: Death points must be -10..=10
+Slayer             mode.suicide                      Error: Suicide points must be -10..=10
+Slayer             mode.betrayal                     Error: Betrayal points must be -10..=10
+CaptureTheFlag     mode.flag_at_home                 Error: Flag at home to score must be 0..=1
+CaptureTheFlag     mode.flag_type                    Error: Flag type must be 0..=2
+CaptureTheFlag     mode.flag_waypoint                Error: Home flag waypoint must be 0..=3
+CaptureTheFlag     mode.objective_respawn            Error: Respawn on capture must be 0..=3
+CaptureTheFlag     mode.sudden_death                 Error: Sudden death (seconds; -1 = unlimited) must be -1..=300
+CaptureTheFlag     mode.touch_return                 Error: Touch return (seconds; -1 = disabled) must be -1..=300
+Oddball            mode.auto_pickup                  Error: Automatic ball pickup must be 0..=1
+Oddball            mode.ball_effect                  Error: Ball carrier effect must be 0..=1
+Oddball            mode.ball_count                   Error: Ball count must be 1..=3
+Oddball            mode.spawn_delay                  Error: Ball spawn delay must be 0..=120
+Oddball            mode.carrying                     Error: Carrying points must be -10..=10
+Oddball            mode.ball_kill                    Error: Ball melee points must be -10..=10
+Oddball            mode.carrier_kill                 Error: Carrier kill points must be -10..=10
+Oddball            mode.kill                         Error: Kill points must be -10..=10
+Oddball            mode.team_scoring                 Error: Team scoring must be 0..=2
+KingOfTheHill      mode.opaque_hill                  Error: Opaque hill must be 0..=1
+KingOfTheHill      mode.hill_movement                Error: Hill movement must be 0..=8
+KingOfTheHill      mode.hill_order                   Error: Hill order must be 0..=1
+KingOfTheHill      mode.uncontested                  Error: Uncontested bonus must be -10..=10
+KingOfTheHill      mode.inside                       Error: Inside hill points must be -10..=10
+KingOfTheHill      mode.outside                      Error: Outside hill points must be -10..=10
+KingOfTheHill      mode.kill                         Error: Kill points must be -10..=10
+KingOfTheHill      mode.team_scoring                 Error: Team scoring must be 0..=3
+Vip                mode.single_vip                   Error: Single VIP must be 0..=1
+Vip                mode.destinations                 Error: Destination zones must be 0..=1
+Vip                mode.end_on_vip_death             Error: End round on VIP death must be 0..=1
+Vip                mode.vip_selection                Error: VIP selection must be 0..=3
+Vip                mode.destination_movement         Error: Destination movement must be 0..=10
+Vip                mode.destination_order            Error: Destination order must be 0..=1
+Vip                mode.takedown                     Error: VIP takedown points must be -10..=10
+Vip                mode.vip_kill                     Error: Kill as VIP points must be -10..=10
+Vip                mode.vip_death                    Error: VIP death points must be -10..=10
+Vip                mode.arrival                      Error: Destination arrival points must be -10..=10
+Vip                mode.vip_suicide                  Error: VIP betrayal points must be -10..=10
+Vip                mode.radius                       Error: VIP influence radius must be 0..=50
+Vip                mode.kill                         Error: Kill points must be -10..=10
+Vip                mode.suicide                      Error: Suicide points must be -10..=10
+Vip                mode.betrayal                     Error: Betrayal points must be -10..=10
+Juggernaut         mode.destinations                 Error: Destination zones must be 0..=1
+Juggernaut         mode.destination_movement         Error: Destination movement must be 0..=10
+Juggernaut         mode.destination_order            Error: Destination order must be 0..=1
+Juggernaut         mode.takedown                     Error: Juggernaut kill points must be -10..=10
+Juggernaut         mode.arrival                      Error: Destination arrival points must be -10..=10
+Juggernaut         mode.allied_against_juggernaut    Error: Allied against Juggernaut must be 0..=1
+Juggernaut         mode.respawn_on_lone_juggernaut   Error: Respawn when Juggernaut is alone must be 0..=1
+Juggernaut         mode.initial_juggernaut           Error: Initial Juggernaut must be 0..=2
+Juggernaut         mode.next_juggernaut              Error: Next Juggernaut must be 0..=3
+Juggernaut         mode.juggernaut_delay             Error: Juggernaut delay (seconds) must be 0..=10
+Juggernaut         mode.juggernaut_kill              Error: Kill as Juggernaut points must be -10..=10
+Juggernaut         mode.kill                         Error: Kill points must be -10..=10
+Juggernaut         mode.suicide                      Error: Suicide points must be -10..=10
+Juggernaut         mode.betrayal                     Error: Betrayal points must be -10..=10
+Territories        mode.objective_respawn            Error: Respawn on capture must be 0..=3
+Territories        mode.sudden_death                 Error: Sudden death (seconds; -1 = unlimited) must be -1..=300
+Territories        mode.one_sided                    Error: One-sided territories must be 0..=1
+Territories        mode.lock_on_capture              Error: Lock territories on capture must be 0..=1
+Territories        mode.capture                      Error: Capture time (seconds) must be 0..=120
+Assault            mode.objective_respawn            Error: Respawn on detonation must be 0..=3
+Assault            mode.sudden_death                 Error: Sudden death (seconds; -1 = unlimited) must be -1..=300
+Assault            mode.reset_on_disarm              Error: Reset bomb on disarm must be 0..=1
+Assault            mode.bomb_type                    Error: Bomb type must be 0..=2
+Assault            mode.bomb_waypoint                Error: Enemy bomb waypoint must be 0..=3
+Assault            mode.arming                       Error: Bomb arming (seconds) must be 0..=30
+Assault            mode.disarming                    Error: Bomb disarming (seconds) must be 0..=30
+Assault            mode.fuse                         Error: Bomb fuse (seconds) must be 0..=30
+Infection          mode.arrival                      Error: Safe haven arrival points must be -10..=10
+Infection          mode.kill                         Error: Infected kill points must be -10..=10
+Infection          mode.respawn_on_haven_move        Error: Respawn on safe haven movement must be 0..=1
+Infection          mode.safe_havens                  Error: Safe havens must be 0..=2
+Infection          mode.next_infected                Error: Next infected must be 0..=3
+Infection          mode.initial_count                Error: Initial infected count must be 0..=16
+Infection          mode.haven_seconds                Error: Safe haven movement (seconds) must be 0..=120
+Infection          mode.infection                    Error: Infection points must be -10..=10
+Infection          mode.last_survivor                Error: Last survivor bonus must be -10..=10
+Infection          mode.suicide                      Error: Suicide points must be -10..=10
+Infection          mode.betrayal                     Error: Betrayal points must be -10..=10
+### top-level extras
+world+author+hosting: Valid custom mode: Growth (script version 1)   (carried over from the earlier probe)
+minutes 999: Error: Time limit (minutes; 0 = unlimited) must be 0..=60   (carried over from the earlier probe)
+unknown top-level key: Error: Invalid custom game: unknown field `bogus_key`, expected one of `version`, `name`, `base_map`, `hosting`, `mode`, `rules`, `script`, `options`, `world`, `map`, `packed_map`, `packed_game`, `author`, `campaign`, `odst`
+score_to_win 501: Error: Score limit must be -1..500 and scoring values -10..10   (carried over from the earlier probe)
+
+### keys named in the program that the old probe didn't try (Slayer)
+(none accepted)
+
+## playlist show: numbers -> labels for every enum option
+
+games: 453
+
+Assault mode.bomb_type [Bomb type] 0..2: 0=Multi bomb | 1=One bomb | 2=Neutral bomb
+
+Assault mode.bomb_waypoint [Enemy bomb waypoint] 0..3: 0=Never | 1=When not carried by enemy | 2=When armed | 3=Always
+
+Assault mode.objective_respawn [Respawn on detonation] 0..3: 0=Normal | 1=On friendly detonation | 2=On enemy detonation | 3=On any detonation
+
+Assault mode.reset_on_disarm [Reset bomb on disarm] 0..1: 0=Off | 1=On
+
+CaptureTheFlag mode.flag_at_home [Flag at home to score] 0..1: 0=Off | 1=On
+
+CaptureTheFlag mode.flag_type [Flag type] 0..2: 0=Multi flag | 1=One flag | 2=Neutral flag
+
+CaptureTheFlag mode.flag_waypoint [Home flag waypoint] 0..3: 0=Never | 1=When not carried by enemy | 2=Away from home | 3=Always
+
+CaptureTheFlag mode.objective_respawn [Respawn on capture] 0..3: 0=Normal | 1=On friendly capture | 2=On enemy capture | 3=On any capture
+
+Infection mode.initial_count [Initial infected count] 0..16: 0=25% | 1=50% | 2=1 player | 3=2 players | 4=3 players | 5=4 players | 6=5 players | 7=6 players | 8=7 players | 9=8 players | 10=9 players | 11=10 players | 12=11 players | 13=12 players | 14=13 players | 15=14 players | 16=15 players
+
+Infection mode.next_infected [Next infected] 0..3: 0=Winner | 1=Loser | 2=Unchanged | 3=Random
+
+Infection mode.respawn_on_haven_move [Respawn on safe haven movement] 0..1: 0=Off | 1=On
+
+Infection mode.safe_havens [Safe havens] 0..2: 0=Off | 1=Sequence | 2=Random
+
+Juggernaut mode.allied_against_juggernaut [Allied against Juggernaut] 0..1: 0=Off | 1=On
+
+Juggernaut mode.destination_movement [Destination movement] 0..10: 0=Off | 1=10 seconds | 2=15 seconds | 3=30 seconds | 4=1 minute | 5=2 minutes | 6=3 minutes | 7=4 minutes | 8=5 minutes | 9=On arrival | 10=On switch
+
+Juggernaut mode.destination_order [Destination order] 0..1: 0=Random | 1=Sequence
+
+Juggernaut mode.destinations [Destination zones] 0..1: 0=Off | 1=On
+
+Juggernaut mode.initial_juggernaut [Initial Juggernaut] 0..2: 0=Random | 1=First kill | 2=First death
+
+Juggernaut mode.next_juggernaut [Next Juggernaut] 0..3: 0=Killer of Juggernaut | 1=Killed by Juggernaut | 2=Unchanged | 3=Random
+
+Juggernaut mode.respawn_on_lone_juggernaut [Respawn when Juggernaut is alone] 0..1: 0=Off | 1=On
+
+KingOfTheHill mode.hill_movement [Hill movement] 0..8: 0=Off | 1=10 seconds | 2=15 seconds | 3=30 seconds | 4=1 minute | 5=2 minutes | 6=3 minutes | 7=4 minutes | 8=5 minutes
+
+KingOfTheHill mode.hill_order [Hill order] 0..1: 0=Random | 1=Sequence
+
+KingOfTheHill mode.opaque_hill [Opaque hill] 0..1: 0=Off | 1=On
+
+KingOfTheHill mode.team_scoring [Team scoring] 0..3: 0=Sum of team | 1=Minimum score | 2=Maximum score | 3=Team control
+
+Oddball mode.auto_pickup [Automatic ball pickup] 0..1: 0=Off | 1=On
+
+Oddball mode.ball_count [Ball count] 1..3: 1=1 | 2=2 | 3=3
+
+Oddball mode.ball_effect [Ball carrier effect] 0..1: 0=Off | 1=On
+
+Oddball mode.team_scoring [Team scoring] 0..2: 0=Sum of team | 1=Minimum score | 2=Maximum score
+
+Slayer leader.speed [Movement speed] 0..10: 0=Unchanged | 1=25% | 2=50% | 3=75% | 4=90% | 5=100% | 6=110% | 7=125% | 8=150% | 9=200% | 10=300%
+
+Slayer map.grenades [Grenades on map] 0..1: 0=None | 1=Map default
+
+Slayer map.indestructible_vehicles [Indestructible vehicles] 0..1: 0=Off | 1=On
+
+Slayer map.vehicles [Vehicle set] 0..9: 0=Default | 1=None | 2=Mongooses | 3=Light ground | 4=Tanks | 5=Aircraft | 6=No light ground | 7=No tanks | 8=No aircraft | 9=All
+
+Slayer map.weapons [Weapon set] 0..13: 0=Default | 1=Assault rifles | 2=Dual wield | 3=Hammers | 4=Lasers | 5=Rockets | 6=Shotguns | 7=Sniper rifles | 8=Swords | 9=No power weapons | 10=No snipers | 11=No weapons | 12=Random | 13=ODST weapons
+
+Slayer mode.team_scoring [Team scoring] 0..2: 0=Sum of team | 1=Minimum score | 2=Maximum score
+
+Slayer player.ammo [Ammunition] 0..3: 0=Unchanged | 1=Normal | 2=Infinite | 3=Bottomless clip
+
+Slayer player.aura [Aura] 0..4: 0=Unchanged | 1=Off | 2=Team color | 3=Black | 4=White
+
+Slayer player.camera [Camera] 0..2: 0=Unchanged | 1=Third person | 2=First person
+
+Slayer player.camouflage [Camouflage] 0..4: 0=Unchanged | 1=Off | 2=Poor | 3=Good | 4=Invisible
+
+Slayer player.character [Character] 0..17: 0=Players | 1=Random | 2=Character 1 | 3=Character 2 | 4=Character 3 | 5=Character 4 | 6=Character 5 | 7=Character 6 | 8=Character 7 | 9=Character 8 | 10=Character 9 | 11=Character 10 | 12=Character 11 | 13=Character 12 | 14=Character 13 | 15=Character 14 | 16=Character 15 | 17=Character 16
+
+Slayer player.character_set [Character set] 0..18: 0=Unchanged | 1=Halo 3 | 2=Random | 3=Customization mod 1 | 4=Customization mod 2 | 5=Customization mod 3 | 6=Customization mod 4 | 7=Customization mod 5 | 8=Customization mod 6 | 9=Customization mod 7 | 10=Customization mod 8 | 11=Customization mod 9 | 12=Customization mod 10 | 13=Customization mod 11 | 14=Customization mod 12 | 15=Customization mod 13 | 16=Customization mod 14 | 17=Customization mod 15 | 18=Customization mod 16
+
+Slayer player.damage [Damage dealt] 0..12: 0=Unchanged | 1=0% | 2=25% | 3=50% | 4=75% | 5=90% | 6=100% | 7=110% | 8=125% | 9=150% | 10=200% | 11=300% | 12=Instant kill
+
+Slayer player.forced_color [Forced color] 0..12: 0=Unchanged | 1=Off | 2=Red | 3=Blue | 4=Green | 5=Orange | 6=Purple | 7=Gold | 8=Brown | 9=Pink | 10=White | 11=Black | 12=Zombie
+
+Slayer player.gravity [Player gravity] 0..5: 0=Unchanged | 1=50% | 2=75% | 3=100% | 4=150% | 5=200%
+
+Slayer player.grenade_regeneration [Grenade regeneration] 0..3: 0=Unchanged | 1=On | 2=Off | 3=On, with firebombs
+
+Slayer player.grenades [Starting grenades] 0..2: 0=Unchanged | 1=Map default | 2=None
+
+Slayer player.headshots [Headshot immunity] 0..2: 0=Unchanged | 1=Immune | 2=Vulnerable
+
+Slayer player.pickup [Weapon pickup] 0..2: 0=Unchanged | 1=Allowed | 2=Disabled
+
+Slayer player.primary_weapon [Starting primary weapon] -3..29: -3=Random | -2=Unchanged | -1=Map default | 0=Battle rifle | 1=Assault rifle | 2=Plasma pistol | 3=Spiker | 4=SMG | 5=Carbine | 6=Energy sword | 7=Magnum | 8=Needler | 9=Plasma rifle | 10=Rocket launcher | 11=Shotgun | 12=Sniper rifle | 13=Brute shot | 14=Unarmed | 15=Beam rifle | 16=Spartan laser | 17=No weapon | 18=Gravity hammer | 19=Mauler | 20=Flamethrower | 21=Missile pod | 22=Sentinel beam | 23=Fuel rod gun | 24=Silenced SMG | 25=Automag | 26=Brute plasma rifle | 27=Machine gun turret | 28=Plasma turret | 29=Golf club
+
+Slayer player.radar [Motion tracker] 0..4: 0=Unchanged | 1=Off | 2=Allies only | 3=Normal | 4=Enhanced
+
+Slayer player.radar_range [Motion tracker range] 0..7: 0=Unchanged | 1=10 m | 2=15 m | 3=25 m | 4=50 m | 5=75 m | 6=100 m | 7=150 m
+
+Slayer player.recharge [Shield recharge] 0..9: 0=Unchanged | 1=-25% | 2=-10% | 3=-5% | 4=Disabled | 5=50% | 6=90% | 7=100% | 8=110% | 9=200%
+
+Slayer player.resistance [Damage resistance] 0..12: 0=Unchanged | 1=10% | 2=50% | 3=90% | 4=100% | 5=110% | 6=150% | 7=200% | 8=300% | 9=500% | 10=1000% | 11=2000% | 12=Invulnerable
+
+Slayer player.secondary_weapon [Starting secondary weapon] -3..29: -3=Random | -2=Unchanged | -1=Map default | 0=Battle rifle | 1=Assault rifle | 2=Plasma pistol | 3=Spiker | 4=SMG | 5=Carbine | 6=Energy sword | 7=Magnum | 8=Needler | 9=Plasma rifle | 10=Rocket launcher | 11=Shotgun | 12=Sniper rifle | 13=Brute shot | 14=Unarmed | 15=Beam rifle | 16=Spartan laser | 17=No weapon | 18=Gravity hammer | 19=Mauler | 20=Flamethrower | 21=Missile pod | 22=Sentinel beam | 23=Fuel rod gun | 24=Silenced SMG | 25=Automag | 26=Brute plasma rifle | 27=Machine gun turret | 28=Plasma turret | 29=Golf club
+
+Slayer player.shields [Shields] 0..5: 0=Unchanged | 1=None | 2=Normal | 3=2x | 4=3x | 5=4x
+
+Slayer player.vampirism [Vampirism] 0..5: 0=Unchanged | 1=Off | 2=10% | 3=25% | 4=50% | 5=100%
+
+Slayer player.vehicles [Vehicle use] 0..3: 0=Unchanged | 1=None | 2=Passenger only | 3=Full use
+
+Slayer player.waypoint [Waypoint] 0..3: 0=Unchanged | 1=Off | 2=Allies | 3=Everyone
+
+Slayer respawn.on_kills [Respawn on kills] 0..1: 0=Off | 1=On
+
+Slayer respawn.synchronize [Synchronize with team] 0..1: 0=Off | 1=On
+
+Slayer rounds.betrayal_booting [Betrayal booting] 0..1: 0=Off | 1=On
+
+Slayer rounds.friendly_fire [Friendly fire] 0..1: 0=Off | 1=On
+
+Slayer rounds.reset_map [Reset map each round] 0..1: 0=Off | 1=On
+
+Slayer rounds.reset_players [Reset players each round] 0..1: 0=Off | 1=On
+
+Slayer rounds.team_changing [Team changing] 0..2: 0=Disabled | 1=Enabled | 2=Balancing only
+
+Slayer rounds.teams [Teams enabled] 0..1: 0=Off | 1=On
+
+Slayer teams.red_character [Red team's character] 0..17: 0=Players | 1=Random | 2=Character 1 | 3=Character 2 | 4=Character 3 | 5=Character 4 | 6=Character 5 | 7=Character 6 | 8=Character 7 | 9=Character 8 | 10=Character 9 | 11=Character 10 | 12=Character 11 | 13=Character 12 | 14=Character 13 | 15=Character 14 | 16=Character 15 | 17=Character 16
+
+Slayer teams.red_character_set [Red team's character set] 0..18: 0=Unchanged | 1=Halo 3 | 2=Random | 3=Customization mod 1 | 4=Customization mod 2 | 5=Customization mod 3 | 6=Customization mod 4 | 7=Customization mod 5 | 8=Customization mod 6 | 9=Customization mod 7 | 10=Customization mod 8 | 11=Customization mod 9 | 12=Customization mod 10 | 13=Customization mod 11 | 14=Customization mod 12 | 15=Customization mod 13 | 16=Customization mod 14 | 17=Customization mod 15 | 18=Customization mod 16
+
+Territories mode.lock_on_capture [Lock territories on capture] 0..1: 0=Off | 1=On
+
+Territories mode.objective_respawn [Respawn on capture] 0..3: 0=Normal | 1=On friendly capture | 2=On enemy capture | 3=On any capture
+
+Territories mode.one_sided [One-sided territories] 0..1: 0=Off | 1=On
+
+Vip mode.destination_movement [Destination movement] 0..10: 0=Off | 1=10 seconds | 2=15 seconds | 3=30 seconds | 4=1 minute | 5=2 minutes | 6=3 minutes | 7=4 minutes | 8=5 minutes | 9=On arrival | 10=On switch
+
+Vip mode.destination_order [Destination order] 0..1: 0=Random | 1=Sequence
+
+Vip mode.destinations [Destination zones] 0..1: 0=Off | 1=On
+
+Vip mode.end_on_vip_death [End round on VIP death] 0..1: 0=Off | 1=On
+
+Vip mode.single_vip [Single VIP] 0..1: 0=Off | 1=On
+
+Vip mode.vip_selection [VIP selection] 0..3: 0=Random | 1=Next respawn | 2=Next kill | 3=Unchanged

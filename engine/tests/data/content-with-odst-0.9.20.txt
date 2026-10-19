@@ -1,0 +1,90 @@
+Maps: map = "…" (and base_map), or a playlist game's "map"
+  "Guardian"
+Map variants: map = "…"; each plays on its own map
+  From Halo 3:
+  "Boundless"        map variant · a map that is not installed
+  "Epilogue"         map variant · a map that is not installed
+  "MLG Amplified 8"  map variant · a map that is not installed
+  "MLG CStruct TS8"  map variant · a map that is not installed
+  "MLG Construct 8"  map variant · a map that is not installed
+  "MLG Guardian 8"   map variant · Guardian
+  "MLG Heretic 8"    map variant · a map that is not installed
+  "MLG Heretic FFA"  map variant · a map that is not installed
+  "MLG Narrows 8"    map variant · a map that is not installed
+  "MLG Onslaught 8"  map variant · a map that is not installed
+  "MLG Pit 8"        map variant · a map that is not installed
+  "Pit Stop"         map variant · a map that is not installed
+  "SAND TARP"        map variant · a map that is not installed
+Game types: game = "…", or a playlist game's "game"
+  "Slayer"
+  "Capture the Flag"
+  "Oddball"
+  "King of the Hill"
+  "Assault"
+  "Infection"
+  "Territories"
+  "Juggernaut"
+  "VIP"
+  "Escalation Slayer"
+Game variants: game = "…"
+  From your content folder:
+  "Flood Infection"     game variant · Slayer
+  "Growth"              game variant · Slayer
+  "Gun Game"            game variant · Slayer
+  "One in the Chamber"  game variant · Slayer
+  "UNSC vs Covenant"    game variant · Slayer
+  "Zone Control"        game variant · Slayer
+  49 from Halo 3 (search to list them: dedicated content <words>)
+Halo 3: ODST campaign missions:
+  odst = { mission = 4100 }  Prepare to Drop
+  odst = { mission = 5000 }  Mombasa Streets (insertion 0 to 6)
+  odst = { mission = 6100 }  Tayari Plaza (insertion 0 to 3)
+  odst = { mission = 6110 }  Uplift Reserve (insertion 0 to 3)
+  odst = { mission = 6120 }  Kizingo Boulevard (insertion 0 to 4)
+  odst = { mission = 6130 }  ONI Alpha Site (insertion 0 to 3)
+  odst = { mission = 6140 }  NMPD HQ (insertion 0 to 4)
+  odst = { mission = 6150 }  Kikowani Station (insertion 0 to 5)
+  odst = { mission = 5200 }  Data Hive (insertion 0 to 5)
+  odst = { mission = 5300 }  Coastal Highway (insertion 0 to 6)
+  odst = { mission = 4200 }  Epilogue
+Halo 3: ODST Firefight maps:
+  odst = { mode = "firefight", mission = 6100, insertion = 4 }  Crater
+  odst = { mode = "firefight", mission = 5000, insertion = 7 }  Crater (Night)
+  odst = { mode = "firefight", mission = 6110, insertion = 4 }  Lost Platoon
+  odst = { mode = "firefight", mission = 6120, insertion = 5 }  Rally Point
+  odst = { mode = "firefight", mission = 5000, insertion = 8 }  Rally (Night)
+  odst = { mode = "firefight", mission = 6130, insertion = 4 }  Security Zone
+  odst = { mode = "firefight", mission = 6130, insertion = 5 }  Alpha Site
+  odst = { mode = "firefight", mission = 6140, insertion = 5 }  Windward
+  odst = { mode = "firefight", mission = 5200, insertion = 6 }  Chasm Ten
+  odst = { mode = "firefight", mission = 5300, insertion = 7 }  Last Exit
+Halo 3: ODST Firefight game types: inside odst = { … }
+  variant = "odst_ff_classic"                Ff Classic
+  variant = "odst_ff_drone_wars_1round"      Bug Hunt
+  variant = "odst_ff_fiestafight_1set"       Fiestafight
+  variant = "odst_ff_floodfight"             Floodfight
+  variant = "odst_ff_gruntpocalypse_1round"  Gruntpocalypse
+  variant = "odst_ff_robocalypse_1round"     Robocalypse
+  variant = "odst_ff_rocketfight_1set"       Rocketfight
+  variant = "odst_ff_sniperfight_1set"       Sniperfight
+  variant = "odst_ff_standard_1set"          Firefight
+  variant = "odst_ff_bvt_1wave"              Firefight Bvt
+  variant = "odst_ff_evolved_1set"           Firefight Elite
+  variant = "odst_ff_fiestaattack_1round"    Fiesta Attack
+  variant = "odst_ff_fistfight_1set"         Fistfight
+  variant = "odst_ff_flierflight_1set"       Flierflight
+  variant = "odst_ff_floodattack_1round"     Spore Attack
+  variant = "odst_ff_floodfight_1set"        Floodfight
+  variant = "odst_ff_frgattack_1round"       Frg Attack
+  variant = "odst_ff_frgfight_1set"          Frg Fight
+  variant = "odst_ff_limited_1set"           Ff Limited
+  variant = "odst_ff_nadeattack_1round"      Nade Attack
+  variant = "odst_ff_nadefight_1set"         Nadefight
+  variant = "odst_ff_rocketattack_1round"    Rocket Attack
+  variant = "odst_ff_scoreattack_1round"     Score Attack
+  variant = "odst_ff_sniperattack_1round"    Sniper Attack
+  variant = "odst_ff_splocketattack_1round"  Splocket Attack
+  variant = "odst_ff_splocketfight_1set"     Splocketfight
+  variant = "odst_ff_standard_1round"        Firefight
+
+Names ignore case. Put map variants in C:eclaimer\content\Maps and game variants in C:eclaimer\content\Game Modes; Workshop mods appear once installed (dedicated mods).

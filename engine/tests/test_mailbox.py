@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
 
-from reclaimer_supervisor import mailbox
-from reclaimer_supervisor.tomledit import set_server_setting
+from huragok import mailbox
+from huragok.tomledit import set_server_setting
 
 
 def test_a_request_is_read_once_and_answered(tmp_path: Path) -> None:
@@ -31,6 +32,27 @@ def test_send_waits_and_gives_up(tmp_path: Path) -> None:
     assert mailbox.read(records) == []  # the unanswered request was withdrawn
 
 
+def test_the_command_line_says_an_unanswered_request_may_still_be_under_way(tmp_path: Path) -> None:
+    """`update` waited 60 s for an answer that comes after the download and pip; no answer in time isn't a no."""
+    from conftest import write_root
+
+    from huragok import cli
+    from huragok.config import load
+
+    settings = load(write_root(tmp_path / "reclaimer", []))
+    reply = cli._ask(settings, "update", wait=0.3)
+    assert not reply.ok and "No answer from Huragok after" in reply.message
+    assert "It may still be doing it" in reply.message
+    assert mailbox.read(settings.records) == []
+    mailbox_reply = mailbox.Reply(False, "refused")
+    original = mailbox.send
+    try:
+        mailbox.send = lambda *args, **kwargs: mailbox_reply  # type: ignore[assignment]  a real answer: as it is
+        assert cli._ask(settings, "update", wait=5) is mailbox_reply
+    finally:
+        mailbox.send = original  # type: ignore[assignment]
+
+
 def test_a_stale_request_is_refused(tmp_path: Path) -> None:
     records = tmp_path / "records"
     request_id = mailbox.post(records, "restart", "all")
@@ -48,7 +70,31 @@ def test_a_stale_request_is_refused(tmp_path: Path) -> None:
     assert not old.exists()
 
 
-SETTINGS = """# Reclaimer Supervisor: how it runs.
+def test_a_request_of_the_wrong_shape_is_answered_and_skipped(tmp_path: Path) -> None:
+    """Anything can leave a file in records/requests/. Valid JSON of the wrong shape used to raise out of read(),
+    and out of the fleet's tick with it."""
+    records = tmp_path / "records"
+    folder = mailbox.folder(records)
+    good = mailbox.post(records, "say", "Alpha", text="hi")
+    wrong = {"t1": {"verb": "status", "time": "now"}, "t2": {"verb": "stop", "options": ["now"]},
+             "t3": {"verb": 3}, "t4": {"verb": "stop", "server": None}, "t5": {"verb": "stop", "id": "../../evil"},
+             "t6": [1, 2], "t7": "stop"}
+    for name, data in wrong.items():
+        (folder / f"{name}.json").write_text(json.dumps(data), encoding="utf-8")
+    (folder / "t8.json").write_text("{not json", encoding="utf-8")
+    os.utime(folder / "t8.json", (time.time() - 60, time.time() - 60))  # not one being written right now
+    (folder / "t9.json").write_text("{half writ", encoding="utf-8")  # just now: perhaps still being written
+    requests = mailbox.read(records)
+    assert [r.id for r in requests] == [good]
+    answers = {name: mailbox.take_reply(records, name) for name in (*wrong, "t8")}
+    assert all(a is not None and not a.ok and a.message.startswith("not understood") for a in answers.values())
+    assert "time must be a number" in answers["t1"].message and "options must be" in answers["t2"].message
+    assert "id isn't a plain name" in answers["t5"].message and not (tmp_path / "evil.reply.json").exists()
+    assert (folder / "t9.json").exists()  # left for the next look
+    assert sorted(p.name for p in folder.iterdir()) == ["t9.json"]
+
+
+SETTINGS = """# Huragok: how it runs.
 servers_folder = "SERVERS"
 
 [restarts]

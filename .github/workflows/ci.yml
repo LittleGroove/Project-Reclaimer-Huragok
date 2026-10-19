@@ -8,11 +8,12 @@ jobs:
   test:
     name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20  # a test that hangs fails the run instead of holding it for hours
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,24 +22,59 @@ jobs:
       - run: python -m pip install -e "engine[test]"
       - run: python -m pytest engine
 
+  release-zip:
+    # The release zip is `git archive` (the tests and the repository's own files are export-ignore'd). A plain,
+    # not editable, install of it must import every module, pass the suite (run from the checkout, against the
+    # installed copy) and write every template: a file left out of the zip or of package-data fails here.
+    name: the release zip works on its own
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          git archive --format=zip -o /tmp/huragok.zip HEAD
+          mkdir /tmp/release && cd /tmp/release && unzip -q /tmp/huragok.zip
+          test ! -e engine/tests   # export-ignore'd: hosts don't get the tests
+          python -m venv /tmp/plain && /tmp/plain/bin/pip install -q /tmp/release/engine pytest
+          /tmp/plain/bin/python -c "import importlib, pkgutil, huragok; [importlib.import_module(m.name) for m in pkgutil.walk_packages(huragok.__path__, 'huragok.') if not m.name.endswith('__main__')]; print('imports', huragok.__file__)"
+      - run: /tmp/plain/bin/python -m pytest engine/tests -q  # huragok: the installed zip's
+      - run: |
+          mkdir -p /tmp/root/SERVERS/Test && cd /tmp/root
+          printf '[rcon]\npassword = "xxxxxxxx"\n[[server]]\nname = "Test"\nport = 49176\n' > SERVERS/Test/dedicated.toml
+          /tmp/plain/bin/huragok -c /tmp/root/settings.toml init --force --backend attach
+          for file in settings.toml commands.toml automod.txt names.txt; do test -s "$file" || { echo "missing $file"; exit 1; }; done
+          ls PACKAGES/*/package.toml
+          /tmp/plain/bin/huragok -c /tmp/root/settings.toml check
+
   start-script:
     name: start.sh sets itself up
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: |
-          mkdir -p /tmp/reclaimer && cp -r . /tmp/reclaimer/ && cd /tmp/reclaimer
+          mkdir -p /tmp/huragok && cp -r . /tmp/huragok/ && cd /tmp/huragok
           mkdir -p "SERVERS/Test"
-          printf '[rcon]\npassword = "x"\n[[server]]\nname = "Test"\nport = 49176\n' > "SERVERS/Test/dedicated.toml"
+          printf '[rcon]\npassword = "xxxxxxxx"\n[[server]]\nname = "Test"\nport = 49176\n' > "SERVERS/Test/dedicated.toml"
           sh start.sh || test $? -eq 3     # first start: writes the files, exit code 3
           sh start.sh init --force --backend attach   # no wine on this runner: watch-only
           sh start.sh check
-          sh start.sh status
+          sh start.sh status || true       # nothing is running: status says so (and exits non-zero)
 
   docker:
     name: docker image
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t reclaimer-supervisor engine
-      - run: docker run --rm reclaimer-supervisor --version
+      - run: docker build -t huragok engine
+      - run: docker run --rm huragok --version
+      - run: |
+          mkdir -p /tmp/volume/SERVERS/Test
+          printf '[rcon]\npassword = "xxxxxxxx"\n[[server]]\nname = "Test"\nport = 49176\n' > /tmp/volume/SERVERS/Test/dedicated.toml
+          docker run --rm --user "$(id -u)" -v /tmp/volume:/huragok huragok init --force --backend attach
+          test -s /tmp/volume/settings.toml
+          docker run --rm --user "$(id -u)" -v /tmp/volume:/huragok huragok check

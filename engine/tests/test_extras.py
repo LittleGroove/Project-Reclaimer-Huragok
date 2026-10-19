@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import struct
-from pathlib import Path
+import subprocess
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -13,13 +15,13 @@ from conftest import free_port, free_ports, staff, wait_for, write_root
 from test_manage import StubClient
 from test_setup import TEMPLATE_COMMAND, make_server_folder, setup_root
 
-from reclaimer_supervisor import cli
-from reclaimer_supervisor.config import load
-from reclaimer_supervisor.contentimport import content_root_of, find_mcc, import_content, importable
-from reclaimer_supervisor.dedicated import Dedicated, parse_content
-from reclaimer_supervisor.events import EventBus
-from reclaimer_supervisor.relay import SOURCE_AUTH, SOURCE_AUTH_RESPONSE, SOURCE_EXEC, SOURCE_RESPONSE, Relay
-from reclaimer_supervisor.state import ServerState, StateTracker, describe_game
+from huragok import cli, desktop
+from huragok.config import load
+from huragok.contentimport import content_root_of, find_mcc, import_content, importable
+from huragok.dedicated import Dedicated, parse_content
+from huragok.events import EventBus
+from huragok.relay import SOURCE_AUTH, SOURCE_AUTH_RESPONSE, SOURCE_EXEC, SOURCE_RESPONSE, Relay
+from huragok.state import ServerState, StateTracker, describe_game
 
 FAKE = Path(__file__).resolve().parent / "fake_dedicated.py"
 
@@ -38,10 +40,16 @@ def fake_mcc(folder: Path) -> Path:
 
 # Importing variants -----------------------------------------------------------------------------
 
-def test_importing_mccs_variants(tmp_path: Path) -> None:
+def test_importing_mccs_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from huragok import contentimport
+
     mcc = fake_mcc(tmp_path / "MCC")
     assert find_mcc(str(mcc)) == mcc
-    assert find_mcc(str(tmp_path / "nowhere")) in (None, find_mcc())  # the hint is wrong: Steam's folders, or none
+    assert find_mcc(str(tmp_path / "nowhere")) is None  # the hint is wrong, and Steam has no MCC (conftest)
+    library = tmp_path / "Library"
+    fake_mcc(library / "steamapps" / "common" / contentimport.MCC_FOLDER)
+    monkeypatch.setattr(contentimport, "_steam_roots", lambda: [library])
+    assert find_mcc(str(tmp_path / "nowhere")) == library / "steamapps" / "common" / contentimport.MCC_FOLDER  # Steam's
     items = importable(mcc)
     assert sorted(i.name for i in items if i.target == "Maps") == ["h3_hardcoreGuardian", "infection_zanzibar",
                                                                      "mlg_guardian_8", "team_hardcore_pit"]
@@ -156,3 +164,31 @@ def test_the_next_game_from_status() -> None:
     assert state.next_game == "Valhalla Slayer" and state.playlist_vote is None
     StateTracker._apply_status(state, {"phase": "no_game", "next": None, "playlist_vote": {"options": []}})
     assert state.next_game is None and state.playlist_vote == {"options": []}
+
+
+# Starting at login ---------------------------------------------------------------------------------------------
+
+def test_the_startup_item_works_whatever_the_folder_is_called(tmp_path: Path, run) -> None:
+    """cmd.exe reads a batch file in the console's code page, not UTF-8: Huragok in C:/Users/José/... didn't start
+    at login ("The system cannot find the path specified"), and a % in the path was read as a variable. The unit on
+    Linux broke on a space in the path."""
+    home = tmp_path / "José 100% Huragok"
+    text = desktop.windows_startup_script(home).decode("utf-8")
+    assert text.startswith("@echo off\r\nchcp 65001 >nul\r\n")
+    assert f'/D "{tmp_path}{os.sep}José 100%% Huragok"' in text
+    unit = desktop.linux_startup_unit(PurePosixPath("/home/jo sé/50% off"))  # type: ignore[arg-type]
+    assert 'ExecStart="/home/jo sé/50%% off/start.sh" start --no-menu\n' in unit
+    assert "WorkingDirectory=/home/jo sé/50%% off\n" in unit
+    assert desktop.systemd_quote('a "b" $HOME \\ c') == '"a \\"b\\" $$HOME \\\\ c"'
+    if os.name == "nt":  # what cmd.exe makes of a script written that way
+        home.mkdir()
+        (home / "start.cmd").write_text("@echo off\r\n", encoding="utf-8")
+        target = desktop.batch_text(str(home / "start.cmd"))
+        probe = tmp_path / "probe.cmd"
+        probe.write_bytes(("@echo off\r\nchcp 65001 >nul\r\n"
+                           f'if exist "{target}" (echo FOUND) else (echo MISSING)\r\n').encode("utf-8"))
+        result = subprocess.run(["cmd", "/c", str(probe)], capture_output=True, text=True, timeout=30)
+        assert "FOUND" in result.stdout, result.stdout + result.stderr
+    # From the window: off the event loop.
+    assert asyncio.iscoroutinefunction(desktop.enable_startup_async)
+    assert asyncio.iscoroutinefunction(desktop.disable_startup_async)

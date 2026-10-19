@@ -6,12 +6,12 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "reclaimer-supervisor"
-dynamic = ["version"]  # from reclaimer_supervisor/__init__.py
-description = "Starts Project Reclaimer dedicated servers and keeps them up, with automod and in-game commands for the roles you pick."
+name = "huragok"
+dynamic = ["version"]  # from huragok/__init__.py
+description = "Huragok, the Engineer for Project Reclaimer dedicated servers: the Superintendent keeps them up, Vergil watches over the players with automod and in-game commands for the roles you pick."
 requires-python = ">=3.11"
 authors = [{ name = "LittleGroove" }]
-keywords = ["halo", "halo-3", "project-reclaimer", "dedicated-server", "rcon", "moderation"]
+keywords = ["halo", "halo-3", "halo-3-odst", "project-reclaimer", "dedicated-server", "rcon", "moderation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -31,21 +31,34 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["pytest>=9"]  # 9: faulthandler_exit_on_timeout
 
 [project.scripts]
-reclaimer-supervisor = "reclaimer_supervisor.cli:main"
+huragok = "huragok.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["reclaimer_supervisor*"]
+include = ["huragok*"]
 
 [tool.setuptools.dynamic]
-version = { attr = "reclaimer_supervisor.__version__" }
+version = { attr = "huragok.__version__" }
 
 [tool.setuptools.package-data]
-reclaimer_supervisor = ["templates/*.toml", "templates/*.txt", "templates/packages/*/*.toml",
+huragok = ["templates/*.toml", "templates/*.txt", "templates/packages/*/*.toml",
                         "templates/packages/*/playlists/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+# A test that hangs prints every thread's stack and ends the run, instead of holding it until CI gives up.
+faulthandler_timeout = 180
+faulthandler_exit_on_timeout = true
+markers = [
+    "slow: starts real processes (fake servers, start.cmd, several Pythons); skip them with -m \"not slow\"",
+    "asyncio_errors: the test makes asyncio log an error on purpose (otherwise that fails the test)",
+]
+# An exception nobody could catch (in __del__, a callback, a thread) and a coroutine never awaited fail the test.
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+    "error::RuntimeWarning",
+]

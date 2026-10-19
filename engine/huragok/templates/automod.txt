@@ -1,0 +1,43 @@
+# Vergil's word list (automod): one rule per line, in five parts. KEEP IT CLEAN!
+#
+#   words | kicks | mutes | ban | name
+#
+# words    The words, separated by commas.
+# kicks    How long each kick keeps them out, in order: 30m, 1h, 1d, 2w.
+#          The last one repeats. Blank: the server's plain kick.
+# mutes    How many strikes come before the mutes (0: muted the first time), then
+#          how long each mute lasts, in order: 0, 1d, 3d, 7d. The last one repeats;
+#          perm (last only) is muted for good. Blank: never muted.
+#          Muted players stay in the game: nobody hears their voice or reads their chat.
+# ban      How many strikes come before the ban for good (0: banned the first time).
+#          Blank: never banned.
+# name     One word players see, and moderators type in !strike. Optional, but
+#          name every line whose strikes add up: an unnamed one's are kept under
+#          its place in the list (rule2), and move if a line is added above it.
+#
+# Each strike is the next step on its line: the kicks, then the mutes, then the ban.
+# Examples, and what a player gets each time:
+#
+#   rudeword          |          | 0, 1d, 3d, 7d |   | rude
+#     1st: muted 1 day   2nd: muted 3 days   3rd and after: muted 7 days
+#
+#   worstword         |          |               | 0 | threats
+#     1st: banned for good
+#
+#   badword, otherword | 1h       | 1, 1d, 7d     | 3 | slurs
+#     1st: out 1 hour    2nd: muted 1 day    3rd: muted 7 days    4th: banned for good
+#
+#   kickword
+#     every time: kicked, never muted or banned
+#
+# Mutes last through restarts and follow the player to every server: Vergil mutes
+# them again as they join, until the time is up.
+# Names: a player whose name has a listed word in it is kicked as they join, every
+# time, until they change it; no strike, no ban. Banned names are in names.txt.
+#
+# Disguised words (b4dw0rd, b a d w o r d, badwords) are caught without listing them.
+# word* also catches longer words that start with it. -word is never caught.
+# Edits apply within a few seconds.
+#
+# Your rules go below.
+

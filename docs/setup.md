@@ -1,9 +1,21 @@
 # Setting servers up
 
-The supervisor makes and changes server folders with the server program's own
+Setting servers up is Huragok's own work, the Engineer's (its lines carry the
+`HRGK` tag). It makes and changes server folders with the server program's own
 `dedicated` commands, so everything it writes is what the Project Reclaimer
 program itself accepts. Nothing here needs a server stopped: the servers keep
 running while you make a new one, change a playlist or install a Workshop item.
+Work that takes a while (making a server, installing SteamCMD, reading a server's
+catalogue) says so on the screen and ignores keys pressed meanwhile, so a stray Esc
+or Q never answers the next question; the servers' care goes on throughout.
+
+Every change Huragok makes to a `dedicated.toml` or `settings.toml` is checked
+before the file is replaced: the change is made in memory and read back, and only
+if exactly that change differs is the file written (in one step). Otherwise the
+file is left byte for byte as it was, and the message says to edit it by hand
+(**E**). Settings written in a form the editor won't change (a dotted key such as
+`workshop.items = …`, an inline table such as `rcon = { … }`) are refused that way,
+without showing their value.
 
 ## A new server: N in the window, or `new`
 
@@ -16,42 +28,80 @@ start.cmd new "Rockets" --map Guardian --game rockets --max-players 8
 name, the port (the next free one is offered), hidden or not, a join password, the
 player cap. Then it:
 
-1. makes `SERVERS/<name>/` with `dedicated init` (as `SERVERS/.new-<name>/` until it's
-   done, so a half-made folder is never started);
+1. makes `SERVERS/<name>/` with `dedicated init` (as `SERVERS/.new-<its file name>/`,
+   such as `.new-infection-night`, until it's done, so a half-made folder is never
+   started; a build that fails part way leaves nothing behind: "couldn't make
+   Infection Night: …; nothing was left half-made");
 2. points it at the **root's shared folders** (below), or copies Halo 3's files from
    MCC when nothing can be shared or linked;
 3. copies the package's playlists and content in, writes the `[[server]]` block (name,
    port, what it plays, your choices), a made-up RCON password, and the `host_name`,
    `stats_server`, `public_address` and `upnp` of the server folder you already have;
-4. installs the package's Workshop items with `dedicated mods`;
-5. runs `dedicated check`. If it passes, the server appears on the dashboard and starts
-   (unless `--no-start`). If not, the folder stays, **autostart off**, and the problems
-   are shown: fix them, then **C** (or `dedicated -s "<name>" check`) and **S**.
+   sets `auto_update = true`, so it installs new Project Reclaimer releases itself,
+   and gives it a copy of the program of its own for that: a hard link to the
+   program that made it (no space used), copied only when the drive can't link
+   (`[setup] auto_update = false`, or `new --no-auto-update`, leaves the updates to
+   Huragok's U instead; see [managing.md](managing.md#updates-u));
+4. writes the SteamCMD account **I** set up into its `[workshop]` table and installs
+   the package's Workshop items with `dedicated mods`;
+5. runs `dedicated check`. If it passes, it says `Made <folder>. Feet first into hell.`,
+   and the server appears on the dashboard and starts (unless `--no-start`). If not,
+   the folder stays, **autostart off** (written before the folder appears, so it's
+   never started meanwhile), and the problems are shown: fix them, then **C** (or
+   `start.cmd dedicated -s "<name>" check`) and **S**.
+
+What a new server can be:
+
+- **its name**: 1 to 48 characters, which become its folder's name too, so none of
+  `< > : " / \ | ? *`, no invisible or control characters, not ending in a space or a
+  dot, not starting with `.` or `_` (folders Huragok ignores), and not a name Windows
+  keeps for a device (`CON`, `NUL`, `COM1`…). Two names that only differ in
+  punctuation or capitals ("LG Slayer", "LG-Slayer") would share their records and
+  logs, so the second is refused;
+- **its port**: 1024 to 65535, not one another server here uses (disabled servers
+  and folders Huragok left out count too, and so does a discovery master's), and
+  nothing on this machine may be listening on it. N asks again for one out of range;
+- **its players**: 1 to 127, at most 16 for campaign co-op and Halo 3: ODST.
+
+A name already used by any server here, disabled or not, is refused too.
 
 ### What new servers share
-By default a new server carries only its own `dedicated.toml`, `playlists/` and
-`data/`. The big parts live at the root once, for every server made this way:
+By default a new server carries its own `dedicated.toml`, `playlists/`, `data/` and
+**`content/`** (its maps, game types, mods and images). The big parts live at the root
+once, for every server made this way:
 
 | At the root | What | Made when |
 | --- | --- | --- |
 | `game/` | Halo 3's files (5.5 GB): **hard-linked** from the first server folder that has them (no space used on the same drive), or copied from MCC with `dedicated init --from` | the first new server |
-| `content/` | one content folder: maps, game types, mods and images every server can play | the first new server |
 | `bans.json` | one ban list, so bans, console-added admins and VPN allowances reach every server at once (what the server program expects: "every server sharing the ban list") | the first new server |
+| `content/` | only when `[setup] share` names it: one content folder every server plays from | the first new server |
 
-`[setup] share` in `settings.toml` picks which (`["game", "content", "bans"]`;
-`--own` on the command line gives a server its own copies). Servers you made by hand
-keep their own folders; nothing moves. To put an existing server on the shared
-folders, set `game = "../../game"`, `content = "../../content"` and
-`bans = "../../bans.json"` in its `dedicated.toml` (relative to that file).
+`[setup] share` in `settings.toml` picks which (`["game", "bans"]` by default; add
+`"content"` to share one content folder; `--own` on the command line gives a server its
+own copies of everything). A server with its own content folder gets its Workshop mods'
+new versions after its own games, and its custom games stay its own; a server sharing
+one waits until nobody is on any server using the mod (the program swaps a shared mod
+for all of them at once). **D → its own content folder** gives a server that shares one
+a copy of its own (hard links on the same drive, so no space is used; an old unused
+`content/` in its folder is set aside, never deleted). Servers you made by hand keep
+their own folders; nothing moves.
 
 Halo 3's files come from one of: a server folder that has them (linked), your MCC
 folder (`[setup] mcc_folder`, or `--from "<folder>"`; `--from` alone means Steam's
 default folder; `--maps "Guardian,Valhalla"` copies some maps only), or
-`--link-from "<server folder>"`.
+`--link-from "<server folder>"`. A server made with `--own` and no MCC folder (no
+`--from`, no `[setup] mcc_folder`) gets its own `game/` hard-linked from the root's
+shared one, or else from the first server here that has Halo 3's files; never from
+MCC's own folder, which would link every game MCC has. A path can be typed or pasted
+in quotes, as Explorer's "Copy as path" gives it, here and everywhere Huragok asks for
+one.
 
 The program itself (`project-reclaimer.exe`) is found in any server folder, or **one
 copy at the root** serves every server (they must all be on the same version anyway).
-With none, `[setup] program` names it.
+A command for one server folder runs that folder's own copy (servers that update
+themselves move ahead of the root's); the rest (making a folder, checking a custom
+game) use `[setup] program` when it names one, or else the newest copy here, by its
+`--version`.
 
 ## Packages: a server in a box
 A package is everything that makes a server *that* server, minus Halo 3's files and
@@ -69,6 +119,7 @@ description = "Infection, Alpha Zombies and Flood Infection on the maps made for
 version = 1
 needs_maps = ["Last Resort", "Sandtrap", "Ghost Town"]   # Halo 3 maps the server must have
 needs_campaign = false                                    # the campaign missions too
+needs_odst = false                                        # Halo 3: ODST's files too
 
 [server]                       # goes into the [[server]] block
 playlist = "playlists/infection.playlist.json"
@@ -80,13 +131,32 @@ voice_proximity = false
 [workshop]
 items = []                     # Workshop item IDs, installed when the server is made
 ```
-Host-specific things stay out (name, port, passwords, admins, `host_name`): the
-supervisor asks for them. **Six starter packages** are written to `PACKAGES/` on the
+In `[server]`, a `map` or `game` file is named inside the content folder
+(`game = "Game Modes/snipers.bin"`), and a saved custom game (`variant`) inside the
+package's own folder (`variant = "content/Game Modes/snipers.json"`), which is
+pointed at the new server's content folder as the package is applied. Applying a
+package never replaces a content file that's already there (other servers may use
+it): the notes name any whose package copy differs. A package with a mistake in its
+`package.toml` (a field of the wrong type, say) is listed as broken with the reason;
+the others list as usual.
+
+Host-specific things stay out (name, port, passwords, admins, `host_name`):
+Huragok asks for them. **Seven starter packages** are written to `PACKAGES/` on the
 first start (never replaced after that; edit them freely): *Team Slayer*, *Big Team
 Battle*, *MLG Hardcore* (Halo 3's own MLG map variants and Hardcore game variants),
 *Infection*, *Scripted Modes* (Gun Game, One in the Chamber, Growth, Zone Control,
-UNSC vs Covenant) and *Campaign Co-op* (needs the campaign files:
-`dedicated init --from "<MCC>" --maps campaign`).
+UNSC vs Covenant), *Campaign Co-op* (needs the campaign files:
+`dedicated init --from "<MCC>" --maps campaign`) and *ODST Firefight* (Project
+Reclaimer 0.9.19 and later: Firefight on Crater (Night), Heroic). A root made before
+0.4.0 has no ODST Firefight starter; `package save` makes one from an ODST server.
+
+A server that plays Halo 3: ODST (`odst = { … }` in its block, or a package with
+`needs_odst = true`) needs ODST's files beside Halo 3's, about 3.5 GB. Huragok adds
+them to its game folder (the root's shared `game/` too) as it makes the server,
+from the MCC on this PC that has ODST installed (`[setup] mcc_folder`, or Steam's
+folders), with `dedicated init --maps odst` into a scratch folder, then hard links;
+what's already there stays as it is. Without such an MCC the server is made all the
+same, with a note saying how to add them. An ODST server holds 16 players at most.
 
 ```text
 start.cmd package list                      what's in PACKAGES/
@@ -112,12 +182,44 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
    - **build one from numbered lists**: name, vote seconds, then pick maps by number
      (Halo 3's, mod maps, variants), then game types or variants by number; every
      pair becomes a game; leave out the pairs you don't want, set weights
-     (`1=3 4=2`), and it's saved and checked with `dedicated playlist show`, then
+     (`1=3 4=2`), and it's checked with `dedicated playlist show`, saved, then
      offered to the server;
+   - **build one from a mod's maps**: the same, but the maps come from the installed mod
+     maps, written the way the server names them (`workshop:<item>/<map>`), so the
+     right mod is found (a playlist takes up to 23 mod maps from 16 mods);
    - **edit one**: add games (pick maps and game types), remove by number, weights,
-     vote seconds, rename, save and check;
+     vote seconds, rename, save and check, and **change one game**:
+     - the **name** players see ("BR Starts"), its **weight**;
+     - its **rules and options**, laid out like the game's own Game Options screen:
+       the game type's rules (score to win, points, its own rules such as Flag type or
+       Hill movement), Rounds & teams, Respawn, Powerup durations, Map & equipment
+       (weapon set, vehicles…), Traits by who gets them (every player, after
+       respawning, powerups, the flag carrier, the infected…) in Shields & health,
+       Weapons & damage, Movement, Sensors and Appearance, Team characters, and World
+       (sprint). Every choice is listed numbered with its label; a number shows its
+       range; R puts back the game type's own value. Choices are written by their
+       label (`"player.primary_weapon": "Battle rifle"`), so the file stays readable;
+       the one exception is the character set, written as its number, because its
+       label differs between program versions ("Vanilla characters" before 0.9.19,
+       "Halo 3" from it) and every version takes the number. As it starts a server,
+       the Superintendent also puts any label in its playlists the way that server's
+       program calls it.
+       A game variant's own game type is known from the listing, so a `.bin` such as
+       `2V2 HARDCORE TS` gets Slayer's options;
+     - its **vote image**: a numbered list of `content/Images`, or import a PNG or
+       JPEG (4 MiB at most; 32 different ones per playlist);
+     - its **base map** (a Forge map made on a mod map), **anti-cheat off** for that
+       game, or **take out every change**.
    - **show** one as the server sees it, **use** one for this server (applies from
-     the next vote), **open** one in the editor.
+     the next vote; its `map`, `game`, `variant`, `campaign` or `odst` is taken out
+     in the same write, since the program won't start a server that has both),
+     **open** one in the editor.
+
+   Every playlist is checked by the server program as a draft (`dedicated playlist
+   show` on a copy beside it) before it's saved. When the program can't play some of
+   its games, they're named and can be dropped. A playlist a server plays is never
+   replaced by one it refuses: the choice is **Leave it unsaved** (the server keeps
+   the one it has); one no server plays can be kept as it is, to fix with **E**.
 3. **Workshop items and mods**: the SteamCMD status (is it installed, which account,
    how many servers are set up for it; **S** opens the setup), the `[workshop] items`
    of its `dedicated.toml` with **what the server last said about each** ("ready",
@@ -140,31 +242,9 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
 4. **check it**: `dedicated check` (also **C** on the dashboard, for one or every
    server: game files, settings, playlists, maps, ports; it installs missing Workshop
    items).
-5. **save it as a package**.
+5. **save it as a package**: its block, its folder's `[defaults]` (not the join
+   password or admins), its playlist and the content the playlist and its variant name.
 6. **open its folder**.
-8. **reload the listing** after changing files by hand.
-
-## SteamCMD for the Workshop: I in the window
-A server downloads Workshop items itself, but only with SteamCMD and a Steam account
-that owns MCC: an anonymous SteamCMD sign-in can't fetch MCC's items (checked). **I**
-(or `start.cmd steam`):
-
-- finds SteamCMD: `[setup] steamcmd`, `steamcmd/` at the root, `C:\steamcmd` (the
-  folder the server's own template names), your PATH, `~/steamcmd` on Linux;
-- **installs it** when missing, from Valve's installer, into `steamcmd/` at the root
-  (kept with the supervisor) or the standard folder, and runs it once so it updates
-  itself (`steam install [--standard] [--path]`);
-- **signs the account in**: it opens SteamCMD in a window of its own where Steam asks
-  for the password and the Steam Guard code **once**; after that the sign-in is cached
-  and the servers fetch items without prompts. No password is ever written anywhere
-  (`steam login <account>`);
-- **tells every server**: `[workshop] steamcmd` and `username` go into each server
-  folder's `dedicated.toml` (a server's `[workshop]` takes effect when its `dedicated`
-  restarts), and `[setup] steamcmd` / `steam_username` into `settings.toml`;
-- can put SteamCMD's folder on your PATH for other tools (`steam path`).
-
-Installing Halo 3's own files through SteamCMD isn't offered: MCC's depots come as one
-130 GB app, and `dedicated init --from` already links them from an MCC install for free.
 7. **import map and game variants from MCC** (or any folder or file). MCC ships
    every matchmaking variant 343 made for Halo 3 (`halo3/hopper_map_variants`,
    320 `.mvar`: MLG, Team Hardcore, Infection, Grifball…; `hopper_game_variants`,
@@ -174,16 +254,70 @@ Installing Halo 3's own files through SteamCMD isn't offered: MCC's depots come 
    up while running and lists them by name, and playlists can name them. Saved
    `.json` maps and game types from a download go to the folder they belong in.
    Command line: `content -s <server> --import [--from <folder>] [words]`; MCC is
-   found by itself when it's installed on this PC.
+   found by itself when it's installed on this PC (`[setup] mcc_folder`, then Steam's
+   own list of library folders, then Steam's default folder, then the PC's fixed
+   drives).
+8. **reload the listing** after changing files by hand.
+9. **custom games** (game variants): a game type with rules of its own, saved as a
+   `.json` in `content/Game Modes`, listed by its name beside the built-in game types
+   (playlists and **D → What it plays** can name it). **New**: pick the game type
+   (numbered), name it, then the same rules-and-options screens as a playlist game;
+   **copy** one (the shipped scripted modes too: their options are editable, their
+   scripts are files for **E**), **edit**, **show** what one changes, **play** it on
+   this server, **delete** (refused while a server plays it: give it something else
+   to play first). Before saving, the server program checks it (`mode-check`); the
+   file is written whole and moved into place, so a hard-linked copy in another
+   server's content folder keeps its own version.
+   `start.cmd variant [list|show|check] [name]` does the same from a terminal.
+
+**C** (check) offers what the check found Huragok can do: the firewall rules it prints
+(`New-NetFirewallRule …`) are run in an administrator PowerShell (Windows asks first),
+each under a name of its own (`Reclaimer games UDP 49176-49177`) and only when it isn't
+there, so running them again changes nothing; when the administrator prompt is
+declined or a rule fails, it says so ("Windows Firewall wasn't changed: …") rather
+than calling it done. After an MCC update, when the check says Halo 3's engine file
+doesn't match, it copies `halo3.dll` from your MCC folder, and `halo3odst.dll` too
+when the game folder has ODST's files (each old one is renamed, since a running
+server holds it); the screen names every server that shares that game folder, and a
+game folder that is MCC's own (linked to it) is left alone, since its file is MCC's.
+When the check says Halo 3: ODST's files aren't in the game folder, it offers to add
+them from MCC.
+
+## SteamCMD for the Workshop: I in the window
+A server downloads Workshop items itself, but only with SteamCMD and a Steam account
+that owns MCC: an anonymous SteamCMD sign-in can't fetch MCC's items (checked). **I**
+(or `start.cmd steam`):
+
+- finds SteamCMD: `[setup] steamcmd`, `steamcmd/` at the root, `C:\steamcmd` (the
+  folder the server's own template names), your PATH, `~/steamcmd` on Linux;
+- **installs it** when missing, from Valve's installer, into `steamcmd/` at the root
+  (kept with Huragok) or the standard folder, and runs it once so it updates
+  itself (`steam install [--standard] [--path]`);
+- **signs the account in**: it opens SteamCMD in a window of its own where Steam asks
+  for the password and the Steam Guard code **once**; after that the sign-in is cached
+  and the servers fetch items without prompts. No password is ever written anywhere
+  (`steam login <account>`). The account is the name you sign in to Steam with, not
+  your profile name: 2 to 64 letters, digits and underscores, so anything else is
+  refused before it reaches a command line. Esc at "Press Enter once the sign-in
+  window says it's done" leaves everything as it was: nothing is written until the
+  sign-in is done;
+- **tells every server**: `[workshop] steamcmd` and `username` go into each server
+  folder's `dedicated.toml` (a server's `[workshop]` takes effect when its `dedicated`
+  restarts), and `[setup] steamcmd` / `steam_username` into `settings.toml`;
+- can put SteamCMD's folder on your PATH for other tools (`steam path`).
+
+Installing Halo 3's own files through SteamCMD isn't offered: MCC's depots come as one
+130 GB app, and `dedicated init --from` already links them from an MCC install for free.
 
 From the command line: `content [-s server] [words]`, `playlist [-s server] [list |
-show <name> | new <name> --maps … --games … | use <name>]`, `workshop [-s server]
-[list | add <ids…> | remove <ids…> | install]`, and `dedicated [-s server] <any
-dedicated command>` for the rest (`dedicated -s Slayer vpn`, `dedicated -s Slayer
-bans`).
+show <name> | new <name> --maps … --games … | use <name>]`, `variant [-s server]
+[list | show <name> | check <name>]`, `workshop [-s server] [list | add <ids…> |
+remove <ids…> | install]`, and `dedicated [-s server] <any dedicated command>` for
+the rest (`start.cmd dedicated -s Slayer vpn`, `start.cmd dedicated -s Slayer bans`).
 
 ## Editing a server's files: E
-**E** lists the supervisor's three files, then each server: its `dedicated.toml`,
+**E** lists Huragok's four files (`settings.toml`, `commands.toml`, `automod.txt`,
+`names.txt`), then each server: its `dedicated.toml`,
 each playlist, its ban list (or the shared one), `disabled-mods.json`, saved game
 types. They open in Notepad (Windows) or the desktop's editor (Linux). Since Project
 Reclaimer 0.9.18 the server re-checks `dedicated.toml`, the playlists and the content
@@ -193,7 +327,7 @@ and RCON settings by a restart once the server is empty. **The result shows in t
 dashboard's events**: `settings reloaded: max_players 16 → 12`, or `settings NOT
 reloaded, nothing changed: …` with what's wrong.
 
-## Folders the supervisor ignores
-A folder in `SERVERS/` whose name starts with `.` or `_` is never a server: the
-supervisor builds new ones as `.new-<name>` and you can set a server aside by
-renaming its folder to `_Old Slayer`.
+## Folders Huragok ignores
+A folder in `SERVERS/` whose name starts with `.` or `_` is never a server:
+Huragok builds new ones as `.new-<file name>` (`.new-infection-night`) and you can
+set a server aside by renaming its folder to `_Old Slayer`.

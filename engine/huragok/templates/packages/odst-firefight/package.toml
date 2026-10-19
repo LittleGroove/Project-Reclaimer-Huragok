@@ -1,0 +1,15 @@
+# A starter package: Halo 3: ODST's Firefight on Crater (Night), Heroic (Project Reclaimer 0.9.19 and
+# later). The server needs ODST's files in its game folder, about 3.5 GB: Huragok adds them from your MCC
+# when the server is made (ODST must be installed in MCC: Steam, MCC, Properties, DLC), or by hand with
+# `dedicated init "<server folder>" --from "<MCC folder>" --maps odst`. An ODST server holds 16 players at most.
+name = "ODST Firefight"
+description = "Halo 3: ODST's Firefight on Crater (Night), Heroic, up to 4 players"
+version = 1
+needs_odst = true
+
+[server]
+odst = { mode = "firefight", mission = 5000, insertion = 7, variant = "odst_ff_classic", difficulty = "heroic" }
+max_players = 4
+
+[workshop]
+items = []

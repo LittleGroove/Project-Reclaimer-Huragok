@@ -1,24 +1,32 @@
-# The supervisor in a container, next to the official Project Reclaimer Docker setup.
-# A sketch: add the `supervisor` service to the compose.yaml that runs your servers.
+# Huragok in a container, next to the official Project Reclaimer Docker setup.
+# A sketch: add the `huragok` service to the compose.yaml that runs your servers.
 #
-# Simpler, and it can restart servers: put the supervisor's folder in your server
+# Simpler, and it can restart servers: put Huragok's folder in your server
 # folder and run ./start.sh on the host (backend docker, picked by itself).
 #
 # In a container it watches and moderates only (backend attach); restarting
 # sibling containers from inside one needs the Docker API, which isn't built in yet.
 #
+# The image (docker build -t huragok engine) keeps its files in /huragok
+# (HURAGOK_CONFIG=/huragok/settings.toml) and runs as the user huragok (uid 1000).
+# It runs `huragok start --no-menu`: no window, a plain log (docker compose logs).
+# A mistake in settings.toml is tried again every 5 minutes, or as soon as the file
+# changes, so fix the file and the container carries on by itself.
+# Reclaimer Supervisor 0.2.1's image used /supervisor: a compose file that still
+# mounts /supervisor starts with fresh files; mount the same folder at /huragok.
+#
 # 1. Write its files once:
-#      mkdir supervisor
-#      docker run --rm -v ./supervisor:/supervisor -v ./server:/server:ro \
-#        reclaimer-supervisor init /server --backend attach
-# 2. docker compose up -d supervisor
+#      mkdir huragok
+#      docker run --rm -v ./huragok:/huragok -v ./server:/server:ro \
+#        huragok init /server --backend attach
+# 2. docker compose up -d huragok
 services:
-  supervisor:
+  huragok:
     build: ../engine                # or image: <published image>
     restart: unless-stopped
     network_mode: host              # RCON listens on 127.0.0.1, like the servers
     volumes:
       - ${SERVER_DIR:-./server}:/server:ro   # dedicated.toml, data/<server>/…
-      - ./supervisor:/supervisor             # settings.toml, commands.toml, automod.txt, records, logs
+      - ./huragok:/huragok                   # settings.toml, commands.toml, automod.txt, records, logs
     stop_signal: SIGTERM
     stop_grace_period: 30s
