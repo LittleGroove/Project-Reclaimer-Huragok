@@ -41,8 +41,8 @@ to end. It never patches the server: it uses what the server offers (its remote
 console, its files and its `dedicated` command), and it changes a server's
 `dedicated.toml` only when you do, from the window's D, G and I screens.
 
-> **Status: 0.4.0, on its way to 1.0.** Tested against Project
-> Reclaimer **v0.9.20** on Windows 11; Linux is experimental. Up to 0.2.1 this was
+> **Status: 0.4.0, the Windows release, on its way to 1.0.** Tested against Project
+> Reclaimer **v0.9.20** on Windows 11; Linux is experimental until 0.5.0. Up to 0.2.1 this was
 > called Reclaimer Supervisor: see [Coming from Reclaimer Supervisor 0.2.1](#coming-from-reclaimer-supervisor-021).
 
 ```text

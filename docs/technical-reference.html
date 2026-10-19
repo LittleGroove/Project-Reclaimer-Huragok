@@ -75,9 +75,9 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <nav class="toc" aria-label="Contents"><p class='toc-part'><a href='#top'>Part 1: Technical reference</a></p><ol><li><a href='#status-at-a-glance'>Status at a glance</a></li><li><a href='#the-road-to-1-0'>The road to 1.0</a></li><li><a href='#what-it-is-and-why-it-exists'>What it is and why it exists</a></li><li><a href='#the-three-parts'>The three parts</a></li><li><a href='#goals-scope-and-non-goals'>Goals, scope and non-goals</a></li><li><a href='#architecture'>Architecture</a></li><li><a href='#design-decisions'>Design decisions</a></li><li><a href='#concurrency-timing-and-resources'>Concurrency, timing and resources</a></li><li><a href='#on-disk-layout-and-configuration'>On-disk layout and configuration</a></li><li><a href='#server-lifecycle'>Server lifecycle</a></li><li><a href='#watchdog-and-keepalive'>Watchdog and keepalive</a></li><li><a href='#moderation'>Moderation</a></li><li><a href='#key-flows'>Key flows</a></li><li><a href='#extending-huragok'>Extending Huragok</a></li><li><a href='#the-window-and-the-command-surface'>The window and the command surface</a></li><li><a href='#window-internals'>Window internals</a></li><li><a href='#setup-and-management-in-depth'>Setup and management in depth</a></li><li><a href='#game-content'>Game content</a></li><li><a href='#logs-diagnostics-tests-and-shipping'>Logs, diagnostics, tests and shipping</a></li><li><a href='#failure-modes'>Failure modes</a></li><li><a href='#security-and-privacy'>Security and privacy</a></li><li><a href='#compatibility-versions-and-migration'>Compatibility, versions and migration</a></li><li><a href='#performance-and-scale'>Performance and scale</a></li><li><a href='#known-issues-and-open-questions'>Known issues and open questions</a></li><li><a href='#reference'>Reference</a></li></ol><p class='toc-part'><a href='#interfaces-and-data-formats'>Part 2: Interfaces and data formats</a></p><ol><li><a href='#rcon-client-protocol'>RCON client protocol</a></li><li><a href='#relay-protocols'>Relay protocols</a></li><li><a href='#files-read-from-each-server'>Files read from each server</a></li><li><a href='#files-huragok-writes'>Files Huragok writes</a></li><li><a href='#database-schema'>Database schema</a></li><li><a href='#host-file-formats'>Host file formats</a></li><li><a href='#environment-exit-codes-and-command-line-options'>Environment, exit codes and command-line options</a></li></ol></nav>
 <main>
 <h1 class='title' id="huragok-technical-reference">Huragok — Technical Reference</h1>
-<p class='byline'>As of 19 October 2026 · Huragok 0.4.0 (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
+<p class='byline'>As of 19 October 2026 · Huragok 0.4.0 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
 <h2 id="status-at-a-glance">Status at a glance</h2>
-<p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. It has not yet run the live host.</p>
+<p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It is the Windows release (Linux, experimental, comes with 0.5.0), and carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. It has not yet run the live host.</p>
 <div class='table'><table>
 <thead>
 <tr>
@@ -96,7 +96,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>The 1.0 audit (19 Oct 2026)</td>
-<td>Every part read by its own reviewer, each finding confirmed by running code where possible, then fixed with a test: about 180 defects. 774 tests pass on Windows (1 skipped there: it sets the time zone with <code>time.tzset</code>, which Windows lacks); CI ran it on Windows and Ubuntu (Python 3.11 to 3.14) and against the release zip before the tag; the Linux container run (<code>linux-check</code>) has not been run since. All of it is committed and released as 0.4.0</td>
+<td>Every part read by its own reviewer, each finding confirmed by running code where possible, then fixed with a test: about 180 defects. 774 tests pass on Windows (1 skipped there: it sets the time zone with <code>time.tzset</code>, which Windows lacks); A plain install of the release zip passes the same suite on Windows. On CI the Windows jobs pass but for two timing flakes; the Linux jobs fail on test problems, left for 0.5.0 with Linux itself (Known issues, Still open 5). All of it is committed and released as 0.4.0</td>
 </tr>
 <tr>
 <td>Where it runs now</td>
@@ -182,7 +182,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </table></div>
 <h3 id="road-release">3. The release itself</h3>
 <ul>
-<li><strong>Released.</strong> Everything since 0.2.1 (the rename, what was built as 0.2.2 and 0.3.0, and this audit) is committed and released as 0.4.0, once CI's release-zip job, which installs the <code>git archive</code> zip on its own and runs the suite against it, had passed.</li>
+<li><strong>Released.</strong> Everything since 0.2.1 (the rename, what was built as 0.2.2 and 0.3.0, and this audit) is committed and released as 0.4.0. A plain install of the <code>git archive</code> zip passed the suite on Windows before the tag; CI's release-zip job does the same on Linux, where it fails for now on the Linux test problems left for 0.5.0 (Known issues, Still open 5).</li>
 <li><strong>The upgrade path.</strong> 0.2.1 can't update itself to this version (the decision was no bridge across the rename, since nothing had been deployed), so a 0.2.1 host reinstalls. From 1.0 on updating must just work: a test that installs a release zip over an older install and relaunches is still missing.</li>
 </ul>
 <h3 id="road-players">4. What needs players to settle</h3>
@@ -3333,7 +3333,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 </tbody>
 </table></div>
-<p>Fixed before the audit, in 0.2.2: the 30-second state refresh that died on its first run (players already on were never listed, countdowns skipped, <code>stuck</code> missed), and a keepalive restart of an <code>external</code> server raising inside an unawaited task. Fixed by the 0.4.0 release, number 5 of Still open: the release zip couldn't be made while nothing since 0.2.1 was committed and ten modules were untracked; everything is committed now, and CI's release-zip job (the checkout's tests against a plain install of the archive) passed before the tag. The full list, part by part, is in <code>docs/changelog.md</code>.</p>
+<p>Fixed before the audit, in 0.2.2: the 30-second state refresh that died on its first run (players already on were never listed, countdowns skipped, <code>stuck</code> missed), and a keepalive restart of an <code>external</code> server raising inside an unawaited task. Fixed by the 0.4.0 release, number 5 of Still open: the release zip couldn't be made while nothing since 0.2.1 was committed and ten modules were untracked; everything is committed now, and a plain install of the archive passed the suite on Windows before the tag (CI's release-zip job runs on Linux, where the tests fail for now: Still open, 5). The full list, part by part, is in <code>docs/changelog.md</code>.</p>
 <h3 id="still-open">Still open</h3>
 <div class='table'><table>
 <thead>
@@ -3347,6 +3347,14 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 </thead>
 <tbody>
+<tr>
+<td>5</td>
+<td><strong>CI's Linux jobs fail (found at the 0.4.0 release).</strong> The suite was last run on Linux before the audit. On Ubuntu: <code>test_the_steam_sign_in_takes_only_a_steam_account_name</code> looks for the raw path in a command that rightly quotes it (its folder is <code>steam cmd's</code>), on every Python; on 3.11 a <code>test_upkeep</code> test patches <code>os.name</code> to <code>"nt"</code> for the whole process, so any <code>Path()</code>, pytest's own included, raises and the run stops with an INTERNALERROR that hides the rest; on 3.12 once, <code>test_a_running_command_is_cancelled_with_esc</code> (exit code 0, not 130). On Windows, once each: <code>test_attach_mode_cannot_restart</code> (an asyncio pipe's unraisable warning) and <code>test_a_part_switched_off_for_failing_is_on_again_after_a_while</code> (timed out)</td>
+<td>CI is red, so a real break would be hard to see; the release-zip job runs on Linux and can't pass. Windows itself passes (774 tests, from the checkout and from the release zip)</td>
+<td>For 0.5.0, with Linux: fix the two Linux tests (split the inner command with <code>shlex</code>; patch only Huragok's own Windows check, not <code>os.name</code>), run the whole suite on 3.11 to see what the INTERNALERROR hid, and make the timing tests wait on a condition, not a clock</td>
+<td><span class='sev sev-medium'>Medium</span></td>
+<td>Left for 0.5.0 (19 Oct 2026)</td>
+</tr>
 <tr>
 <td>b</td>
 <td><strong>Nobody is told.</strong> There is no outbound channel: FAULTED, the start loop restarting Huragok, a console lockout, a watchdog restart, a failed update, a part switched off are all only in the window and the log</td>
@@ -3531,7 +3539,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </ul>
 <h3 id="suggested-order">Suggested order</h3>
 <ol>
-<li>Done in 0.4.0: everything committed, CI's release-zip job passing, the version number decided.</li>
+<li>Done in 0.4.0: everything committed and released. For 0.5.0, with Linux: CI's Linux jobs (Still open, 5).</li>
 <li>The burn-in on the live host (The road to 1.0, section 1), with the players' questions settled along the way.</li>
 <li>Decide gaps a to d, then build them: the FAULTED cool-down, one alert channel, start at boot without a logon, the canary.</li>
 <li>Then the medium items (console log rotation, the ledger gap, reloading <code>settings.toml</code>) with the next moderation work.</li>

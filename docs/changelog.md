@@ -1,12 +1,12 @@
 # Changelog
 
 ## 0.4.0
-The first release as **Huragok**, with everything since Reclaimer Supervisor 0.2.1:
-a setting for every watchdog case, servers that update themselves, Vergil's mutes
-and banned names, roles moved a step at a time in game, Halo 3: ODST servers, and
-about 180 fixes from an audit of the whole program before 1.0. A 0.2.1 install
-can't update itself across the rename: reinstall it (the README's "Coming from
-Reclaimer Supervisor 0.2.1").
+The first release as **Huragok**, for Windows (Linux comes with 0.5.0), with
+everything since Reclaimer Supervisor 0.2.1: a setting for every watchdog case,
+servers that update themselves, Vergil's mutes and banned names, roles moved a
+step at a time in game, Halo 3: ODST servers, and about 180 fixes from an audit of
+the whole program before 1.0. A 0.2.1 install can't update itself across the
+rename: reinstall it (the README's "Coming from Reclaimer Supervisor 0.2.1").
 
 It was built as 0.2.2 and 0.3.0, neither released on its own; both are in here.
 
