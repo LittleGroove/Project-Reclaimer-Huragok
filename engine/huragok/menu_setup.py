@@ -1,7 +1,7 @@
 """The window's setup screens: N new server, G game content (what's there, playlists built from
 numbered lists or from a mod's maps, each playlist game's own rules and options, custom games,
-Workshop items, mods' Forge layouts, imports), C check, I Steam/Workshop setup, and E for each
-server's files.
+Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop account and Halo 3's
+files), and E for each server's files.
 
 Everything the host picks from is listed first, numbered: maps, map variants, game types
 and variants, mods, packages, playlists. Nothing has to be typed from memory. The screens
@@ -12,6 +12,7 @@ dashboard's work goes on meanwhile; a second window (not supervising) can use th
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -808,8 +809,35 @@ class SetupScreens:
     # I: SteamCMD -----------------------------------------------------------------------------
 
     async def screen_steam(self) -> None:
-        self.title("STEAM WORKSHOP SETUP (SteamCMD)", "servers download Workshop items with SteamCMD, signed in once "
-                                                     "to an account that owns MCC (anonymous can't fetch MCC's items)")
+        """SteamCMD and everything it does for the servers: the Workshop account, and Halo 3's files."""
+        from . import repair
+
+        while True:
+            self.title("STEAMCMD", "Workshop items and Halo 3's files, with one Steam account that owns MCC, signed in "
+                                   "once (never a password in any file)")
+            settings = self._settings()
+            steam = await asyncio.to_thread(steamsetup.status, settings)
+            self.heading("SteamCMD")
+            self.note(steam.summary(), "green" if steam.ready else "yellow")
+            self.heading("Halo 3's files")
+            rows = await asyncio.to_thread(repair.game_status, settings)
+            for label, text, colour in rows or [("shared game/", "no server folders yet", "gray")]:
+                self.note(f"{label:<13} {text}", colour)
+            choice = await self.choose("Which?", [
+                ("1", "SteamCMD and the Steam account", "find or install it, sign in once, tell every server"),
+                ("2", "Get Halo 3's files", f"{repair.DEPOTS['halo3'].holds}"),
+                ("3", "Add the campaign missions", "co-op campaign, and every Forge map's campaign vehicles"),
+                ("4", "Add Halo 3: ODST's files", "for ODST servers (Firefight, campaign)")])
+            if choice is None:
+                return
+            if choice == "1":
+                await self._steam_account()
+            else:
+                await self._game_files({"2": "halo3", "3": "campaign", "4": "odst"}[choice])
+
+    async def _steam_account(self) -> None:
+        self.heading("SteamCMD", "the Steam account", note="servers download Workshop items (and Huragok Halo 3's "
+                                                          "files) with SteamCMD; anonymous can't fetch MCC's")
         settings = self._settings()
         steam = steamsetup.status(settings)
         executable = steam.executable
@@ -878,14 +906,71 @@ class SetupScreens:
         if await self.prompt_yes_no("  Put SteamCMD's folder on your PATH, for other tools?", False):
             # In a thread: Windows tells every open window about the change and waits on the ones that hang.
             self.note(await asyncio.to_thread(steamsetup.add_to_path, executable.parent))
+        if ok:  # servers waiting for SteamCMD (to download their game files) look again now
+            await self.controller.verb("game_files_retry")
         await self.wait_any_key(10)
+
+    async def _game_files(self, kind: str) -> None:
+        """One kind of game files into this folder's shared game/: every way there is, with sizes, first."""
+        from . import repair
+
+        settings = self._settings()
+        label = repair.LABELS[kind]
+        self.heading("SteamCMD", label)
+        target, why = repair.shared_target(settings, kind)
+        if target is None:
+            self.note(why, "yellow")
+            await self.wait_any_key(10)
+            return
+        depot = repair.DEPOTS[kind]
+        found, no_download = await asyncio.to_thread(repair.sources, settings, kind, downloads=True)
+        self.note(f"Into {target}: {depot.holds}. What's there stays as it is, and running servers keep running.")
+        options = []
+        for number, source in enumerate(found, 1):
+            if source.how == "mcc":
+                options.append((str(number), f"Copy them from MCC at {source.path}",
+                                "hard links on the same drive: no space used"))
+            else:
+                options.append((str(number), f"Download them with SteamCMD as {source.username}",
+                                f"{repair.gb(depot.download)} down, {repair.gb(depot.kept)} kept (no sound or video)"))
+        if not any(source.how == "mcc" for source in found):
+            self.note("MCC with these files isn't on this PC (Steam's own records say where it is: Steam, MCC, "
+                      "Properties, DLC adds Halo 3 and ODST).", "yellow")
+        if not any(source.how == "steamcmd" for source in found):
+            self.note(f"No download: {no_download} (1 sets SteamCMD up).", "yellow")
+        if not found:
+            await self.wait_any_key(15)
+            return
+        choice = await self.choose("How?", options)
+        if choice is None:
+            return
+        source = found[int(choice) - 1]
+        results = await self.controller.verb("game_files", kind=kind, how=source.how)
+        result = results[0][1] if results else None
+        if result is not None and result.message not in ("not available",) and \
+                not result.message.startswith("unknown request"):
+            self.note(result.message, "green" if result.ok else "yellow")
+            await self.wait_any_key(15)
+            return
+        # No running Huragok to hand it to (a window of its own): got here, with the window waiting on it.
+        tool = await self._tool(settings)
+        if tool is None:
+            await self.wait_any_key(10)
+            return
+        try:
+            said = await self.slow(repair.fetch, settings, kind, source, target, lambda: tool, self._sayer("cyan"))
+        except (OSError, steamsetup.SteamSetupError) as error:
+            self.note(f"Not got: {error}", "yellow")
+        else:
+            self.note(said, "green")
+        await self.wait_any_key(15)
 
     # Importing ---------------------------------------------------------------------------------
 
     async def _import_content(self, settings: Settings, server: ServerConfig) -> None:
         from .contentimport import find_mcc, import_content, importable
 
-        # Looking for MCC probes drives and walking a folder reads every file name: in a thread, never on the loop.
+        # Looking for MCC reads Steam's records and walking a folder reads every file name: in a thread, never on the loop.
         found = await asyncio.to_thread(find_mcc, settings.setup.mcc_folder)
         self.note("MCC ships Halo 3's matchmaking map variants (MLG, Team Hardcore, Infection, Grifball…) and game "
                   "variants; the server lists only what's in its content folder.")
@@ -960,8 +1045,38 @@ class SetupScreens:
                     self.note(await asyncio.to_thread(upkeep.copy_engine, game, mcc, sharing), "green")
                 except OSError as error:
                     self.note(f"Not copied: {error}", "yellow")
+            elif mcc is None:
+                await self._engine_from_steam(settings, game, files, sharing)
         if upkeep.odst_files_missing(text):
             await self._offer_odst_files(settings, game)
+
+    async def _engine_from_steam(self, settings: Settings, game: Path, files: str, sharing: list[str]) -> None:
+        """No MCC on this PC after an MCC update: the new engine files from Steam with SteamCMD instead (the whole
+        multiplayer depot comes down; only the engine files are copied in, the old ones renamed)."""
+        from . import repair, upkeep
+
+        found, no_download = await asyncio.to_thread(repair.sources, settings, "halo3", downloads=True)
+        steam = next((source for source in found if source.how == "steamcmd"), None)
+        if steam is None:
+            self.note(f"MCC isn't on this PC, and {no_download}: copy {files} from a PC with MCC, or set SteamCMD up "
+                      "(I) to download them.", "yellow")
+            return
+        depot = repair.DEPOTS["halo3"]
+        if not await self.prompt_yes_no(f"  MCC isn't on this PC: download Halo 3's files with SteamCMD "
+                                        f"({repair.gb(depot.download)}) and copy the new {files} in?", False):
+            return
+        tool = await self._tool(settings)
+        if tool is None:
+            return
+        stage = settings.records / "engine-download"
+        try:
+            downloaded = await self.slow(repair.gather, settings, "halo3", steam, stage, lambda: tool,
+                                         self._sayer("cyan"))
+            self.note(await asyncio.to_thread(upkeep.copy_engine, game, downloaded, sharing), "green")
+        except (OSError, steamsetup.SteamSetupError) as error:
+            self.note(f"Not copied: {error}", "yellow")
+        finally:
+            await asyncio.to_thread(shutil.rmtree, stage, True)
 
     async def _offer_odst_files(self, settings: Settings, game: Path) -> bool:
         """Halo 3: ODST's files into a game folder that lacks them, from this PC's MCC. True when they're there."""

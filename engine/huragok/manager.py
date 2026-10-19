@@ -70,6 +70,8 @@ DAILY_WINDOW = 1800.0  # the daily restart only fires within this long after its
 JOB_LIMIT = 1200.0  # a job before a start (a Workshop swap) gets this long; then the server starts anyway
 INFERRED_ALIVE_SECONDS = 30.0  # without a process to watch: status.json this fresh means up
 HISTORY_DAYS = 7  # what records/servers/<server>.json remembers of starts, restarts, crashes
+WAIT_RECHECK = 30.0  # a server waiting to start (game files, its port) looks again this often
+OWN_STATUS_SECONDS = 120.0  # status.json written this recently: the server on its port runs from its own folder
 HISTORY_MAX = 60
 
 
@@ -241,6 +243,9 @@ class ServerManager:
         self.jobs: list[StoppedJob] = []  # run at the next start, while it's stopped
         self.job_running: str = ""  # the label of the one running now
         self.flags: dict[str, str] = {}  # short notes for the dashboard's detail line, by who set them
+        self.waiting_for = ""  # why it can't start yet (game files being got, its port taken); "" when it can
+        self.waiting_kind = ""  # "files" or "port"
+        self.waiting_checked = float("-inf")  # monotonic: when it last looked whether it still has to wait
 
     # What we know -------------------------------------------------------------------
 
@@ -368,6 +373,13 @@ class ServerManager:
             return
         if self.backend.sees_processes:
             taken = self.fleet.ports.in_use(self.server)
+            if taken and not self._status_is_ours():
+                # Something answers on its port, but not a server writing this folder's status.json: another copy
+                # of it running from another folder, or another program. Never watched as if it were this one.
+                self._wait("port", f"its port {self.server.rcon_port} is in use by something that isn't this "
+                                   "server (the copy it was made from, running from another folder?): stop that, "
+                                   "or give this one another port (D)")
+                return
             if taken:
                 self._set_phase("external")
                 self.started = time.time()
@@ -377,12 +389,56 @@ class ServerManager:
                 return
             if taken is None:
                 return  # not known yet (it's being found out in the background): never start onto a taken port
+            if self.waiting_kind == "port":
+                self._stop_waiting("its port is free")
         if self.record.wanted == "running" and not self.record.faulted and not self.server.errors:
+            if self.waiting_kind == "files" and time.monotonic() - self.waiting_checked < WAIT_RECHECK:
+                return
             self._set_phase("launch")
+
+    def _status_is_ours(self) -> bool:
+        """This folder's server writes its status.json every few seconds while it runs."""
+        try:
+            return time.time() - self.server.status_path.stat().st_mtime < OWN_STATUS_SECONDS
+        except OSError:
+            return False
+
+    def _wait(self, kind: str, why: str) -> None:
+        """It can't start yet: shown as WAITING with why, and looked at again (not counted as a failed start)."""
+        if why != self.waiting_for:
+            log.warning("[%s] waiting to start: %s", self.name, why)
+        self.waiting_for, self.waiting_kind = why, kind
+        self.waiting_checked = time.monotonic()
+        self._set_phase("idle")
+
+    def _stop_waiting(self, why: str) -> None:
+        if self.waiting_for:
+            log.info("[%s] no longer waiting: %s", self.name, why)
+        self.waiting_for, self.waiting_kind = "", ""
+        self.waiting_checked = float("-inf")
+
+    def _prelaunch(self) -> str | None:
+        """What the server lacks before it can start (repair.py puts right what it can), or None. A mistake in
+        that check never keeps a server from starting."""
+        check = self.fleet.prelaunch
+        if check is None:
+            return None
+        try:
+            return check(self.server)
+        except Exception:  # noqa: BLE001 - start it; the program says what's wrong if anything is
+            log.exception("[%s] couldn't check what it needs before it starts; starting it anyway", self.name)
+            return None
 
     def _step_launch(self) -> None:
         if not self._still_wanted():
             return
+        if not self.alive:
+            wait = self._prelaunch()
+            if wait:
+                self._wait("files", wait)
+                return
+            if self.waiting_kind == "files":
+                self._stop_waiting("it has what it needs")
         if self.jobs and not self.alive:
             # The jobs waiting now run, and then it starts whatever they do: a job added while they run (one
             # re-adding itself after failing) waits for the next start instead of keeping it stopped for good.
@@ -1067,6 +1123,7 @@ class ServerManager:
         self.record.wanted, self.record.faulted, self.record.fault_reason, self.record.fail_count = \
             "running", False, "", 0
         self.record.retry_at, self.record.retries = None, 0
+        self.waiting_checked = float("-inf")
         self._save()
         if self.phase in ("idle", "faulted", "backoff", "offline"):
             log.info("[%s] start requested", self.name)
@@ -1272,6 +1329,9 @@ class ServerManager:
         if phase == "idle":
             if self.server.errors:
                 status, color = "CONFIG ERROR", "red"
+            elif self.waiting_for and self.record.wanted == "running":
+                status, detail = "WAITING", self.waiting_for
+                color = "cyan" if self.waiting_for.startswith("getting") else "yellow"
             elif not self.backend.can_start:
                 status, color = "not running", "gray"
             else:
@@ -1382,6 +1442,7 @@ class ServerManager:
             "rcon_ms": round(state.rcon_latency_ms) if state.rcon_latency_ms is not None else None,
             "status_age": round(state.status_age) if state.status_age is not None else None,
             "jobs": [job.label for job in self.jobs],
+            "waiting": self.waiting_for,
             "can": {
                 "start": self.backend.can_start and phase in ("idle", "faulted", "backoff", "offline"),
                 "stop": self.backend.can_stop and (phase in ("running", "countdown", "booting", "launch", "backoff",
@@ -1414,6 +1475,8 @@ class Fleet:
         self._live_written = float("-inf")  # monotonic
         self._requests_tasks: set[asyncio.Task[None]] = set()
         self.ports = PortWatch()  # whether a stopped server's port is taken, without holding the loop
+        # What a server lacks before it starts (repair.GameFiles.prelaunch): why it waits, or None.
+        self.prelaunch: Callable[[ServerConfig], str | None] | None = None
         self.booted = False  # boot() has run: once per Fleet, however often run() is restarted
         bus.subscribe("rcon.phase", self._on_phase)
         bus.subscribe("rcon.leave", self._on_leave)
@@ -1449,6 +1512,16 @@ class Fleet:
 
     def names(self) -> list[str]:
         return list(self.managers)
+
+    def release(self) -> None:
+        """Game files arrived (or getting them failed): every server waiting for them looks again now, with a fresh
+        count of failed starts (the ones that failed for want of the files don't count against it)."""
+        for manager in self.managers.values():
+            if manager.waiting_kind == "files":
+                manager.waiting_checked = float("-inf")
+                if manager.record.fail_count:
+                    manager.record.fail_count = 0
+                    manager._save()
 
     @property
     def can_control(self) -> bool:
@@ -1560,7 +1633,7 @@ class Fleet:
         if verb == "stop_all":
             return self.stop_all(immediate=bool(options.get("immediate")))
         if verb in ("update", "check_update", "close", "check_program_update", "update_program", "check_workshop",
-                    "update_workshop"):
+                    "update_workshop", "game_files", "game_files_retry"):
             if self.on_request is None:
                 return [("Huragok", Result(False, "not available"))]
             return [("Huragok", await self.on_request(verb, options))]

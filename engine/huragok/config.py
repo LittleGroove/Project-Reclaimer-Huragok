@@ -64,7 +64,8 @@ KNOWN_KEYS: dict[str, set[str]] = {
     "updates": {"check", "check_hours", "install_on_server_restart", "repository"},
     "server_updates": {"check", "check_hours", "install", "repository", "follow", "fallback"},
     "workshop_updates": {"install", "check_minutes"},
-    "setup": {"mcc_folder", "share", "packages_folder", "program", "auto_update", "steamcmd", "steam_username"},
+    "setup": {"mcc_folder", "share", "packages_folder", "program", "auto_update", "steamcmd", "steam_username",
+              "download_game_files"},
     "relay": {"enabled", "address", "port_offset", "source_port_offset", "user"},
     "relay.user": {"name", "password", "role"},
     "process": PROCESS_KEYS,
@@ -305,8 +306,9 @@ class SetupSettings:
     packages_folder: str = "PACKAGES"
     program: str = ""  # the server program for making and checking folders, when it isn't in a server folder or at the root
     auto_update: bool = True  # new servers install new Project Reclaimer releases themselves (dedicated.toml auto_update)
-    steamcmd: str = ""  # SteamCMD, for Workshop items; empty: looked for in the usual places
+    steamcmd: str = ""  # SteamCMD, for Workshop items and Halo 3's files; empty: looked for in the usual places
     steam_username: str = ""  # the Steam account that owns MCC, signed in to SteamCMD once (never a password here)
+    download_game_files: bool = True  # a server missing Halo 3's files may download them with SteamCMD by itself
 
 
 @dataclass(frozen=True)
@@ -832,6 +834,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
             steamcmd=setup.path("steamcmd", "") or "",
             steam_username=setup.get("steam_username", str, ""),
             auto_update=setup.get("auto_update", bool, True),
+            download_game_files=setup.get("download_game_files", bool, True),
         ),
         relay=RelaySettings(
             enabled=relay.get("enabled", bool, False),

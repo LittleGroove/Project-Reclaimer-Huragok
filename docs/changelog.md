@@ -1,5 +1,85 @@
 # Changelog
 
+## 0.4.1
+Huragok now keeps your files up to date with itself, and puts right what a server
+arrives without. A server folder copied in from another Huragok folder or PC gets
+its ban list, content folder and Halo 3's files by itself, and waits (WAITING, with
+why) instead of failing its starts until it's FAULTED. **I** is SteamCMD now: the
+Workshop account as before, plus Halo 3's files. Install it over 0.4.0 as usual
+(U, or `start.cmd update`): nothing to reinstall, nothing to start over.
+
+**Your files keep up with Huragok.** An update replaces only the program, so until
+now a new setting never reached an existing `settings.toml`. From this version on,
+Huragok brings your own files up to date as it starts after an update:
+
+- `settings.toml` gets what's new (this time `[setup] download_game_files`, with
+  its comment, and the `[setup] steamcmd` comment that now names Halo 3's files).
+  Settings that do nothing any more become comments that say why
+  (`[process] disable_auto_update`, retired in 0.4.0), and the repository's old name
+  is corrected. Your own values and comments stay exactly as you wrote them: a
+  comment you edited, or a setting you wrote as a comment, is left alone.
+- `commands.toml` lists in-game commands added since it was written, under their
+  default role (a command in no list had that role already: nobody's rights change).
+  `PACKAGES/` gets starter packages added since; one you removed stays removed.
+- Each file is copied to `records/previous-files/<version>/` before its first change,
+  and `records/files.json` says what's been done, so nothing runs twice. `check` lists
+  what the next start will bring up to date. A file that can't be read is never
+  touched: Huragok says so, as before, and brings it up to date once it's fixed.
+- Every release from here on reads your files as any version from 0.4.0 on wrote
+  them, and updates them itself.
+
+**A server folder that arrives without what it shared.** A server Huragok makes
+shares this folder's `game/` and `bans.json` (`game = "../../game"` in its
+`dedicated.toml`). Copied into another Huragok folder without them, it wouldn't start
+("missing files copied from your own MCC installation"); worse, the server program
+reads a missing ban list as an empty one, so once it did start it would have had no
+bans and nobody would have known. Now, as soon as Huragok finds a server folder, and
+again before each start:
+
+- **A ban list that isn't there** is made, empty, where the file says (or, when even
+  its folder isn't on this PC, the server uses this folder's shared `bans.json`). The
+  log says so, and that the old bans stayed where the folder came from.
+- **A content folder that isn't there** is made.
+- **A game folder without Halo 3's files**: the server is pointed at one here that has
+  them. With none, Huragok gets them into this folder's `game/`: copied from MCC when
+  it's on this PC (hard links on the same drive: no space used), otherwise downloaded
+  with SteamCMD (Halo 3's multiplayer is its own part of MCC on Steam: about 9.3 GB
+  down, 5.8 GB kept, since sound is left out). Meanwhile the server shows **WAITING**
+  and why, and its failed starts aren't counted. With no way to get them, it waits and
+  says to press I. The campaign missions and ODST's files, for a server that plays
+  them, come the same way. `[setup] download_game_files = false`: nothing is
+  downloaded without you.
+- **A start that fails for missing files** (a copy that left out a map) gets them
+  before it tries again.
+- **A `[workshop] steamcmd` from another PC** is replaced by this folder's SteamCMD.
+- **A copy whose original still runs** on the same port waits ("in use by something
+  that isn't this server") instead of being watched as if it were this server.
+- Only with `backend = "process"`: in a container, or wherever a command runs the
+  server, its `dedicated.toml`'s paths aren't this PC's, so they're left alone.
+
+**I is SteamCMD.** It shows SteamCMD and the account, and every game folder: its
+Halo 3 maps, the campaign files, ODST, and which servers use it. **1** is SteamCMD
+and the account, as before. **2** gets Halo 3's files, **3** the campaign missions,
+**4** ODST's files. Each lists every way there is first (copy from MCC here,
+download with SteamCMD), with sizes. A download runs in the background while the
+window stays free; the servers waiting for the files start once they're in. Without
+the window: `start.cmd steam files [halo3|campaign|odst] [--download]`.
+
+- **After an MCC update**, when C's check says to copy `halo3.dll` again and MCC isn't
+  on this PC, it offers to download the new files with SteamCMD and swap the engine
+  files in (the old ones renamed, as a running server holds them).
+
+**Workshop updates wait for a SteamCMD that can fetch them.** A new version of a
+server's mod, when that server's SteamCMD isn't on this PC or its account has no saved
+sign-in here, no longer restarts the server: the update waits, flagged "press I", and
+players aren't told anything. Before, the server was restarted after each of up to
+three games, and each time the old copy went back.
+
+**MCC is found only where Steam says it is**: the registry's Steam folder (Steam's own
+links on Linux), the libraries `libraryfolders.vdf` lists with the games each holds,
+and the folder MCC's own `appmanifest_976730.acf` names. No drive is searched and no
+folder guessed. MCC that Steam doesn't list: name it as `[setup] mcc_folder`.
+
 ## 0.4.0
 The first release as **Huragok**, for Windows (Linux comes with 0.5.0), with
 everything since Reclaimer Supervisor 0.2.1: a setting for every watchdog case,

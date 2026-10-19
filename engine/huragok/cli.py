@@ -872,6 +872,7 @@ def _run_supervisor(args: argparse.Namespace) -> int:
     except AlreadyRunning as error:
         out.fail(f"Huragok is already running from this folder (process {error.pid}).")
         return ALREADY_RUNNING
+    settings = _bring_files_up_to_date(args, settings)
     relaunch = False
 
     async def main() -> None:
@@ -920,6 +921,26 @@ def _run_supervisor(args: argparse.Namespace) -> int:
     finally:
         _release_lock(lock)  # back to the start loop, if it lent it
     return RELAUNCH if relaunch else 0
+
+
+def _bring_files_up_to_date(args: argparse.Namespace, settings: Settings) -> Settings:
+    """The host's files in this version's form (migrate.py), under the lock and before anything looks after a
+    server: settings.toml read again when a step changed it. Nothing here may keep Huragok from starting."""
+    from .migrate import bring_up_to_date
+
+    try:
+        changed = bring_up_to_date(settings.path, settings.records, settings.packages_folder)
+    except Exception:  # noqa: BLE001 - the files as they are still work: this version reads every older form
+        logging.getLogger("huragok").exception("Couldn't bring the files up to date; carrying on with them as they are")
+        return settings
+    if not changed:
+        return settings
+    try:
+        return load(settings.path)
+    except ConfigError as error:  # a step's write is checked as it's made, so this would be a bug: keep what ran
+        logging.getLogger("huragok").error("settings.toml couldn't be read again after it was brought up to date "
+                                           "(%s); carrying on with it as it was read before", error)
+        return settings
 
 
 def cmd_update_program(args: argparse.Namespace, settings: Settings) -> int:
@@ -1387,6 +1408,13 @@ def cmd_check(args: argparse.Namespace) -> int:
         out.heading("Values from an older version")
         for line in settings.notes:
             out.warn(line)
+    from .migrate import pending
+
+    upcoming = pending(settings.path, settings.records, settings.packages_folder)
+    if upcoming:
+        out.heading("Brought up to date at the next start")
+        for line in upcoming:
+            out.say(line)
 
     out.heading("Parts")
     rows = []
@@ -1612,7 +1640,8 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("variant [-s server] [list|show|check] [name]", "a server's saved custom games: what each changes, checked "
                                                          "by the server program"),
         ("workshop [-s server] [list|add|remove|install]", "a server's Workshop items"),
-        ("steam [status|install|login <account>|path]", "SteamCMD for Workshop items"),
+        ("steam [status|install|login <account>|files [halo3|campaign|odst]|path]",
+         "SteamCMD: Workshop items, and Halo 3's files (copied from MCC here, or downloaded)"),
         ("dedicated [-s server] <command…>", "any of the server program's own commands, e.g. dedicated check"),
         ("init [--force]", "write settings.toml, commands.toml, automod.txt and names.txt (the first start does this)"),
     ]),

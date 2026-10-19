@@ -558,7 +558,7 @@ def test_the_steam_screen_offers_the_path(tmp_path: Path, run, monkeypatch) -> N
     monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (True, ""))
     monkeypatch.setattr(steamsetup, "configure", lambda settings, executable, username: [])
     monkeypatch.setattr(steamsetup, "add_to_path", lambda folder: f"{folder} added on your PATH (new windows see it)")
-    menu, terminal, _ = setup_menu(settings_path, ["ENTER", "Y", "x"])
+    menu, terminal, _ = setup_menu(settings_path, ["1", "ENTER", "Y", "x", "ESC"])
     run(menu.screen_steam())
     text = printed(terminal)
     assert "me is signed in: the servers can download Workshop items." in text and "added on your PATH" in text

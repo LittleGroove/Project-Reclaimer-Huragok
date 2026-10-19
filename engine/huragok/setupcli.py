@@ -414,11 +414,52 @@ def cmd_steam(args: argparse.Namespace, load: Callable[[str], Settings], launche
                                      + "; a server's [workshop] takes effect when its `dedicated` restarts "
                                      f"({launcher} restart <server>).")
         return 0 if ok else 1
-    # path: the parser allows status, install, login and path only
+    if action == "files":
+        return _steam_files(settings, args, launcher)
+    # path: the parser allows status, install, login, files and path only
     if status.executable is None:
         out.fail("SteamCMD isn't installed")
         return 1
     out.note(steamsetup.add_to_path(status.executable.parent))
+    return 0
+
+
+def _steam_files(settings: Settings, args: argparse.Namespace, launcher: str) -> int:
+    """`steam files [halo3|campaign|odst] [--download]`: one kind of game files into the shared game/, copied from
+    MCC when it's on this PC, else (or with --download) downloaded with SteamCMD. Asked for by a person, so a
+    download happens whatever [setup] download_game_files says."""
+    from . import repair, steamsetup
+
+    kind = (args.account or "halo3").lower()
+    if kind not in repair.DEPOTS:
+        out.fail(f"'{kind}' isn't one of {', '.join(repair.DEPOTS)}: {launcher} steam files [halo3|campaign|odst]")
+        return 2
+    out.heading("Halo 3's files")
+    for label, text, colour in repair.game_status(settings):
+        (out.ok if colour == "green" else out.warn if colour == "yellow" else out.say)(f"{label:<13} {text}")
+    target, why = repair.shared_target(settings, kind)
+    if target is None:
+        out.fail(why)
+        return 1
+    found, no_download = repair.sources(settings, kind, downloads=True)
+    if args.download:
+        found = [source for source in found if source.how == "steamcmd"]
+    if not found:
+        why = no_download or "SteamCMD can download them, but --download leaves MCC out and there's no SteamCMD way"
+        out.fail(f"No way to get {repair.LABELS[kind]} here: "
+                 + ("" if args.download else "MCC isn't on this PC (Steam's records don't list it), and ")
+                 + f"{why}. Set SteamCMD up: {launcher} steam install ; {launcher} steam login <account>")
+        return 1
+    source = found[0]
+    try:
+        said = repair.fetch(settings, kind, source, target, lambda: _tool(settings), out.note)
+    except (OSError, steamsetup.SteamSetupError) as error:
+        out.fail(f"Not got: {error}")
+        return 1
+    out.ok(said)
+    for server in settings.servers:  # a server whose game folder has no Halo 3 now uses this one
+        for line in repair.quick_repairs(settings, server):
+            out.say(f"{server.name}: {line}")
     return 0
 
 
@@ -504,9 +545,12 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     workshop.add_argument("ids", nargs="*", help="item IDs or Workshop addresses")
     workshop.set_defaults(func=bind(cmd_workshop))
 
-    steam = commands.add_parser("steam", help="SteamCMD for Workshop items: status, install, login <account>, path")
-    steam.add_argument("action", nargs="?", default="status", choices=["status", "install", "login", "path"])
-    steam.add_argument("account", nargs="?", help="login: the Steam account that owns MCC")
+    steam = commands.add_parser("steam", help="SteamCMD: status, install, login <account>, files [halo3|campaign|odst], "
+                                              "path")
+    steam.add_argument("action", nargs="?", default="status", choices=["status", "install", "login", "files", "path"])
+    steam.add_argument("account", nargs="?", help="login: the Steam account that owns MCC; files: halo3 (the default), "
+                                                  "campaign or odst")
+    steam.add_argument("--download", action="store_true", help="files: download with SteamCMD even when MCC is here")
     steam.add_argument("--standard", action="store_true", help="install: into SteamCMD's standard folder, not the root's")
     steam.add_argument("--into", help="install: into this folder")
     steam.add_argument("--force", action="store_true", help="install: even when one was found")

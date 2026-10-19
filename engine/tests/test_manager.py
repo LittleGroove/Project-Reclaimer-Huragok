@@ -484,6 +484,10 @@ def test_a_running_server_is_adopted_not_restarted(world, run) -> None:
 def test_a_server_running_elsewhere_is_external(world, run, monkeypatch) -> None:
     clock, settings, backend, fleet, manager, client, state, seen = world
     monkeypatch.setattr(fleet.ports, "in_use", lambda server: True)
+    status = manager.server.status_path  # started by hand from its own folder: it writes that folder's status.json
+    status.parent.mkdir(parents=True, exist_ok=True)
+    status.write_text("{}", encoding="utf-8")
+    os.utime(status, (clock.now, clock.now))  # written just now, by the clock the manager reads
 
     async def scenario() -> None:
         fleet.boot()
@@ -498,6 +502,78 @@ def test_a_server_running_elsewhere_is_external(world, run, monkeypatch) -> None
         assert manager.phase == "booting" and backend.starts == [SERVER]  # wanted: started once the port is free
 
     run(scenario())
+
+
+def test_a_copy_whose_original_holds_its_port_waits_and_is_never_taken_for_it(world, run, monkeypatch) -> None:
+    """A server folder copied from another Huragok folder, whose original still runs there on the same port: what
+    answers on the port writes no status.json here, so it isn't this server. It waits, says why, and starts once
+    the port is free; nothing is counted as a failed start."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    monkeypatch.setattr(fleet.ports, "in_use", lambda server: True)
+    manager.server.status_path.unlink(missing_ok=True)
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        assert manager.phase == "idle" and manager.waiting_kind == "port" and backend.starts == []
+        row = manager.row(1, clock.now)
+        assert row["status"] == "WAITING" and "in use by something that isn't this server" in row["detail"]
+        assert manager.record.fail_count == 0
+        monkeypatch.setattr(fleet.ports, "in_use", lambda server: False)
+        await cycle(manager, clock)
+        assert manager.waiting_for == "" and manager.phase == "booting" and backend.starts == [SERVER]
+
+    run(scenario())
+
+
+def test_a_server_waits_for_what_it_lacks_and_starts_once_it_has_it(world, run) -> None:
+    """The check before a start (repair.GameFiles.prelaunch): while it says what's missing the server waits as
+    WAITING, looks again every WAIT_RECHECK seconds, never counts a failed start; release() looks again at once."""
+    from huragok import manager as manager_module
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lacking = ["getting Halo 3's files: copying them from MCC"]
+    asked: list[str] = []
+    fleet.prelaunch = lambda server: (asked.append(server.name), lacking[0] if lacking else None)[1]
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        assert manager.phase == "idle" and backend.starts == [] and asked == [SERVER]
+        row = manager.row(1, clock.now)
+        assert row["status"] == "WAITING" and row["color"] == "cyan" and "copying them from MCC" in row["detail"]
+        await cycle(manager, clock)
+        assert asked == [SERVER]  # not asked again before WAIT_RECHECK
+        manager.waiting_checked -= manager_module.WAIT_RECHECK
+        lacking[0] = "needs Halo 3's files: MCC isn't on this PC; press I"
+        await cycle(manager, clock)
+        assert len(asked) == 2 and manager.row(1, clock.now)["color"] == "yellow"
+        manager.record.fail_count = 2
+        lacking.clear()
+        fleet.release()  # the files arrived
+        assert manager.record.fail_count == 0
+        await cycle(manager, clock)
+        assert manager.phase == "booting" and backend.starts == [SERVER] and manager.waiting_for == ""
+
+    run(scenario())
+
+
+def test_a_mistake_in_the_check_before_a_start_never_keeps_a_server_down(world, run, caplog) -> None:
+    clock, settings, backend, fleet, manager, client, state, seen = world
+
+    def broken(server: Any) -> str | None:
+        raise RuntimeError("a bug")
+
+    fleet.prelaunch = broken
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        assert manager.phase == "booting" and backend.starts == [SERVER]
+
+    with caplog.at_level(logging.ERROR):
+        run(scenario())
+    assert "starting it anyway" in caplog.text
 
 
 def test_a_planned_restart_waits_for_the_game_then_gives_short_notice(world, run) -> None:
@@ -660,9 +736,11 @@ def test_a_tick_with_stopped_servers_never_waits_on_their_ports(tmp_path: Path, 
         for _ in range(50):
             await asyncio.sleep(0.02)
             first.tick(real_time.time())
-            if first.phase != "idle":
+            if first.phase != "idle" or first.waiting_kind:
                 break
-        assert first.phase == "external"  # the probe found something on its port: never started over it
+        # The probe found something on its port that writes no status.json here: never started over it, and never
+        # taken for this server either.
+        assert first.phase == "idle" and first.waiting_kind == "port"
 
     run(unknown())
 

@@ -286,13 +286,19 @@ packages_folder = 'PACKAGES'
 # checking custom games). Empty: the newest copy among the root's and the server
 # folders' (by its --version). A command for one server runs that server's own copy.
 program = ''
-# SteamCMD, for Workshop items (the window's I key sets this up: finds or installs
-# it, signs the account in once, and writes [workshop] into every server folder).
-# Empty: looked for in steamcmd/ here, C:\steamcmd, PATH. The account must own MCC;
-# an anonymous sign-in can't fetch MCC's Workshop items. Never a password here.
+# SteamCMD, for Workshop items and Halo 3's files (the window's I key sets this up:
+# finds or installs it, signs the account in once, writes [workshop] into every
+# server folder, and gets Halo 3's files). Empty: looked for in steamcmd/ here,
+# C:\steamcmd, PATH. The account must own MCC; an anonymous sign-in can't fetch
+# MCC's Workshop items or files. Never a password here.
 # steamcmd = 'C:\steamcmd\steamcmd.exe'
 steamcmd = ''
 steam_username = ""
+# A server that's missing Halo 3's files (one copied in without the game/ it shared,
+# say) gets them by itself: copied from MCC when it's on this PC, otherwise downloaded
+# with SteamCMD (about 9.3 GB for multiplayer, 5.8 GB kept). false: nothing is
+# downloaded without you; the server waits, and I gets them.
+download_game_files = true
 # New servers install new Project Reclaimer releases themselves (auto_update = true in
 # their dedicated.toml, with a copy of the program of their own). false: Huragok
 # installs them (U).

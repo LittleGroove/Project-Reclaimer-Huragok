@@ -75,9 +75,9 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <nav class="toc" aria-label="Contents"><p class='toc-part'><a href='#top'>Part 1: Technical reference</a></p><ol><li><a href='#status-at-a-glance'>Status at a glance</a></li><li><a href='#the-road-to-1-0'>The road to 1.0</a></li><li><a href='#what-it-is-and-why-it-exists'>What it is and why it exists</a></li><li><a href='#the-three-parts'>The three parts</a></li><li><a href='#goals-scope-and-non-goals'>Goals, scope and non-goals</a></li><li><a href='#architecture'>Architecture</a></li><li><a href='#design-decisions'>Design decisions</a></li><li><a href='#concurrency-timing-and-resources'>Concurrency, timing and resources</a></li><li><a href='#on-disk-layout-and-configuration'>On-disk layout and configuration</a></li><li><a href='#server-lifecycle'>Server lifecycle</a></li><li><a href='#watchdog-and-keepalive'>Watchdog and keepalive</a></li><li><a href='#moderation'>Moderation</a></li><li><a href='#key-flows'>Key flows</a></li><li><a href='#extending-huragok'>Extending Huragok</a></li><li><a href='#the-window-and-the-command-surface'>The window and the command surface</a></li><li><a href='#window-internals'>Window internals</a></li><li><a href='#setup-and-management-in-depth'>Setup and management in depth</a></li><li><a href='#game-content'>Game content</a></li><li><a href='#logs-diagnostics-tests-and-shipping'>Logs, diagnostics, tests and shipping</a></li><li><a href='#failure-modes'>Failure modes</a></li><li><a href='#security-and-privacy'>Security and privacy</a></li><li><a href='#compatibility-versions-and-migration'>Compatibility, versions and migration</a></li><li><a href='#performance-and-scale'>Performance and scale</a></li><li><a href='#known-issues-and-open-questions'>Known issues and open questions</a></li><li><a href='#reference'>Reference</a></li></ol><p class='toc-part'><a href='#interfaces-and-data-formats'>Part 2: Interfaces and data formats</a></p><ol><li><a href='#rcon-client-protocol'>RCON client protocol</a></li><li><a href='#relay-protocols'>Relay protocols</a></li><li><a href='#files-read-from-each-server'>Files read from each server</a></li><li><a href='#files-huragok-writes'>Files Huragok writes</a></li><li><a href='#database-schema'>Database schema</a></li><li><a href='#host-file-formats'>Host file formats</a></li><li><a href='#environment-exit-codes-and-command-line-options'>Environment, exit codes and command-line options</a></li></ol></nav>
 <main>
 <h1 class='title' id="huragok-technical-reference">Huragok — Technical Reference</h1>
-<p class='byline'>As of 19 October 2026 · Huragok 0.4.0 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
+<p class='byline'>As of 19 October 2026 · Huragok 0.4.1 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
 <h2 id="status-at-a-glance">Status at a glance</h2>
-<p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It is the Windows release (Linux, experimental, comes with 0.5.0), and carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. It has not yet run the live host.</p>
+<p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It is the Windows release (Linux, experimental, comes with 0.5.0), and carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. 0.4.1 followed the same day, after the host's first full test of 0.4.0 in a folder of its own: a server folder copied in from another install wouldn't start (its shared <code>game/</code> and <code>bans.json</code> stayed behind). It puts right what a server arrives without (<a href="#what-a-server-arrives-without">What a server arrives without</a>), makes I SteamCMD's screen for Halo 3's files too, and is the first release that brings a host's own files up to date (<a href="#hosts-files-across-updates">Hosts' files across updates</a>): from 0.4.0 on, every install is treated as live, and no release may need a clean install.</p>
 <div class='table'><table>
 <thead>
 <tr>
@@ -99,6 +99,10 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>Every part read by its own reviewer, each finding confirmed by running code where possible, then fixed with a test: about 180 defects. 774 tests pass on Windows (1 skipped there: it sets the time zone with <code>time.tzset</code>, which Windows lacks); A plain install of the release zip passes the same suite on Windows. On CI the Windows jobs pass but for two timing flakes; the Linux jobs fail on test problems, left for 0.5.0 with Linux itself (Known issues, Still open 5). All of it is committed and released as 0.4.0</td>
 </tr>
 <tr>
+<td>0.4.1 (19 Oct 2026)</td>
+<td>Hosts' files brought up to date by each new version (<code>migrate.py</code>); a server folder's missing ban list, content folder, game files and SteamCMD put right by Huragok (<code>repair.py</code>), the server WAITING meanwhile; I as SteamCMD's screen, with Halo 3's files copied from MCC or downloaded by depot; Workshop updates that never restart a server whose SteamCMD can't fetch; MCC found only through Steam's own records. 807 tests pass on Windows</td>
+</tr>
+<tr>
 <td>Where it runs now</td>
 <td>A deployed copy (<code>DEPLOY/</code>) on the development PC with four test servers and nobody on them. Not yet on the live host</td>
 </tr>
@@ -112,7 +116,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>Size</td>
-<td>About 24,200 lines of Python in 63 files under <code>engine/huragok/</code>, plus about 15,700 lines of tests in 33 files</td>
+<td>About 26,000 lines of Python in 66 files under <code>engine/huragok/</code>, plus about 16,900 lines of tests in 35 files</td>
 </tr>
 <tr>
 <td>Runtime</td>
@@ -183,7 +187,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <h3 id="road-release">3. The release itself</h3>
 <ul>
 <li><strong>Released.</strong> Everything since 0.2.1 (the rename, what was built as 0.2.2 and 0.3.0, and this audit) is committed and released as 0.4.0. A plain install of the <code>git archive</code> zip passed the suite on Windows before the tag; CI's release-zip job does the same on Linux, where it fails for now on the Linux test problems left for 0.5.0 (Known issues, Still open 5).</li>
-<li><strong>The upgrade path.</strong> 0.2.1 can't update itself to this version (the decision was no bridge across the rename, since nothing had been deployed), so a 0.2.1 host reinstalls. From 1.0 on updating must just work: a test that installs a release zip over an older install and relaunches is still missing.</li>
+<li><strong>The upgrade path.</strong> 0.2.1 can't update itself to this version (the decision was no bridge across the rename, since nothing had been deployed), so a 0.2.1 host reinstalls. From 0.4.0 on, updating must just work, and every install counts as live: each release reads a host's files as any version since 0.4.0 wrote them and brings them up to date itself (<code>migrate.py</code>, tested from the files 0.4.0 wrote). Still missing: a test that installs a release zip over an older install and relaunches it.</li>
 </ul>
 <h3 id="road-players">4. What needs players to settle</h3>
 <ul>
@@ -230,7 +234,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li><strong>Give up instead of looping.</strong> Repeated fast failures or too many restarts in an hour stop automatic restarts and ask a person.</li>
 <li><strong>Every action on a player goes through one ledger,</strong> so it is recorded, shows who acted, and respects dry run. A moderation command is never resent after an error, because it may already have run.</li>
 <li><strong>Never hammer a refused RCON password.</strong> Five failures in ten minutes lock every tool on the machine out of that server, so a refused password is tried again only when the server's files give a different one, once after the server restarts (never more than 2 refusals in 10 minutes), or else every 10 minutes.</li>
-<li><strong>The host's files are theirs.</strong> First start writes <code>settings.toml</code>, <code>commands.toml</code>, <code>automod.txt</code> and <code>names.txt</code>; updates replace only the program; an edit Huragok makes to a host's file changes exactly what was asked or leaves the file as it was.</li>
+<li><strong>The host's files are theirs, and keep up with Huragok.</strong> First start writes <code>settings.toml</code>, <code>commands.toml</code>, <code>automod.txt</code> and <code>names.txt</code>; updates replace only the program, and the new version brings those files up to date as it starts (a step per change, each run once, each file backed up first) without taking away anything the host wrote; an edit Huragok makes to a host's file changes exactly what was asked or leaves the file as it was. No release needs a clean install.</li>
 <li><strong>Same behaviour on Windows and Linux,</strong> with the platform differences kept in the process backend and the keyboard layer.</li>
 </ol>
 <h2 id="the-three-parts">The three parts</h2>
@@ -755,7 +759,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>D13</td>
-<td>The host's files are the host's: written once, edited in place with comments kept</td>
+<td>The host's files are the host's: written once, edited in place with comments kept, and brought up to date by each release's steps (<code>migrate.py</code>), never regenerated</td>
 <td>Regenerating config from a model</td>
 <td>The host keeps ownership; comments are the documentation</td>
 <td><code>tomledit.py</code> is a hand-written line editor for keys, tables and <code>[[server]]</code> blocks only; forms it doesn't edit are refused (D20)</td>
@@ -1211,6 +1215,14 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tbody>
 </table></div>
 <p>The full key list for <code>settings.toml</code> is in the Reference section.</p>
+<h3 id="hosts-files-across-updates">Hosts' files across updates</h3>
+<p>Every install since 0.4.0 counts as live: an update goes over it, and no release may need a clean install. An update replaces the program only, so a host's <code>settings.toml</code> is the one their first start wrote. Since 0.4.1 <code>migrate.py</code> keeps it in step: as Huragok starts (in its own process, under its lock, before any server is looked after) it runs each step not yet done, and <code>check</code> lists what the next start would change.</p>
+<ul>
+<li><strong>A step</strong> is keyed <code>&lt;version&gt;/&lt;what&gt;</code> and runs once (<code>records/files.json</code> lists those done). It looks before it changes anything, changes TOML only through <code>tomledit</code> (<code>add_table_key</code>, <code>comment_out_table_key</code>, <code>replace_comments</code>), and copies the file to <code>records/previous-files/&lt;version&gt;/</code> before its first change. It adds what's missing, turns what does nothing into a comment saying why, and swaps only comment blocks that are exactly what an earlier version wrote: the host's values and comments stay. A step that fails, or a file that can't be read, is logged and tried again at the next start; Huragok starts regardless, reading the old form.</li>
+<li><strong>0.4.1's steps:</strong> <code>[setup] download_game_files</code> added with its comment; the <code>[setup] steamcmd</code> comment that names Halo 3's files; <code>[process] disable_auto_update</code> (retired in 0.4.0) made a comment; the repository's old name corrected. Two run at every start and only add: in-game commands newer than <code>commands.toml</code> (under their default role, which they had anyway) and starter packages newer than <code>PACKAGES/</code> (one the host removed stays removed).</li>
+<li><strong>Rollback stays possible.</strong> The start loop puts back a new version that fails to start, and that older version runs on the files as the steps left them: steps add keys (an older version names an unknown key and runs on) and never remove or rename tables.</li>
+<li><strong>The test that holds the rule:</strong> <code>test_migrate.py</code> starts from the files 0.4.0 wrote (<code>tests/data/host-0.4.0</code>); a setting added to the template that no step adds to that file fails <code>test_every_template_key_reaches_an_older_hosts_file</code>.</li>
+</ul>
 <h2 id="server-lifecycle">Server lifecycle</h2>
 <p>Keeping the servers running is the Superintendent's part (<code>SUPT</code>). Each server is a <code>ServerManager</code> state machine ticked once a second. With the <code>process</code> backend, each server runs as its own detached <code>dedicated run</code> process, so servers outlive Huragok and are adopted when it comes back.</p>
 <h3 id="two-layers-of-supervision">Two layers of supervision</h3>
@@ -1248,6 +1260,15 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li><strong>Not ours.</strong> A server whose RCON port something already listens on (the process backend reads the system's socket table) and that was not started from here is <code>external</code>: watched and moderated, never stopped or restarted. Until it is known whether the port is taken, a stopped server isn't started.</li>
 <li><strong>Servers found later.</strong> A server folder that appears while Huragok runs is read at the next discovery (10 s) and adopted if its process runs; the first server found while Huragok runs with none is booted (started if autostart). <code>running-servers.json</code> keeps the entries of servers left out of this run (<code>servers = [...]</code>, a broken folder) until their process dies.</li>
 <li><strong>Names before numbers.</strong> A server is named by its exact name (any case), then its folder slug, then <code>#N</code> or a bare number as its position (<code>Fleet.find</code>, and the same with Huragok not running); a server really called "2" wins over position 2.</li>
+</ul>
+<h3 id="what-a-server-arrives-without">What a server arrives without</h3>
+<p>A server Huragok makes shares the root's <code>game/</code> and <code>bans.json</code> (<code>game = "../../game"</code>). The host's first full test of 0.4.0 copied one such folder into a new install: the server program refused to start ("missing files copied from your own MCC installation") and Huragok failed it five times to FAULTED. Worse, the program reads a missing ban list as empty (checked with 0.9.20's <code>dedicated check</code>), so the copy would have run with none of its bans. <code>repair.py</code> puts this right as the folder is found (<code>Supervisor.add_server</code>) and before each start (<code>Fleet.prelaunch</code>, called from <code>_step_launch</code>), with the <code>process</code> backend only (in a container the paths aren't this PC's):</p>
+<ul>
+<li><strong>Quick repairs</strong>, on the loop (file checks and a <code>tomledit</code> write): a ban list made empty where the file says, or the server pointed at the root's shared one when even its folder isn't here; a content folder made; a game folder without Halo 3 pointed at one here that has it; a <code>[workshop] steamcmd</code> that isn't on this PC replaced by the root's. Each is logged with what the host may want to do (copy the old <code>bans.json</code> over, say) and emitted as <code>server.repaired</code>.</li>
+<li><strong>Game files</strong> (<code>GameFiles</code>): when Halo 3's files (or, for a server that plays them, the campaign missions or ODST's) are still missing, the server waits (<code>waiting_for</code>, the row says WAITING, no failed start counted, looked at again every 30 s) while they're got in a worker thread into the root's <code>game/</code>: copied from MCC (<code>dedicated init --from</code> into a scratch folder, then hard-linked beside what's there) or, with <code>[setup] download_game_files</code>, downloaded with SteamCMD's <code>download_depot</code> on the saved sign-in (<code>+@NoPromptForPassword</code>: never a prompt). MCC's depots, read from Steam's own manifests on the development PC: 976739 is Halo 3 multiplayer (9.33 GB, 5.75 GB without <code>fmod</code>/<code>waves</code>), 976738 the campaign (9.01 GB), 1064222 ODST (8.73 GB), 976731 MCC itself (17 GB, never needed). A failed get isn't tried again by itself for an hour (I tries at once); <code>Fleet.release</code> sends the waiting servers back to <code>launch</code> with a fresh failure count once the files are in.</li>
+<li><strong>A failed start that says files are missing</strong> (<code>server.start_failed</code> whose console lists them: a copy that left out a map) forces a get of that kind before the next try; the same failure within 15 minutes of the files arriving isn't fetched again.</li>
+<li><strong>A port held by the copy it was made from:</strong> a stopped server whose port answers but whose own <code>status.json</code> hasn't been written in two minutes isn't taken for <code>external</code> (watched and moderated as if it were this server): it waits, <code>waiting_kind = "port"</code>, until the port is free.</li>
+<li><strong>Workshop updates</strong> check <code>steamsetup.cannot_fetch</code> before planning their restart: a SteamCMD that isn't on this PC, or an account with no saved sign-in here, means no restart and a flag (<code>press I</code>) instead of up to three restarts that each put the old copy back.</li>
 </ul>
 <h3 id="the-process-backend">The process backend</h3>
 <div class='table'><table>
@@ -1836,7 +1857,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   SUPERINTENDENT  [S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server
   VERGIL          [P] Players  [M] Message  [A] Console  [B] Bans &amp; admins
-  HURAGOK         [N] New server  [G] Game content  [I] Workshop  [D] Settings  [C] Check  [E] Edit
+  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check  [E] Edit
                   [O] Folder  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   RECENT EVENTS  ·  SUPT Superintendent  VRGL Vergil  HRGK Huragok  ·  logs/huragok.log has them all
@@ -1993,7 +2014,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td></td>
 <td>I</td>
-<td>SteamCMD for Workshop items: find or install, sign the account in once, write <code>[workshop]</code> into every server</td>
+<td>SteamCMD: find or install, sign the account in once, write <code>[workshop]</code> into every server; every game folder's state; Halo 3's files, the campaign missions and ODST's, copied from MCC here or downloaded by depot (in the background when Huragok runs: the <code>game_files</code> request)</td>
 </tr>
 <tr>
 <td></td>
@@ -2404,7 +2425,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <ul>
 <li><strong>Catalogue</strong> (<code>catalogue.py</code>): Halo 3's maps, map variants, game types, game variants, mod maps (hand-installed and Workshop) and the Forge layouts mods ship, built from <code>dedicated content</code>, mods' <code>ModInfo.json</code> and the Workshop list. Every picker numbers these. A mod whose <code>ModInfo.json</code> can't be read is skipped, not the whole catalogue.</li>
 <li><strong>Playlists</strong> (<code>playlists.py</code>): <code>playlists/&lt;name&gt;.playlist.json</code>, version 2, 3 to 128 games, each a map plus a game type with weight, rules and options. The builder picks map and game-type pairs. Every save is checked first as a draft (<code>playlists/.&lt;name&gt;.huragok-draft.json</code>, run through <code>dedicated playlist show</code>, then deleted), and games the program cannot play can be dropped. A playlist a server plays is never replaced by one the program refuses ("Leave it unsaved"); any other can be kept as it is to fix by hand.</li>
-<li><strong>MCC variants</strong> (<code>contentimport.py</code>): MCC ships Halo 3's matchmaking variants (320 map variants, 334 game variants: MLG, Team Hardcore, Infection, Grifball…). Import copies them into a <code>From MCC/</code> folder in the server's <code>content/Maps</code> and <code>content/Game Modes</code>, skipping a file already there (<code>content --import --overwrite</code> replaces it); the server picks them up while running. MCC is found (<code>contentimport.find_mcc</code>) from the folder given (quotes, as Explorer's "Copy as path" writes them, are taken off), then each Steam folder (the registry's <code>SteamPath</code>, Program Files) and the libraries its <code>libraryfolders.vdf</code> lists, then Steam's default, then the fixed drives only (never a network or removable drive), in a worker thread.</li>
+<li><strong>MCC variants</strong> (<code>contentimport.py</code>): MCC ships Halo 3's matchmaking variants (320 map variants, 334 game variants: MLG, Team Hardcore, Infection, Grifball…). Import copies them into a <code>From MCC/</code> folder in the server's <code>content/Maps</code> and <code>content/Game Modes</code>, skipping a file already there (<code>content --import --overwrite</code> replaces it); the server picks them up while running. MCC is found (<code>contentimport.find_mcc</code>) from the folder given (quotes, as Explorer's "Copy as path" writes them, are taken off), then only where Steam's own records say it is: Steam's folder (the registry's <code>SteamPath</code> and <code>InstallPath</code>; Program Files only when neither is set; Steam's own links on Linux), the libraries its <code>libraryfolders.vdf</code> lists (in <code>steamapps/</code> and the older <code>config/</code>) with the games each holds, and the folder MCC's <code>appmanifest_976730.acf</code> names. Since 0.4.1 no drive is searched and no folder guessed: looking through a host's PC is a privacy problem (the host's call). In a worker thread.</li>
 <li><strong>Content writes break hard links:</strong> imports, Forge layouts, playlists, presets and vote images are written to a temporary file and renamed over the old one (<code>contentimport.copy_replacing</code>, <code>Playlist.save</code>, <code>Preset.save</code>), so a server's own copy never changes a file it shares with another through a hard link.</li>
 <li><strong>Workshop items</strong>: SteamCMD with an account that owns MCC (anonymous sign-in cannot fetch MCC items). A running server fetches its items itself on reload; Huragok follows its console instead of running a second SteamCMD, which used to hang the window. A map without <code>.mapinfo</code> is skipped by the server, and Huragok says so.</li>
 <li><strong>Next game</strong>: the dashboard's game column shows <code>status</code>'s <code>next</code> (a <code>nextmap</code> override) or an open playlist vote. It comes from the 30-second refresh.</li>
@@ -3077,7 +3098,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </ul>
 <h3 id="how-older-installs-carry-over">How older installs carry over</h3>
 <ul>
-<li>Host files are never replaced by an update, so new settings are not added to an existing <code>settings.toml</code>; the code's defaults apply instead. An install from 0.2.1 gets the new watchdog cases with their defaults.</li>
+<li>Host files are never replaced by an update. Up to 0.4.0, new settings weren't added to an existing <code>settings.toml</code> (the code's defaults applied); since 0.4.1 the new version's steps add them, with their comments, and turn retired settings into comments (<a href="#hosts-files-across-updates">Hosts' files across updates</a>). An install from 0.2.1 gets the new watchdog cases with their defaults.</li>
 <li>The reverse also holds: a <code>settings.toml</code> written by 0.2.0 says <code>mode = "watch"</code>, and it stays that way until the host changes it.</li>
 <li>Old names still read: <code>backend = "windows"</code> and a <code>[windows]</code> section mean <code>process</code>; <code>server_folder = ".."</code> keeps the 0.1 layout; 0.2.1's <code>slow_frames</code> sets <code>slow</code> and <code>very_slow</code> when they are not set.</li>
 <li><strong>From Reclaimer Supervisor 0.2.1:</strong> 0.2.1 can't update itself to this version (its updater looks for <code>engine/reclaimer_supervisor</code> in the download, and the decision was no bridge across the rename, since nothing had been deployed): a 0.2.1 host installs this version by hand into the same folder, keeping its own files. Every section and key kept its name, so a 0.2.1 <code>settings.toml</code> loads unchanged. It names <code>database = "records/supervisor.sqlite3"</code>, <code>log_file = "logs/supervisor.log"</code>, <code>name = "Supervisor"</code> and <code>[automod] name = "AutoMod"</code>, so an updated install keeps them; only a newly written <code>settings.toml</code> has <code>huragok.sqlite3</code>, <code>huragok.log</code>, "Superintendent" and "Vergil". The lock is <code>records/huragok.pid</code> whatever the settings say, and a live 0.2.1 <code>records/supervisor.pid</code> counts as running.</li>
@@ -3644,7 +3665,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>Content</td>
-<td><code>catalogue.py</code> (283), <code>playlists.py</code> (260), <code>contentimport.py</code> (221), <code>steamsetup.py</code> (314), <code>livesettings.py</code> (549), <code>gameoptions.py</code> (475), <code>gameoptions_data.py</code> (179, generated)</td>
+<td><code>repair.py</code> (548), <code>migrate.py</code> (331), <code>catalogue.py</code> (283), <code>playlists.py</code> (260), <code>contentimport.py</code> (221), <code>steamsetup.py</code> (314), <code>livesettings.py</code> (549), <code>gameoptions.py</code> (475), <code>gameoptions_data.py</code> (179, generated)</td>
 <td>What a server can play; playlist files and labels by program version; MCC import; SteamCMD; every setting a host can change, grouped, with defaults, checks and the version each needs; the game option catalogue, presets and playlist-game overrides</td>
 </tr>
 <tr>

@@ -18,7 +18,8 @@ from typing import Any
 FOLDER = "requests"
 STALE_SECONDS = 600
 VERBS = ("start", "stop", "restart", "cancel", "say", "rcon", "autostart", "server_setting", "stop_all", "close",
-         "update", "check_update", "check_program_update", "update_program", "check_workshop", "update_workshop")
+         "update", "check_update", "check_program_update", "update_program", "check_workshop", "update_workshop",
+         "game_files", "game_files_retry")
 
 
 @dataclass

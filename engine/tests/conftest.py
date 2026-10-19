@@ -42,6 +42,17 @@ BRAVO = "d" * 64
 ADMIN = "e" * 64
 
 
+def init_files(folder: Path) -> None:
+    """What `dedicated init` makes beside dedicated.toml, and the two game files a start needs: a server the process
+    backend runs has them, or Huragok waits for them before it starts it (repair.py)."""
+    for file in ("game/halo3/halo3.dll", "game/halo3/maps/shared.map"):
+        (folder / file).parent.mkdir(parents=True, exist_ok=True)
+        (folder / file).write_bytes(b"")
+    for sub in ("Maps", "Game Modes", "Images", "Mods"):
+        (folder / "content" / sub).mkdir(parents=True, exist_ok=True)
+    (folder / "bans.json").write_text(json.dumps({"players": [], "ips": []}), encoding="utf-8")
+
+
 def write_server_folder(folder: Path, port: int, *, name: str = "LG Test Server", host_key: str | None = None,
                         status_age: float | None = None, extra_server: str = "", exe: bool = False,
                         rcon_password: str | None = PASSWORD) -> Path:
@@ -59,6 +70,7 @@ port = {port}
 """, encoding="utf-8")
     if exe:
         (folder / "project-reclaimer.exe").write_bytes(b"")
+        init_files(folder)
     data = folder / "data" / name.lower().replace(" ", "-")
     data.mkdir(parents=True, exist_ok=True)
     if host_key:
@@ -245,15 +257,15 @@ def no_github(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def not_this_pcs_installs(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
     """Steam, MCC and SteamCMD are found only where a test puts them, never this PC's own (C:\\steamcmd's
-    config.vdf names real accounts; a walk of the drives finds the real MCC). The lookups themselves are tested
+    config.vdf names real accounts; Steam's own records name the real MCC). The lookups themselves are tested
     against folders made in the test (test_content.py). New servers' ports are picked past the real servers'."""
     from huragok import contentimport, newserver, steamsetup
 
     nowhere = tmp_path_factory.getbasetemp() / "nothing-is-installed-here"
     monkeypatch.setattr(contentimport, "_steam_roots", lambda: [])
-    monkeypatch.setattr(contentimport, "_fixed_drives", lambda: [])
-    monkeypatch.setattr(contentimport, "STEAM_DEFAULT", nowhere / "MCC")
     monkeypatch.setattr(steamsetup, "STANDARD_WINDOWS", nowhere / "steamcmd")
+    monkeypatch.setattr(steamsetup, "depot_folders", lambda executable, depot: [
+        executable.parent / "steamapps" / "content" / f"app_{steamsetup.MCC_APP}" / f"depot_{depot}"])
     real_candidates = steamsetup.candidates
     kept = ("[setup] steamcmd", "the root's steamcmd folder")  # the standard folder, ~/steamcmd and PATH are this PC's
     monkeypatch.setattr(steamsetup, "candidates", lambda home, hint="": [

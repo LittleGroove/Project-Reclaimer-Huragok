@@ -33,6 +33,7 @@ from .parts import PARTS
 from .permissions import PermissionsError, Roles, reload_if_changed
 from .rcon import RconClient
 from .relay import Relay
+from .repair import GameFiles
 from .runner import PartRunner, handler_time_limit
 from .serverupdates import ProgramUpdateService
 from .state import StateTracker
@@ -85,6 +86,9 @@ class Supervisor:
         self.updates = UpdateService(settings, self.bus, self.relaunch_now)
         self.program_updates = ProgramUpdateService(settings, self.bus, self.lifecycle, self.states, self.clients)
         self.workshop_updates = WorkshopUpdateService(settings, self.bus, self.lifecycle, tool=self._tool)
+        # What a server arrives without (a ban list, Halo 3's files…), put right before it starts: repair.py.
+        self.game_files = GameFiles(settings, self.bus, self._tool, release=self.fleet.release)
+        self.fleet.prelaunch = self.game_files.prelaunch
         self.relay = Relay(settings, self.clients, self.states, self.bus)
         self.bus.subscribe("rcon.join", self._remember_player)
         self.bus.subscribe("rcon.control", self._note_reload)
@@ -115,6 +119,10 @@ class Supervisor:
         self.clients[server.name] = client
         state = self.tracker.add(server.name, client)
         self.watchers[server.name] = FileWatcher(server, state, self.bus)
+        try:  # a folder copied in from elsewhere: its ban list, content folder, game path and SteamCMD put right
+            self.game_files.arrived(server)
+        except Exception:  # noqa: BLE001 - the server is looked after as it is; its start says what's wrong
+            log.exception("[%s] couldn't look at what its folder needs", server.name)
         if not listed:
             # Found while running (a new folder, or one whose dedicated.toml was fixed): if we started it before,
             # it's picked up again, not taken for a server started some other way.
@@ -363,7 +371,33 @@ class Supervisor:
             if not results:
                 return Result(False, "no new Workshop version is waiting")
             return Result(all(ok for _, (ok, _) in results), "; ".join(f"{n}: {m}" for n, (_, m) in results))
+        if verb == "game_files":
+            return await self._get_game_files(str(options.get("kind") or "halo3"), str(options.get("how") or ""))
+        if verb == "game_files_retry":
+            self.game_files.try_again()
+            return Result(True, "the servers waiting for game files look again now")
         return Result(False, f"unknown request '{verb}'")
+
+    async def _get_game_files(self, kind: str, how: str) -> Result:
+        """I's "get Halo 3's files": in the background, so the window stays free; the servers waiting for them start
+        once they're in. `how`: "mcc" or "steamcmd" (asked by a person: a download is allowed whatever
+        [setup] download_game_files says), or "" for the best way there is."""
+        from .repair import DEPOTS, LABELS, shared_target, sources
+
+        if kind not in DEPOTS:
+            return Result(False, f"'{kind}' isn't one of {', '.join(DEPOTS)}")
+        target, why = shared_target(self.settings, kind)
+        if target is None:
+            return Result(False, why)
+        found, no_download = await asyncio.to_thread(sources, self.settings, kind, downloads=True)
+        source = next((s for s in found if not how or s.how == how), None)
+        if source is None:
+            return Result(False, f"no way to get {LABELS[kind]} here: " + ("MCC isn't on this PC" if how != "steamcmd"
+                                                                            else no_download))
+        if not self.game_files.get(kind, target, source):
+            return Result(False, f"{LABELS[kind]} are being got already: {self.game_files.getting.get(kind, '')}")
+        return Result(True, f"getting {LABELS[kind]} in the background: {source.text(kind)}. The log says when "
+                            "they're in, and the servers waiting for them start")
 
     def stop_everything(self, *, immediate: bool = False) -> None:
         """Stop every server (warning players unless immediate), then the supervisor."""

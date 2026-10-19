@@ -49,6 +49,9 @@ def test_importing_mccs_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     library = tmp_path / "Library"
     fake_mcc(library / "steamapps" / "common" / contentimport.MCC_FOLDER)
     monkeypatch.setattr(contentimport, "_steam_roots", lambda: [library])
+    assert find_mcc(str(tmp_path / "nowhere")) is None  # Steam's folder has it, but no record of Steam's says so
+    (library / "steamapps" / f"appmanifest_{contentimport.MCC_APP}.acf").write_text(
+        f'"AppState"\n{{\n\t"installdir"\t\t"{contentimport.MCC_FOLDER}"\n}}\n', encoding="utf-8")
     assert find_mcc(str(tmp_path / "nowhere")) == library / "steamapps" / "common" / contentimport.MCC_FOLDER  # Steam's
     items = importable(mcc)
     assert sorted(i.name for i in items if i.target == "Maps") == ["h3_hardcoreGuardian", "infection_zanzibar",

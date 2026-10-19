@@ -31,7 +31,9 @@ two parts claim the same one.
 | `storage.py`, `updates.py`, `desktop.py`, `watch.py`, `tomledit.py` | SQLite; new versions of Huragok from GitHub (renames only, the backup in `records/previous-<version>/`, `records/last-update.json`, `put_back`); opening folders, editors, log windows, start at boot; following a log; editing `settings.toml` and `dedicated.toml` in place (keys, tables, `[[server]]` blocks), keeping comments. Every `tomledit` write makes the change in memory, reads the result back, and replaces the file (temp + replace) only if exactly that change differs; otherwise `TomlEditError`, with the file untouched. |
 | `dedicated.py`, `newserver.py`, `packages.py` | **Setting servers up**: running the server program's own `dedicated` commands (exe on Windows, wine on Linux; a server folder's own copy, else `[setup] program` or the newest copy here) and reading their listings, a timeout or Esc ending the whole process tree; making a server folder from a package with the root's shared `game/`, `content/` and `bans.json`; packages (`PACKAGES/`, the starters in `templates/packages`). |
 | `menu_setup.py`, `setupcli.py` | The window's N, G, I, C and E screens; the `new`, `package`, `content`, `playlist`, `variant`, `workshop`, `steam` and `dedicated` commands. Both work without the fleet, so a second window has them too. |
-| `catalogue.py`, `playlists.py`, `steamsetup.py`, `contentimport.py` | What a server can play as one catalogue (the listing, the mods' ModInfo.json and Forge layouts, the Workshop items) with numbered picking; playlist files built and edited from picks; SteamCMD found, installed, signed in and written into every server; MCC's variants imported. |
+| `catalogue.py`, `playlists.py`, `steamsetup.py`, `contentimport.py` | What a server can play as one catalogue (the listing, the mods' ModInfo.json and Forge layouts, the Workshop items) with numbered picking; playlist files built and edited from picks; SteamCMD found, installed, signed in and written into every server, one depot of MCC downloaded (`download_depot`), and whether a server's SteamCMD can fetch at all (`cannot_fetch`); MCC found only where Steam's own records say it is (`find_mcc`: the registry, `libraryfolders.vdf`, `appmanifest_976730.acf`; never a drive search) and its variants imported. |
+| `repair.py` | **What a server arrives without**, put right as its folder is found and before each start (`GameFiles.prelaunch`, the Fleet's `prelaunch` hook): a missing ban list or content folder made, a game path or `[workshop] steamcmd` from another PC pointed at this one's, Halo 3's files (and the campaign's, ODST's) got in the background from MCC here or with SteamCMD (`DEPOTS`: which piece of MCC holds what) while the server waits as WAITING. Process backend only. |
+| `migrate.py` | **The host's own files brought up to date** after an update: the `STEPS`, run at Huragok's start under its lock, each once (`records/files.json`), each file backed up first (`records/previous-files/<version>/`). See "Hosts' files across updates" below. |
 | `livesettings.py`, `menu_manage.py` | **Managing a running server**: every setting a host can change (`SETTINGS`: key, scope, type, default, group, when it applies; add a row for a new one) and the window's A (console with events), D (settings in groups, what it plays, rename, own content), B (bans, admins, VPN) and U (updates, Workshop mods, clean up) screens. |
 | `statuscard.py` | The **status card** (V): ten sections from a server's files, its dashboard row and what the supervising window adds. |
 | `gameoptions.py`, `gameoptions_data.py`, `menu_games.py` | **Game options**: the catalogue (generated: see below), presets (saved custom games) and playlist-game overrides; the one option editor both use. |
@@ -66,6 +68,15 @@ in a manager waits: a stop in progress is a task the next tick looks at, and a s
 whose process outlives the kill leaves the server running and flagged (`! couldn't
 stop it`), never reported stopped. What survives closing the window is in
 `records/servers/<server>.json` and `records/running-servers.json`.
+
+Before `launch` starts a stopped server, the Fleet's `prelaunch` hook (repair.py)
+puts right what its folder lacks; while something is missing (Halo 3's files being
+got, or no way to get them) the server stays `idle` with `waiting_for` set: the row
+says WAITING and why, it looks again every `WAIT_RECHECK` (30 s) or as soon as
+`Fleet.release()` says the files arrived, and nothing counts as a failed start. A
+stopped server whose port answers but writes no `status.json` in its own folder isn't
+taken for `external`: it waits the same way (`waiting_kind = "port"`), since that's
+another copy of it, running from another folder.
 
 ### The start loop and the exit codes
 `start` (what `start.cmd` and `start.sh` run) doesn't run Huragok itself: its
@@ -302,6 +313,7 @@ Huragok adds its own:
 | `server.workshop`, `server.map_skipped` | from the console: `item`, `text`; `path`, `reason` |
 | `server.workshop_update`, `server.workshop_updated` | a new Workshop version seen (`item`, `newest`, `installed`); swapped in (`items`) |
 | `server.program_updated` | `version`, and `before` (a server that updated itself) or `restarted` (Huragok's install) |
+| `server.repaired` | `text`: what Huragok put right in a server's folder (a ban list made, a game path pointed here: repair.py) |
 | `log.falling_behind` | `fps`, `behind`, `window`, `average`, `longest_ms`, `players` |
 | `log.upload` | `rate`, `unit`, `players` |
 | `log.roster_lost` | `lost`, `of`, `present`, `details` (the engine's JSON snapshot, as text) |
@@ -314,6 +326,7 @@ Huragok adds its own:
 | `supervisor.started`, `supervisor.stopping` | `version` and `parts` on `started` |
 | `supervisor.part_disabled`, `supervisor.part_enabled` | `part`; `reason`, `for_good` and `seconds` (until it's on again) on `part_disabled` |
 | `supervisor.commands_reloaded` | `commands.toml` was read again |
+| `supervisor.game_files` | `kind` (`halo3`, `campaign`, `odst`), `text`: game files arrived in this folder's `game/` |
 | `automod.strike`, `automod.pardon` | `player_id`, `player_name`, `rule`, `strike`, `action` (`kick`, `kick 1h`, `mute 1d`, `mute perm`, `ban`), `source` (`chat`, `manual`), `evidence`, `by`, `dry_run` |
 | `automod.name` | `player_id`, `player_name`, `caught_by` (`names.txt line 4`, `automod.txt slurs`), `by`, `dry_run`, `ok`: a name kicked as it joined |
 | `automod.name_banned`, `automod.name_allowed` | `text` (the name), `by`; `player_id` and `note` on `name_banned` |
@@ -322,6 +335,12 @@ Huragok adds its own:
 Switch on `[eventlog]` to see every event as JSON while you work.
 
 ## Ground rules
+- **Hosts' files move forward with Huragok, never backward or by hand.** Since 0.4.0
+  went out, every release reads `settings.toml`, `commands.toml`, `automod.txt`,
+  `names.txt`, `PACKAGES/` and `records/` as any version from 0.4.0 on wrote them, and
+  a change to their format comes with a step in `migrate.py` that brings an existing
+  file up to date. No release may need a clean install. See "Hosts' files across
+  updates".
 - **Don't block.** Handlers are `async`; use `await asyncio.to_thread(...)` for slow
   work (a file walk, a drive probe, a subprocess, a blocking socket). Each handler
   has `handler_timeout` (10 seconds; the part's section changes it), and always at
@@ -365,6 +384,36 @@ Switch on `[eventlog]` to see every event as JSON while you work.
   each logger gets, that every key belongs to a named part and shows on the
   dashboard, and the Superintendent's face for each state; `test_guards.py` checks
   the guards every test runs inside (below).
+
+## Hosts' files across updates
+An update replaces the program and nothing else, so a host's `settings.toml` is the one
+their first start wrote, however many versions ago. Huragok keeps it in step itself:
+`migrate.py` runs as Huragok starts (`cli._run_supervisor`, under the lock, before any
+server is looked after), and `check` lists what the next start would change. When a
+release changes what a host's file should say:
+
+1. **The reader first.** The code reads every older form, as if no step had run: a new
+   setting has a default, a renamed one still reads its old name (`OLD_VALUES`,
+   `RETIRED` name what an old file says). A step that fails, or a file that can't be
+   read, must never stop Huragok.
+2. **A step** in `migrate.STEPS`, keyed `<version>/<what>`: it looks before it changes
+   anything (a second run changes nothing), changes TOML only through `tomledit`
+   (`add_table_key`, `comment_out_table_key`, `replace_comments`, `set_table_key`), and
+   calls `ctx.backup(path)` before its first change. Leave the host's own values and
+   comments alone: add what's missing, turn what does nothing into a comment that says
+   why, and replace only comment blocks that are exactly what an earlier version wrote.
+3. **Files the version before can still read.** The start loop puts back a new version
+   that fails to start, and the version put back runs on the files as the steps left
+   them: add keys (an older version names an unknown key, and runs), don't remove or
+   rename tables.
+4. **A test** in `test_migrate.py`, from the files 0.4.0 wrote (`tests/data/host-0.4.0`).
+   `test_every_template_key_reaches_an_older_hosts_file` fails when the template gains a
+   setting that no step adds to an older file (or that `NOT_ADDED` doesn't explain).
+
+`always` steps run at every start and only add what's missing: in-game commands newer
+than `commands.toml` (under their default role), starter packages newer than `PACKAGES/`
+(`records/files.json` remembers which were offered, so one the host removed stays
+removed).
 
 ## Running the tests
 From the repository's top folder:
@@ -508,6 +557,10 @@ gh release create v0.4.0 huragok-0.4.0.zip --title "Huragok 0.4.0" --notes-file 
 Running copies of Huragok find it within `check_hours` and offer it to their host;
 the first six lines of the notes (headings left out) are what their window shows,
 so start with what changed for hosts. An update replaces `engine/` (except
-`engine/.venv`), the start scripts, `docs/`, `README.md` and `LICENSE`; never the
-host's own files. A copy from before the rename (Reclaimer Supervisor 0.2.1) can't
-update itself to Huragok: its hosts reinstall (the README says how).
+`engine/.venv`), the start scripts, `docs/`, `README.md` and `LICENSE`; the host's own
+files are brought up to date by the new version's `migrate.py` as it starts. Before
+tagging, install the zip over a copy of the previous release's install (its settings,
+servers and records) and start it: it must come up with no warnings about its files,
+and `check` must list nothing still to bring up to date. A copy from before the rename
+(Reclaimer Supervisor 0.2.1) can't update itself to Huragok: its hosts reinstall (the
+README says how).

@@ -123,7 +123,7 @@ def key_rows(startup: bool | None) -> list[tuple[str, str, str]]:
         ("SUPERINTENDENT", "[S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server",
          SUPERINTENDENT.colour),
         ("VERGIL", "[P] Players  [M] Message  [A] Console  [B] Bans & admins", VERGIL.colour),
-        ("HURAGOK", "[N] New server  [G] Game content  [I] Workshop  [D] Settings  [C] Check  [E] Edit",
+        ("HURAGOK", "[N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check  [E] Edit",
          HURAGOK.colour),
         ("", f"[O] Folder  [U] Updates  [W] Start at boot: {startup_text}  [H] Help  [Q] Quit", "white"),
     ]
@@ -391,7 +391,8 @@ class RemoteController:
 
 # How long a second window waits for the supervising window's answer, by request: longer than the work takes.
 REMOTE_WAITS = {"update": 600.0, "update_program": 900.0, "update_workshop": 600.0, "check_update": 180.0,
-                "check_program_update": 180.0, "check_workshop": 300.0, "rcon": 30.0, "say": 30.0}
+                "check_program_update": 180.0, "check_workshop": 300.0, "rcon": 30.0, "say": 30.0,
+                "game_files": 60.0, "game_files_retry": 30.0}
 
 
 def remote_wait(verb: str) -> float:
@@ -1008,7 +1009,8 @@ class Menu(SetupScreens, ManageScreens, GameScreens):
             (HURAGOK, [("N", "a new server: a folder in SERVERS/, from a package in PACKAGES/, checked and started"),
                        ("G", "what a server plays: maps, variants, game types, playlists built from numbered lists, "
                              "Workshop items and mods"),
-                       ("I", "SteamCMD for Workshop items: finds or installs it, signs in, tells every server"),
+                       ("I", "SteamCMD: finds or installs it, signs in once, tells every server; gets Halo 3's files "
+                             "(copied from MCC here, or downloaded), the campaign missions and ODST's"),
                        ("D", "everything about a server, in groups, changed while it runs (or after the game "
                              "when it needs a restart)"),
                        ("C", "a server's own `dedicated check`"), ("E", "edit Huragok's files, or a server's"),

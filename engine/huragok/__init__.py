@@ -6,7 +6,7 @@ over the players, removing them for words on a list (automod) and giving in-game
 commands to the roles the host picks (commands.toml). Works the same on Windows and
 Linux."""
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 from .chat import CommandCall  # noqa: E402
 from .events import Event  # noqa: E402

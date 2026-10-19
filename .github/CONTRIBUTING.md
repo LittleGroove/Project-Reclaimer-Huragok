@@ -35,10 +35,15 @@ A few things that keep Huragok dependable:
 - Nothing blocks the event loop: slow work goes to `asyncio.to_thread`.
 - A command's `role` is only its default; hosts decide in `commands.toml`.
 - New parts are switched off by default unless they're safe for every host.
-- Hosts' files (`settings.toml`, `commands.toml`, `automod.txt`, `names.txt`) are
-  written once and never replaced; the program lives in `engine/`. A change to a
-  host's file goes through `tomledit`, which writes only what reads back as exactly
-  that change.
+- Huragok is installed on hosts' machines, and every update goes over an existing
+  install: no release may need a clean install. Hosts' files (`settings.toml`,
+  `commands.toml`, `automod.txt`, `names.txt`, `PACKAGES/`, `records/`) are theirs and
+  are never rewritten: the program lives in `engine/`, and an update replaces only
+  that. Read every form of a host's file that any version from 0.4.0 on wrote, and
+  when what a file should say changes, add a step to `migrate.py` that brings an
+  existing file up to date, with a test from `tests/data/host-0.4.0`
+  (docs/development.md, "Hosts' files across updates"). A change to a host's file
+  goes through `tomledit`, which writes only what reads back as exactly that change.
 - Keep slurs out of the repository: tests use stand-in words.
 - No personal details in the repository (names, addresses, player IDs, passwords,
   your own paths): use `C:\reclaimer`, Alice and Bravo, `abcd…` IDs.

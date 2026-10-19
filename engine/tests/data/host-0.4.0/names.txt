@@ -1,0 +1,15 @@
+# Vergil's banned names: one per line. KEEP IT CLEAN!
+#
+# A player who joins with one is kicked, every time, until they change it. There's
+# no strike and no ban: the name is what's banned, and a kicked player can come
+# straight back with another one.
+#
+# Moderators add a player's name from the game with !strike <player> name; admins
+# take one off with !unbanname <name>. Capitals, accents, digits for letters,
+# spacing and lookalike letters are caught for you, as in automod.txt, and so is
+# the name inside a longer one. *name* also catches it inside a word.
+# Names with a word from automod.txt in them are kicked too, without being listed here.
+# Edits apply within a few seconds.
+#
+# Banned names go below.
+

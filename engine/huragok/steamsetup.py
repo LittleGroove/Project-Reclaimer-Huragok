@@ -1,4 +1,4 @@
-"""SteamCMD for the Workshop: finding it, installing it, signing in, and telling every server about it.
+"""SteamCMD for the Workshop and Halo 3's files: finding it, installing it, signing in, telling every server.
 
 A dedicated server installs Workshop items itself (`[workshop] items`, `dedicated mods`), but on
 a headless server it needs SteamCMD and an account that owns MCC: an anonymous SteamCMD
@@ -12,7 +12,12 @@ sign-in can't fetch MCC's items (checked). So the supervisor:
    password and the Steam Guard code once; after that the account's login is cached and
    `dedicated mods` runs without prompts (never a password in any file);
 4. writes `[workshop] steamcmd` and `username` into every server's dedicated.toml and
-   `[setup] steamcmd` / `steam_username` into settings.toml.
+   `[setup] steamcmd` / `steam_username` into settings.toml;
+5. downloads one depot of MCC (a piece of it, such as Halo 3's multiplayer files) with `download_depot`, for a
+   server with no MCC on its PC (repair.py keeps what a server uses and leaves out sound and video).
+
+Before a Workshop update restarts a server, cannot_fetch() says whether its SteamCMD can fetch anything here: a
+copied server can name a SteamCMD that's on another PC, or an account with no saved sign-in on this one.
 """
 
 from __future__ import annotations
@@ -37,6 +42,9 @@ LINUX_INSTALLER = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_lin
 STANDARD_WINDOWS = Path(r"C:\steamcmd")
 MCC_APP = 976730
 USERNAME = re.compile(r"[A-Za-z0-9_]{2,64}")
+DEPOT_DONE = re.compile(r'Depot download complete\s*:\s*"([^"]+)"')
+NO_PROMPTS = ["+@ShutdownOnFailedCommand", "1", "+@NoPromptForPassword", "1"]  # fail rather than wait for a person
+DEPOT_HOURS = 4.0  # a depot is gigabytes: this long before SteamCMD is given up on
 
 
 class SteamSetupError(Exception):
@@ -312,3 +320,57 @@ def workshop_download(executable: Path, username: str, item: int, timeout: float
         return False, "SteamCMD took too long (waiting for a password?)"
     ok = "Success" in result.stdout and "ERROR" not in result.stdout
     return ok, result.stdout[-400:]
+
+
+def cannot_fetch(config: Path) -> str | None:
+    """Why the server whose dedicated.toml this is can't fetch Workshop items with SteamCMD here, or None. Only what
+    the files say: a saved sign-in that Steam has since expired shows when SteamCMD runs (the server's console says
+    so, and its line turns red). No SteamCMD named: the Steam app on its PC fetches them, which no file tells."""
+    path, username = workshop_settings(config)
+    if not path:
+        return None
+    executable = Path(path)
+    if not executable.is_file():
+        return f"its SteamCMD ({path}) isn't on this PC"
+    if not username:
+        return "no Steam account is set for SteamCMD (an anonymous sign-in can't fetch MCC's items)"
+    if username.lower() not in [a.lower() for a in cached_accounts(executable)]:
+        return f"{username} has no saved SteamCMD sign-in here"
+    return None
+
+
+def depot_folders(executable: Path, depot: int) -> list[Path]:
+    """Where SteamCMD puts a depot it downloaded: beside it on Windows, under the Steam folder on Linux."""
+    tail = Path("steamapps") / "content" / f"app_{MCC_APP}" / f"depot_{depot}"
+    roots = [executable.parent, Path.home() / "Steam", Path.home() / ".steam" / "steam",
+             Path.home() / ".local" / "share" / "Steam"]
+    return [root / tail for root in roots]
+
+
+def download_depot(executable: Path, username: str, depot: int, timeout: float = DEPOT_HOURS * 3600) -> Path:
+    """One depot of MCC with SteamCMD's download_depot, on the account's saved sign-in (never a password: with none
+    saved it fails rather than asks). Returns the folder it's in. Gigabytes: run it in a thread."""
+    if problem := check_username(username):
+        raise SteamSetupError(problem)
+    platform = [] if os.name == "nt" else ["+@sSteamCmdForcePlatformType", "windows"]  # MCC is Windows only
+    words = [*NO_PROMPTS, *platform, "+login", username, "+download_depot", str(MCC_APP), str(depot), "+quit"]
+    try:
+        result = run(executable, words, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise SteamSetupError(f"SteamCMD was still downloading after {DEPOT_HOURS:.0f} hours: try again (I)") from None
+    text = result.stdout
+    lower = text.lower()
+    if "login failure" in lower or ("password" in lower and "logged in ok" not in lower):
+        raise SteamSetupError(f"SteamCMD couldn't sign {username} in on its saved sign-in: press I to sign in again")
+    if any(word in lower for word in ("no subscription", "access denied", "missing decryption key")):
+        raise SteamSetupError(f"{username} doesn't own this part of MCC on Steam (depot {depot})")
+    match = DEPOT_DONE.search(text)
+    found = [Path(match.group(1))] if match else []
+    for folder in found + depot_folders(executable, depot):
+        try:
+            if folder.is_dir() and any(folder.iterdir()):
+                return folder
+        except OSError:
+            continue
+    last = " | ".join(line.strip() for line in text.strip().splitlines()[-3:])
+    raise SteamSetupError(f"SteamCMD didn't download depot {depot} ({last or 'it said nothing'})")

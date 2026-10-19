@@ -53,7 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from . import __version__
+from . import __version__, steamsetup
 from .events import Event
 from .manager import StoppedJob
 from .updates import UpdateError
@@ -208,6 +208,7 @@ class WorkshopUpdateService:
         self.last_error = ""
         self._error_logged = 0.0
         self._sign_in_logged: dict[str, float] = {}
+        self._blocked_logged: dict[str, float] = {}  # server -> when "can't be fetched here" was last logged
         bus.subscribe("server.workshop", self._on_console)
         self.recover()  # a job cut short last time: its old copies back before any server starts
 
@@ -327,6 +328,15 @@ class WorkshopUpdateService:
     def _server(self, name: str | None) -> ServerConfig | None:
         return next((s for s in self.settings.servers if s.name == name), None)
 
+    def cannot_fetch(self, server: ServerConfig) -> str | None:
+        """Why the server's SteamCMD can't fetch the new version here (steamsetup.cannot_fetch), logged once an hour."""
+        blocked = steamsetup.cannot_fetch(server.config_path)
+        if blocked and time.monotonic() - self._blocked_logged.get(server.name, -QUIET_ERRORS) > QUIET_ERRORS:
+            self._blocked_logged[server.name] = time.monotonic()
+            log.warning("[%s] a new version of its Workshop mods waits, but it can't be fetched here: %s. No restart "
+                        "until it can: press I to set up SteamCMD", server.name, blocked)
+        return blocked
+
     def _sign_in_failed(self, server: ServerConfig, text: str) -> None:
         self.lifecycle.set_flag(server.name, SIGN_IN_FLAG, "! SteamCMD sign-in failed: press I to sign in again")
         if time.monotonic() - self._sign_in_logged.get(server.name, -QUIET_ERRORS) > QUIET_ERRORS:
@@ -387,6 +397,12 @@ class WorkshopUpdateService:
             self.lifecycle.set_flag(server.name, FLAG, f"! {', '.join(w.label for w in waiting.values())}: the new "
                                                        f"version didn't install ({MAX_TRIES} tries): U -> Workshop "
                                                        "mods to try again")
+            return
+        if blocked := self.cannot_fetch(server):
+            # A restart now would only put the old copy back: no restart and nothing told to players until it can.
+            self.lifecycle.drop_job(server.name, JOB)
+            self.lifecycle.set_flag(server.name, FLAG, f"! mod update waiting: {', '.join(w.label for w in tryable)}; "
+                                                       f"it can't be fetched: {blocked}: press I")
             return
         if server.name not in self.installing:  # never added while it runs: the server must start after it
             self.lifecycle.add_job(server.name, StoppedJob(JOB, "installing new Workshop versions",
@@ -651,6 +667,8 @@ class WorkshopUpdateService:
                            "the new version for all of them once nobody's on")
         if not self.waiting.get(name):
             return False, "nothing is waiting: the server has the newest version of every item"
+        if blocked := self.cannot_fetch(server):
+            return False, f"it can't be fetched: {blocked}: press I to set up SteamCMD for it"
         for item in self.waiting[name]:
             self.failures.pop((name, item), None)  # a person asked: tried again, however often it failed
         self.lifecycle.add_job(name, StoppedJob(JOB, "installing new Workshop versions", lambda: self.install(server)))

@@ -361,6 +361,11 @@ def cmd_init(words: list[str]) -> int:
         (halo3 / "game_variants").mkdir(exist_ok=True)
         (halo3 / "halo3.dll").write_bytes(b"dll")
         (halo3 / "maps" / "shared.map").write_bytes(b"map")
+        if wanted and "campaign" in wanted:  # --maps campaign: the missions, and campaign.map they share
+            wanted = (wanted - {"campaign"}) | {"guardian"}
+            for stem in ("campaign", "005_intro", "010_jungle", "020_base", "030_outskirts", "040_voi",
+                         "050_floodvoi", "070_waste", "100_citadel", "110_hc", "120_halo", "130_epilogue"):
+                (halo3 / "maps" / f"{stem}.map").write_bytes(b"map")
         for title, stem in MAPS:
             if wanted and title.lower() not in wanted and stem.lower() not in wanted:
                 continue

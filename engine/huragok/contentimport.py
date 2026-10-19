@@ -11,6 +11,11 @@ and game types up while running (0.9.18); `dedicated content` lists them by name
 A server's own content folder can be hard links to the root's shared files (serverops.own_content), so every
 write into a content folder goes through copy_replacing: a new file moved into place, never an overwrite of the
 linked one, which would change the shared copy every other server plays.
+
+MCC is found only where the host or Steam says it is (find_mcc): [setup] mcc_folder, then Steam's own records:
+where Steam is (the registry's SteamPath on Windows, Steam's ~/.steam/steam link on Linux), the libraries its
+libraryfolders.vdf lists with the games each holds, and the folder MCC's appmanifest_976730.acf names. Nothing
+else on the PC is looked at: no drive is searched and no folder guessed.
 """
 
 from __future__ import annotations
@@ -21,12 +26,11 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
-MCC_FOLDER = "Halo The Master Chief Collection"
-STEAM_DEFAULT = Path(r"C:\Program Files (x86)\Steam\steamapps\common") / MCC_FOLDER
+MCC_APP = "976730"  # MCC on Steam
+MCC_FOLDER = "Halo The Master Chief Collection"  # the folder Steam installs it in (its appmanifest says so)
 WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
-DRIVE_FIXED = 3  # GetDriveTypeW: a local disk (not removable, optical, network or RAM)
 MCC_SOURCES = {  # folder under halo3/ -> content subfolder
     "hopper_map_variants": "Maps", "map_variants": "Maps",
     "hopper_game_variants": "Game Modes", "game_variants": "Game Modes",
@@ -74,67 +78,121 @@ def copy_replacing(source: Path, target: Path) -> None:
         raise
 
 
-def _fixed_drives() -> list[str]:
-    """This PC's local disks (C:, D:…), asked of Windows without touching any drive: an empty DVD drive, a
-    disconnected network drive or a card reader isn't probed (each can stall for seconds)."""
-    try:
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        mask = kernel32.GetLogicalDrives()
-        return [f"{letter}:\\" for number, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-                if mask >> number & 1 and kernel32.GetDriveTypeW(f"{letter}:\\") == DRIVE_FIXED]
-    except (AttributeError, OSError):
-        return []
-
-
 def _steam_roots() -> list[Path]:
-    """Where Steam itself is: the registry's SteamPath, then the usual folders."""
+    """Where Steam is, as Steam itself records it: on Windows the registry's SteamPath (and the InstallPath its
+    installer writes), and only when neither is there, Steam's own install folders; on Linux the ~/.steam links
+    Steam keeps, its data folder and Flatpak's. Each once, and only one that's there."""
     roots: list[Path] = []
     if os.name == "nt":
         try:
             import winreg
-
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
-                roots.append(Path(str(winreg.QueryValueEx(key, "SteamPath")[0])))
-        except OSError:
-            pass
-        roots += [Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Steam",
-                  Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Steam"]
+        except ImportError:
+            winreg = None  # type: ignore[assignment]
+        for hive, key, value in (("HKEY_CURRENT_USER", r"Software\Valve\Steam", "SteamPath"),
+                                 ("HKEY_LOCAL_MACHINE", r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath")):
+            if winreg is None:
+                break
+            try:
+                with winreg.OpenKey(getattr(winreg, hive), key) as handle:
+                    roots.append(Path(str(winreg.QueryValueEx(handle, value)[0])))
+            except OSError:
+                continue
+        if not roots:
+            roots += [Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Steam",
+                      Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Steam"]
     else:
-        roots += [Path(p).expanduser() for p in ("~/.steam/steam", "~/.local/share/Steam",
+        roots += [Path(p).expanduser() for p in ("~/.steam/steam", "~/.steam/root", "~/.local/share/Steam",
+                                                  "~/.steam/debian-installation",
                                                   "~/.var/app/com.valvesoftware.Steam/.local/share/Steam")]
-    return roots
-
-
-def _steam_libraries() -> Iterator[Path]:
-    """Steam's library folders as Steam lists them (steamapps/libraryfolders.vdf), each Steam root first."""
-    for root in _steam_roots():
-        yield root
+    found: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
         try:
-            text = (root / "steamapps" / "libraryfolders.vdf").read_text(encoding="utf-8", errors="replace")
+            key = str(root.resolve()).lower()
+            if key not in seen and root.is_dir():
+                seen.add(key)
+                found.append(root)
         except OSError:
             continue
-        for match in re.finditer(r'"path"\s+"([^"]+)"', text):
-            yield Path(match.group(1).replace("\\\\", "\\"))
+    return found
+
+
+def read_vdf(path: Path) -> dict[str, Any]:
+    """Steam's KeyValues text (libraryfolders.vdf, appmanifest_*.acf) as nested dicts; {} when it can't be read."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    root: dict[str, Any] = {}
+    stack = [root]
+    key: str | None = None
+    for match in re.finditer(r'"((?:[^"\\]|\\.)*)"|([{}])', text):
+        token, brace = match.group(1), match.group(2)
+        if brace == "{":
+            child: dict[str, Any] = {}
+            if key is not None:
+                stack[-1][key] = child
+            stack.append(child)
+            key = None
+        elif brace == "}":
+            if len(stack) > 1:
+                stack.pop()
+            key = None
+        elif key is None:
+            key = re.sub(r"\\(.)", r"\1", token)
+        else:
+            stack[-1][key] = re.sub(r"\\(.)", r"\1", token)
+            key = None
+    return root
+
+
+def steam_libraries() -> Iterator[tuple[Path, dict[str, Any] | None]]:
+    """Each Steam library, as Steam lists them (steamapps/libraryfolders.vdf), with the games Steam says are in it
+    (None from the old file, which doesn't say). Steam's own folder first."""
+    seen: set[str] = set()
+    for root in _steam_roots():
+        listed: list[tuple[Path, dict[str, Any] | None]] = []
+        for where in ("steamapps", "config"):  # Steam keeps the list in steamapps/, older Steam in config/
+            data = read_vdf(root / where / "libraryfolders.vdf")
+            folders = data.get("libraryfolders") or data.get("LibraryFolders") or {}
+            for number, entry in (folders.items() if isinstance(folders, dict) else []):
+                if not str(number).isdigit():
+                    continue
+                if isinstance(entry, dict) and entry.get("path"):
+                    apps = entry.get("apps")
+                    listed.append((Path(str(entry["path"])), apps if isinstance(apps, dict) else None))
+                elif isinstance(entry, str) and entry:  # before 2021: "1" "D:\\SteamLibrary"
+                    listed.append((Path(entry), None))
+        listed.append((root, None))  # Steam's own folder is a library, listed or not
+        for library, apps in listed:
+            key = str(library).lower().replace("/", "\\").rstrip("\\")
+            if key in seen:
+                continue
+            seen.add(key)
+            yield library, apps
+
+
+def mcc_in(library: Path) -> Path | None:
+    """The folder MCC's own manifest in this library names (appmanifest_976730.acf), or None: not installed here."""
+    state = read_vdf(library / "steamapps" / f"appmanifest_{MCC_APP}.acf").get("AppState")
+    folder = state.get("installdir") if isinstance(state, dict) else None
+    return library / "steamapps" / "common" / str(folder) if folder else None
 
 
 def _mcc_candidates(hint: str | None) -> Iterator[Path]:
     if hint and clean_path(hint):
         yield Path(clean_path(hint))
-    for library in _steam_libraries():
-        yield library / "steamapps" / "common" / MCC_FOLDER
-    yield STEAM_DEFAULT
-    if os.name == "nt":
-        for drive in _fixed_drives():
-            for library in ("SteamLibrary", "Steam", "Games\\Steam", "Program Files (x86)\\Steam",
-                            "Program Files\\Steam"):
-                yield Path(drive) / library / "steamapps" / "common" / MCC_FOLDER
+    for library, apps in steam_libraries():
+        if apps is not None and MCC_APP not in apps:
+            continue  # Steam says MCC isn't in this library
+        found = mcc_in(library)
+        if found is not None:
+            yield found
 
 
 def find_mcc(hint: str | None = None) -> Path | None:
-    """Where MCC is: the hint, the Steam libraries Steam lists, Steam's default folder, or a Steam library on one
-    of this PC's local disks. The first that has halo3/ wins; nothing past it is looked at."""
+    """Where MCC is: the hint ([setup] mcc_folder), else where Steam's own records say it's installed. The first
+    that has halo3/ wins; nothing past it is looked at, and nothing Steam doesn't name is looked at at all."""
     seen: set[str] = set()
     for path in _mcc_candidates(hint):
         if str(path).lower() in seen:

@@ -1,0 +1,106 @@
+# Who can use which in-game command. Players type them in game chat:
+#     !mute Bravo 30m spam
+# Everyone in that chat sees the line, and the answer comes back privately.
+# Edits apply within a few seconds; if one has a mistake, the log says what and
+# the file from before stays in force.
+#
+# The roles, each able to use its own commands and those of every role above it:
+#   everyone   every player
+#   member     the players you list below: regulars, friends, clan. No commands
+#              of their own yet; what they get is that no vote can kick them.
+#   moderator  the players you list below. The game itself doesn't know about
+#              moderators, so what they can do is exactly what you list here.
+#   admin      the server's own admins: admins in dedicated.toml, or added in game.
+#              They aren't listed here, so there's never a second list to keep in
+#              step.
+#   owner      the players you list below (you): everything.
+#
+# One role each, on a ladder: player, member, moderator, admin, owner. In game,
+# !promote <player> moves someone one step up (up to the role below your own) and
+# !demote one step down (only someone below you): moderators make members, admins
+# make moderators, owners make admins. A ban takes every role away. Each change
+# gets a line of its own below, with who they are and who changed it; your own
+# comments in the lists stay as you wrote them. Owners change only here.
+#
+# Players are listed by player ID, never by name (anyone can use any name). It's
+# 64 letters and digits; players find theirs in game under Settings > Online
+# services. `start.cmd rcon players` (Linux: ./start.sh rcon players) shows
+# everyone's on the server.
+#
+# To change who can use a command, move it to another role's list. To switch it
+# off, put it in [off]. A command in no list keeps the role it has here. Nobody
+# can use a command on someone of their own role or above (owners excepted).
+#
+# No vote can kick a member, moderator, admin or owner: Vergil puts everyone
+# listed here on each server's vote-kick immune list (the console's `immune`),
+# and takes them off again when you take them out of this file.
+
+prefix = "!"            # what commands start with ("/" lines are the game's own)
+cooldown_seconds = 3    # between uses of a command, per player; admins and owners wait for nothing
+
+[everyone]
+commands = [
+    "help",         # The commands you can use, or how to use one
+    "strikes",      # Your automod strikes (moderators: anyone's)
+]
+
+[member]
+players = [
+    # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",  # who this is
+]
+commands = []
+
+[moderator]
+players = [
+    # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",  # who this is
+]
+commands = [
+    "banname",      # Ban a name: whoever uses it is kicked as they join, until they change it (names.txt)
+    "demote",       # One step down the roles: an admin becomes a moderator, a moderator a member, a member a player
+    "health",       # How this server is running
+    "kick",         # Remove them; the server keeps them out 10, 30, 60, then 120 minutes
+    "mute",         # Nobody hears their voice or reads their chat, e.g. !mute Bravo 30m spam
+    "pardon",       # Let a kicked player back in now
+    "players",      # Who's on, with #numbers and player IDs
+    "promote",      # One step up the roles: player, member, moderator, admin (up to the role below yours)
+    "roles",        # Who has which role: owners, admins, moderators, members
+    "strike",       # Give a strike on an automod rule, e.g. for something said in voice; 'name' bans their name
+    "unmute",       # Lift a mute, also for someone who left
+    "warn",         # A private warning, recorded
+    "whois",        # A player's other names, visits and past actions
+]
+
+[admin]
+commands = [
+    "ban",          # Ban their ID, address and device; no time means for good, e.g. !ban Bravo 7d cheating
+    "cancelvote",   # End the vote under way with no result
+    "endgame",      # End the game with the scores as they stand
+    "endround",     # End the round as if its time ran out
+    "load",         # End this game and load a map and mode
+    "map",          # Load a map with the current rules
+    "maxping",      # Show or set the ping limit for joining
+    "mode",         # Load a mode on the current map
+    "nextmap",      # Show or pick the next game
+    "pardonplayer", # Clear someone's automod strikes and lift what automod did to them
+    "passvote",     # Pass the vote under way
+    "say",          # A [Server] line for everyone
+    "servername",   # Show or change the server's name until it restarts
+    "shuffle",      # Shuffle and balance the teams
+    "startvote",    # Call a vote
+    "team",         # Move a player
+    "teamcount",    # Show teams, or spread players over this many
+    "unban",        # Lift a ban with everything linked to it
+    "unbanname",    # Take a name off the banned names, names.txt
+]
+
+[owner]
+players = [
+    # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",  # who this is
+]
+commands = [
+    "admin",        # The admins (the server's own list, shared by every server using the ban list): add makes a player one, remove makes them a moderator
+    "reload",       # Apply edits to dedicated.toml now
+]
+
+[off]
+commands = []

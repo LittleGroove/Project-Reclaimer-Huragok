@@ -350,7 +350,11 @@ can differ with `workshop_updates = "..."` in its `[[server]]` block in
 server's own way: it swaps the mod for all of them at once.
 
 When SteamCMD's sign-in has expired, the server's line says so in red: press **I**
-to sign in again.
+to sign in again. A server whose SteamCMD can't fetch anything here (one copied in
+from another PC names a SteamCMD that isn't on this one, or an account with no saved
+sign-in here) isn't restarted for a new version at all: the update waits, its line
+says `it can't be fetched: … press I`, and players aren't told anything. Once I has
+set SteamCMD up, the next look at Steam plans it as usual.
 
 ## A console for moderators elsewhere: the relay
 Moderators who aren't at this PC normally use the official RCON client against

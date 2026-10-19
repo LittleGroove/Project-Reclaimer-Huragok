@@ -280,13 +280,19 @@ doesn't match, it copies `halo3.dll` from your MCC folder, and `halo3odst.dll` t
 when the game folder has ODST's files (each old one is renamed, since a running
 server holds it); the screen names every server that shares that game folder, and a
 game folder that is MCC's own (linked to it) is left alone, since its file is MCC's.
+With no MCC on this PC, it offers to download Halo 3's files with SteamCMD (I sets it
+up) and copies the new engine file in from them the same way.
 When the check says Halo 3: ODST's files aren't in the game folder, it offers to add
 them from MCC.
 
-## SteamCMD for the Workshop: I in the window
-A server downloads Workshop items itself, but only with SteamCMD and a Steam account
-that owns MCC: an anonymous SteamCMD sign-in can't fetch MCC's items (checked). **I**
-(or `start.cmd steam`):
+## SteamCMD: I in the window
+**I** (or `start.cmd steam`) shows SteamCMD and the Steam account, then every game
+folder here: its Halo 3 multiplayer maps, the campaign files, ODST's, and which
+servers use it, and any server missing files. Then:
+
+**1 SteamCMD and the Steam account.** A server downloads Workshop items itself, but
+only with SteamCMD and a Steam account that owns MCC: an anonymous SteamCMD sign-in
+can't fetch MCC's items (checked). It:
 
 - finds SteamCMD: `[setup] steamcmd`, `steamcmd/` at the root, `C:\steamcmd` (the
   folder the server's own template names), your PATH, `~/steamcmd` on Linux;
@@ -306,8 +312,25 @@ that owns MCC: an anonymous SteamCMD sign-in can't fetch MCC's items (checked). 
   restarts), and `[setup] steamcmd` / `steam_username` into `settings.toml`;
 - can put SteamCMD's folder on your PATH for other tools (`steam path`).
 
-Installing Halo 3's own files through SteamCMD isn't offered: MCC's depots come as one
-130 GB app, and `dedicated init --from` already links them from an MCC install for free.
+**2 Halo 3's files, 3 the campaign missions, 4 Halo 3: ODST's files**, into this
+folder's shared `game/`, beside what's there (running servers keep running). Each
+lists every way there is, with sizes, before asking:
+
+- **copy them from MCC on this PC**: hard links on the same drive, so no space used.
+  MCC is found only where Steam's own records say it is (the registry's Steam folder,
+  the libraries `libraryfolders.vdf` lists, MCC's `appmanifest_976730.acf`); no drive
+  is searched. MCC that Steam doesn't list: name it as `[setup] mcc_folder`;
+- **download them with SteamCMD**, as the signed-in account. MCC on Steam comes in
+  parts (depots), and a server needs only its game's: Halo 3 multiplayer is 9.3 GB
+  (`halo3.dll`, `shared.map` and the 27 maps; 5.8 GB kept, since sound is left out),
+  the campaign 9.0 GB, ODST 8.7 GB. Never all of MCC (57 GB with every game).
+
+With a Huragok window running, the getting runs in the background and the window stays
+free: the log says when they're in, and the servers waiting for them start. Without the
+window: `start.cmd steam files [halo3|campaign|odst] [--download]`.
+
+**Huragok does this by itself, too**, for a server that needs the files: see "A server
+folder from somewhere else" below.
 
 From the command line: `content [-s server] [words]`, `playlist [-s server] [list |
 show <name> | new <name> --maps … --games … | use <name>]`, `variant [-s server]
@@ -326,6 +349,30 @@ once, `friendly_fire`, `team_changing` and a playlist from the next game or vote
 and RCON settings by a restart once the server is empty. **The result shows in the
 dashboard's events**: `settings reloaded: max_players 16 → 12`, or `settings NOT
 reloaded, nothing changed: …` with what's wrong.
+
+## A server folder from somewhere else
+A server Huragok made shares this folder's `game/` and `bans.json`: its
+`dedicated.toml` says `game = "../../game"` and `bans = "../../bans.json"`. Copy or move
+just that server folder into another Huragok folder (or onto another PC) and those
+paths point at nothing. The server program then refuses to start ("missing files
+copied from your own MCC installation"), and it reads a missing ban list as an empty
+one, so the bans the server had are gone without a word.
+
+Huragok puts that right by itself, as soon as it finds the folder and again before each
+start (with `backend = "process"`; in a container the paths aren't this PC's):
+
+| What's missing | What Huragok does |
+| --- | --- |
+| the ban list | makes an empty one where the file says; when even its folder isn't on this PC, points the server at this folder's shared `bans.json` (made if need be). The log says so, and that the old bans stayed where the folder came from: copy that `bans.json` over this one to keep them |
+| the content folder | makes it, with `Maps`, `Game Modes`, `Images` and `Mods` |
+| Halo 3's files | points the server at a game folder here that has them (this folder's `game/` first). With none, gets them into `game/`: copied from MCC when it's on this PC, otherwise downloaded with SteamCMD (`[setup] download_game_files`, on by default; false downloads nothing without you). The server shows **WAITING** and why until they're in, and its failed starts aren't counted. With no way to get them it waits and says to press I |
+| the campaign missions, ODST's files | the same, for a server that plays the campaign or ODST |
+| a map the copy left out | a start that fails for missing files gets them before it tries again |
+| `[workshop] steamcmd` from another PC | this folder's SteamCMD (the one I set up) in its place |
+| its port, held by the copy it was made from | it waits ("in use by something that isn't this server") rather than being watched as if it were this server: stop the other one, or give this one another port (D) |
+
+A copy also keeps the original's `data/stats-key.json`, its identity to the stats
+service: two copies running at once report as one server.
 
 ## Folders Huragok ignores
 A folder in `SERVERS/` whose name starts with `.` or `_` is never a server:

@@ -498,6 +498,81 @@ def set_table_key(path: Path, table: str, key: str, value: object, *, before: st
     edit.save()
 
 
+def comment_out_table_key(path: Path, table: str, key: str, note: str) -> bool:
+    """Turn [table]'s `key` line(s) into comments, with `note` (why; a line break starts another comment line)
+    above them, so the host still sees what was there and why it does nothing now. False: the table doesn't set
+    it."""
+    edit = _Edit(path, f"[{table}] {key}")
+    current = edit.wanted.get(table)
+    if not isinstance(current, dict) or key not in current:
+        return False
+    del current[key]
+    number, _ = _list_line(edit, table, key)
+    if number is None:
+        raise edit.refuse(f"[{table}] {key} isn't on a line of its own")
+    end = edit.layout[number].end
+    old = edit.lines[number:end + 1]
+    edit.lines[number:end + 1] = [*(f"# {line}".rstrip() for line in note.splitlines()), *(f"# {line}" for line in old)]
+    edit.changed()
+    edit.save()
+    return True
+
+
+def add_table_key(path: Path, table: str, key: str, value: object, comments: list[str] | None = None, *,
+                  after: str | None = None) -> bool:
+    """Add `key = value` to [table] with its comment lines above it: just after `after`'s line(s) when the table
+    sets that, else at the end of the table (made when it's missing). False: the table sets `key` already, or
+    the file has it commented out (`# key = …`), which is the host's choice to leave it to its default."""
+    edit = _Edit(path, f"[{table}] {key}")
+    current = edit.wanted.setdefault(table, {})
+    if not isinstance(current, dict):
+        raise edit.refuse(f"{table} isn't a table there")
+    if key in current:
+        return False
+    tables = edit.tables()
+    span = tables.get((table,))
+    if span is not None and any(edit.layout[n].kind == "comment" and (m := COMMENTED_KEY.match(edit.lines[n]))
+                                and m.group(1) == key for n in range(span[0] + 1, span[1])):
+        return False
+    current[key] = _plain(value)
+    lines = [f"# {line}" if line else "#" for line in (comments or [])] + [f"{_key(key)} = {_toml_value(value)}"]
+    if span is None:
+        while edit.lines and not edit.lines[-1].strip():
+            edit.lines.pop()
+        edit.lines += ["", f"[{_key(table)}]", *lines]
+    else:
+        number = edit.key_line(span[0] + 1, span[1], after, f"[{table}]") if after else None
+        if number is not None:
+            insert = edit.layout[number].end + 1
+        else:
+            insert = span[1]
+            while insert > span[0] + 1 and edit.layout[insert - 1].kind == "blank":
+                insert -= 1
+        edit.lines[insert:insert] = lines
+    edit.changed()
+    edit.save()
+    return True
+
+
+def replace_comments(path: Path, old: list[str], new: list[str]) -> bool:
+    """Put the comment lines `new` where the file has exactly the comment lines `old` (each compared with its
+    spaces at either end taken off), so a comment Huragok wrote can say something new; a block the host edited
+    is left as they made it. False: no such block."""
+    edit = _Edit(path, "comments")
+    if not old or not all(line.lstrip().startswith("#") for line in old + new):
+        raise edit.refuse("only comment lines are swapped")
+    wanted = [line.strip() for line in old]
+    for number in range(len(edit.lines) - len(old) + 1):
+        comments = all(edit.layout[number + i].kind == "comment" for i in range(len(old)))
+        if comments and [line.strip() for line in edit.lines[number:number + len(old)]] == wanted:
+            indent = edit.lines[number][:len(edit.lines[number]) - len(edit.lines[number].lstrip())]
+            edit.lines[number:number + len(old)] = [indent + line.strip() for line in new]
+            edit.changed()
+            edit.save()
+            return True
+    return False
+
+
 def _list_line(edit: _Edit, table: str, key: str) -> tuple[int | None, tuple[int, int] | None]:
     """The line where [table] sets `key` (None: it doesn't), and the table's lines (None: no such table)."""
     span = edit.tables().get((table,))

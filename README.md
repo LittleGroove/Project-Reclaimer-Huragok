@@ -61,7 +61,7 @@ console, its files and its `dedicated` command), and it changes a server's
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   SUPERINTENDENT  [S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server
   VERGIL          [P] Players  [M] Message  [A] Console  [B] Bans & admins
-  HURAGOK         [N] New server  [G] Game content  [I] Workshop  [D] Settings  [C] Check  [E] Edit
+  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check  [E] Edit
                   [O] Folder  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   RECENT EVENTS  ·  SUPT Superintendent  VRGL Vergil  HRGK Huragok  ·  logs/huragok.log has them all
@@ -202,7 +202,7 @@ on the screen is always still waiting for you.
 | | **Huragok** |
 | **N** | a **new server**: a folder in `SERVERS/` made with the server program's `dedicated init`, from a package in `PACKAGES/` (its playlist, game types, maps, Workshop items), sharing the root's Halo 3 files and ban list (and one content folder, if you choose), checked, then started. See [docs/setup.md](docs/setup.md) |
 | **G** | what a server plays: browse its maps, mod maps, variants and game types as numbered lists; build and edit playlists by picking from them; Workshop items and mods (and the Forge layouts mods ship); `dedicated check`; save it as a package; import MCC's own matchmaking map and game variants (MLG, Hardcore, Infection…) into its content |
-| **I** | SteamCMD for Workshop items: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), tell every server about it |
+| **I** | SteamCMD: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), tell every server about it; and **Halo 3's files**, the campaign missions and ODST's, copied from MCC on this PC or downloaded with SteamCMD. See [docs/setup.md](docs/setup.md#steamcmd-i-in-the-window) |
 | **D** | a server's settings changed while it runs: player cap, join password, voice, votes, welcome, playlist, hidden, anti-cheat… written to its `dedicated.toml` (a value the server program would refuse, or one its version is too old for, is refused before anything is written; Enter leaves a value as it was); the screen says when each applies (at once, next game, when empty) and the events show the server's answer |
 | **C** | a server's own `dedicated check`: game files, settings, playlists, maps, ports |
 | **E / O** | edit `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, or any server's `dedicated.toml`, playlists and ban list (the server applies most edits by itself; the result shows in the events); open the root folder |
@@ -266,7 +266,11 @@ Each server has a small state machine, looked at every second, so nothing waits
 on anything else:
 
 - **Starting:** a server is up once its RCON answers. One that never answers
-  within `ready_seconds` is a failed start.
+  within `ready_seconds` is a failed start. Before a start, Huragok puts right what
+  the server's folder lacks (a ban list, a content folder, Halo 3's files, a SteamCMD
+  that's on this PC: see [docs/setup.md](docs/setup.md#a-server-folder-from-somewhere-else));
+  while something is still missing the server shows **WAITING** and why, and that
+  never counts as a failed start.
 - **Crashes:** a server that dies is started again after `backoff_seconds` (5 s,
   then 10, 30, 60, 300). Dying within `good_run_seconds` of starting counts as a
   failed start; `max_failures` (5) of those in a row mean **FAULTED**: the
@@ -419,8 +423,8 @@ logging what it would do. See [docs/automod.md](docs/automod.md).
 reclaimer/                the root
   start.cmd, start.sh     open the window (and run the other commands)
   settings.toml           \
-  commands.toml            | yours: written on the first start, never replaced
-  automod.txt              |
+  commands.toml            | yours: written on the first start; an update brings them up to date
+  automod.txt              | and never takes away what you wrote (see Updating)
   names.txt               /
   SERVERS/                one folder per server (yours); a folder starting with . or _ is ignored
   PACKAGES/               server packages: seven starters on the first start, and the ones you save
@@ -451,7 +455,13 @@ It never installs one by itself: the window says what's new and waits for you.
 
 Your servers keep running while it updates. Only the program is replaced
 (`engine`, the start scripts, `docs`, `README.md`, `LICENSE`); your settings,
-commands, word lists, servers and records stay. The install is all or nothing:
+commands, word lists, servers and records stay. Then, as the new version starts, it
+brings your files up to date itself: a new setting is added to `settings.toml` with
+its comment, a setting that does nothing any more becomes a comment saying why, a new
+in-game command is listed in `commands.toml`, a new starter package goes into
+`PACKAGES/`. What you wrote stays as you wrote it, each file is kept as it was in
+`records/previous-files/<version>/`, and `check` lists what the next start will bring
+up to date. You never need to reinstall or start over. The install is all or nothing:
 anything that can't be moved into place (an antivirus scanning the new files, a
 console whose current folder is in `engine`) puts every file back as it was. The
 replaced files are kept in `records/previous-<version>/` (a backup of the same

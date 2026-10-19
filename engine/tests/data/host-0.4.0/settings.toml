@@ -1,0 +1,350 @@
+# Huragok: how it runs.
+#
+# Huragok is the Engineer: it runs your Project Reclaimer servers from one window.
+# Inside it, as in Halo 3: ODST, are the two minds it carried out of New Mombasa:
+#   the Superintendent  keeps every server running: backend, [restarts], [watchdog],
+#                       [keepalive], and name (what players read when it acts)
+#   Vergil              watches over the players: [automod], commands.toml, [relay]
+# KEEP IT CLEAN!
+#
+# This folder is the root. The other files in it:
+#   commands.toml   who's who, and which in-game commands each role can use
+#   automod.txt     Vergil's word list (automod)
+#   SERVERS/        one folder per server: what `dedicated init` makes (dedicated.toml,
+#                   project-reclaimer.exe, game/, data/...). Add a folder, and the server
+#                   appears in the window within seconds; remove it once it's stopped.
+# commands.toml and automod.txt apply edits within seconds. Edits to this file apply
+# when Huragok starts again (the servers keep running meanwhile).
+# Check everything without starting anything: start.cmd check (Linux: ./start.sh check)
+#
+# Relative paths are from this folder. Windows paths: write them in 'single quotes',
+# like 'D:\Servers', or with forward slashes ("D:/Servers"); inside "double quotes" a
+# backslash starts an escape (\n is a line break), so "D:\Servers" can't be read.
+
+# Where the server folders are.
+servers_folder = 'SERVERS'
+# One server folder somewhere else (the folder holding dedicated.toml), on top of the
+# ones in servers_folder. ".." is the folder this one sits in (the 0.1 layout).
+server_folder = ''
+# The name of each server folder's configuration file.
+dedicated_config = "dedicated.toml"
+
+# Who starts the servers:
+#   process  the Superintendent: one `dedicated` per server, started and restarted from
+#            here, so start.cmd (Linux: ./start.sh) is how your servers start from now
+#            on. Windows runs project-reclaimer.exe itself; Linux runs it through wine.
+#   docker   the official Docker setup: the Superintendent runs `docker compose` for each
+#            server's container (see [docker] below).
+#   command  your own commands, such as systemd units (see [command] below).
+#   attach   something else (a startup task, a window you opened). Huragok watches
+#            and moderates, but can't restart anything.
+backend = 'process'
+
+# Which servers, by name as in their dedicated.toml. Empty: every enabled server found.
+servers = []
+
+# The name players read when the Superintendent acts ("restarting…").
+name = "Superintendent"
+
+# true: record every moderation action as "would have…" without doing it.
+dry_run = false
+
+# Its records (every player seen, every action with who and why) and its log.
+database = "records/huragok.sqlite3"
+log_file = "logs/huragok.log"
+
+
+# ── THE SUPERINTENDENT ── keeps every server running ─────────────────────────────
+# Players read its warnings with the public notices it posted on New Mombasa's
+# signs: "PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart."
+
+[restarts]
+# Chat warnings before a planned stop or restart: this many seconds before it, in
+# turn ("Server restarting in 5 minutes: daily restart."). Nobody on: no countdown,
+# and a countdown ends early once everyone has left.
+warn_seconds = [300, 180, 60, 30]
+# A restart "after this game": seconds of notice once the game has ended.
+after_game_seconds = 15
+# Restart every server every day at this local time (24-hour clock), like "04:00".
+# Empty: never. One server's own time goes in its [[server]] block below.
+daily_restart = ""
+# A daily restart waits until the server has been up this long.
+min_uptime_seconds = 900
+# A server that died: wait this long before each new start, in turn (the last repeats).
+backoff_seconds = [5, 10, 30, 60, 300]
+# A server that dies within this long of starting counts as a failed start…
+good_run_seconds = 600
+# …and this many failed starts in a row stop the Superintendent trying for now: the window
+# shows FAULTED, logs/faulted-<server>.txt says why, and S starts it again at once.
+max_failures = 5
+# More automatic restarts than this in one hour means something is looping: FAULTED.
+restarts_per_hour = 6
+# FAULTED is a pause, not the end: the Superintendent tries once more after this many
+# minutes, in turn (the last repeats: 30 minutes, then every hour), until a run lasts
+# good_run_seconds. [] leaves a FAULTED server for you to start (S).
+faulted_retry_minutes = [30, 60]
+# A started server must answer on RCON within this many seconds, or it's a failed start.
+ready_seconds = 300
+# A countdown ends once nobody has been on for this many seconds.
+empty_seconds = 10
+
+[watchdog]
+# The Superintendent's watchdog. It looks at every server each minute for the cases
+# below, and does what each says:
+#   "actnow"  restart it right away (players get 30 s of warning, when they can
+#             be warned): METROPOLITAN EMERGENCY!
+#   "act"     restart it at the end of the game; right away when no game is on
+#             or nobody is playing
+#   "watch"   only log it and show it in the window
+# (Not with backend attach: it can't restart. A server that stops answering at all
+# is the keepalive's, below.)
+enabled = true
+mode = "act"                         # "watch" makes every case watch, to see what it would do
+report_minutes = 15                  # a health line in the log this often; 0: never
+
+# Dead: every player dropped at once ("Host roster lost 112 of 112 players"). Seen
+# on the live server 38 s after a game ended; it let nobody back in afterwards, and
+# the server program's own rule only restarts it after five minutes.
+dead = "actnow"
+drop_players = 8                     # it counts when at least this many went at once,
+drop_share = 0.5                     # at least this share of those on,
+drop_left = 0                        # and no more than this many were left
+
+# Nobody gets in: players keep connecting and none of them joins, while there's
+# room. Catches a dead server even when it doesn't say so (2 minutes more are
+# allowed for loading the map).
+no_joins = "actnow"
+no_joins_connections = 3             # this many connections (0: never checked)
+no_joins_minutes = 5                 # in this many minutes, and none joined
+
+# Stuck: on the scoreboard after a game with players waiting. When healthy, the
+# live server always had its next game running within 2 minutes (109 s at most).
+stuck = "actnow"
+stuck_minutes = 3                    # 0: never checked
+
+# Slow: the server falling behind (its log's "under 54 frames a second") for a good
+# share of several minutes. A full server is slow anyway, and a restart doesn't make
+# it faster: on the live server's log, restarting for slow frames would have
+# restarted it mid-game hundreds of times.
+slow = "watch"
+slow_share = 0.25                    # a minute is slow when this share of it was,
+slow_minutes = 3                     # and this many minutes were slow
+slow_window_minutes = 5              # out of the last this many
+very_slow = "watch"                  # nearly all of every minute, minutes on end:
+very_slow_share = 0.9                # this share of each minute,
+very_slow_minutes = 3                # this many minutes in a row
+
+# Memory: the server program using more than this many MB.
+memory = "act"
+memory_mb = 0                        # 0: never checked
+
+[keepalive]
+# A server that has stopped responding: status.json not rewritten (normally every
+# 5 seconds) AND RCON silent, both for this long. The game's own supervisor
+# waits five minutes without frames before acting.
+hang_seconds = 180
+check_seconds = 10
+act = true                           # restart it (not with backend attach); false: only report
+
+[eventlog]
+# Every event as a line of JSON, one file per UTC day: what the server sends.
+# Player IPs are in it: keep the folder private.
+enabled = false
+folder = "logs/events"
+
+
+# ── VERGIL ── watches over the players ───────────────────────────────────────────
+# Dr. Endesha wrote Vergil to watch over his daughter; here it watches over your
+# players. Its in-game commands and who may use them are in commands.toml.
+
+[automod]
+# Vergil acts on the words in automod.txt said in chat, and tells the player why:
+# "KEEP IT CLEAN! That isn't allowed here…". Each line there has the words, then
+# the kicks, the mutes and the ban its strikes lead to: see docs/automod.md. Mutes
+# last through restarts (Vergil mutes them again as they join). A name with a
+# listed word in it, or one in names.txt, is kicked as it joins until it changes.
+# It starts in dry run: watch the window's VRGL lines (part.automod in
+# logs/huragok.log) for what it would do, then set dry_run = false.
+enabled = true
+dry_run = true
+words = "automod.txt"
+names = "names.txt"                  # banned names: !strike <player> name adds one
+forget_after_days = 0                # strikes older than this stop counting; 0: never
+name = "Vergil"                      # players read "removed by Vergil"
+exempt_roles = ["admin", "owner"]    # never acted on (roles as in commands.toml; "player" is everyone)
+check_names = true                   # kick names with a word from automod.txt in them (names.txt always applies)
+cooldown_seconds = 10                # lines this close together count as one strike
+split_seconds = 10                   # a word split over lines this close together is caught
+
+[relay]
+# Vergil's console for moderators elsewhere, through Huragok: the official RCON
+# client (or any tool speaking the server's WebSocket console) connects to
+# Huragok instead of a server, each moderator with a password and name of their
+# own. Their commands go through Huragok's own connection (the 4 console
+# spots stay free), only the commands their role allows pass (the same lists as
+# commands.toml: a moderator can mute, not ban), players read "kicked by Alice",
+# and every command is logged. Each server's console is at its game port plus
+# port_offset (49176 -> 50176) for the RCON client and other WebSocket tools, and at
+# its game port plus source_port_offset (49176 -> 51176) for Source RCON tools (0
+# switches that off). Not encrypted: keep address = "127.0.0.1" and reach it through
+# an SSH tunnel or a VPN, as with the server's own console.
+enabled = false
+address = "127.0.0.1"
+port_offset = 1000
+source_port_offset = 2000
+# One block per moderator. role: moderator, admin or owner. Passwords are 8 to 128
+# characters, no two alike (the password is what tells moderators apart).
+# [[relay.user]]
+# name = "Alice"
+# password = "a long passphrase only Alice knows"
+# role = "moderator"
+
+
+# ── HURAGOK ── builds and mends ──────────────────────────────────────────────────
+
+[updates]
+# New versions of Huragok (not the game server), from its GitHub releases.
+# It never installs one unless you say so: when one is out, the window says so;
+# press U there, or run start.cmd update (Linux: ./start.sh update). Your servers
+# keep running while it updates, and only the program is replaced: your settings,
+# commands, word list and records stay.
+check = true
+check_hours = 6
+# true: install a new version by itself the next time a server restarts.
+install_on_server_restart = false
+repository = "LittleGroove/Project-Reclaimer-Huragok"
+
+[server_updates]
+# New releases of the server program (Project Reclaimer itself). Players must be on
+# exactly the server's version, so a server left behind empties out. Each server's
+# auto_update, in its dedicated.toml, is the one switch (D in the window):
+#   auto_update = true   the server installs each release itself: it looks when it
+#                        starts and hourly, checks the download against the release's
+#                        SHA-256 list, and restarts its game at once, mid-game (back in
+#                        seconds). Huragok makes sure it did (see fallback).
+#   auto_update = false  Huragok tells you: it says so in the window, and when asked
+#                        puts the checked program in place of those servers' copies
+#                        (the old ones kept in records/previous-program/), each
+#                        restarting after its game.
+check = true
+# How often Huragok looks at GitHub: hourly, as the servers' own updaters do.
+check_hours = 1
+# For servers with auto_update off. "ask": only say so (press U, or start.cmd update
+# --program); "after_game": install by itself and restart each server after its game;
+# "now": install and restart at once.
+install = "ask"
+repository = "ProjectReclaimer/project-reclaimer-releases"
+# When one server has updated itself, restart the other servers that update
+# themselves after their game: they look for releases as they start, so every
+# server is on the new version within a game instead of within the hour.
+follow = true
+# When a server with auto_update on didn't update itself (its console says the update
+# failed, or it is still on an older version 70 minutes after the release came out),
+# Huragok downloads and checks the release itself and puts it in place while the
+# server is stopped after its game. false: only say so.
+fallback = true
+
+[workshop_updates]
+# New versions of the Workshop mods the servers list ([workshop] items in each
+# dedicated.toml). The server program updates them by itself only once nobody is on a
+# server using the mod, which a busy server may never reach; meanwhile players who
+# already have the new version can't join. How new versions are installed:
+#   "after_game"  when the game ends, the Superintendent stops the server, swaps the
+#                 new version in (with SteamCMD, about a minute) and starts it again.
+#                 If the fetch fails, the old version is put back. Servers sharing one
+#                 content folder are left to the program's own way.
+#   "when_empty"  the server's own way: it installs once nobody is on.
+#   "off"         by hand.
+# One server can differ: workshop_updates = "off" in its [[server]] block below.
+install = "after_game"
+# Minutes between looks at Steam for new versions (5 at least; 0 leaves each server's
+# own setting alone and Huragok doesn't look). Also written into each server's
+# [workshop] update_check_minutes, so it downloads the new version during the game.
+check_minutes = 5
+
+[setup]
+# New servers: the window's N key, or start.cmd new "<name>" (Linux: ./start.sh new).
+# Each new server is made with the server program's own `dedicated init`, a package
+# from PACKAGES/ (its playlists, game types, maps and Workshop items), a free port and
+# an RCON password of its own, then checked with `dedicated check`.
+#
+# What new servers take from this folder instead of carrying their own copy:
+#   game     Halo 3's files (5.5 GB), once, at game/: linked from a server that has
+#            them, or copied from MCC with dedicated init
+#   bans     one bans.json: one ban list, one admin list, one VPN allowance list
+#   content  one content/ folder (maps, game types, mods, images) for every server. Left
+#            out by default: each server keeps its own, so its Workshop mods can be
+#            updated after its own games and its custom games stay its own (D gives a
+#            server that shares one its own copy: hard links, no space used)
+share = ["game", "bans"]
+# Your MCC folder, for copying Halo 3's files when no server has them yet. Empty
+# means Steam's default folder; leave the line out to link from an existing server.
+# mcc_folder = 'D:\SteamLibrary\steamapps\common\Halo The Master Chief Collection'
+# Where the packages are.
+packages_folder = 'PACKAGES'
+# The server program used for what isn't one server's (making new server folders,
+# checking custom games). Empty: the newest copy among the root's and the server
+# folders' (by its --version). A command for one server runs that server's own copy.
+program = ''
+# SteamCMD, for Workshop items (the window's I key sets this up: finds or installs
+# it, signs the account in once, and writes [workshop] into every server folder).
+# Empty: looked for in steamcmd/ here, C:\steamcmd, PATH. The account must own MCC;
+# an anonymous sign-in can't fetch MCC's Workshop items. Never a password here.
+# steamcmd = 'C:\steamcmd\steamcmd.exe'
+steamcmd = ''
+steam_username = ""
+# New servers install new Project Reclaimer releases themselves (auto_update = true in
+# their dedicated.toml, with a copy of the program of their own). false: Huragok
+# installs them (U).
+auto_update = true
+
+# How each backend runs the servers ---------------------------------------------
+
+[process]
+# The server program, in each server's folder.
+executable = 'project-reclaimer.exe'
+# How it's run. Empty: the program itself on Windows, and `wine` + the program on
+# Linux, as `dedicated run --config dedicated.toml` in the server's folder. To run it
+# another way, give the whole command; {executable}, {config}, {folder} and
+# {name} are filled in. Each server's process gets RECLAIMER_DEDICATED_ONLY, so it
+# runs that server alone.
+# command = ["wine", "{executable}", "dedicated", "run", "--config", "{config}"]
+command = []
+# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux) before
+# ending the process.
+stop_timeout = 30
+# false: closing Huragok leaves the servers running, so players aren't
+# disturbed, and starting it again picks them up. start.cmd stop stops both.
+# true: closing Huragok stops the servers too.
+stop_servers_on_exit = false
+
+[docker]
+# In each server's folder. The server's service name is set in its [[server]] block
+# below (service = "server-1"); otherwise server-1, server-2… in order.
+compose_file = 'compose.yaml'
+
+[command]
+# {name}, {slug} (the data folder name), {service}, {port}, {folder} and {config} are filled in.
+# start = "systemctl start reclaimer@{slug}"
+# stop = "systemctl stop reclaimer@{slug}"
+# restart = "systemctl restart reclaimer@{slug}"
+
+[rcon]
+# Sign in on the console spot each server keeps for its own machine, so
+# moderators keep all 4 normal spots. Needs Huragok on the same machine.
+use_host_key = true
+command_timeout = 10
+
+# Settings for one server, by name as in its dedicated.toml, when needed. The
+# window's T key writes autostart here.
+# [[server]]
+# name = "Reclaimer Slayer"
+# autostart = true                # started whenever Huragok starts
+# daily_restart = "05:00"         # instead of [restarts] daily_restart ("": none for it)
+# warn_seconds = [60, 30]         # instead of [restarts] warn_seconds
+# min_uptime_seconds = 1800       # instead of [restarts] min_uptime_seconds
+# service = "server-1"            # its docker compose service
+# data = "data/reclaimer-slayer"  # its data folder (from its server folder), when not found by itself
+# workshop_updates = "off"        # instead of [workshop_updates] install
+# rcon_host = "127.0.0.1"
+# rcon_port = 49176

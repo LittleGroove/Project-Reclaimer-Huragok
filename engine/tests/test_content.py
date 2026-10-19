@@ -17,7 +17,6 @@ from test_setup import SetupController, StrictKeyboard, fake_tool, make_server_f
 from huragok import cli, steamsetup
 from huragok.catalogue import install_layouts, installed_mods, load_catalogue, parse_listing, parse_picks
 from huragok.config import load
-from huragok.contentimport import _fixed_drives as this_pcs_drives  # the real one: conftest stands in for it
 from huragok.contentimport import content_root_of
 from huragok.menu import Menu
 from huragok.playlists import PlaylistError, load_playlist, new_playlist, resolve
@@ -225,7 +224,7 @@ def test_steamcmd_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys:
     # The window's I screen with everything in place: account offered, checked, written.
     controller = SetupController(settings_path)
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["I", "ENTER", "N", "x", "Q", "Y"]), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["I", "1", "ENTER", "N", "x", "ESC", "Q", "Y"]), RecentLog())  # type: ignore[arg-type]
     assert run_menu(menu) == "quit"
     printed = "".join(terminal.output)
     assert "lilgremlin is signed in" in printed and "Written: [workshop]" in printed
@@ -359,7 +358,7 @@ def test_leaving_the_steam_sign_in_writes_nothing(tmp_path: Path, run, monkeypat
     fake_steamcmd(settings_path.parent / "steamcmd", ["lilgremlin"])
     monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (False, ""))
     monkeypatch.setattr(steamsetup, "login_window", lambda executable, username: "a sign-in window opened")
-    menu, terminal = screen(settings_path, ["ENTER", "ESC", "x"])  # the account offered; Esc at "Press Enter once…"
+    menu, terminal = screen(settings_path, ["1", "ENTER", "ESC", "x", "ESC"])  # the account offered; Esc at "Press Enter once…"
     run(menu.screen_steam())
     printed = "".join(terminal.output)
     assert "Left as it was: nothing was written" in printed and "Written:" not in printed
@@ -380,7 +379,7 @@ def test_a_quoted_path_is_the_path(tmp_path: Path, run, monkeypatch) -> None:
     monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (True, ""))
     on_path: list[bool] = []  # PowerShell, which waits on every open window: never on the loop
     monkeypatch.setattr(steamsetup, "add_to_path", lambda folder: on_path.append(on_the_loop()) or "on your PATH")
-    menu, terminal = screen(settings_path, ["3", *f'"{folder}"', "ENTER", "ENTER", "Y", "x"])
+    menu, terminal = screen(settings_path, ["1", "3", *f'"{folder}"', "ENTER", "ENTER", "Y", "x", "ESC"])
     run(menu.screen_steam())
     assert "Written: [workshop]" in "".join(terminal.output) and on_path == [False]
     assert load(settings_path).setup.steamcmd == str(program)
@@ -533,27 +532,48 @@ def test_layouts_of_a_mod_with_an_odd_title_stay_in_maps(tmp_path: Path) -> None
             assert path.parent.name not in ("", ".", "..", "CON") and path.name not in ("..json", ".json")
 
 
-def test_mcc_is_looked_for_where_steam_says_first_and_never_on_drives_that_can_stall(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def steam_library(library: Path, apps: list[str]) -> str:
+    """One library's entry in libraryfolders.vdf, as Steam writes it (backslashes doubled)."""
+    escaped = str(library).replace("\\", "\\\\")
+    listed = "".join(f'\t\t\t"{app}"\t\t"1000"\n' for app in apps)
+    return f'\t\t"path"\t\t"{escaped}"\n\t\t"label"\t\t""\n\t\t"apps"\n\t\t{{\n{listed}\t\t}}\n'
+
+
+def test_mcc_is_found_only_where_steam_says_it_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Steam's own records (libraryfolders.vdf: each library and its games; appmanifest_976730.acf: MCC's folder)
+    and nothing else: no drive is searched, no folder guessed, a library Steam says has no MCC isn't looked in."""
     from huragok import contentimport
 
-    library = tmp_path / "Games" / "SteamLibrary"
-    mcc = library / "steamapps" / "common" / contentimport.MCC_FOLDER
-    (mcc / "halo3").mkdir(parents=True)
     steam = tmp_path / "Steam"
+    other = tmp_path / "Games" / "Other"
+    library = tmp_path / "Games" / "SteamLibrary"
+    mcc = library / "steamapps" / "common" / "MCC Installed Here"  # the folder the manifest names, not a guess
+    (mcc / "halo3").mkdir(parents=True)
+    decoy = other / "steamapps" / "common" / contentimport.MCC_FOLDER  # MCC's usual name, where Steam says it isn't
+    (decoy / "halo3").mkdir(parents=True)
+    (other / "steamapps" / f"appmanifest_{contentimport.MCC_APP}.acf").write_text(
+        f'"AppState"\n{{\n\t"installdir"\t\t"{contentimport.MCC_FOLDER}"\n}}\n', encoding="utf-8")
+    (library / "steamapps" / f"appmanifest_{contentimport.MCC_APP}.acf").write_text(
+        '"AppState"\n{\n\t"appid"\t\t"976730"\n\t"installdir"\t\t"MCC Installed Here"\n}\n', encoding="utf-8")
     (steam / "steamapps").mkdir(parents=True)
-    escaped = str(library).replace("\\", "\\\\")
     (steam / "steamapps" / "libraryfolders.vdf").write_text(
-        f'"libraryfolders"\n{{\n\t"0"\n\t{{\n\t\t"path"\t\t"{escaped}"\n\t}}\n}}\n', encoding="utf-8")
+        '"libraryfolders"\n{\n\t"0"\n\t{\n' + steam_library(steam, ["228980"]) + '\t}\n\t"1"\n\t{\n'
+        + steam_library(other, ["21970"]) + '\t}\n\t"2"\n\t{\n' + steam_library(library, ["976730", "1695794"])
+        + '\t}\n}\n', encoding="utf-8")
     monkeypatch.setattr(contentimport, "_steam_roots", lambda: [steam])
-    probed: list[str] = []
-    monkeypatch.setattr(contentimport, "_fixed_drives", lambda: probed.append("drives") or [])
-    assert contentimport.find_mcc() == mcc and probed == []  # found before any drive was walked
+    assert contentimport.find_mcc() == mcc
+    assert [lib for lib, _ in contentimport.steam_libraries()] == [steam, other, library]  # each once
     assert contentimport.find_mcc(f'"{mcc}"') == mcc  # Explorer's "Copy as path" keeps its quotes
     assert contentimport.clean_path("  '\"C:\\x y\"'  ") == "C:\\x y"
-    if os.name == "nt":  # Windows names its local disks without any of them being touched
-        drives = this_pcs_drives()
-        assert drives and all(len(d) == 3 and d.endswith(":\\") for d in drives)
+    # The list from before 2021 ("1" "D:\\SteamLibrary", no apps): the manifest alone says where MCC is.
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(
+        '"LibraryFolders"\n{\n\t"contentstatsid"\t\t"1"\n\t"1"\t\t"' + str(library).replace("\\", "\\\\")
+        + '"\n}\n', encoding="utf-8")
+    assert contentimport.find_mcc() == mcc
+    # No record names it: not found, whatever folders exist on the PC.
+    (library / "steamapps" / f"appmanifest_{contentimport.MCC_APP}.acf").unlink()
+    assert contentimport.find_mcc() is None
+    assert not hasattr(contentimport, "_fixed_drives")  # there's no drive search to fall back on
 
 
 def test_the_steam_sign_in_takes_only_a_steam_account_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

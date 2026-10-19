@@ -15,7 +15,7 @@ from typing import Any
 
 import psutil
 import pytest
-from conftest import free_port, free_ports, staff, wait_for, write_root
+from conftest import free_port, free_ports, init_files, staff, wait_for, write_root
 
 from huragok import lifecycle as lifecycle_module
 from huragok import winproc
@@ -38,7 +38,10 @@ def process_root(tmp_path: Path, extra: str = "") -> Path:
     body = (f'backend = "process"\n[process]\ncommand = ["{python}", "{FAKE.as_posix()}", "dedicated", "run", '
             f'"--config", "{{config}}"]\nstop_timeout = 5\n[restarts]\nbackoff_seconds = [0.5]\nready_seconds = 30\n'
             f'warn_seconds = [1]\nmax_failures = 2\n' + extra)
-    return write_root(root, [(ONE, ports[0]), (TWO, ports[1])], body, staff(), backend=None)
+    path = write_root(root, [(ONE, ports[0]), (TWO, ports[1])], body, staff(), backend=None)
+    for name in (ONE, TWO):
+        init_files(root / "SERVERS" / name)
+    return path
 
 
 def reap(*backends: Any) -> None:
