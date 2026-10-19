@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.2
+A new version of Huragok no longer gets lost among the events: the dashboard's
+HURAGOK line says `Huragok <version> is out (U)` until it's installed, in the second
+window too. And Huragok can install its own new versions: `[updates] auto_update =
+true` installs one as soon as it's found (off unless you turn it on). It replaces
+`install_on_server_restart`, which waited for a server to restart. Install it with U.
+
+- **The HURAGOK line** says when a new version is out, when it's installing, and when
+  one didn't install (`U tries again`). Before, the only sign was a notice in the
+  events, which a server failing its starts pushed off the screen within seconds.
+- **The notice says U.** It said "type update here and press Enter", which is how it
+  works without the window.
+- **`[updates] auto_update = true`** installs a new version as soon as Huragok finds it
+  (at its start and every `check_hours`), whatever the servers are doing; they keep
+  running while it updates. A version that failed to install, or that didn't start and
+  was put back, isn't tried again by itself, only a newer one. `false`, the default,
+  waits for U.
+- **`install_on_server_restart` is now `auto_update`.** It waited for a server to restart
+  or come online, which a server that keeps failing to start never does, so the new
+  version that might have fixed it never came. Your `settings.toml` is brought up to
+  date at the next start: `true` becomes `auto_update = true` (the old line stays as a
+  comment saying so), `false` becomes `auto_update = false`. Until then the old name is
+  still read.
+
+**Fixed: a role change that went unseen.** Huragok noticed `commands.toml` changing by
+its file time, and Windows moves file times in steps of about 16 ms: two changes in one
+step (two `!promote` at once, say) left the second unseen, and the roles in force stayed
+the old ones until the file changed again. Now a change Huragok makes itself is read at
+once, and any other is noticed by what the file holds, not only its time.
+
 ## 0.4.1
 Huragok now keeps your files up to date with itself, and puts right what a server
 arrives without. A server folder copied in from another Huragok folder or PC gets

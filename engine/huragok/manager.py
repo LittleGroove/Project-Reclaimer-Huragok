@@ -1475,6 +1475,8 @@ class Fleet:
         self._live_written = float("-inf")  # monotonic
         self._requests_tasks: set[asyncio.Task[None]] = set()
         self.ports = PortWatch()  # whether a stopped server's port is taken, without holding the loop
+        # More for records/live.json, from the supervisor: what the second window shows beyond the servers.
+        self.live_extra: Callable[[], dict[str, Any]] | None = None
         # What a server lacks before it starts (repair.GameFiles.prelaunch): why it waits, or None.
         self.prelaunch: Callable[[ServerConfig], str | None] | None = None
         self.booted = False  # boot() has run: once per Fleet, however often run() is restarted
@@ -1596,6 +1598,11 @@ class Fleet:
         now = now or time.time()
         data = {"updated": now, "pid": os.getpid(), "version": __version__, "backend": self.backend.name,
                 "stopping_all": self.stopping_all, "servers": self.rows(now)}
+        if self.live_extra is not None:
+            try:
+                data.update(self.live_extra())
+            except Exception:  # noqa: BLE001 - the servers' rows are what matters: written without the extras
+                log.debug("couldn't add the extras to %s", self.live_path, exc_info=True)
         try:
             self.live_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.live_path.with_suffix(".tmp")

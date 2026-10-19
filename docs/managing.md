@@ -202,7 +202,9 @@ folder (`dedicated bans`).
 **U** offers four things:
 
 1. **Huragok** itself, from its GitHub releases: the servers keep running
-   while it updates. The install is renames only, all or nothing (if a file can't
+   while it updates. While a new version waits, the dashboard's HURAGOK line says
+   `Huragok <version> is out (U)`; with `[updates] auto_update = true` it installs
+   itself as soon as it's found instead (off unless you turn it on). The install is renames only, all or nothing (if a file can't
    be moved, say an antivirus is scanning the new copy, everything is put back),
    and checked before it counts; if the new version's Python packages don't
    install, the old files go back too. The replaced files go to

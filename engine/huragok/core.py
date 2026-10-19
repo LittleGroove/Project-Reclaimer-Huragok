@@ -89,6 +89,7 @@ class Supervisor:
         # What a server arrives without (a ban list, Halo 3's files…), put right before it starts: repair.py.
         self.game_files = GameFiles(settings, self.bus, self._tool, release=self.fleet.release)
         self.fleet.prelaunch = self.game_files.prelaunch
+        self.fleet.live_extra = lambda: {"huragok_update": self.updates.status_text()}
         self.relay = Relay(settings, self.clients, self.states, self.bus)
         self.bus.subscribe("rcon.join", self._remember_player)
         self.bus.subscribe("rcon.control", self._note_reload)
@@ -292,10 +293,10 @@ class Supervisor:
 
     # Files edited while running ----------------------------------------------------------------
 
-    def check_files(self) -> None:
-        """commands.toml reloads when edited."""
+    def check_files(self, *, force: bool = False) -> None:
+        """commands.toml reloads when edited; with force, at once (Huragok itself just changed it)."""
         try:
-            fresh = reload_if_changed(self.settings.permissions)
+            fresh = reload_if_changed(self.settings.permissions, force=force)
         except PermissionsError as error:
             log.error("commands.toml not reloaded, keeping what was in force: %s", error)
         else:

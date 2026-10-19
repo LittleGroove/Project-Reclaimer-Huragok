@@ -447,7 +447,9 @@ names it. Moving the server folder into `SERVERS/` is the layout to grow into.
 
 ## Updating
 Huragok looks for a new version on GitHub when it starts and every few hours.
-It never installs one by itself: the window says what's new and waits for you.
+Unless you set it to install them itself (below), it waits for you: the events say
+what's new, and the HURAGOK line on the dashboard keeps saying `Huragok <version> is
+out (U)` until it's installed.
 
 - **In the window:** press **U**.
 - **From anywhere else** (or when it runs at boot with no window): `start.cmd update`
@@ -470,8 +472,11 @@ version already there is kept too, as `previous-<version>-<date>`), and U's
 server is part way through a restart (at most 30 minutes later); if the new
 version won't start, the one before it is put back and started, and that version
 isn't installed again by itself.
-To have it install new versions by itself, the next time a server restarts, set
-`install_on_server_restart = true` under `[updates]` in `settings.toml`.
+To have it install new versions by itself, as soon as it finds them, set
+`auto_update = true` under `[updates]` in `settings.toml` (off unless you turn it on;
+0.4.1 and earlier called it `install_on_server_restart` and waited for a server to
+restart, which a server that keeps failing to start never does: the next start renames
+the line and keeps your value).
 
 ### Coming from Reclaimer Supervisor 0.2.1
 0.2.1 can't update itself to this version (the program was renamed), so install

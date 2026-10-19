@@ -199,6 +199,8 @@ class LocalController:
         consoles = self.supervisor.relay.connected()
         if consoles:
             bits[VERGIL].append("consoles: " + ", ".join(consoles))
+        if update := self.supervisor.updates.status_text():  # stays here: the events scroll it away
+            bits[HURAGOK].append(update)
         status = self.supervisor.program_updates.status()
         versions = sorted(set(status["running"].values()))
         themselves = len(status.get("self_updating") or [])
@@ -314,7 +316,8 @@ class RemoteController:
         bits = [f"{SUPERINTENDENT.tag} backend {live.get('backend', self.settings.backend)}"]
         pid = self.is_running()
         if pid:
-            bits.append(f"{HURAGOK.tag} supervising window: process {pid}")
+            update = str(live.get("huragok_update") or "")
+            bits.append(f"{HURAGOK.tag} supervising window: process {pid}" + (f" · {update}" if update else ""))
         return bits
 
     def rows(self) -> list[Row]:

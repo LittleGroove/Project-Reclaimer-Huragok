@@ -123,7 +123,13 @@ def test_a_checksum_mismatch_is_refused(tmp_path: Path, monkeypatch) -> None:
 def test_settings(tmp_path: Path) -> None:
     write_server_folder(tmp_path / "server", free_port())
     settings = load(write_settings(tmp_path, tmp_path / "server"))
-    assert settings.updates.check and not settings.updates.install_on_server_restart
+    assert settings.updates.check and not settings.updates.auto_update  # off unless the host turns it on
+    # 0.4.0 and 0.4.1 called it install_on_server_restart: read as auto_update until the start renames the line.
+    old = load(write_settings(tmp_path, tmp_path / "server", "[updates]\ninstall_on_server_restart = true"))
+    assert old.updates.auto_update and any("is auto_update's name before 0.4.2" in note for note in old.notes)
+    both = load(write_settings(tmp_path, tmp_path / "server",
+                               "[updates]\nauto_update = false\ninstall_on_server_restart = true"))
+    assert not both.updates.auto_update  # the new name wins
     assert settings.updates.repository == "LittleGroove/Project-Reclaimer-Huragok"
     with pytest.raises(ConfigError, match="owner/name"):
         load(write_settings(tmp_path, tmp_path / "server", '[updates]\nrepository = "https://github.com/x"'))
@@ -154,8 +160,10 @@ def test_a_new_version_is_announced_once_and_not_installed(tmp_path: Path, monke
     run(scenario())
     said = [r.getMessage() for r in caplog.records]
     assert sum("Update available: Huragok 99.0.0" in m for m in said) == 1
-    assert any("type update here" in m for m in said) and any("- Better things" in m for m in said)
+    assert any("To install it: U in the window" in m for m in said) and any("- Better things" in m for m in said)
+    assert any("[updates] auto_update = true" in m for m in said)  # how to have it install itself
     assert svc.pending == RELEASE and installed == []
+    assert svc.status_text() == "Huragok 99.0.0 is out (U)"  # what stays on the window's HURAGOK line
 
 
 def test_installing_when_asked_then_starting_again(tmp_path: Path, monkeypatch, run) -> None:
@@ -163,20 +171,54 @@ def test_installing_when_asked_then_starting_again(tmp_path: Path, monkeypatch, 
     assert run(svc.install("asked in this window")) and installed == [NEW] and relaunched == ["yes"]
 
 
-def test_a_server_restart_installs_it_only_when_set_to(tmp_path: Path, monkeypatch, run) -> None:
-    from huragok.events import Event
+def test_auto_update_installs_a_new_version_as_soon_as_its_found(tmp_path: Path, monkeypatch, run, caplog) -> None:
+    """Off by default: found, said, kept on the window's line, waiting for U. On: installed at once, whatever the
+    servers are doing (a server that keeps failing to start never restarts, which 0.4.1's switch waited for)."""
 
     async def scenario(svc: UpdateService) -> None:
         await svc.check()
-        svc._on_server_restart(Event("server.restarted", "LG Test Server", {}))
         await asyncio.sleep(0.05)
 
     svc, installed, _ = service(tmp_path, monkeypatch)
     run(scenario(svc))
     assert installed == []
-    svc, installed, relaunched = service(tmp_path / "auto", monkeypatch, "[updates]\ninstall_on_server_restart = true")
-    run(scenario(svc))
+    svc, installed, relaunched = service(tmp_path / "auto", monkeypatch, "[updates]\nauto_update = true")
+    with caplog.at_level(logging.WARNING):
+        run(scenario(svc))
     assert installed == [NEW] and relaunched == ["yes"]
+    assert "auto_update is on: it installs now" in caplog.text
+    svc, installed, _ = service(tmp_path / "old", monkeypatch, "[updates]\ninstall_on_server_restart = true")
+    run(scenario(svc))
+    assert installed == [NEW]  # an older file's switch still works before the start renames it
+
+
+def test_the_window_keeps_saying_a_new_version_is_out(tmp_path: Path, monkeypatch, run) -> None:
+    """The events scroll it away (a server that keeps failing to start writes seven lines a try): the HURAGOK line
+    in both windows says so until it's installed."""
+    from huragok.menu import LocalController, RemoteController
+
+    async def scenario() -> None:
+        write_server_folder(tmp_path / "server", free_port())
+        settings = load(write_settings(tmp_path, tmp_path / "server", commands=staff()))
+        supervisor = Supervisor(settings)
+        monkeypatch.setattr(updates, "latest_release", lambda *a, **k: RELEASE)
+        supervisor.updates.can_install = True
+        local = LocalController(supervisor, None)
+        assert not any("Huragok 99" in line for line in local.header())
+        await supervisor.updates.check()
+        assert any(line.startswith("HRGK") and "Huragok 99.0.0 is out (U)" in line for line in local.header())
+        supervisor.fleet.write_live()
+        live = json.loads((settings.records / "live.json").read_text(encoding="utf-8"))
+        assert live["huragok_update"] == "Huragok 99.0.0 is out (U)"
+        remote = RemoteController(settings, lambda: 4242)
+        assert any("process 4242 · Huragok 99.0.0 is out (U)" in line for line in remote.header())
+        supervisor.updates.failed = NEW
+        assert supervisor.updates.status_text() == "Huragok 99.0.0 didn't install: U tries again"
+        supervisor.updates.installing = True
+        assert supervisor.updates.status_text() == "installing Huragok 99.0.0"
+        supervisor.storage.close()
+
+    run(scenario())
 
 
 def test_a_copy_not_run_from_its_folder_wont_update_itself(tmp_path: Path, monkeypatch, run) -> None:
@@ -476,9 +518,7 @@ def test_the_update_loops_survive_a_bad_round(tmp_path: Path, monkeypatch, run, 
 
 def test_a_failed_self_update_isnt_tried_again_at_every_server_start(tmp_path: Path, monkeypatch, run,
                                                                     caplog) -> None:
-    from huragok.events import Event
-
-    svc, _, _ = service(tmp_path, monkeypatch, "[updates]\ninstall_on_server_restart = true")
+    svc, _, _ = service(tmp_path, monkeypatch, "[updates]\nauto_update = true")
     calls: list[str] = []
 
     def failing(home: Path, release: Release) -> str:
@@ -488,23 +528,22 @@ def test_a_failed_self_update_isnt_tried_again_at_every_server_start(tmp_path: P
     monkeypatch.setattr(updates, "update", failing)
 
     async def scenario() -> None:
-        await svc.check()
-        for _ in range(3):
-            svc._on_server_restart(Event("log.online", "LG Test Server", {}))
+        for _ in range(3):  # Huragok looks every check_hours
+            await svc.check()
             await asyncio.sleep(0.05)
-        assert calls == [NEW]  # once, not at every server start
+        assert calls == [NEW]  # once, not at every look
+        assert svc.status_text() == "Huragok 99.0.0 didn't install: U tries again"
         assert not await svc.install("asked in this window") and calls == [NEW, NEW]  # a person asks: tried again
         newer = Release("99.0.1", "p", "", "https://example.invalid/huragok-99.0.1.zip")
         monkeypatch.setattr(updates, "latest_release", lambda *a, **k: newer)
         await svc.check()
-        svc._on_server_restart(Event("server.restarted", "LG Test Server", {}))
         await asyncio.sleep(0.05)
         assert calls == [NEW, NEW, "99.0.1"]  # a newer release is tried by itself
 
     with caplog.at_level(logging.INFO):
         run(scenario())
-    assert "Huragok doesn't try 99.0.0 again by itself at server restarts" in caplog.text
-    assert "To try 99.0.0 again: type update here" in caplog.text
+    assert "Huragok doesn't try 99.0.0 again by itself; it tries a newer release when one is out" in caplog.text
+    assert "To try 99.0.0 again: U in the window" in caplog.text
 
 
 def test_a_version_the_start_loop_took_back_out_isnt_installed_again_by_itself(tmp_path: Path, monkeypatch, run,
@@ -512,9 +551,9 @@ def test_a_version_the_start_loop_took_back_out_isnt_installed_again_by_itself(t
     import json
 
     from huragok import __version__
-    from huragok.events import Event, EventBus
+    from huragok.events import EventBus
 
-    svc, installed, _ = service(tmp_path, monkeypatch, "[updates]\ninstall_on_server_restart = true")
+    svc, installed, _ = service(tmp_path, monkeypatch, "[updates]\nauto_update = true")
     note = svc.settings.records / "failed-update.json"
     note.parent.mkdir(parents=True, exist_ok=True)
     note.write_text(json.dumps({"version": NEW, "restored": __version__, "exit_code": 2, "time": 0}), encoding="utf-8")
@@ -525,11 +564,10 @@ def test_a_version_the_start_loop_took_back_out_isnt_installed_again_by_itself(t
 
     async def scenario() -> None:
         await svc.check()
-        svc._on_server_restart(Event("log.online", "LG Test Server", {}))
         await asyncio.sleep(0.05)
 
     run(scenario())
-    assert installed == []  # a server restarting doesn't put the version that didn't start back in
+    assert installed == []  # auto_update doesn't put the version that didn't start back in
     note.write_text(json.dumps({"version": __version__, "restored": "0.0.1"}), encoding="utf-8")
     UpdateService(svc.settings, EventBus(), lambda: None)
     assert not note.exists()  # that version runs now: the note is done with

@@ -15,10 +15,13 @@ half there. The result is checked (the version file must read the new version)
 before it counts, and if the new version's packages can't be installed the old
 files go back. A backup is never deleted or refilled.
 
-Nothing is installed unless the host says so (`update` in the supervisor's
-window, or `start.cmd update`), or has set [updates] install_on_server_restart.
-A version whose install failed isn't tried again by itself (at each server start,
-say): only once a newer one is out, or when asked.
+Nothing is installed unless the host says so (U in the window, `update` typed in
+the console without one, or `start.cmd update`), or has set [updates] auto_update,
+which installs a new version as soon as it's found (at the start and every
+check_hours). While one waits, the window's HURAGOK line says so (status_text), so
+it isn't lost among the events. A version whose install failed, or that the start
+loop took back out, isn't tried again by itself: only once a newer one is out, or
+when asked.
 """
 
 from __future__ import annotations
@@ -426,12 +429,13 @@ def summary(notes: str, lines: int = 6) -> list[str]:
 
 
 class UpdateService:
-    """Looks for a new version now and then, says so in the console, and installs it when asked.
+    """Looks for a new version now and then, says so, and installs it when asked, or as soon as it's found with
+    [updates] auto_update.
 
-    Asked means: `update` typed in the supervisor's window, `start.cmd update`, or,
-    with install_on_server_restart, a server restarting. Installing ends with
-    `relaunch()`: the supervisor stops (leaving the servers running) and its
-    start loop runs the new version, which picks the servers up again.
+    Asked means: U in the window, `update` typed in the console without one, or `start.cmd update`. Installing
+    ends with `relaunch()`: the supervisor stops (leaving the servers running) and its start loop runs the new
+    version, which picks the servers up again. 0.4.1 and earlier installed by itself only when a server restarted
+    (install_on_server_restart), which a server that keeps failing to start never does.
     """
 
     def __init__(self, settings: Settings, bus: EventBus, relaunch: Callable[[], None]) -> None:
@@ -446,8 +450,6 @@ class UpdateService:
         self.failed: str | None = None  # a version whose install failed: not tried again by itself
         self.last_failure = ""
         self._remember_failed_start()
-        bus.subscribe("server.restarted", self._on_server_restart)
-        bus.subscribe("log.online", self._on_server_restart)
 
     def _remember_failed_start(self) -> None:
         """records/failed-update.json, from the start loop: a version that was installed but didn't start, so the
@@ -465,8 +467,8 @@ class UpdateService:
         self.failed = version
         self.last_failure = f"it was installed but didn't start (exit code {data.get('exit_code')}), so {__version__} " \
                             "was put back"
-        log.error("Huragok %s %s. It isn't installed again by itself; to try it again: type update here and press "
-                  "Enter (or run: %s update)", version, self.last_failure, self.launcher)
+        log.error("Huragok %s %s. It isn't installed again by itself; to try it again: U in the window (or run: %s "
+                  "update)", version, self.last_failure, self.launcher)
 
     @property
     def launcher(self) -> str:
@@ -503,7 +505,22 @@ class UpdateService:
         if not quiet or self.announced != release.version:
             self.announce(release)
             self.announced = release.version
+        if self.config.auto_update and self.can_install and not self.installing and self.failed != release.version:
+            asyncio.ensure_future(self.install("auto_update is on", automatic=True))
         return release
+
+    def status_text(self) -> str:
+        """For the window's HURAGOK line while a new version waits (it stays there, where the events scroll by)."""
+        release = self.pending
+        if release is None:
+            return ""
+        if self.installing:
+            return f"installing Huragok {release.version}"
+        if self.failed == release.version:
+            return f"Huragok {release.version} didn't install: U tries again"
+        if not self.can_install:
+            return f"Huragok {release.version} is out (this copy can't update itself)"
+        return f"Huragok {release.version} is out (U)"
 
     def announce(self, release: Release) -> None:
         log.warning("Update available: Huragok %s (this is %s)", release.version, __version__)
@@ -513,17 +530,12 @@ class UpdateService:
         if not self.can_install:
             log.warning("  This copy doesn't run from its own folder's engine/, so it can't update itself; "
                         "download the new version")
-        elif self.config.install_on_server_restart:
-            log.warning("  It installs itself the next time a server restarts. To install it now, type update "
-                        "here and press Enter")
+        elif self.config.auto_update and self.failed != release.version:
+            log.warning("  auto_update is on: it installs now. Your servers keep running while it updates")
         else:
-            log.warning("  To install it, type update here and press Enter (or run: %s update). Your servers keep "
-                        "running while it updates", self.launcher)
-
-    def _on_server_restart(self, event: Event) -> None:
-        if self.pending and self.config.install_on_server_restart and not self.installing \
-                and self.failed != self.pending.version:  # failed once: a newer release or a person tries again
-            asyncio.ensure_future(self.install(f"{event.server or 'a server'} restarted", automatic=True))
+            log.warning("  To install it: U in the window (or run: %s update; without the window, type update "
+                        "here). Your servers keep running while it updates. To have new versions install "
+                        "themselves: [updates] auto_update = true", self.launcher)
 
     async def install(self, why: str, *, automatic: bool = False) -> bool:
         """Download, check and install the newest release, then relaunch. automatic (a server restarting):
@@ -543,10 +555,10 @@ class UpdateService:
         except (UpdateError, OSError, subprocess.SubprocessError) as error:
             self.failed, self.last_failure = release.version, str(error)
             log.error("Update failed, still on %s: %s", __version__, error)
-            if self.config.install_on_server_restart:
-                log.warning("  Huragok doesn't try %s again by itself at server restarts; it tries a newer release "
-                            "when one is out. To try %s again: type update here and press Enter (or run: %s update)",
-                            release.version, release.version, self.launcher)
+            if self.config.auto_update:
+                log.warning("  Huragok doesn't try %s again by itself; it tries a newer release when one is out. "
+                            "To try %s again: U in the window (or run: %s update)", release.version,
+                            release.version, self.launcher)
             self.installing = False
             return False
         self.failed, self.last_failure = None, ""

@@ -518,6 +518,22 @@ def comment_out_table_key(path: Path, table: str, key: str, note: str) -> bool:
     return True
 
 
+def remove_table_key(path: Path, table: str, key: str) -> bool:
+    """Take [table]'s `key` line(s) out (a value spread over lines goes whole). False: the table doesn't set it."""
+    edit = _Edit(path, f"[{table}] {key}")
+    current = edit.wanted.get(table)
+    if not isinstance(current, dict) or key not in current:
+        return False
+    del current[key]
+    number, _ = _list_line(edit, table, key)
+    if number is None:
+        raise edit.refuse(f"[{table}] {key} isn't on a line of its own")
+    del edit.lines[number:edit.layout[number].end + 1]
+    edit.changed()
+    edit.save()
+    return True
+
+
 def add_table_key(path: Path, table: str, key: str, value: object, comments: list[str] | None = None, *,
                   after: str | None = None) -> bool:
     """Add `key = value` to [table] with its comment lines above it: just after `after`'s line(s) when the table

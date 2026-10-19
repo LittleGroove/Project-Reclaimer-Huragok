@@ -27,7 +27,7 @@ NOT_ADDED: dict[tuple[str, ...], str] = {}
 def host(tmp_path: Path, *, packages: bool = True) -> Path:
     """A root as 0.4.0 left it: its four files, and PACKAGES/ with 0.4.0's starters."""
     root = tmp_path / "huragok"
-    root.mkdir()
+    root.mkdir(parents=True)
     for path in HOST_0_4_0.iterdir():
         shutil.copy2(path, root / path.name)
     if packages:
@@ -63,7 +63,9 @@ def active_keys(path: Path) -> set[tuple[str, ...]]:
 def test_this_version_reads_0_4_0s_files_as_they_are(tmp_path: Path) -> None:
     settings_path = host(tmp_path)
     settings = load(settings_path)  # before anything is brought up to date: nothing in them is wrong or unknown
-    assert settings.retired == [] and settings.notes == []  # retired keys and unknown ones alike
+    assert settings.retired == []  # retired keys and unknown ones alike
+    # Only a key renamed since, still read under its old name until the start renames it (0.4.2):
+    assert len(settings.notes) == 1 and "install_on_server_restart = false is auto_update's name" in settings.notes[0]
     assert settings.setup.download_game_files is True  # a setting 0.4.0 never had takes its default
     load_permissions(settings_path.parent / "commands.toml")
 
@@ -73,19 +75,30 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     before = settings_path.read_text(encoding="utf-8")
     with caplog.at_level(logging.INFO):
         changed = up_to_date(settings_path)
-    assert changed == ["settings.toml: [setup] download_game_files = true added (new in 0.4.1)",
-                       "settings.toml: the comment above [setup] steamcmd says it gets Halo 3's files too"]
+    assert changed == [
+        "settings.toml: [setup] download_game_files = true added (new in 0.4.1)",
+        "settings.toml: the comment above [setup] steamcmd says it gets Halo 3's files too",
+        "settings.toml: [updates] install_on_server_restart is auto_update now (= false)",
+        "settings.toml: [updates] auto_update = false added: true installs new versions of Huragok by themselves "
+        "(new in 0.4.2)",
+        "settings.toml: the comment above [updates] says the window keeps saying a new version is out"]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
     template = TEMPLATE.read_text(encoding="utf-8")
-    for line in migrate.STEAMCMD_COMMENT_0_4_1 + [f"# {c}" for c in migrate.DOWNLOAD_GAME_FILES_COMMENT]:
-        assert line in text and line in template  # the same words a new host's file has
+    added = (migrate.UPDATES_COMMENT_0_4_2 + [f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT] + ["auto_update = false"]
+             + migrate.STEAMCMD_COMMENT_0_4_1 + [f"# {c}" for c in migrate.DOWNLOAD_GAME_FILES_COMMENT]
+             + ["download_game_files = true"])
+    for line in added:
+        assert line in template.splitlines()  # the same words a new host's file has
     setup = text[text.index("\n[setup]\n"):]
     assert setup.index("steam_username") < setup.index("download_game_files") < setup.index("auto_update = true")
-    # The host's own values and every other line are as they were.
-    assert [line for line in text.splitlines() if line not in before.splitlines()] == \
-        migrate.STEAMCMD_COMMENT_0_4_1 + [f"# {c}" for c in migrate.DOWNLOAD_GAME_FILES_COMMENT] + \
-        ["download_game_files = true"]
+    updates_table = text[text.index("\n[updates]\n"):text.index("\n[server_updates]\n")]
+    assert updates_table == template[template.index("\n[updates]\n"):template.index("\n[server_updates]\n")]
+    # The host's own values and every other line are as they were: only these went, only these came.
+    assert [line for line in text.splitlines() if line not in before.splitlines()] == added
+    assert [line for line in before.splitlines() if line not in text.splitlines()] == (
+        migrate.UPDATES_COMMENT_0_4_0 + migrate.INSTALL_ON_RESTART_COMMENT_0_4_0 + ["install_on_server_restart = false"]
+        + migrate.STEAMCMD_COMMENT_0_4_0)
     backup = settings_path.parent / "records" / "previous-files" / __version__ / "settings.toml"
     assert backup.read_text(encoding="utf-8") == before
     record = json.loads((settings_path.parent / "records" / "files.json").read_text(encoding="utf-8"))
@@ -93,6 +106,31 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     assert up_to_date(settings_path) == [] and settings_path.read_text(encoding="utf-8") == text  # done once
     settings = load(settings_path)
     assert settings.retired == [] and settings.notes == []
+
+
+def test_a_host_who_had_huragok_install_itself_keeps_it(tmp_path: Path) -> None:
+    """0.4.2 renamed [updates] install_on_server_restart auto_update: true carries over (and installs as soon as a
+    version is found now), with a comment where the old line was; a value the host wrote either way wins."""
+    settings_path = host(tmp_path)
+    text = settings_path.read_text(encoding="utf-8").replace("install_on_server_restart = false",
+                                                              "install_on_server_restart = true", 1)
+    settings_path.write_text(text, encoding="utf-8")
+    assert load(settings_path).updates.auto_update  # read as auto_update before the start renames it
+    assert "settings.toml: [updates] install_on_server_restart is auto_update now (= true)" in up_to_date(settings_path)
+    after = settings_path.read_text(encoding="utf-8")
+    assert "\nauto_update = true\n" in after and "# install_on_server_restart = true" in after
+    assert "# Renamed auto_update in 0.4.2" in after
+    fresh = load(settings_path)
+    assert fresh.updates.auto_update and fresh.notes == [] and fresh.retired == []
+    # The host set auto_update themselves, beside the old line: theirs stays, the old line still goes.
+    settings_path = host(tmp_path / "both")
+    text = settings_path.read_text(encoding="utf-8").replace("install_on_server_restart = false",
+                                                              "install_on_server_restart = true\nauto_update = false", 1)
+    settings_path.write_text(text, encoding="utf-8")
+    assert "settings.toml: [updates] install_on_server_restart is auto_update now (auto_update was set already)" in \
+        up_to_date(settings_path)
+    assert not load(settings_path).updates.auto_update
+    assert read_toml(settings_path)["updates"].get("install_on_server_restart") is None
 
 
 def test_every_template_key_reaches_an_older_hosts_file(tmp_path: Path) -> None:
@@ -135,9 +173,22 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     text = text.replace('steam_username = ""\n', 'steam_username = ""\n# download_game_files = false\n', 1)
     text = text.replace("# SteamCMD, for Workshop items (the window's I key", "# My SteamCMD notes (the window's I key", 1)
     settings_path.write_text(text, encoding="utf-8")
-    assert up_to_date(settings_path) == []  # their commented-out key stays theirs; their comment stays theirs
-    assert settings_path.read_text(encoding="utf-8") == text
+    changed = up_to_date(settings_path)
+    assert not any("[setup]" in line for line in changed)  # their commented-out key, their comment: theirs
+    after = settings_path.read_text(encoding="utf-8")
+    assert after[after.index("\n[setup]\n"):] == text[text.index("\n[setup]\n"):]
     assert load(settings_path).setup.download_game_files is True
+    # The same for [updates]: an edited comment and a commented-out auto_update stay as the host wrote them.
+    settings_path = host(tmp_path / "updates")
+    text = settings_path.read_text(encoding="utf-8")
+    text = text.replace("# It never installs one unless you say so", "# My own note: it never installs one", 1)
+    text = text.replace("install_on_server_restart = false\n", "# auto_update = true\n", 1)
+    text = text.replace("# true: install a new version by itself the next time a server restarts.\n", "", 1)
+    settings_path.write_text(text, encoding="utf-8")
+    assert not any("[updates]" in line for line in up_to_date(settings_path))
+    after = settings_path.read_text(encoding="utf-8")
+    table = slice(after.index("\n[updates]\n"), after.index("\n[server_updates]\n"))
+    assert after[table] == text[text.index("\n[updates]\n"):text.index("\n[server_updates]\n")]
 
 
 def test_a_file_that_cant_be_read_is_never_touched(tmp_path: Path, caplog) -> None:

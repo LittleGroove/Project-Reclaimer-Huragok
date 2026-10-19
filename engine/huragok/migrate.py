@@ -61,6 +61,29 @@ STEAMCMD_COMMENT_0_4_1 = [
     "# C:\\steamcmd, PATH. The account must own MCC; an anonymous sign-in can't fetch",
     "# MCC's Workshop items or files. Never a password here.",
 ]
+UPDATES_COMMENT_0_4_0 = [
+    "# New versions of Huragok (not the game server), from its GitHub releases.",
+    "# It never installs one unless you say so: when one is out, the window says so;",
+    "# press U there, or run start.cmd update (Linux: ./start.sh update). Your servers",
+    "# keep running while it updates, and only the program is replaced: your settings,",
+    "# commands, word list and records stay.",
+]
+UPDATES_COMMENT_0_4_2 = [
+    "# New versions of Huragok (not the game server), from its GitHub releases. Huragok",
+    "# looks when it starts and every check_hours; when one is out, the window's HURAGOK",
+    "# line says so until it's installed: press U there, or run start.cmd update (Linux:",
+    "# ./start.sh update). Your servers keep running while it updates, and only the",
+    "# program is replaced: your settings, commands, word list and records stay, and the",
+    "# new version brings them up to date.",
+]
+INSTALL_ON_RESTART_COMMENT_0_4_0 = ["# true: install a new version by itself the next time a server restarts."]
+AUTO_UPDATE_COMMENT = [
+    "true: a new version installs itself as soon as Huragok finds it, rather than",
+    "waiting for you (the servers keep running; a version that failed to install or",
+    "to start isn't tried again by itself). false: it waits for U.",
+]
+RENAMED_TO_AUTO_UPDATE = ("Renamed auto_update in 0.4.2, which Huragok set to this value: true now installs a new\n"
+                          "version as soon as it's found, rather than at the next server restart.")
 DOWNLOAD_GAME_FILES_COMMENT = [
     "A server that's missing Halo 3's files (one copied in without the game/ it shared,",
     "say) gets them by itself: copied from MCC when it's on this PC, otherwise downloaded",
@@ -114,6 +137,19 @@ def _read(path: Path) -> dict[str, Any]:
         return {}
 
 
+def commented_in(text: str, table: str, key: str) -> bool:
+    """The host wrote `# key = …` in [table] itself: their choice to leave it to its default. Only that table's
+    lines count: another table's comments may name a key of the same name (dedicated.toml's auto_update, say)."""
+    inside = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            inside = stripped.split("#", 1)[0].strip() == f"[{table}]"
+        elif inside and re.match(rf"#\s*{re.escape(key)}\s*=", stripped):
+            return True
+    return False
+
+
 # The steps ------------------------------------------------------------------------------------------------------
 
 def retired_settings(ctx: Context) -> list[str]:
@@ -154,7 +190,7 @@ def download_game_files(ctx: Context) -> list[str]:
         text = ctx.settings_path.read_text(encoding="utf-8")
     except OSError:
         return []
-    if re.search(r"(?m)^\s*#\s*download_game_files\s*=", text):
+    if commented_in(text, "setup", "download_game_files"):
         return []  # written as a comment by the host: their choice to leave it to its default
     if ctx.dry:
         return [f"{ctx.settings_path.name}: [setup] download_game_files = true added (new in 0.4.1)"]
@@ -182,6 +218,60 @@ def steamcmd_comment(ctx: Context) -> list[str]:
         if not replace_comments(ctx.settings_path, STEAMCMD_COMMENT_0_4_0, STEAMCMD_COMMENT_0_4_1):
             return []
     return [f"{ctx.settings_path.name}: the comment above [setup] steamcmd says it gets Halo 3's files too"]
+
+
+def auto_update(ctx: Context) -> list[str]:
+    """[updates] install_on_server_restart becomes auto_update (0.4.2): a server that keeps failing to start never
+    restarts, so the old switch could wait for ever. Its value moves over; false, the template's default, just goes
+    (with the template's comment above it), true stays as a comment saying where it went."""
+    from .tomledit import add_table_key, comment_out_table_key, remove_table_key, replace_comments
+
+    updates = _read(ctx.settings_path).get("updates")
+    updates = updates if isinstance(updates, dict) else {}
+    old = updates.get("install_on_server_restart")
+    try:
+        text = ctx.settings_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    add = "auto_update" not in updates and not commented_in(text, "updates", "auto_update")
+    value = old if isinstance(old, bool) else False
+    said: list[str] = []
+    if old is not None:
+        said.append(f"{ctx.settings_path.name}: [updates] install_on_server_restart is auto_update now"
+                    + (f" (= {str(value).lower()})" if add else " (auto_update was set already)"))
+    if add:
+        said.append(f"{ctx.settings_path.name}: [updates] auto_update = {str(value).lower()} added: true installs new "
+                    "versions of Huragok by themselves (new in 0.4.2)")
+    if ctx.dry or not said:
+        return said
+    ctx.backup(ctx.settings_path)
+    if old is not None:
+        replace_comments(ctx.settings_path, INSTALL_ON_RESTART_COMMENT_0_4_0, [])
+        if old is True:
+            comment_out_table_key(ctx.settings_path, "updates", "install_on_server_restart", RENAMED_TO_AUTO_UPDATE)
+        else:
+            remove_table_key(ctx.settings_path, "updates", "install_on_server_restart")
+    if add:
+        add_table_key(ctx.settings_path, "updates", "auto_update", value, AUTO_UPDATE_COMMENT, after="check_hours")
+    return said
+
+
+def updates_comment(ctx: Context) -> list[str]:
+    from .tomledit import replace_comments
+
+    try:
+        text = ctx.settings_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    stripped = [line.strip() for line in text.splitlines()]
+    wanted = [line.strip() for line in UPDATES_COMMENT_0_4_0]
+    if not any(stripped[i:i + len(wanted)] == wanted for i in range(len(stripped) - len(wanted) + 1)):
+        return []
+    if not ctx.dry:
+        ctx.backup(ctx.settings_path)
+        if not replace_comments(ctx.settings_path, UPDATES_COMMENT_0_4_0, UPDATES_COMMENT_0_4_2):
+            return []
+    return [f"{ctx.settings_path.name}: the comment above [updates] says the window keeps saying a new version is out"]
 
 
 def new_commands(ctx: Context) -> list[str]:
@@ -244,6 +334,8 @@ STEPS: list[Step] = [
     Step("0.4.1/old-repository", "Huragok's repository by its name since 0.4.0", old_repository),
     Step("0.4.1/download-game-files", "[setup] download_game_files", download_game_files),
     Step("0.4.1/steamcmd-comment", "[setup] steamcmd's comment names Halo 3's files", steamcmd_comment),
+    Step("0.4.2/auto-update", "[updates] install_on_server_restart becomes auto_update", auto_update),
+    Step("0.4.2/updates-comment", "[updates]' comment", updates_comment),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

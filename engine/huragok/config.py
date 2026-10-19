@@ -61,7 +61,7 @@ KNOWN_KEYS: dict[str, set[str]] = {
                  "good_run_seconds", "max_failures", "restarts_per_hour", "ready_seconds", "empty_seconds"},
     "keepalive": {"hang_seconds", "check_seconds", "act"},
     "rcon": {"use_host_key", "command_timeout"},
-    "updates": {"check", "check_hours", "install_on_server_restart", "repository"},
+    "updates": {"check", "check_hours", "auto_update", "install_on_server_restart", "repository"},
     "server_updates": {"check", "check_hours", "install", "repository", "follow", "fallback"},
     "workshop_updates": {"install", "check_minutes"},
     "setup": {"mcc_folder", "share", "packages_folder", "program", "auto_update", "steamcmd", "steam_username",
@@ -115,6 +115,10 @@ OLD_VALUES: list[tuple[str, str, Any, str]] = [
     ("server_updates", "check_hours", 6,
      "is what 0.2.0 and 0.2.1 wrote. Since 0.4.0 the default is 1, as often as the servers' own updaters look (the "
      "fallback for a server that didn't update itself counts on hourly looks). Set check_hours = 1"),
+    ("updates", "install_on_server_restart", ANY_VALUE,
+     "is auto_update's name before 0.4.2, and is read as auto_update while that isn't set: true installs a new "
+     "version as soon as Huragok finds it, rather than at the next server restart (which a server that keeps "
+     "failing to start never reaches). Huragok renames the line at its next start"),
     ("updates", "repository", "LittleGroove/Project-Reclaimer-Server-Supervisor",
      "is the old name of Huragok's repository; Huragok uses LittleGroove/Project-Reclaimer-Huragok in its place. "
      "Change the line to that"),
@@ -288,7 +292,7 @@ class UpdateSettings:
 
     check: bool = True
     check_hours: float = 6.0
-    install_on_server_restart: bool = False  # otherwise only when the host says so
+    auto_update: bool = False  # true: a new version installs itself once found; false: the host says when (U)
     repository: str = "LittleGroove/Project-Reclaimer-Huragok"
 
 
@@ -810,7 +814,8 @@ def load(path: str | os.PathLike[str]) -> Settings:
         updates=UpdateSettings(
             check=updates.get("check", bool, True),
             check_hours=max(1.0, updates.get("check_hours", float, 6.0)),
-            install_on_server_restart=updates.get("install_on_server_restart", bool, False),
+            # 0.4.0 and 0.4.1 called it install_on_server_restart: read as auto_update until the start renames it
+            auto_update=updates.get("auto_update", bool, updates.get("install_on_server_restart", bool, False)),
             repository=repository,
         ),
         restarts=RestartSettings(

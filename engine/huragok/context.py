@@ -70,7 +70,7 @@ class PartContext:
 
     def reload_permissions(self) -> None:
         """commands.toml was just changed from here: in force now, not at the next look a couple of seconds on."""
-        self._core.check_files()
+        self._core.check_files(force=True)
 
     # Talking ----------------------------------------------------------------------
 

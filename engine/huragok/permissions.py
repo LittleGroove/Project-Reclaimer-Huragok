@@ -33,6 +33,7 @@ from member up can be vote-kicked (parts/commands/votekicks.py).
 from __future__ import annotations
 
 import difflib
+import hashlib
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -70,6 +71,7 @@ class Permissions:
     cooldown: float = 3.0
     path: Path | None = None
     mtime: float = 0.0
+    digest: str = ""  # of the file as read: a change within one tick of the clock keeps the time but not this
     sections: set[str] = field(default_factory=set)  # the sections the file has
 
     def doubles(self, admins: Iterable[str] = ()) -> dict[str, list[str]]:
@@ -108,10 +110,19 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
+def _digest(path: Path) -> str:
+    """What the file holds, in short. Windows moves file times in steps of about 16 ms, so two saves in one step (two
+    !promote at once) leave the time as it was: the time alone would miss the second."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
 def load_permissions(path: Path, known: dict[str, CommandSpec] | None = None) -> Permissions:
     """Read commands.toml. A missing file means every command keeps its default and nobody is listed."""
     known = all_commands() if known is None else known
-    result = Permissions(path=path, mtime=_mtime(path))
+    result = Permissions(path=path, mtime=_mtime(path), digest=_digest(path))
     if not path.exists():
         return result
     name = path.name
@@ -196,22 +207,25 @@ def _blank(path: Path) -> bool:
         return False  # can't be read (locked): load_permissions says so
 
 
-def reload_if_changed(current: Permissions) -> Permissions | None:
-    """A fresh copy when the file changed since `current` was read, else None. Raises PermissionsError.
+def reload_if_changed(current: Permissions, *, force: bool = False) -> Permissions | None:
+    """A fresh copy when the file changed since `current` was read (its time, or else what it holds), or always
+    with force (Huragok just wrote it: !promote), else None. Raises PermissionsError.
 
     Only a file that reads replaces what's in force. One gone missing or empty while running is a save in
     progress (or a mistake), not "nobody is listed": it's reported once, the old roles stay, and the file
     is read again as soon as it changes."""
-    if current.path is None or _mtime(current.path) == current.mtime:
+    if current.path is None:
+        return None
+    if not force and _mtime(current.path) == current.mtime and _digest(current.path) == current.digest:
         return None
     if _blank(current.path) and (current.sections or any(current.members.values()) or current.roles or current.off):
-        current.mtime = _mtime(current.path)
+        current.mtime, current.digest = _mtime(current.path), _digest(current.path)
         raise PermissionsError(f"{current.path.name} is missing or empty (an editor saving it, perhaps); it's read "
                                "again once it has something in it")
     try:
         return load_permissions(current.path)
     except PermissionsError:
-        current.mtime = _mtime(current.path)  # report a broken edit once, not every few seconds
+        current.mtime, current.digest = _mtime(current.path), _digest(current.path)  # a broken edit: said once
         raise
 
 

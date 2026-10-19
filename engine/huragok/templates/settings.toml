@@ -203,15 +203,18 @@ source_port_offset = 2000
 # ── HURAGOK ── builds and mends ──────────────────────────────────────────────────
 
 [updates]
-# New versions of Huragok (not the game server), from its GitHub releases.
-# It never installs one unless you say so: when one is out, the window says so;
-# press U there, or run start.cmd update (Linux: ./start.sh update). Your servers
-# keep running while it updates, and only the program is replaced: your settings,
-# commands, word list and records stay.
+# New versions of Huragok (not the game server), from its GitHub releases. Huragok
+# looks when it starts and every check_hours; when one is out, the window's HURAGOK
+# line says so until it's installed: press U there, or run start.cmd update (Linux:
+# ./start.sh update). Your servers keep running while it updates, and only the
+# program is replaced: your settings, commands, word list and records stay, and the
+# new version brings them up to date.
 check = true
 check_hours = 6
-# true: install a new version by itself the next time a server restarts.
-install_on_server_restart = false
+# true: a new version installs itself as soon as Huragok finds it, rather than
+# waiting for you (the servers keep running; a version that failed to install or
+# to start isn't tried again by itself). false: it waits for U.
+auto_update = false
 repository = "LittleGroove/Project-Reclaimer-Huragok"
 
 [server_updates]

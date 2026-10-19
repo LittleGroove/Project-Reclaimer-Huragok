@@ -124,3 +124,18 @@ def test_one_role_each_and_check_names_anyone_listed_twice(tmp_path: Path) -> No
     assert permissions.doubles() == {bravo: ["moderator", "member"]}
     assert permissions.doubles([OWNER.upper(), MOD]) == {OWNER: ["owner", "admin"], MOD: ["admin", "moderator"],
                                                          bravo: ["moderator", "member"]}
+
+
+def test_a_change_within_one_tick_of_the_clock_is_still_seen(tmp_path: Path) -> None:
+    """Windows moves file times in steps of about 16 ms: a second save in the same step (two !promote at once) left
+    the time as it was, and the roles in force stayed the old ones until the file changed again."""
+    path = tmp_path / "commands.toml"
+    path.write_text(f'[moderator]\nplayers = ["{MOD}"]\n', encoding="utf-8")
+    current = load_permissions(path)
+    stamp = path.stat().st_mtime
+    path.write_text(f'[owner]\nplayers = ["{MOD}"]\n', encoding="utf-8")
+    os.utime(path, (stamp, stamp))  # the same time, as two saves in one tick get
+    fresh = reload_if_changed(current)
+    assert fresh is not None and MOD in fresh.members["owner"] and MOD not in fresh.members["moderator"]
+    assert reload_if_changed(fresh) is None  # nothing changed since: nothing read again
+    assert reload_if_changed(fresh, force=True) is not None  # Huragok just wrote it: read now, whatever
