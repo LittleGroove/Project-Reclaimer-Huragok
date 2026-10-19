@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.4.3
+**D is now where every setting is changed, a step at a time: Huragok's own files as
+well as each server's, with no file format to know.** D lists Huragok's files above
+the servers: **S** how Huragok runs (`settings.toml`), **C** roles and commands
+(`commands.toml`), **A** Vergil's word list (`automod.txt`), **N** banned names
+(`names.txt`). **E** is gone: **O** (Open) opens the folder first, then every file E
+listed, in your editor. Install it with U; your files stay as they are.
+
+- **S, how Huragok runs**: every `settings.toml` setting in thirteen groups (which
+  servers and who starts them, how they're run, restarts, the watchdog, the keepalive,
+  the event log, automod, the moderators' console, Huragok's updates, the server
+  program's, Workshop updates, new servers and SteamCMD, folders and files), each with
+  its value, whether it's the default, and what it does. On/off and choices are picked,
+  lists of roles by number; `-` puts the default back. **A change that would stop
+  Huragok starting is never written**: it's tried on a copy of the file first, read
+  the way Huragok reads it as it starts (`check`'s checks too), and refused with why.
+  The relay's moderators are here too: add one (name, password, role), change a role
+  or password, take one out. Changes apply when Huragok starts again (close the window
+  with Q; the servers keep running).
+- **C, roles and commands**: owners, moderators and members, added from the players
+  Huragok has seen lately (numbered: no player ID to type, though you can) or taken
+  out, one role each as `!promote` keeps it; every in-game command with the lowest
+  role that may use it, moved to another role or switched off and on; the prefix and
+  the cooldown.
+- **A, Vergil's word list**: each rule shown as players meet it ("1st: removed for 1
+  hour; 2nd: muted for 1 day…"). Add one: its words, then what each strike does from
+  four ready-made ladders or your own (a question for the kicks, the mutes and the
+  ban), then its name; it's shown before it's added, and a rule the list can't take is
+  refused with why. Change a rule's words, strikes or name, take it out, or try a line
+  of chat to see what catches it.
+- **N, banned names**: add one with a note, take one off, or try a name.
+- **A server's page** gains its playlists (P), custom games (G), bans (B) and **its
+  mods switched on or off** (M; `content/disabled-mods.json`, applied at its next
+  restart, which D offers). The settings in groups are as before; from the D list,
+  Esc goes back to the list, and from there to the dashboard.
+- **O, Open**: the folder first, then `settings.toml`, `commands.toml`, `automod.txt`,
+  `names.txt` and each server's files (its folder first) in your editor, for what D
+  doesn't change.
+
 ## 0.4.2
 A new version of Huragok no longer gets lost among the events: the dashboard's
 HURAGOK line says `Huragok <version> is out (U)` until it's installed, in the second

@@ -132,7 +132,7 @@ def rename_server(settings: Settings, server: ServerConfig, new_name: str, say: 
                 stuck.append(f"{what} ({undo_error})")
         if stuck:
             partial = ServerOpError(f"{error}. It's partly renamed: putting back failed for {'; '.join(stuck)}. "
-                                    "Fix those by hand (E), then pick it again")
+                                    "Fix those by hand (O opens the files), then pick it again")
             partial.partly = True
             raise partial from None
         say("every step put back as it was")

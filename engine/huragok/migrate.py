@@ -416,8 +416,8 @@ def pending(settings_path: Path, records: Path, packages: Path, steps: list[Step
         except OSError:
             continue
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as error:
-            return [f"can't yet: {path.name} can't be read ({error}); once it's fixed (E), the next start brings it "
-                    "up to date"]
+            return [f"can't yet: {path.name} can't be read ({error}); once it's fixed (O opens it), the next start "
+                    "brings it up to date"]
     ctx = context_for(settings_path, records, packages, dry=True)
     changed, failed = _run(ctx, STEPS if steps is None else steps)
     return changed + [f"can't yet: {line}" for line in failed]

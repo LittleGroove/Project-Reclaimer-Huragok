@@ -281,3 +281,54 @@ def describe_games(games: list[dict[str, Any]], limit: int = 6) -> str:
     if len(names) <= limit:
         return ", ".join(names)
     return ", ".join(names[:limit]) + f", and {len(names) - limit} more"
+
+
+# Mods kept but not used: content/disabled-mods.json ------------------------------------------
+
+DISABLED_MODS = "disabled-mods.json"  # {"packages": ["Mods/canyon"]}: mods the server keeps on disk but doesn't use
+
+
+class DisabledModsError(ValueError):
+    pass
+
+
+def disabled_mods(content_root: Path) -> list[str]:
+    """The mod folders switched off, as written (relative to the content folder). Raises DisabledModsError when
+    the file isn't in the shape the server program reads, so it's never written over."""
+    path = content_root / DISABLED_MODS
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as error:
+        raise DisabledModsError(f"{DISABLED_MODS} can't be read ({error})") from None
+    packages = data.get("packages") if isinstance(data, dict) else None
+    if not isinstance(packages, list) or not all(isinstance(p, str) for p in packages) or set(data) - {"packages"}:
+        raise DisabledModsError(f'{DISABLED_MODS} isn\'t written as {{"packages": ["Mods/<folder>", …]}}')
+    return packages
+
+
+def mod_package(content_root: Path, mod: Mod) -> str:
+    """How disabled-mods.json names a mod: its folder from the content folder, with forward slashes."""
+    try:
+        return mod.folder.resolve().relative_to(content_root.resolve()).as_posix()
+    except ValueError:
+        return mod.folder.as_posix()
+
+
+def is_disabled(packages: list[str], package: str) -> bool:
+    return any(p.strip().strip("/").replace("\\", "/").lower() == package.lower() for p in packages)
+
+
+def set_mod_disabled(content_root: Path, package: str, off: bool) -> list[str]:
+    """Switch one mod off (listed in disabled-mods.json) or on again; the file goes once nothing is listed. The
+    list as it is now. Raises DisabledModsError or OSError."""
+    packages = [p for p in disabled_mods(content_root) if not is_disabled([p], package)]
+    if off:
+        packages.append(package)
+    path = content_root / DISABLED_MODS
+    if packages:
+        path.write_text(json.dumps({"packages": packages}, indent=2) + "\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+    return packages

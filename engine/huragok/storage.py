@@ -161,3 +161,23 @@ class PartStore:
 
     def query(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> list[sqlite3.Row]:
         return self._storage.query(sql, params)
+
+
+def recent_players(path: Path | None, limit: int = 15) -> list[tuple[str, str, float]]:
+    """The players seen most lately, read-only from Huragok's records (the window lists them to pick from, so
+    nobody has to type a player ID): (ID, the name they last used, when they were last seen). [] when there are
+    no records yet or they can't be read."""
+    from urllib.request import pathname2url
+
+    if path is None or not path.is_file():
+        return []
+    try:
+        db = sqlite3.connect(f"file:{pathname2url(str(path))}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = db.execute("SELECT id, last_name, last_seen FROM players ORDER BY last_seen DESC LIMIT ?",
+                              (limit,)).fetchall()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return []
+    return [(str(r[0]), str(r[1]), float(r[2])) for r in rows]

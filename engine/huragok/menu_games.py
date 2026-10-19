@@ -327,7 +327,7 @@ class GameScreens:
                 await self._pages(lines or ["(plays as its game type has it)"])
                 if preset.scripted:
                     self.note("It runs a script (a scripted mode): its options are here; its script is edited as a "
-                              "file (E).")
+                              "file (O opens it).")
                 await self.wait_any_key(20)
             elif choice == "P":
                 from .livesettings import write_plays

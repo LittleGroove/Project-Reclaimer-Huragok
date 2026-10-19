@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 import time
 from collections import deque
-from datetime import datetime
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +14,8 @@ from ...rcon import RconError
 from ...state import Player
 
 from .matcher import Hit, Matcher, normalise
-from .rules import (NAME_STRIKE, PARTS, BannedName, Rule, RuleError, Step, describe_seconds, describe_unnamed,
-                    read_names, read_rules, read_text, unnamed_ladders)
+from .rules import (NAME_STRIKE, PARTS, BannedName, Rule, RuleError, Step, add_name, describe_seconds, describe_unnamed,
+                    read_names, read_rules, remove_name, unnamed_ladders)
 
 MIGRATIONS = [
     """
@@ -384,17 +382,8 @@ class AutoMod(Part):
     def _write_name(self, name: str, by: str, note: str) -> None:
         """Add a name to names.txt (written back as UTF-8, whatever it was saved as). Raises RuleError or
         OSError when the file can't be read or written."""
-        path = self.names_path
-        try:
-            text = read_text(path)
-        except FileNotFoundError:
-            text = resources.files("huragok").joinpath("templates/names.txt").read_text("utf-8")
-        if text and not text.endswith("\n"):
-            text += "\n"
-        when = datetime.now().strftime("%Y-%m-%d")
-        text += f"# banned {when} by {by}" + (f": {note}" if note else "") + f"\n{name}\n"
-        path.write_text(text, encoding="utf-8")
-        self._install_names(read_names(path))
+        add_name(self.names_path, name, by, note)
+        self._install_names(read_names(self.names_path))
 
     # Striking ------------------------------------------------------------------------
 
@@ -613,28 +602,13 @@ class AutoMod(Part):
                              + (", ".join(n.text for n in self.names[-8:]) or "none"))
             return
         try:
-            lines = read_text(self.names_path).splitlines()
-        except FileNotFoundError:
-            lines = []
-        except (RuleError, OSError) as error:
-            await call.reply(f"{self.config['names']} can't be read ({error}); nothing changed.")
-            return
-        keep: list[str] = []
-        removed = 0
-        for line in lines:
-            if line.strip() and not line.strip().startswith("#") and same_name(line, name):
-                removed += 1
-                if keep and keep[-1].startswith("# banned "):
-                    keep.pop()  # the note Vergil wrote above it
-                continue
-            keep.append(line)
-        if removed:
-            try:
-                self.names_path.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            removed = remove_name(self.names_path, name, same_name)
+            if removed:
                 self._install_names(read_names(self.names_path))
-            except (RuleError, OSError) as error:
-                await call.reply(f"{self.config['names']} can't be changed ({error}); {name} is still banned.")
-                return
+        except (RuleError, OSError) as error:
+            await call.reply(f"{self.config['names']} can't be changed ({error}); {name} is still banned.")
+            return
+        if removed:
             self.log.info("[%s] %s took the name %s off the banned names", call.server, call.player.name, name)
             self.ctx.emit("name_allowed", call.server, text=name, by=call.player.name)
         if hit := self.name_hit(name):

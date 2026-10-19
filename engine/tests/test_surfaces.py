@@ -377,7 +377,7 @@ def test_a_setting_that_cannot_be_written_says_so(tmp_path: Path, run, monkeypat
 
     monkeypatch.setattr(menu_manage_module, "write", locked)
     terminal = FakeTerminal()
-    keys = ["1", "ENTER", "1", "ENTER", "3", "ENTER", *"8", "ENTER", "x", "ESC", "ESC"]  # Joining -> max_players
+    keys = ["1", "ENTER", "1", "ENTER", "3", "ENTER", *"8", "ENTER", "x", "ESC", "ESC", "ESC"]  # Joining -> max_players
     menu = Menu(ManageController(settings_path), terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
     run(menu.screen_settings())
     assert "Couldn't write dedicated.toml: read-only" in printed(terminal)

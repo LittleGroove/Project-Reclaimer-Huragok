@@ -75,7 +75,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <nav class="toc" aria-label="Contents"><p class='toc-part'><a href='#top'>Part 1: Technical reference</a></p><ol><li><a href='#status-at-a-glance'>Status at a glance</a></li><li><a href='#the-road-to-1-0'>The road to 1.0</a></li><li><a href='#what-it-is-and-why-it-exists'>What it is and why it exists</a></li><li><a href='#the-three-parts'>The three parts</a></li><li><a href='#goals-scope-and-non-goals'>Goals, scope and non-goals</a></li><li><a href='#architecture'>Architecture</a></li><li><a href='#design-decisions'>Design decisions</a></li><li><a href='#concurrency-timing-and-resources'>Concurrency, timing and resources</a></li><li><a href='#on-disk-layout-and-configuration'>On-disk layout and configuration</a></li><li><a href='#server-lifecycle'>Server lifecycle</a></li><li><a href='#watchdog-and-keepalive'>Watchdog and keepalive</a></li><li><a href='#moderation'>Moderation</a></li><li><a href='#key-flows'>Key flows</a></li><li><a href='#extending-huragok'>Extending Huragok</a></li><li><a href='#the-window-and-the-command-surface'>The window and the command surface</a></li><li><a href='#window-internals'>Window internals</a></li><li><a href='#setup-and-management-in-depth'>Setup and management in depth</a></li><li><a href='#game-content'>Game content</a></li><li><a href='#logs-diagnostics-tests-and-shipping'>Logs, diagnostics, tests and shipping</a></li><li><a href='#failure-modes'>Failure modes</a></li><li><a href='#security-and-privacy'>Security and privacy</a></li><li><a href='#compatibility-versions-and-migration'>Compatibility, versions and migration</a></li><li><a href='#performance-and-scale'>Performance and scale</a></li><li><a href='#known-issues-and-open-questions'>Known issues and open questions</a></li><li><a href='#reference'>Reference</a></li></ol><p class='toc-part'><a href='#interfaces-and-data-formats'>Part 2: Interfaces and data formats</a></p><ol><li><a href='#rcon-client-protocol'>RCON client protocol</a></li><li><a href='#relay-protocols'>Relay protocols</a></li><li><a href='#files-read-from-each-server'>Files read from each server</a></li><li><a href='#files-huragok-writes'>Files Huragok writes</a></li><li><a href='#database-schema'>Database schema</a></li><li><a href='#host-file-formats'>Host file formats</a></li><li><a href='#environment-exit-codes-and-command-line-options'>Environment, exit codes and command-line options</a></li></ol></nav>
 <main>
 <h1 class='title' id="huragok-technical-reference">Huragok — Technical Reference</h1>
-<p class='byline'>As of 19 October 2026 · Huragok 0.4.2 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
+<p class='byline'>As of 19 October 2026 · Huragok 0.4.3 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
 <h2 id="status-at-a-glance">Status at a glance</h2>
 <p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It is the Windows release (Linux, experimental, comes with 0.5.0), and carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. 0.4.1 followed the same day, after the host's first full test of 0.4.0 in a folder of its own: a server folder copied in from another install wouldn't start (its shared <code>game/</code> and <code>bans.json</code> stayed behind). It puts right what a server arrives without (<a href="#what-a-server-arrives-without">What a server arrives without</a>), makes I SteamCMD's screen for Halo 3's files too, and is the first release that brings a host's own files up to date (<a href="#hosts-files-across-updates">Hosts' files across updates</a>): from 0.4.0 on, every install is treated as live, and no release may need a clean install.</p>
 <div class='table'><table>
@@ -105,6 +105,10 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td>0.4.2 (19 Oct 2026)</td>
 <td>The window's HURAGOK line keeps saying a new Huragok is out until it's installed (the notice alone was scrolled away by a crash-looping server's errors); <code>[updates] auto_update</code>, off by default, installs new versions as soon as they're found, replacing <code>install_on_server_restart</code> (renamed in hosts' files by <code>migrate.py</code>)</td>
+</tr>
+<tr>
+<td>0.4.3 (19 Oct 2026)</td>
+<td>E folded into D: D lists Huragok's own files above the servers and changes every one a step at a time (<code>settings.toml</code> in groups, each change checked by loading a copy as the start does, with the relay's moderators; <code>commands.toml</code>'s roles and commands; <code>automod.txt</code>'s rules; <code>names.txt</code>), and a server's page gains its playlists, custom games, bans and mods on or off. O is Open: the folder first, then every file E listed. No host file changes format</td>
 </tr>
 <tr>
 <td>Where it runs now</td>
@@ -815,7 +819,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>Every TOML write is checked: the old file is read, the change made in memory, the result read back with <code>tomllib</code>, and the file replaced (temporary file, then rename) only if exactly the intended change differs</td>
 <td>Trusting the line editor; rewriting files from a parsed model</td>
 <td>Valid but unusual files (dotted keys, inline tables, a <code>[</code> line inside an array) were corrupted, and a failed rename plus a retry made <code>settings.toml</code> unreadable. Now a write is right or the file is left byte for byte</td>
-<td>Forms it doesn't edit (dotted keys, inline tables, a dotted or sub-table <code>campaign</code>) are refused: "couldn't change X safely in &lt;file&gt;: …; edit it by hand (E)"</td>
+<td>Forms it doesn't edit (dotted keys, inline tables, a dotted or sub-table <code>campaign</code>) are refused: "couldn't change X safely in &lt;file&gt;: …; edit it by hand (O opens it)"</td>
 </tr>
 <tr>
 <td>D21</td>
@@ -858,6 +862,13 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>A connect per stopped server on every tick</td>
 <td>A connect to a closed port takes Windows about half a second to refuse: every stopped server held up every other server's care by that much each second</td>
 <td>Until the answer is known the server isn't started (never onto a taken port)</td>
+</tr>
+<tr>
+<td>D27</td>
+<td>D is where every setting is changed, a value at a time, for Huragok's own files as for a server's; each change is checked as the file's reader will read it before it's written: <code>settings.toml</code> by loading a copy as Huragok's start does (every part's own check too), <code>commands.toml</code> by reading a copy with <code>load_permissions</code>, <code>automod.txt</code> by parsing the whole new list. O only opens files</td>
+<td>E opening the files in an editor (before 0.4.3)</td>
+<td>Hosts had to know TOML and the word list's five parts; a typo in <code>settings.toml</code> stopped Huragok at its next start, and a word list line in four parts read as 0.2's layout</td>
+<td>Edits to <code>settings.toml</code> still apply only when Huragok starts again (it doesn't restart itself: a relaunch is read by the start loop as an update to put back if it fails); the copy is checked in the window's own thread (milliseconds: every server folder is read)</td>
 </tr>
 </tbody>
 </table></div>
@@ -1171,9 +1182,9 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li><strong>D</strong> (live settings) writes one key per change, or takes one out of the server's block; the server reloads it.</li>
 <li>A Workshop update's job moves <code>content/Mods/Workshop/&lt;item&gt;</code> aside to <code>.huragok-workshop-previous/</code> next to the content folder while the server is stopped (a marker file there first, so a job cut short is put right), runs <code>dedicated mods</code>, then deletes the old copy (or puts it back).</li>
 <li><strong>G</strong> writes playlists and Workshop items; <strong>I</strong> writes <code>[workshop]</code> into every server.</li>
-<li><strong>E</strong> opens any server file in an editor.</li>
+<li><strong>O</strong> opens any server file in an editor; D's server page writes <code>content/disabled-mods.json</code> (M: a mod off or on; the file goes once nothing is listed, and one in a shape it doesn't know is never written over).</li>
 <li><strong>N</strong> and <code>new</code> create the whole folder with <code>dedicated init</code>, with <code>auto_update</code> (<code>[setup] auto_update</code>, on), a program copy of its own when it updates itself, and <code>[workshop] steamcmd</code>/<code>username</code> from <code>[setup]</code>.</li>
-<li><code>settings.toml</code> is written by <strong>T</strong> (<code>autostart</code>), by D (a server's <code>autostart</code>, <code>daily_restart</code>, <code>workshop_updates</code>, and its block's name on a rename), by I and steam login (<code>[setup] steamcmd</code> and <code>steam_username</code>), and by new (autostart = false after a failed check). <code>init &lt;folder&gt;</code> writes paths as literal strings, so a Windows path reads back.</li>
+<li><code>settings.toml</code> is written by <strong>T</strong> (<code>autostart</code>), by D (a server's <code>autostart</code>, <code>daily_restart</code>, <code>workshop_updates</code>, and its block's name on a rename), by I and steam login (<code>[setup] steamcmd</code> and <code>steam_username</code>), by new (autostart = false after a failed check), and by D → S (any setting, and <code>[[relay.user]]</code> blocks added, changed and taken out, each change checked by loading a copy first). <code>init &lt;folder&gt;</code> writes paths as literal strings, so a Windows path reads back. D → C writes <code>commands.toml</code> (players' lines with a note, commands moved between roles' lists or into <code>[off]</code>, <code>prefix</code>, <code>cooldown_seconds</code>), D → A <code>automod.txt</code> (one rule line, always in five parts when it has a name) and D → N <code>names.txt</code> (a name with a <code># banned …</code> note above it, as <code>!strike … name</code> writes).</li>
 </ul>
 <h3 id="configuration-files">Configuration files</h3>
 <div class='table'><table>
@@ -1862,8 +1873,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   SUPERINTENDENT  [S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server
   VERGIL          [P] Players  [M] Message  [A] Console  [B] Bans &amp; admins
-  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check  [E] Edit
-                  [O] Folder  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
+  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check
+                  [O] Open  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   RECENT EVENTS  ·  SUPT Superintendent  VRGL Vergil  HRGK Huragok  ·  logs/huragok.log has them all
   21:03:40 SUPT INFO    [Slayer] restart planned (now): the server is struggling
@@ -2024,7 +2035,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td></td>
 <td>D</td>
-<td>Everything about a server in 11 groups (<code>livesettings.GROUPS</code>): every <code>dedicated.toml</code> setting with its value, origin and when it applies; what it plays (playlist, map and game, custom game, campaign co-op, Halo 3: ODST); Huragok's own per-server settings; rename a stopped server; give it its own content folder</td>
+<td>Settings, a value at a time: Huragok's own files by letter (S <code>settings.toml</code> in 13 groups and the relay's moderators, C <code>commands.toml</code>, A <code>automod.txt</code>, N <code>names.txt</code>; <code>menu_files.py</code>), then each server by number: everything about it in 11 groups (<code>livesettings.GROUPS</code>): every <code>dedicated.toml</code> setting with its value, origin and when it applies; what it plays (playlist, map and game, custom game, campaign co-op, Halo 3: ODST); Huragok's own per-server settings; its playlists (P), custom games (G), bans (B) and mods on or off (M); rename a stopped server; give it its own content folder</td>
 </tr>
 <tr>
 <td></td>
@@ -2033,8 +2044,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td></td>
-<td>E / O</td>
-<td>Edit any file (Huragok's or a server's); open the root folder</td>
+<td>O</td>
+<td>Open: the root folder (first), or any of Huragok's files or a server's (its folder first) in an editor</td>
 </tr>
 <tr>
 <td></td>
@@ -2255,11 +2266,11 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tbody>
 <tr>
 <td><code>menu.py</code></td>
-<td>Dashboard, S, X, R, K, T, M, P, L, V, O, W, H, Q, and the helpers every screen uses: <code>title</code> (its part's name first, in its colour), <code>heading</code>, <code>note</code>, <code>listing</code>, <code>choose</code>, <code>prompt_line</code>, <code>prompt_key</code>, <code>slow</code></td>
+<td>Dashboard, S, X, R, K, T, M, P, L, V, W, H, Q, and the helpers every screen uses: <code>title</code> (its part's name first, in its colour), <code>heading</code>, <code>note</code>, <code>listing</code>, <code>choose</code>, <code>prompt_line</code>, <code>prompt_key</code>, <code>slow</code></td>
 </tr>
 <tr>
 <td><code>menu_manage.py</code></td>
-<td>A (console with events and your name), D (settings in groups, what it plays, campaign, rename, own content), B (bans, admins, VPN block), U (updates, Workshop mods, clean up)</td>
+<td>A (console with events and your name), D (its list of Huragok's files and servers; a server's settings in groups, what it plays, campaign, rename, own content), B (bans, admins, VPN block), U (updates, Workshop mods, clean up)</td>
 </tr>
 <tr>
 <td><code>menu_games.py</code></td>
@@ -2267,7 +2278,11 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td><code>menu_setup.py</code></td>
-<td>N (new server), G (game content, playlists, Workshop, packages, MCC import), C (check, then the firewall rules, the engine file and ODST's files it found), E (edit a file), I (SteamCMD)</td>
+<td>N (new server), G (game content, playlists, Workshop, packages, MCC import), C (check, then the firewall rules, the engine file and ODST's files it found), I (SteamCMD); the list of a server's files O opens</td>
+</tr>
+<tr>
+<td><code>menu_files.py</code></td>
+<td>D's screens for Huragok's own files (S <code>settings.toml</code> through <code>hostsettings.py</code>, with the relay's moderators; C <code>commands.toml</code>, players picked from <code>storage.recent_players</code>; A <code>automod.txt</code>, rules from ready-made ladders or asked a part at a time, and a line of chat tried; N <code>names.txt</code>, a name tried), a server page's extras (P, G, B, M), and O. Last in <code>Menu</code>'s bases, so its stubs never stand in for another mixin's screens</td>
 </tr>
 </tbody>
 </table></div>
@@ -2277,11 +2292,19 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <h2 id="setup-and-management-in-depth">Setup and management in depth</h2>
 <p>Management prefers the server's own live reload: Huragok writes the file, the server (v0.9.18, <code>auto_reload</code> on) re-reads it within a couple of seconds, and the result shows as an event. RCON is used where the change is about players. Every write to a TOML file goes through <code>tomledit.py</code>'s check (below).</p>
 <h3 id="toml-edits">TOML edits: the safety net</h3>
-<p><code>tomledit.py</code> edits in place, keeping every comment and the layout: top-level keys, keys in a table and <code>[[server]]</code> blocks. Each change goes through <code>_Edit</code>: the old text is read and parsed with <code>tomllib</code>, the change is made to what it read as, the new text is parsed again and must equal exactly that; then it is written to a temporary file (<code>&lt;name&gt;.&lt;pid&gt;-&lt;n&gt;.tmp</code>) and renamed over the old one (file permissions kept on Linux). Anything else and the file is left byte for byte, with "couldn't change X safely in &lt;file&gt;: &lt;why&gt;; edit it by hand (E)" (why: "other values would change too (…)", "it isn't valid TOML now (…)", "it isn't UTF-8 text").</p>
+<p><code>tomledit.py</code> edits in place, keeping every comment and the layout: top-level keys, keys in a table and <code>[[server]]</code> blocks. Each change goes through <code>_Edit</code>: the old text is read and parsed with <code>tomllib</code>, the change is made to what it read as, the new text is parsed again and must equal exactly that; then it is written to a temporary file (<code>&lt;name&gt;.&lt;pid&gt;-&lt;n&gt;.tmp</code>) and renamed over the old one (file permissions kept on Linux). Anything else and the file is left byte for byte, with "couldn't change X safely in &lt;file&gt;: &lt;why&gt;; edit it by hand (O opens it)" (why: "other values would change too (…)", "it isn't valid TOML now (…)", "it isn't UTF-8 text").</p>
 <ul>
 <li><strong>Refused, without showing the value:</strong> dotted keys (<code>rcon.password = …</code>), an inline table (<code>rcon = { … }</code>) where a table would be written, a campaign written as a <code>[server.campaign]</code> sub-table or dotted keys.</li>
 <li><strong>Understood:</strong> multi-line arrays and strings (<code>"""</code>, <code>'''</code>), quoted and literal keys and headers, commented-out <code>#key =</code> lines and <code># [table]</code> headers (a commented <code># [workshop]</code> example becomes the live table). A value over several lines, like the <code>admins</code> list <code>dedicated init</code> writes, is replaced whole.</li>
 <li><strong>Written safely:</strong> control characters, DEL, the C1 range (NEL included) and the line and paragraph separators are written as <code>\uXXXX</code>; files are split on newlines only.</li>
+</ul>
+<h3 id="huragoks-own-files-d">Huragok's own files (D → S, C, A, N)</h3>
+<p>D's list puts Huragok's four files above the servers, by letter (servers keep their dashboard numbers, so a script that picked a server with its number still does). Each file has its own screens in <code>menu_files.py</code>; nothing there needs the file's format, and every change is checked before it replaces the file:</p>
+<ul>
+<li><strong>S, <code>settings.toml</code></strong>: <code>hostsettings.py</code> catalogues every setting the template writes (a test holds them in step), each with its section, type (bool, int, float, text, choice, time of day, numbers, names, a command's words, roles, what new servers share, a path), default, bounds and group, and the backend it belongs to (<code>[process]</code>, <code>[docker]</code> or <code>[command]</code> shown only with that backend). A change is made with <code>tomledit</code> on a copy beside the file (<code>.settings.toml.&lt;pid&gt;.check</code>); <code>hostsettings.problems</code> reads the copy with <code>config.load</code> and runs each enabled part's <code>preflight</code> and <code>check_config</code> (<code>parts.config_problem</code>, shared with <code>check</code>); a problem the original didn't have refuses the change ("Not changed (&lt;what&gt;): &lt;why&gt;"), otherwise the copy replaces the file. The relay's moderators are <code>[[relay.user]]</code> blocks (<code>tomledit.add_array_block</code>, <code>set_array_block_key</code>, <code>remove_array_block</code>; a new one goes after the last, or after the table's own lines and the comments that follow them). It applies when Huragok starts again.</li>
+<li><strong>C, <code>commands.toml</code></strong>: <code>permissions.add_player</code> (one role each: out of the others), <code>remove_player</code>, <code>set_command_role</code> (out of every role's list, into the new one with what it does), <code>set_command_off</code>, <code>set_top</code>; each on a copy read with <code>load_permissions</code> first. Players are picked from <code>storage.recent_players</code> (read-only from the records). A missing file is offered as <code>init</code> writes it.</li>
+<li><strong>A, <code>automod.txt</code></strong>: rules shown with <code>rules.ladder</code> ("1st: removed for 1 hour; 2nd and after: muted for 1 day"); <code>rules.rule_line</code> writes a rule in five parts when it has a name (four parts ending in a name read as 0.2's layout) and leaves empty parts off the end otherwise; <code>rules.change_rule</code> adds, replaces or removes one line and parses the whole new list before writing, so a duplicate name or a bad time is refused. Tried lines go through Vergil's own <code>Matcher</code>.</li>
+<li><strong>N, <code>names.txt</code></strong>: <code>rules.add_name</code> and <code>rules.remove_name</code>, the same functions <code>!strike … name</code> and <code>!unbanname</code> use.</li>
 </ul>
 <h3 id="live-settings-d">Live settings (D)</h3>
 <p><code>livesettings.py</code> holds every setting a host can change about a server: its key, where it lives (the server's block, the file's top, <code>[rcon]</code>, <code>[master]</code>, <code>[vpn]</code>, <code>[workshop]</code>, or Huragok's own <code>settings.toml</code> block), its type (bool, int, choice, text, list, Workshop IDs, https addresses, chat lines, folder, time of day, and the special <em>what it plays</em>), the program's default, its group, when the server applies it, and the program version it first appeared in (<code>since</code>). D lists the 11 groups (Joining, What it plays, Gameplay, Voice and chat, Safety and admins, Mods and the Workshop, Updates, Listing and network, Remote console, Folders and files, Huragok's own) with counts and a summary of their values, then a group's settings with value and origin (this server, <code>[defaults]</code>, the file, a table, settings.toml, the program's default, or unset). Choices are numbered lists; passwords display as "set (n characters)", since the window's transcript is a file. Huragok's own (autostart, daily restart, Workshop update mode) go through the <code>server_setting</code> verb, which writes <code>settings.toml</code> and updates the live overrides and <code>ServerConfig</code> at once.</p>
@@ -2793,7 +2816,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td>Huragok's edit of a TOML file would change more than asked (an unusual form)</td>
 <td><code>tomledit</code>'s check before writing</td>
-<td>The file is left byte for byte: "couldn't change X safely in &lt;file&gt;: …; edit it by hand (E)"</td>
+<td>The file is left byte for byte: "couldn't change X safely in &lt;file&gt;: …; edit it by hand (O opens it)"</td>
 <td>Edit it by hand</td>
 </tr>
 <tr>
@@ -3660,8 +3683,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>Window</td>
-<td><code>menu.py</code> (1,057), <code>menu_manage.py</code> (827), <code>menu_setup.py</code> (1,095), <code>menu_games.py</code> (416), <code>statuscard.py</code> (259), <code>tui.py</code> (825), <code>shell.py</code> (122), <code>console.py</code> (95)</td>
-<td>Dashboard and screens (V; A, D, B, U; N, G, C, E, I; the option editors), the status card, the terminal (<code>ConsoleWriter</code>, <code>Keyboard</code>, <code>clean</code>, <code>cells</code>), the tagged log format, command-line output, the <code>--no-menu</code> typed console</td>
+<td><code>menu.py</code> (1,059), <code>menu_manage.py</code> (877), <code>menu_setup.py</code> (1,166), <code>menu_games.py</code> (416), <code>menu_files.py</code> (900), <code>statuscard.py</code> (259), <code>tui.py</code> (825), <code>shell.py</code> (122), <code>console.py</code> (95)</td>
+<td>Dashboard and screens (V; A, D, B, U; N, G, C, I, O; Huragok's files; the option editors), the status card, the terminal (<code>ConsoleWriter</code>, <code>Keyboard</code>, <code>clean</code>, <code>cells</code>), the tagged log format, command-line output, the <code>--no-menu</code> typed console</td>
 </tr>
 <tr>
 <td>Setup</td>
@@ -3670,12 +3693,12 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>Content</td>
-<td><code>repair.py</code> (548), <code>migrate.py</code> (331), <code>catalogue.py</code> (283), <code>playlists.py</code> (260), <code>contentimport.py</code> (221), <code>steamsetup.py</code> (314), <code>livesettings.py</code> (549), <code>gameoptions.py</code> (475), <code>gameoptions_data.py</code> (179, generated)</td>
-<td>What a server can play; playlist files and labels by program version; MCC import; SteamCMD; every setting a host can change, grouped, with defaults, checks and the version each needs; the game option catalogue, presets and playlist-game overrides</td>
+<td><code>repair.py</code> (548), <code>migrate.py</code> (331), <code>catalogue.py</code> (283), <code>playlists.py</code> (260), <code>contentimport.py</code> (221), <code>steamsetup.py</code> (314), <code>livesettings.py</code> (549), <code>hostsettings.py</code> (539), <code>gameoptions.py</code> (475), <code>gameoptions_data.py</code> (179, generated)</td>
+<td>What a server can play; playlist files and labels by program version; MCC import; SteamCMD; every setting a host can change, grouped, with defaults, checks and the version each needs (a server's, and <code>settings.toml</code>'s); the game option catalogue, presets and playlist-game overrides</td>
 </tr>
 <tr>
 <td>Program</td>
-<td><code>updates.py</code> (555), <code>serverupdates.py</code> (1,022), <code>workshopupdates.py</code> (662), <code>desktop.py</code> (211), <code>watch.py</code> (88), <code>tomledit.py</code> (532)</td>
+<td><code>updates.py</code> (555), <code>serverupdates.py</code> (1,022), <code>workshopupdates.py</code> (662), <code>desktop.py</code> (211), <code>watch.py</code> (88), <code>tomledit.py</code> (819)</td>
 <td>Self-update, its backups and <code>put_back</code>; server program updates; Workshop mods after the game; folders, editors, start at boot; log following; comment-keeping TOML edits, each checked before the file is replaced</td>
 </tr>
 </tbody>

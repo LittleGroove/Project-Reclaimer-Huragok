@@ -264,7 +264,8 @@ class _Edit:
         self.layout = _layout(self.lines)
 
     def refuse(self, why: str) -> TomlEditError:
-        return TomlEditError(f"couldn't change {self.what} safely in {self.path.name}: {why}; edit it by hand (E)")
+        return TomlEditError(f"couldn't change {self.what} safely in {self.path.name}: {why}; edit it by hand (O "
+                             "opens it)")
 
     def changed(self) -> None:
         self.layout = _layout(self.lines)
@@ -474,6 +475,19 @@ def set_top_key(path: Path, key: str, value: object) -> None:
     edit.save()
 
 
+def remove_top_key(path: Path, key: str) -> bool:
+    """Take a top-level key's line(s) out (above the first table). False: the file doesn't set it."""
+    edit = _Edit(path, key)
+    number = edit.key_line(0, edit.first_header(), key, "the top of the file")
+    if key not in edit.wanted or number is None:  # not set, or a [table] of that name
+        return False
+    del edit.wanted[key]
+    del edit.lines[number:edit.layout[number].end + 1]
+    edit.changed()
+    edit.save()
+    return True
+
+
 def set_table_key(path: Path, table: str, key: str, value: object, *, before: str | None = None) -> None:
     """Set a key in [table], making the table when it's missing (before the [before] table, else at the end
     of the top-level keys)."""
@@ -675,6 +689,109 @@ def remove_from_list(path: Path, table: str, key: str, item: str) -> bool:
     edit.changed()
     edit.save()
     return True
+
+
+def _array_blocks(edit: _Edit, parts: tuple[str, ...]) -> list[tuple[int, int]]:
+    """Each [[parts]] block (such as [[relay.user]]): its header line and the line after its last value (the
+    blank lines and comments after that belong to whatever comes next)."""
+    headers = [n for n, entry in enumerate(edit.layout) if entry.kind == "header"]
+    found = []
+    for i, number in enumerate(headers):
+        entry = edit.layout[number]
+        if not entry.array or entry.parts != parts:
+            continue
+        end = headers[i + 1] if i + 1 < len(headers) else len(edit.lines)
+        nxt = edit.layout[end].parts if end < len(edit.lines) else None
+        if nxt is not None and nxt[:len(parts)] == parts and len(nxt) > len(parts):
+            raise edit.refuse(f"a [[{'.'.join(parts)}]] block has a table of its own under it")
+        while end > number + 1 and edit.layout[end - 1].kind in ("blank", "comment"):
+            end -= 1
+        found.append((number, end))
+    return found
+
+
+def _parsed_array(edit: _Edit, parts: tuple[str, ...], create: bool = False) -> list[Any] | None:
+    where: Any = edit.wanted
+    for part in parts[:-1]:
+        if not isinstance(where, dict):
+            return None
+        where = where.setdefault(part, {}) if create else where.get(part)
+    if not isinstance(where, dict):
+        return None
+    found = where.setdefault(parts[-1], []) if create else where.get(parts[-1])
+    return found if isinstance(found, list) else None
+
+
+def _array_block(edit: _Edit, parts: tuple[str, ...], name: str) -> tuple[int, tuple[int, int]]:
+    """The [[parts]] block whose name is `name` (any case): its place in the parsed list, and its lines."""
+    parsed = _parsed_array(edit, parts) or []
+    blocks = _array_blocks(edit, parts)
+    if len(parsed) != len(blocks):
+        raise edit.refuse(f"the [[{'.'.join(parts)}]] blocks aren't each written as one")
+    for index, (data, block) in enumerate(zip(parsed, blocks)):
+        if isinstance(data, dict) and str(data.get("name", "")).lower() == name.lower():
+            return index, block
+    raise edit.refuse(f"there's no [[{'.'.join(parts)}]] block named {name}")
+
+
+def add_array_block(path: Path, parts: tuple[str, ...], values: dict[str, Any]) -> None:
+    """A new [[parts]] block with these values, after the last one, or else after its table's own lines (and the
+    comments right after them, such as a commented-out example); at the end when there's neither."""
+    edit = _Edit(path, f"a [[{'.'.join(parts)}]] block")
+    parsed = _parsed_array(edit, parts, create=True)
+    if parsed is None:
+        raise edit.refuse(f"{'.'.join(parts)} isn't a list of [[{'.'.join(parts)}]] blocks there")
+    parsed.append(_plain(values))
+    lines = [f"[[{'.'.join(_key(p) for p in parts)}]]", *(f"{_key(k)} = {_toml_value(v)}" for k, v in values.items())]
+    blocks = _array_blocks(edit, parts)
+    table = edit.tables().get(parts[:-1])
+    if blocks or table:
+        if blocks:
+            at = blocks[-1][1]
+        else:
+            start, end = table  # type: ignore[misc]
+            at = 1 + max((n for n in range(start, end) if edit.layout[n].kind in ("key", "more", "other")),
+                         default=start)
+        while at < len(edit.lines) and edit.layout[at].kind == "comment":
+            at += 1  # the comments that go with the lines above it
+        edit.lines[at:at] = ["", *lines]
+    else:
+        while edit.lines and not edit.lines[-1].strip():
+            edit.lines.pop()
+        edit.lines += ["", *lines]
+    edit.changed()
+    edit.save()
+
+
+def set_array_block_key(path: Path, parts: tuple[str, ...], name: str, key: str, value: object) -> None:
+    """Set `key` in the [[parts]] block named `name`."""
+    edit = _Edit(path, f"{key} of {name}")
+    index, (start, end) = _array_block(edit, parts, name)
+    block = (_parsed_array(edit, parts) or [])[index]
+    block[key] = _plain(value)
+    edit.set_in(start + 1, end, key, value, f"{name}'s block")
+    edit.save()
+
+
+def remove_array_block(path: Path, parts: tuple[str, ...], name: str) -> None:
+    """Take the [[parts]] block named `name` out, with the blank line before it."""
+    edit = _Edit(path, f"{name}'s block")
+    index, (start, end) = _array_block(edit, parts, name)
+    del (_parsed_array(edit, parts) or [])[index]
+    if not _parsed_array(edit, parts):  # the last one: the key goes, and a table only the blocks made goes too
+        tables = edit.tables()
+        chain: list[dict[str, Any]] = [edit.wanted]
+        for part in parts[:-1]:
+            chain.append(chain[-1][part])
+        del chain[-1][parts[-1]]
+        for depth in range(len(parts) - 1, 0, -1):
+            if not chain[depth] and parts[:depth] not in tables:
+                del chain[depth - 1][parts[depth - 1]]
+    if start > 0 and edit.layout[start - 1].kind == "blank":
+        start -= 1
+    del edit.lines[start:end]
+    edit.changed()
+    edit.save()
 
 
 def render_server_block(values: dict[str, Any]) -> list[str]:

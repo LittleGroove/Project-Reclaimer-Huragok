@@ -23,6 +23,12 @@ What a player gets each time:
 | `threats` | banned for good | | | | |
 | `kickword` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
 
+**You don't have to write the lines yourself.** In the window, **D → A** lists the rules
+as players meet them, adds one from the words and a ready-made ladder (or your own, a
+question at a time), changes or takes one out, and tries a line of chat against them;
+**D → N** does the same for banned names. Either way Vergil reads the file again
+within seconds.
+
 A strike is the next step down its line: the kicks come first, then the mutes, then
 the ban. The numbers in **mutes** and **ban** count the strikes that come before
 them, so `0` is the first offence: `| | | 0 |` bans the first time, `| | 0, 1d |` mutes

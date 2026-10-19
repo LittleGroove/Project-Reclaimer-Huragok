@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 UNITS = {"s": ("second", 1), "m": ("minute", 60), "h": ("hour", 3600), "d": ("day", 86400), "w": ("week", 604800)}
 TIME = re.compile(r"(\d+)([smhdw])")
@@ -306,3 +307,111 @@ def read_names(path: Path) -> list[BannedName]:
         return []
     return [BannedName(line.strip(), number) for number, line in enumerate(text.splitlines(), 1)
             if line.strip() and not line.strip().startswith("#")]
+
+
+# Changing the files from the window (D), and from the game -------------------------------------
+
+def ordinal(number: int) -> str:
+    """1st, 2nd, 3rd, 4th… 11th, 12th, 13th, 21st."""
+    if number % 100 in (11, 12, 13):
+        return f"{number}th"
+    return f"{number}" + {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+
+
+def ladder(rule: Rule) -> list[str]:
+    """What each strike does, in order, until it stops changing: ["1st: kicked", "2nd and after: muted for 1 day"]."""
+    steps = [rule.step_for(previous) for previous in range(MAX_STRIKES + 2)]
+    out: list[str] = []
+    for number, step in enumerate(steps):
+        if all(later == step for later in steps[number:]):  # the same every time from here on
+            if step.action == "ban":  # banned for good: no strike comes after it
+                out.append(f"{ordinal(number + 1)}: {step.describe()}")
+            elif number == 0:
+                out.append(f"every time: {step.describe()}")
+            else:
+                out.append(f"{ordinal(number + 1)} and after: {step.describe()}")
+            break
+        out.append(f"{ordinal(number + 1)}: {step.describe()}")
+    return out
+
+
+def rule_line(words: list[str], kicks: list[str], mute_after: int | None, mutes: list[str], ban_after: int | None,
+              name: str) -> str:
+    """A rule as its line in the word list. With a name it's written in all five parts (four parts ending in a
+    name read as the 0.2 layout); without one, the empty parts at the end are left off."""
+    parts = [", ".join(words), ", ".join(kicks), "" if mute_after is None else ", ".join([str(mute_after), *mutes]),
+             "" if ban_after is None else str(ban_after), name]
+    while not name and len(parts) > 1 and not parts[-1]:
+        parts.pop()
+    return parts[0] + "".join(f" | {part}" if part else " |" for part in parts[1:])
+
+
+def line_of(rule: Rule) -> str:
+    return rule_line([*rule.words, *(f"-{w}" for w in rule.allow)], rule.kicks, rule.mute_after, rule.mutes,
+                     rule.ban_after, rule.label)
+
+
+def change_rule(path: Path, line: int | None, text: str | None) -> list[Rule]:
+    """Put `text` in place of the rule on `line` (None: added at the end); a text of None takes that line out.
+    The whole list is read again before it's written, so a change that would break it raises RuleError and the
+    file stays as it was. The rules as they are now."""
+    try:
+        lines = read_text(path).split("\n")
+    except FileNotFoundError:
+        from importlib import resources
+
+        lines = resources.files("huragok").joinpath("templates/automod.txt").read_text("utf-8").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    if line is None:
+        if text is None:
+            raise RuleError("nothing to add")
+        lines.append(text)
+    elif not 1 <= line <= len(lines) or parse_line(lines[line - 1], line) is None:
+        raise RuleError(f"line {line} isn't a rule any more (the file changed): look again")
+    elif text is None:
+        del lines[line - 1]
+    else:
+        lines[line - 1] = text
+    new = "\n".join(lines) + "\n"
+    rules = parse_text(new)
+    path.write_text(new, encoding="utf-8")
+    return rules
+
+
+def add_name(path: Path, name: str, by: str, note: str = "") -> None:
+    """Add a banned name to names.txt with a line above it saying when and by whom (written back as UTF-8,
+    whatever it was saved as). Raises RuleError or OSError when the file can't be read or written."""
+    from datetime import datetime
+    from importlib import resources
+
+    try:
+        text = read_text(path)
+    except FileNotFoundError:
+        text = resources.files("huragok").joinpath("templates/names.txt").read_text("utf-8")
+    if text and not text.endswith("\n"):
+        text += "\n"
+    when = datetime.now().strftime("%Y-%m-%d")
+    text += f"# banned {when} by {by}" + (f": {note}" if note else "") + f"\n{name}\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def remove_name(path: Path, name: str, same: Any) -> int:
+    """Take every line banning `name` out of names.txt (`same(line, name)` says which), with the note above each
+    that add_name wrote. How many went. Raises RuleError or OSError."""
+    try:
+        lines = read_text(path).splitlines()
+    except FileNotFoundError:
+        return 0
+    keep: list[str] = []
+    removed = 0
+    for line in lines:
+        if line.strip() and not line.strip().startswith("#") and same(line, name):
+            removed += 1
+            if keep and keep[-1].startswith("# banned "):
+                keep.pop()  # the note written above it
+            continue
+        keep.append(line)
+    if removed:
+        path.write_text("\n".join(keep) + "\n", encoding="utf-8")
+    return removed

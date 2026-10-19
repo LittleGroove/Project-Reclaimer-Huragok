@@ -1,7 +1,7 @@
 """The window's setup screens: N new server, G game content (what's there, playlists built from
 numbered lists or from a mod's maps, each playlist game's own rules and options, custom games,
 Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop account and Halo 3's
-files), and E for each server's files.
+files), and the list of each server's files that O opens.
 
 Everything the host picks from is listed first, numbered: maps, map variants, game types
 and variants, mods, packages, playlists. Nothing has to be typed from memory. The screens
@@ -1100,30 +1100,7 @@ class SetupScreens:
             return False
         return True
 
-    # E: a file of the supervisor's, or of a server's --------------------------------------
-
-    async def screen_edit(self) -> None:
-        self.title("EDIT A FILE", "opens it in your editor; most files are re-read within seconds")
-        settings = self._settings()
-        files: list[tuple[str, str, Path | ServerConfig]] = [
-            ("settings.toml", "how Huragok runs; applies when it starts again", self.controller.home / "settings.toml"),
-            ("commands.toml", "who can use which in-game command; applies within seconds", self.controller.home / "commands.toml"),
-            ("automod.txt", "Vergil's word list (automod); applies within seconds", self.controller.home / "automod.txt"),
-            ("names.txt", "Vergil's banned names; applies within seconds", self.controller.home / "names.txt"),
-        ]
-        for server in settings.servers:
-            files.append((f"{server.name}'s files", f"{settings.config_name}, playlists… in {server.folder}", server))
-        self.terminal.print()
-        panel = self.listing([(name, what) for name, what, _ in files])
-        answer = await self.prompt_line("  Which? (number; Esc cancels)", panel=panel)
-        if not answer or not answer.strip().isdigit() or not 1 <= int(answer) <= len(files):
-            return
-        target = files[int(answer) - 1][2]
-        if isinstance(target, Path):
-            self.note(desktop.open_editor(target))
-            await self.wait_any_key(4)
-            return
-        await self._edit_server_file(settings, target)
+    # A server's files, for O (opened as they are) -----------------------------------------------
 
     def server_files(self, settings: Settings, server: ServerConfig) -> list[tuple[str, str, Path]]:
         """What's worth editing in a server folder: (name, what it's for, path)."""
@@ -1149,27 +1126,6 @@ class SetupScreens:
         for path in sorted(modes.glob("*.json"))[:12] if modes.is_dir() else []:
             found.append((f"Game Modes/{path.name}", "a saved game type; picked up live", path))
         return found
-
-    async def _edit_server_file(self, settings: Settings, server: ServerConfig) -> None:
-        self.heading(server.name, "Files", note=str(server.folder))
-        files = self.server_files(settings, server)
-        rows = [(name, what) for name, what, _ in files] + [("open its folder", "")]
-        panel = self.listing(rows, keys=[str(n) for n in range(1, len(files) + 1)] + ["O"])
-        answer = await self.prompt_line("  Which? (number or O; Esc cancels)", panel=panel)
-        if not answer:
-            return
-        if answer.strip().upper() == "O":
-            self.note(desktop.open_path(server.folder))
-            await self.wait_any_key(3)
-            return
-        if not answer.strip().isdigit() or not 1 <= int(answer) <= len(files):
-            return
-        name, _, path = files[int(answer) - 1]
-        self.note(desktop.open_editor(path))
-        if name == settings.config_name or name.startswith(("playlists/", "Game Modes/")):
-            self.note("Save it and the server re-checks its files a couple of seconds later; the result shows in the "
-                      "dashboard's events ('settings reloaded …', or what's wrong).", "cyan")
-        await self.wait_any_key(6)
 
 
 def unquote(text: str) -> str:

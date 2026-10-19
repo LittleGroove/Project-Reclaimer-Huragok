@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 from . import __version__, desktop, lore, mailbox
 from .lore import HURAGOK, SUPERINTENDENT, VERGIL
 from .manager import Result
+from .menu_files import FileScreens
 from .menu_games import GameScreens
 from .menu_manage import ManageScreens
 from .menu_setup import SetupScreens
@@ -123,9 +124,8 @@ def key_rows(startup: bool | None) -> list[tuple[str, str, str]]:
         ("SUPERINTENDENT", "[S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server",
          SUPERINTENDENT.colour),
         ("VERGIL", "[P] Players  [M] Message  [A] Console  [B] Bans & admins", VERGIL.colour),
-        ("HURAGOK", "[N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check  [E] Edit",
-         HURAGOK.colour),
-        ("", f"[O] Folder  [U] Updates  [W] Start at boot: {startup_text}  [H] Help  [Q] Quit", "white"),
+        ("HURAGOK", "[N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check", HURAGOK.colour),
+        ("", f"[O] Open  [U] Updates  [W] Start at boot: {startup_text}  [H] Help  [Q] Quit", "white"),
     ]
 
 
@@ -439,7 +439,7 @@ WIDE = 110  # rules and columns never go wider than this, however wide the windo
 Option = tuple[str, str] | tuple[str, str, str]  # (key, label) or (key, label, note)
 
 
-class Menu(SetupScreens, ManageScreens, GameScreens):
+class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens):
     """Every screen is written the same way: a title, then sections headed by where you are (a path like
     `LG Test Server › Game content › Playlists`), numbered or lettered lists in aligned columns, a menu
     block of [key] options, and one question. Log lines and server events that arrive while a question
@@ -459,7 +459,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens):
         self.actions: dict[str, Callable[[], Awaitable[str | None]]] = {
             "S": self.screen_start, "X": self.screen_stop, "R": self.screen_restart, "K": self.screen_cancel,
             "T": self.screen_autostart, "M": self.screen_message, "A": self.screen_admin, "P": self.screen_players,
-            "L": self.screen_watch, "U": self.screen_update, "E": self.screen_edit, "O": self.screen_open,
+            "L": self.screen_watch, "U": self.screen_update, "O": self.screen_open,
             "N": self.screen_new, "G": self.screen_content, "C": self.screen_check, "I": self.screen_steam,
             "D": self.screen_settings, "B": self.screen_bans, "V": self.screen_view,
             "W": self.screen_startup, "H": self.screen_help, "?": self.screen_help, "Q": self.screen_quit,
@@ -738,7 +738,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens):
     async def wait_any_key(self, seconds: float = 15) -> None:
         self.held.flush()
         self.terminal.print()
-        text = f"  Press any key to return to the dashboard (or wait {seconds:.0f}s)..."
+        text = f"  Press any key to go on (or wait {seconds:.0f}s)..."
         self.terminal.print(text, "gray")
         self.held.waiting(lambda: self.terminal.print(text, "gray", record=False), lambda: 0)
         try:
@@ -970,11 +970,6 @@ class Menu(SetupScreens, ManageScreens, GameScreens):
         self.note(message)
         await self.wait_any_key(5)
 
-    async def screen_open(self) -> None:
-        self.title("OPEN THE FOLDER")
-        self.note(desktop.open_path(self.controller.home))
-        await self.wait_any_key(3)
-
     async def screen_startup(self) -> None:
         self.title("START AT BOOT")
         enabled = desktop.startup_enabled()
@@ -1014,10 +1009,12 @@ class Menu(SetupScreens, ManageScreens, GameScreens):
                              "Workshop items and mods"),
                        ("I", "SteamCMD: finds or installs it, signs in once, tells every server; gets Halo 3's files "
                              "(copied from MCC here, or downloaded), the campaign missions and ODST's"),
-                       ("D", "everything about a server, in groups, changed while it runs (or after the game "
-                             "when it needs a restart)"),
-                       ("C", "a server's own `dedicated check`"), ("E", "edit Huragok's files, or a server's"),
-                       ("O", "open Huragok's folder")]),
+                       ("D", "settings, a step at a time, no file formats to know: Huragok's own (how it runs, "
+                             "roles and commands, Vergil's word list and banned names), and everything about each "
+                             "server in groups, changed while it runs (or after the game when it needs a restart), "
+                             "with its playlists, custom games, bans and mods"),
+                       ("C", "a server's own `dedicated check`"),
+                       ("O", "open: Huragok's folder, or any of its files or a server's in your editor")]),
             (None, [("U", "updates: Huragok, the server program (servers with auto_update update themselves), "
                           "Workshop mods"),
                     ("W", "start at boot"),

@@ -331,3 +331,133 @@ def render_commands_toml(specs: Iterable[CommandSpec] | None = None) -> str:
         out.append("]\n")
     out.append("\n[off]\ncommands = []\n")
     return "".join(out)
+
+
+# Changing commands.toml from the window (D) ----------------------------------------------------------------------
+
+ENTRY = re.compile(r"""^\s*["']([0-9A-Fa-f]{64})["']\s*,?\s*(?:#\s*(?P<note>.*?))?\s*$""")
+
+
+def player_notes(path: Path) -> dict[str, str]:
+    """Each listed player ID's note, as written beside it (who they are, who changed it); "" without one."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {}
+    return {m.group(1).lower(): m.group("note") or "" for m in (ENTRY.match(line) for line in lines) if m}
+
+
+def _checked(path: Path, change: Any, what: str) -> None:
+    """Make the change on a copy beside the file, read the copy as Huragok reads commands.toml, and only then put
+    it in place (in one step). A PermissionsError says why it wasn't, and the file is as it was."""
+    import os
+    import shutil
+
+    copy = path.with_name(f".{path.name}.{os.getpid()}.check")
+    try:
+        shutil.copy2(path, copy)
+        try:
+            change(copy)
+        except OSError as error:  # tomledit's refusal names the file it was given: name the real one
+            raise type(error)(str(error).replace(copy.name, path.name)) from None
+        try:
+            load_permissions(copy)
+        except PermissionsError as error:
+            raise PermissionsError(f"not changed ({what}): {str(error).replace(copy.name, path.name)}") from None
+        os.replace(copy, path)
+    finally:
+        copy.unlink(missing_ok=True)
+
+
+def make_commands_toml(path: Path) -> None:
+    """commands.toml as `init` writes it: every command under its default role (for a folder without one)."""
+    path.write_text(render_commands_toml(), encoding="utf-8")
+
+
+def add_player(path: Path, role: str, player_id: str, note: str) -> list[str]:
+    """List a player under member, moderator or owner, out of any other role listed here (one role each). The
+    roles they were taken out of."""
+    from .tomledit import add_to_list, remove_from_list
+
+    given = player_id.strip()
+    player_id = given.lower()
+    if role not in LISTED:
+        raise PermissionsError(f"only {', '.join(LISTED)} list players here (admins are the servers' own)")
+    if not PLAYER_ID.fullmatch(player_id):
+        raise PermissionsError(f"{given[:20]} is not a player ID (64 letters and digits; players find theirs "
+                               "under Settings > Online services)")
+    members = load_permissions(path).members
+    moved = [other for other in LISTED if other != role and player_id in members.get(other, set())]
+
+    def change(copy: Path) -> None:
+        for other in moved:
+            remove_from_list(copy, other, "players", player_id)
+        add_to_list(copy, role, "players", player_id, note)
+
+    _checked(path, change, f"{player_id[:8]} as {role}")
+    return moved
+
+
+def remove_player(path: Path, role: str, player_id: str) -> bool:
+    """Take a player out of a role's list. False: they weren't in it."""
+    from .tomledit import remove_from_list
+
+    removed: list[bool] = []
+    _checked(path, lambda copy: removed.append(remove_from_list(copy, role, "players", player_id.lower())),
+             f"{player_id[:8]} out of {role}")
+    return bool(removed and removed[0])
+
+
+def _listed_as(path: Path, section: str, command: str, prefix: str) -> list[str]:
+    """How a command is written in a section's list ("mute", "!mute"), each way it is."""
+    from .tomledit import read_toml
+
+    table = read_toml(path).get(section, {})
+    values = table.get("commands", []) if isinstance(table, dict) else []
+    return [v for v in values if isinstance(v, str) and v.strip().lower().removeprefix(prefix) == command]
+
+
+def set_command_role(path: Path, command: str, role: str) -> None:
+    """The lowest role that may use a command: its line moved to that role's list (with what it does). Whether
+    it's switched off ([off]) stays as it was."""
+    from .tomledit import add_to_list, remove_from_list
+
+    spec = all_commands().get(command)
+    if spec is None:
+        raise PermissionsError(f"there's no command {command}")
+    if role not in ROLES:
+        raise PermissionsError(f"the roles are {', '.join(ROLES)}")
+    prefix = load_permissions(path).prefix
+
+    def change(copy: Path) -> None:
+        for section in SECTIONS:
+            for written in _listed_as(copy, section, command, prefix):
+                remove_from_list(copy, section, "commands", written)
+        add_to_list(copy, TITLES[role], "commands", command, spec.help)
+
+    _checked(path, change, f"{command} for {role}")
+
+
+def set_command_off(path: Path, command: str, off: bool) -> None:
+    """Switch a command off ([off]: nobody can use it) or on again (out of [off]: its role's own)."""
+    from .tomledit import add_to_list, remove_from_list
+
+    if command not in all_commands():
+        raise PermissionsError(f"there's no command {command}")
+    prefix = load_permissions(path).prefix
+
+    def change(copy: Path) -> None:
+        if off:
+            add_to_list(copy, "off", "commands", command)
+            return
+        for written in _listed_as(copy, "off", command, prefix):
+            remove_from_list(copy, "off", "commands", written)
+
+    _checked(path, change, f"{command} {'off' if off else 'on'}")
+
+
+def set_top(path: Path, key: str, value: Any) -> None:
+    """prefix or cooldown_seconds."""
+    from .tomledit import set_top_key
+
+    _checked(path, lambda copy: set_top_key(copy, key, value), f"{key} = {value}")

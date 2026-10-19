@@ -448,8 +448,9 @@ def test_the_setup_screens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run)
         "C", "A", "ENTER", "x",
         # G on server 2: browse its maps, playlists (show the first, then back), check, then back out.
         "G", "2", "ENTER", "1", "1", "ESC", "2", "S", "1", "ENTER", "ESC", "4", "ESC",
-        # E: the second server's files, its dedicated.toml.
-        "E", "6", "ENTER", "1", "ENTER", "x",
+        # O: the second server's files (the folder, then the four files of Huragok's, come first), its
+        # dedicated.toml (its folder comes first).
+        "O", "7", "ENTER", "2", "ENTER", "x",
         "Q", "Y"]
     terminal = FakeTerminal()
     menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
@@ -691,7 +692,7 @@ def test_the_rename_screen_reads_the_servers_phase_as_it_is_now(tmp_path: Path, 
 
     controller = BackingOff(settings_path)
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["1", "ENTER", "N", "ENTER", "x", "ESC"]), RecentLog())
+    menu = Menu(controller, terminal, StrictKeyboard(["1", "ENTER", "N", "ENTER", "x", "ESC", "ESC"]), RecentLog())
     run(menu.screen_settings())
     assert "stop it first (X)" in "".join(terminal.output)
     assert (settings_path.parent / "SERVERS" / ALPHA).is_dir()

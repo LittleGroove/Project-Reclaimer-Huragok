@@ -8,7 +8,9 @@ who may use each one.
 
 ## commands.toml
 The first start writes it with every command under its default role, each with
-a line on what it does. It looks like this:
+a line on what it does. **D → C** in the window changes it for you: owners,
+moderators and members picked from the players seen lately, each command moved to
+a role or switched off, the prefix and the cooldown. By hand, it looks like this:
 
 ```toml
 prefix = "!"

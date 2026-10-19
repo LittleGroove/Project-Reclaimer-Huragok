@@ -1,6 +1,7 @@
 """The window's screens for managing a running server: A the console (with the server's events as
-they happen, and your name on what you do), D everything about it in groups (what it plays, the
-settings of its dedicated.toml, Huragok's own for it; renaming it, a content folder of its own),
+they happen, and your name on what you do), D settings: Huragok's own files (menu_files) above every
+server, and each server in groups (what it plays, the settings of its dedicated.toml, Huragok's own
+for it; its playlists, custom games, bans and mods; renaming it, a content folder of its own),
 B bans, admins and the VPN block, U updates (Huragok's, the server program's, Workshop mods).
 """
 
@@ -10,12 +11,13 @@ import asyncio
 import os
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .events import Event
 from .livesettings import (APPLIES, FOLDER_SETTINGS, GROUPS, SERVER_SETTINGS, can_reset, catalogue, check_path,
                            check_value, display, parse, plays_problem, reset, show, summary, write, write_plays)
 from .manager import Result
+from .menu_files import FILES
 from .rcon import masked as mask_console_line
 
 Row = dict[str, Any]
@@ -83,6 +85,13 @@ class ManageScreens:
     def _game_groups(self, catalogue: Any) -> list[tuple[str, int]]: ...
     async def _offer_odst_files(self, settings: Any, game: Path) -> bool: ...  # SetupScreens'
     async def slow(self, work: Any, *args: Any, note: str | None = None, colour: str = "cyan") -> Any: ...  # Menu's
+    def server_rows(self, rows: list[Row], *, show: bool = True) -> list[Any]: ...  # Menu's
+    if TYPE_CHECKING:  # FileScreens', which comes after this one: a stub here would stand in for them
+        def huragok_files(self, settings: Any) -> list[tuple[str, str, str, str]]: ...
+        async def huragok_file(self, settings: Any, key: str) -> None: ...
+        def server_page_extras(self, settings: Any, server: Any) -> list[tuple[str, str, str, str]]: ...
+        async def _server_page_extra(self, settings: Any, server: Any, row: Row, key: str) -> None: ...
+    _preselect: str | None = None
 
     async def _who(self) -> str:
         if self.by_name is None:
@@ -135,18 +144,49 @@ class ManageScreens:
         finally:
             unwatch()
 
-    # D: settings changed live -------------------------------------------------------------------
+    # D: settings: Huragok's own files, and every server's, changed a step at a time ----------------------------
 
     async def screen_settings(self) -> None:
-        self.title("SERVER SETTINGS", "everything about a server, in groups: written in place, applied while it runs")
-        settings = self._settings()
-        picked = await self.select_servers("Change settings of", single=True)
-        if not picked:
+        self.title("SETTINGS", "Huragok's own and every server's, a step at a time: each change checked, then written "
+                               "in place with the file's comments kept")
+        if self._preselect is not None:  # a server already chosen (its status card): straight to it
+            picked = await self.select_servers("Change settings of", single=True)
+            if picked:
+                await self._server_settings(self._settings(), picked[0])
             return
-        server = self._server(settings, picked[0])
+        while True:
+            settings = self._settings()
+            files = self.huragok_files(settings)
+            self.heading("Huragok", note=f"its own files, in {settings.home}")
+            panel = self.listing([(what, name, about) for _, what, name, about in files],
+                                 keys=[key for key, *_ in files], wrap=True)
+            rows = self.controller.rows()
+            self.heading("Servers", note="each one's dedicated.toml in groups, its playlists, custom games, bans and "
+                                         "mods")
+            if rows:
+                panel += self.server_rows(rows)
+            else:
+                self.note("(no servers yet: N makes one)")
+            answer = await self.prompt_line("  Which? (a server's number, or a letter; Esc goes back)", panel=panel)
+            if not answer:
+                return
+            answer = answer.strip()
+            if answer.upper() in FILES:
+                await self.huragok_file(settings, answer.upper())
+                continue
+            row = next((r for r in rows if str(r["index"]) == answer.lstrip("#") or r["name"].lower() == answer.lower()),
+                       None)
+            if row is None:
+                self.note(f"'{answer}' is not one of the choices.", "yellow")
+                continue
+            await self._server_settings(settings, row)
+
+    async def _server_settings(self, settings: Any, row: Row) -> None:
+        """One server's page: its dedicated.toml in groups and Huragok's own for it, then what else it has (its
+        playlists, custom games, bans, mods), renaming it and a content folder of its own."""
+        server = self._server(settings, row)
         if server is None:
             return
-        row = picked[0]
         while True:
             try:
                 entries = catalogue(server.config_path, server.name, settings)
@@ -159,23 +199,30 @@ class ManageScreens:
             rows = [(title, f"{counts[key]}", summary(entries, key) or what) for key, title, what in GROUPS]
             row = next((r for r in self.controller.rows() if r["name"] == row["name"]), row)  # its phase now
             stopped = row.get("phase") in ("idle", "faulted", "offline")  # backoff: about to be restarted
-            extra = [("rename this server", "", "its name everywhere: block, data, records, folder"
-                      if stopped else "stop it first (X)")]
+            extra = [(key, what, count, about) for key, what, count, about in self.server_page_extras(settings, server)]
+            extra.append(("N", "rename this server", "", "its name everywhere: block, data, records, folder"
+                          if stopped else "stop it first (X)"))
             if self._shared_content(settings, server):
-                extra.append(("its own content folder", "", "stop sharing the root's content/ (no copy on the same "
-                                                            "drive)" if stopped else "stop it first (X)"))
-            keys = [str(n) for n in range(1, len(rows) + 1)] + ["N", "O"][:len(extra)]
-            panel = self.listing(rows + extra, keys=keys)
+                extra.append(("O", "its own content folder", "", "stop sharing the root's content/ (no copy on the "
+                              "same drive)" if stopped else "stop it first (X)"))
+            keys = [str(n) for n in range(1, len(rows) + 1)] + [key for key, *_ in extra]
+            panel = self.listing(rows + [(what, count, about) for _, what, count, about in extra], keys=keys)
             answer = await self.prompt_line("  Which group? (number, or a letter; Esc goes back)", panel=panel)
             if not answer:
                 return
             answer = answer.strip().upper()
+            letters = [key for key, *_ in extra]
             if answer == "N":
                 if await self._rename(settings, server, stopped):
                     return
                 continue
-            if answer == "O" and len(extra) > 1:
+            if answer == "O" and "O" in letters:
                 await self._own_content(settings, server, stopped)
+                settings = self._settings()
+                server = self._server(settings, row) or server
+                continue
+            if answer in letters:
+                await self._server_page_extra(settings, server, row, answer)
                 settings = self._settings()
                 server = self._server(settings, row) or server
                 continue
@@ -661,7 +708,10 @@ class ManageScreens:
         picked = await self.select_servers("Look at", single=True)
         if not picked:
             return
-        row = picked[0]
+        await self._bans(settings, picked[0])
+
+    async def _bans(self, settings: Any, row: Row) -> None:
+        row = next((r for r in self.controller.rows() if r["name"] == row["name"]), row)  # as it is now
         live = bool(row["can"]["talk"])
         server = self._server(settings, row)
         if server is None:

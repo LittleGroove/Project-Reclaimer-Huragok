@@ -1335,7 +1335,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     from .events import EventBus
     from .part import commands_of
-    from .parts import PARTS
+    from .parts import PARTS, config_problem
     from .permissions import ROLES, TITLES, all_commands
     from .state import ServerState
 
@@ -1434,7 +1434,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             continue
         # The keys that aren't settings are named above, with what they were probably meant to be.
         notes.extend((f"{name}: {warning}", False) for warning in warnings if not _named_above(name, warning))
-        if problem := _part_config_problem(settings, name, cls):
+        if problem := config_problem(settings, name, cls):
             notes.append((f"PROBLEM  [{name}] {problem} ({name} wouldn't start)", True))
     out.listing(rows, index=False, wrap=True)
     for line, problem in notes:
@@ -1528,24 +1528,6 @@ def _backend_problems(backend: Any, server: ServerConfig) -> list[str]:
 def _named_above(part: str, warning: str) -> bool:
     """A part's own "isn't a setting" warning for a key that check already named with what it was meant to be."""
     return part == "watchdog" and warning.endswith("isn't a watchdog setting, so it does nothing")
-
-
-def _part_config_problem(settings: Settings, name: str, cls: Any) -> str | None:
-    """What stops a part at the start (its check_config), without starting it: the part made as the
-    Superintendent makes it, on a stand-in for the running Huragok."""
-    from types import SimpleNamespace
-
-    config = {**cls.defaults, **settings.parts[name].options}
-    ctx = SimpleNamespace(name=name, config=config, home=settings.home, dry_run=True,
-                          acts_as=str(config.get("name") or cls.acts_as or name.title()),
-                          log=logging.getLogger(f"part.{name}"))
-    try:
-        cls(ctx).check_config()
-    except ValueError as error:
-        return str(error)
-    except Exception as error:  # noqa: BLE001 - a part that needs the running Huragok to check itself
-        logging.getLogger(__name__).debug("%s's check_config needs more than check gives it: %s", name, error)
-    return None
 
 
 def updates_text(settings: Settings, server: ServerConfig) -> str:

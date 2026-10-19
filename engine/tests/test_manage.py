@@ -195,9 +195,9 @@ def test_the_manage_screens(tmp_path: Path, run) -> None:
         "A", "1", "ENTER", *"Alice", "ENTER", *"players", "ENTER", "ENTER",
         # D: max_players -> 8, then public_address -> play.example.com with a restart, then back.
         # D: Joining -> max_players (3rd) -> 8; Listing and network -> public_address (4th) with a restart after the
-        # game; then back out of the group and the screen.
+        # game; then back out of the group, the server's page and D's list.
         "D", "1", "ENTER", "1", "ENTER", "3", "ENTER", *"8", "ENTER", "ESC",
-        "8", "ENTER", "4", "ENTER", *"play.example.com", "ENTER", "A", "ESC", "ESC",
+        "8", "ENTER", "4", "ENTER", *"play.example.com", "ENTER", "A", "ESC", "ESC", "ESC",
         # B: list bans, pardon Bravo, add an admin, back.
         "B", "1", "ENTER", "L", "P", *"Bravo", "ENTER", "+", *"#2", "ENTER", "ESC",
         # U: the server program, after the game.

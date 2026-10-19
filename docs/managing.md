@@ -1,9 +1,10 @@
 # Managing a running server
 
 Setting a server up is in [setup.md](setup.md). This is what the window and the
-commands do with a server that's running: its status card, its console, everything
-about it changed live, bans and admins, updates of the server program and of its
-Workshop mods, cleaning up, and a console for moderators who aren't at this PC.
+commands do with a server that's running: its status card, its console, the settings
+(Huragok's own and everything about each server) changed a step at a time, bans and
+admins, updates of the server program and of its Workshop mods, cleaning up, and a
+console for moderators who aren't at this PC.
 
 ## A server's status card: V
 **V** picks a server and shows, on one screen, everything the Superintendent keeps an
@@ -76,11 +77,85 @@ refuses them too, but 0.9.20 still takes `map`, `mode` and `load` in an ODST
 server's lobby and queues a Halo 3 game as the next one. `status`, `players`,
 `kick`, `ban`, `nextmap` on its own and the rest work as usual.
 
-## Everything about a server: D
-**D** shows a server's settings in groups, each with how many it holds and its most
-telling values, then the group's settings with their values, where each comes from
-(this server, `[defaults]`, the file, a table, settings.toml, or the program's own
-default) and what it does:
+## Settings: D
+**D** is every setting there is, changed a step at a time: nobody has to know a
+file's format. Each value is asked for on its own, with what's there now listed
+first (and choices numbered), every change is checked before it's written, and the
+file keeps its comments and layout. D lists Huragok's own files first, by letter,
+then the servers, by their number on the dashboard; Esc goes back a step, and from
+the list back to the dashboard. From a server's status card (V), D goes straight to
+that server.
+
+| | | |
+| --- | --- | --- |
+| **S** | `settings.toml` | how Huragok runs |
+| **C** | `commands.toml` | roles and in-game commands |
+| **A** | `automod.txt` | Vergil's word list |
+| **N** | `names.txt` | Vergil's banned names |
+| **1, 2…** | each server | its `dedicated.toml` in groups, Huragok's own settings for it, its playlists, custom games, bans and mods |
+
+### How Huragok runs: S
+`settings.toml` in thirteen groups, each named for whose it is (SUPT, VRGL, HRGK) with
+its most telling values: which servers and who starts them, how the servers are run
+(the backend's own settings and Huragok's console connection), restarts, the
+watchdog, the keepalive, the event log; automod and the moderators' console (relay);
+Huragok's updates, the server program's, Workshop updates, new servers and SteamCMD,
+and its folders and files. Each setting shows its value, `(default)` when the file
+doesn't set it, and what it does. On/off settings and choices (the watchdog's `watch`,
+`act`, `actnow`) are picked; roles (`exempt_roles`) and what new servers share are
+picked by number from the whole list; for a typed value, `-` puts the default back
+(or takes out a line whose absence means something, such as `mcc_folder`), `none`
+empties a list, and Enter leaves it as it was.
+
+**A change that would stop Huragok starting is never written.** It's made on a copy of
+the file first, and the copy is read the way Huragok reads `settings.toml` as it
+starts, every part's own check included (`check` does the same): `Not changed
+([server_updates] repository = not a repository): server_updates.repository: 'not a
+repository' should look like owner/name`. A problem the file had already doesn't
+stop another change. Edits to `settings.toml` apply when Huragok starts again: close
+the window (Q; the servers keep running) and start it again. A server's own Huragok
+settings (autostart, its daily restart, how its Workshop updates install) are on that
+server's page instead, where they're in force at once.
+
+The moderators' console (relay) group also lists **the moderators** (M): add one
+(name, password, role), change a role or a password, or take one out. Passwords are 8
+to 128 characters, no two alike, and show only as `password set (19 characters)`.
+
+### Roles and commands: C
+`commands.toml`: the **owners**, **moderators** and **members**, each listed with the
+note beside them (who they are, who added them), and **every in-game command** with
+the lowest role that may use it, its default, and whether it's off. Adding someone
+lists the players Huragok has seen lately (from its records), numbered, so no player
+ID has to be typed; a player ID can be typed too. One role each: adding a moderator
+who's a member takes them out of the members (as `!promote` does). A command is moved
+to a role by picking it, and switched off (nobody can use it) or on again; `!help`
+can't be switched off. The prefix and the cooldown are here too. Admins are each
+server's own: a server's settings (Safety and admins), or B while it runs. Vergil
+reads the file again within seconds.
+
+### Vergil's word list: A
+`automod.txt`, one rule per line, shown as players meet it: its name, its words, and
+what each strike does (`1st: removed for 1 hour; 2nd: muted for 1 day; 3rd: muted for
+7 days; 4th: banned for good`). **Add a rule**: the words, then what each strike does,
+from four ready-made ladders (kicked every time; muted 1 day, 3 days, then 7 days;
+out 1 hour, then muted 1 day, 7 days, then banned; banned the first time) or your
+own, asked a part at a time (the kicks' times, whether and when the mutes start and
+how long each lasts, whether and when the ban comes), then its name. The line and
+its ladder are shown before it's added, and a rule the word list can't take is
+refused with why. A rule's words, ladder or name can be changed, or the rule taken
+out. **Try a line of chat** says which rule catches what, disguised words included.
+The notes at the top of the file stay as they are; see [automod.md](automod.md).
+
+### Vergil's banned names: N
+`names.txt`: each banned name with the note above it (when, by whom, why). Ban a name
+(with a note), take one off, or **try a name**: whether a player using it would be
+kicked as they join, by a banned name or by a word from the word list.
+
+### A server's settings
+A server's page shows its settings in groups, each with how many it holds and its
+most telling values, then the group's settings with their values, where each comes
+from (this server, `[defaults]`, the file, a table, settings.toml, or the program's
+own default) and what it does:
 
 1. **Joining**: join password, hidden, max/min players, ping limit, load timeout,
    welcome lines, enabled
@@ -144,7 +219,7 @@ A change is written in place (`dedicated.toml` keeps its comments; Huragok's own
 into `settings.toml` and are in force at once). Every write is checked first: the
 change is made in memory and read back, and the file is replaced only if exactly
 that one change differs; otherwise it's left byte for byte as it was and the screen
-says `couldn't change … safely …: edit it by hand (E)`. A setting written in a form
+says `couldn't change … safely …: edit it by hand (O opens it)`. A setting written in a form
 the editor won't touch (a dotted key such as `rcon.password = …`, an inline table
 such as `rcon = { … }`) is refused the same way. Since Project Reclaimer 0.9.18 the
 server re-reads its file a couple of seconds later, so no restart is needed for most
@@ -174,6 +249,14 @@ stays in red on the server's line until a reload goes through). Three things cha
 live over the console instead of the file, until a restart: `servername`, `password`
 (join) and `maxping`.
 
+Below the groups, by letter, the rest of what the server has:
+- **P its playlists**: the same screen as G's (list, build, edit, use one);
+- **G its custom games**: game types with rules of their own, as on G;
+- **B bans, admins and the VPN block**: as B, for this server;
+- **M mods on or off**: every mod in its content folder, each switched off (kept on
+  disk but not used: `content/disabled-mods.json`) or on again; the server takes it
+  when it restarts, and D offers the restart.
+
 Two things on D need the server stopped (X), and say so otherwise (a server
 waiting to be started again after a crash counts as running: "the Superintendent
 is about to restart it (backoff): stop it first (X)"):
@@ -188,6 +271,13 @@ is about to restart it (backoff): stop it first (X)"):
   and its `dedicated.toml` pointed at it. What Huragok writes into it later
   (imports, Forge layouts, playlists, custom games, vote images) replaces the file
   rather than writing through the link, so the shared copy never changes with it.
+
+## Open: O
+**O** opens Huragok's folder (the first choice), or one of its files in your editor
+(Notepad on Windows): `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`,
+or a server's: its folder first, then its `dedicated.toml`, playlists, ban list,
+`disabled-mods.json` and saved game types. For what D doesn't change, or a file to
+put right by hand (D says so when it can't read one).
 
 ## Bans, admins and the VPN block: B
 **B** on a running server: the ban list (`bans`), `unban`, a ban of someone who

@@ -104,7 +104,7 @@ def test_what_a_server_plays_is_picked_from_lists(tmp_path: Path, run, monkeypat
             "2", "ENTER", "Y", "4", "3", "ENTER", "1", "ENTER", "3", "N", "Y", *"200", "ENTER", "ENTER", "ENTER",
             "ENTER", "N", "x",  # campaign: Tsavo Highway, rally point 1, heroic, modifiers: health 200%, no sprint
             "2", "ENTER", "Y", "1", "1", "ENTER", "x",  # back to a playlist
-            "ESC"]
+            "ESC", "ESC"]
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     text = text_of(terminal)
@@ -119,7 +119,7 @@ def test_campaign_values_are_kept(tmp_path: Path, run) -> None:
     settings_path = setup_root(tmp_path)
     controller = SetupController(settings_path)
     server = controller.settings.servers[0]
-    keys = ["1", "ENTER", "2", "ENTER", "Y", "4", "9", "ENTER", "0", "ENTER", "4", "Y", "N", "x", "ESC"]
+    keys = ["1", "ENTER", "2", "ENTER", "Y", "4", "9", "ENTER", "0", "ENTER", "4", "Y", "N", "x", "ESC", "ESC"]
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     assert read_toml(server.config_path)["server"][0]["campaign"] == {"mission": 3120, "insertion": 0,
@@ -135,7 +135,7 @@ def test_choices_are_numbered_and_huragoks_own_go_through_the_window(tmp_path: P
             "3", "ENTER", "2", "ENTER", "3", "ESC",  # Gameplay -> team changing -> 3: off
             *"11", "ENTER", "2", "ENTER", *"4:30", "ENTER", "1", "ENTER", "N", "ESC",  # Huragok's own
             "7", "ENTER", "3", "ENTER", "2", "ESC",  # Updates -> workshop_updates -> 2: when_empty
-            "ESC"]
+            "ESC", "ESC"]
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     assert read_toml(server.config_path)["server"][0]["team_changing"] == "off"
@@ -180,7 +180,7 @@ def test_a_stopped_server_can_be_renamed_and_given_its_own_content(tmp_path: Pat
     controller = SetupController(settings_path)
     keys = ["1", "ENTER",
             "O", "ENTER", "Y", "x",  # its own content folder
-            "N", "ENTER", *"Gamma Server", "ENTER", "x"]  # then a new name
+            "N", "ENTER", *"Gamma Server", "ENTER", "x", "ESC"]  # then a new name; back out of D's list
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     text = text_of(terminal)
@@ -197,7 +197,7 @@ def test_a_running_server_is_not_renamed(tmp_path: Path, run) -> None:
     from test_manage import ManageController, manage_root
 
     controller = ManageController(manage_root(tmp_path))
-    menu, terminal = menu_on(controller, ["1", "ENTER", "N", "ENTER", "x", "ESC"])
+    menu, terminal = menu_on(controller, ["1", "ENTER", "N", "ENTER", "x", "ESC", "ESC"])
     run(menu.screen_settings())
     assert "stop it first (X), then rename it" in text_of(terminal)
 
@@ -249,7 +249,8 @@ def test_v_shows_the_card_and_jumps_to_its_settings(tmp_path: Path, run) -> None
     run(menu.screen_view())
     text = text_of(terminal)
     assert "SERVER STATUS" in text and "What it plays" in text and "Problems and notes" in text
-    assert "SERVER SETTINGS" in text and text.count("which server?") == 1
+    assert "Huragok's own and every server's" in text and text.count("which server?") == 1  # V's own question
+    assert "Vergil's word list" not in text  # straight to the server's page, not D's list
 
 
 def test_the_dashboard_line_says_why(tmp_path: Path) -> None:

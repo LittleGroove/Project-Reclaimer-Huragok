@@ -195,7 +195,7 @@ def test_an_odst_game_is_picked_from_lists(tmp_path: Path, run, monkeypatch) -> 
             "2", "ENTER", "Y", "5",  # again: a campaign mission this time
             "1", "2", "ENTER", "3", "ENTER", "4", "Y", *"150", "ENTER", "ENTER", "ENTER", "ENTER",
             "Y", *"150", "ENTER", *"10", "ENTER", "x",  # Mombasa Streets from start 3, legendary, sprint
-            "ESC"]
+            "ESC", "ESC"]
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     text = text_of(terminal)
@@ -219,7 +219,7 @@ def test_campaign_modifiers_keep_what_they_dont_ask_about(tmp_path: Path, run) -
                                                             "modifiers": {"skulls": 5, "sprint": True,
                                                                           "sprint_speed_percent": 120}}})
     keys = ["1", "ENTER", "2", "ENTER", "Y", "4", "1", "ENTER", "0", "ENTER", "2", "N",
-            "Y", "ENTER", *"33", "ENTER", "ENTER", "ENTER", "N", "x", "ESC"]  # damage 33: refused; sprint off
+            "Y", "ENTER", *"33", "ENTER", "ENTER", "ENTER", "N", "x", "ESC", "ESC"]  # damage 33: refused; sprint off
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
     campaign = read_toml(server.config_path)["server"][0]["campaign"]

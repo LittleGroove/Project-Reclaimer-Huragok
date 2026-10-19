@@ -13,7 +13,7 @@ Every change Huragok makes to a `dedicated.toml` or `settings.toml` is checked
 before the file is replaced: the change is made in memory and read back, and only
 if exactly that change differs is the file written (in one step). Otherwise the
 file is left byte for byte as it was, and the message says to edit it by hand
-(**E**). Settings written in a form the editor won't change (a dotted key such as
+(**O** opens it). Settings written in a form the editor won't change (a dotted key such as
 `workshop.items = …`, an inline table such as `rcon = { … }`) are refused that way,
 without showing their value.
 
@@ -263,7 +263,7 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
    (playlists and **D → What it plays** can name it). **New**: pick the game type
    (numbered), name it, then the same rules-and-options screens as a playlist game;
    **copy** one (the shipped scripted modes too: their options are editable, their
-   scripts are files for **E**), **edit**, **show** what one changes, **play** it on
+   scripts are files for **O**), **edit**, **show** what one changes, **play** it on
    this server, **delete** (refused while a server plays it: give it something else
    to play first). Before saving, the server program checks it (`mode-check`); the
    file is written whole and moved into place, so a hard-linked copy in another

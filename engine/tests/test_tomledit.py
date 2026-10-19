@@ -111,7 +111,7 @@ def test_every_change_is_exactly_that_change_or_refused(tmp_path: Path, label: s
             op(path)
         except TomlEditError as error:
             assert path.read_bytes() == text.encode("utf-8"), f"{name}: refused but the file changed"
-            assert "edit it by hand (E)" in str(error)
+            assert "edit it by hand (O opens it)" in str(error)
             continue
         wanted = copy.deepcopy(base)
         change(wanted)
