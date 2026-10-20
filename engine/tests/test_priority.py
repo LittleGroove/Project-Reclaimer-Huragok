@@ -85,7 +85,11 @@ def test_every_process_in_a_servers_tree_is_set_and_new_ones_are_found(tmp_path:
         again = priority.apply(popen.pid, LEVEL)
         assert again.processes == 3 and again.changed == (1 if os.name == "nt" else 0)  # Linux handed it on
         assert tree_levels(popen.pid) == [LEVEL] * 3
-        assert priority.apply(popen.pid, "normal").changed == 3 and tree_levels(popen.pid) == ["normal"] * 3
+        back = priority.apply(popen.pid, "normal")
+        if os.name == "nt" or is_admin():
+            assert back.changed == 3 and tree_levels(popen.pid) == ["normal"] * 3
+        else:  # only root raises a nice value on Linux: refused, and said
+            assert back.changed == 0 and back.denied and tree_levels(popen.pid) == [LEVEL] * 3
     finally:
         end_tree(popen)
     assert priority.apply(popen.pid, LEVEL) == Outcome()  # gone: nothing to look at
@@ -150,11 +154,13 @@ def test_the_keeper_looks_in_a_thread_and_not_too_often(tmp_path: Path, run) -> 
         assert "Alpha" in keeper._busy  # the event loop doesn't wait for it
         await wait_for(lambda: "Alpha" in keeper.now, 20)
         assert tree_levels(popen.pid) == [LEVEL, LEVEL]
-        psutil.Process(popen.pid).nice(priority.value_for("normal"))
+        # Moved off it by hand: back to normal, or further down on Linux, where only root raises a nice value.
+        moved = priority.value_for("normal") if os.name == "nt" or is_admin() else 10
+        psutil.Process(popen.pid).nice(moved)
         keeper.keep("Alpha", popen.pid, LEVEL)  # within EVERY of the last look: not looked at again yet
         assert "Alpha" not in keeper._busy
         await asyncio.sleep(0.2)
-        assert tree_levels(popen.pid)[0] == "normal"
+        assert psutil.Process(popen.pid).nice() == moved
 
     try:
         run(scenario())
