@@ -1337,6 +1337,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     from .part import commands_of
     from .parts import PARTS, config_problem
     from .permissions import ROLES, TITLES, all_commands
+    from .priority import unavailable as unavailable_priority
     from .state import ServerState
 
     settings = _load(args.config)
@@ -1385,6 +1386,13 @@ def cmd_check(args: argparse.Namespace) -> int:
             rows.append(("RCON", "off"))
             problems.insert(0, "RCON is off: set [rcon] password in dedicated.toml")
         rows.append(("updates", updates_text(settings, server)))
+        priority_warning = ""
+        if settings.backend == "process":
+            level = settings.priority_for(server)
+            rows.append(("priority", ("off (left as it starts)" if level == "off" else level)
+                         + (" (its own)" if server.priority else "")))
+            if why := unavailable_priority(level):
+                priority_warning = f"warning: priority {level}: {why}"
         if status_age is None:
             rows.append(("running", "unknown (no status.json)"))
         else:
@@ -1393,6 +1401,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         for problem in problems:
             out.warn(f"PROBLEM  {problem}")
             ok = False
+        if priority_warning:
+            out.warn(priority_warning)
         for line in _label_warnings(settings, server):
             out.warn(line)
     if settings.problems:

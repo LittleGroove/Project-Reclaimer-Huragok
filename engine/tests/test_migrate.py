@@ -81,17 +81,22 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "settings.toml: [updates] install_on_server_restart is auto_update now (= false)",
         "settings.toml: [updates] auto_update = false added: true installs new versions of Huragok by themselves "
         "(new in 0.4.2)",
-        "settings.toml: the comment above [updates] says the window keeps saying a new version is out"]
+        "settings.toml: the comment above [updates] says the window keeps saying a new version is out",
+        "settings.toml: [process] priority = \"high\" added: the servers run at High priority, ahead of everything "
+        "else on this PC that runs at normal (new in 0.4.4)"]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
     template = TEMPLATE.read_text(encoding="utf-8")
     added = (migrate.UPDATES_COMMENT_0_4_2 + [f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT] + ["auto_update = false"]
              + migrate.STEAMCMD_COMMENT_0_4_1 + [f"# {c}" for c in migrate.DOWNLOAD_GAME_FILES_COMMENT]
-             + ["download_game_files = true"])
+             + ["download_game_files = true"] + [f"# {c}" for c in migrate.PRIORITY_COMMENT] + ['priority = "high"'])
     for line in added:
         assert line in template.splitlines()  # the same words a new host's file has
     setup = text[text.index("\n[setup]\n"):]
     assert setup.index("steam_username") < setup.index("download_game_files") < setup.index("auto_update = true")
+    process = text[text.index("\n[process]\n"):text.index("\n[docker]\n")]
+    assert process.rstrip().endswith("\nstop_servers_on_exit = false\n" + "\n".join(
+        f"# {c}" for c in migrate.PRIORITY_COMMENT) + '\npriority = "high"')  # where a new host's file has it
     updates_table = text[text.index("\n[updates]\n"):text.index("\n[server_updates]\n")]
     assert updates_table == template[template.index("\n[updates]\n"):template.index("\n[server_updates]\n")]
     # The host's own values and every other line are as they were: only these went, only these came.
@@ -172,12 +177,14 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     text = settings_path.read_text(encoding="utf-8")
     text = text.replace('steam_username = ""\n', 'steam_username = ""\n# download_game_files = false\n', 1)
     text = text.replace("# SteamCMD, for Workshop items (the window's I key", "# My SteamCMD notes (the window's I key", 1)
+    text = text.replace("stop_servers_on_exit = false\n", 'stop_servers_on_exit = false\n# priority = "normal"\n', 1)
     settings_path.write_text(text, encoding="utf-8")
     changed = up_to_date(settings_path)
-    assert not any("[setup]" in line for line in changed)  # their commented-out key, their comment: theirs
-    after = settings_path.read_text(encoding="utf-8")
+    assert not any("[setup]" in line or "[process]" in line for line in changed)  # their commented-out keys and
+    after = settings_path.read_text(encoding="utf-8")  # their comment: theirs
     assert after[after.index("\n[setup]\n"):] == text[text.index("\n[setup]\n"):]
     assert load(settings_path).setup.download_game_files is True
+    assert "priority" not in read_toml(settings_path)["process"]  # the default, High, applies
     # The same for [updates]: an edited comment and a commented-out auto_update stay as the host wrote them.
     settings_path = host(tmp_path / "updates")
     text = settings_path.read_text(encoding="utf-8")

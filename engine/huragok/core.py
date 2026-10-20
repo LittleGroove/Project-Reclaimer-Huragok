@@ -192,7 +192,7 @@ class Supervisor:
                 known.autostart = server.autostart
                 changed = known.auto_update != server.auto_update
                 for key in ("auto_update", "content_dir", "workshop_items", "workshop_check_minutes",
-                            "workshop_updates", "plays", "plays_kind"):
+                            "workshop_updates", "priority", "plays", "plays_kind"):
                     setattr(known, key, getattr(server, key))
                 if changed:
                     log.info("[%s] auto_update is now %s in its dedicated.toml%s", server.name,

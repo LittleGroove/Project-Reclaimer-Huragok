@@ -90,6 +90,17 @@ DOWNLOAD_GAME_FILES_COMMENT = [
     "with SteamCMD (about 9.3 GB for multiplayer, 5.8 GB kept). false: nothing is",
     "downloaded without you; the server waits, and I gets them.",
 ]
+PRIORITY_COMMENT = [  # the template's, above [process] priority
+    "How much of the processor the servers get before everything else on this PC.",
+    "\"high\": ahead of everything that runs at normal (browsers, Steam, Huragok).",
+    "\"realtime\": ahead of Windows' own disk, network and input work too. Windows",
+    "only gives it to a Huragok started as administrator (otherwise: High), and a",
+    "server that runs away with the processor can leave the PC unresponsive.",
+    "Also \"above_normal\", \"normal\", \"below_normal\", or \"off\" (left as it starts,",
+    "for a host who sets it some other way). One server can have its own: D in the",
+    "window, or priority in its [[server]] block below. On Linux these are nice",
+    "values, and above normal needs root or CAP_SYS_NICE.",
+]
 
 
 @dataclass
@@ -274,6 +285,32 @@ def updates_comment(ctx: Context) -> list[str]:
     return [f"{ctx.settings_path.name}: the comment above [updates] says the window keeps saying a new version is out"]
 
 
+def process_priority(ctx: Context) -> list[str]:
+    """[process] priority (0.4.4): the servers run at High unless it says otherwise, so the line shows the host the
+    choice. Only added where the file has a [process] table (or 0.1's [windows]); without one the default applies."""
+    from .tomledit import add_table_key
+
+    data = _read(ctx.settings_path)
+    table = next((name for name in ("process", "windows") if isinstance(data.get(name), dict)), "")
+    if not table or "priority" in data[table]:
+        return []
+    try:
+        text = ctx.settings_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    if commented_in(text, table, "priority"):
+        return []  # written as a comment by the host: their choice to leave it to its default
+    said = [f"{ctx.settings_path.name}: [{table}] priority = \"high\" added: the servers run at High priority, ahead "
+            "of everything else on this PC that runs at normal (new in 0.4.4)"]
+    if ctx.dry:
+        return said
+    ctx.backup(ctx.settings_path)
+    if not add_table_key(ctx.settings_path, table, "priority", "high", PRIORITY_COMMENT,
+                         after="stop_servers_on_exit"):
+        return []
+    return said
+
+
 def new_commands(ctx: Context) -> list[str]:
     """Commands newer than the host's commands.toml, put in their default role's list so the host sees them (a
     command in no list has its default role anyway: this changes nobody's rights)."""
@@ -336,6 +373,7 @@ STEPS: list[Step] = [
     Step("0.4.1/steamcmd-comment", "[setup] steamcmd's comment names Halo 3's files", steamcmd_comment),
     Step("0.4.2/auto-update", "[updates] install_on_server_restart becomes auto_update", auto_update),
     Step("0.4.2/updates-comment", "[updates]' comment", updates_comment),
+    Step("0.4.4/process-priority", "[process] priority", process_priority),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

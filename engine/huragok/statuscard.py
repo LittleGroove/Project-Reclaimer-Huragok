@@ -108,6 +108,8 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
         bits.append(f"status {row['status_age']} s old")
     if row.get("pid"):
         bits.append(f"process {row['pid']}")
+    if row.get("priority"):
+        bits.append(str(row["priority"]))
     if extra.get("memory_mb"):
         bits.append(f"{extra['memory_mb']:.0f} MB in use")
     running: list[Line] = [("Status", str(row.get("status") or "?"), row.get("color"))]

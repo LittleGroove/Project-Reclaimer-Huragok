@@ -26,8 +26,9 @@ from .contentimport import content_root_of
 from .lore import TAGS
 from .parts.automod.automod import name_rules, same_name
 from .parts.automod.matcher import Matcher, normalise
-from .parts.automod.rules import (FOREVER, MAX_STRIKES, TIME, RuleError, add_name, change_rule, describe_unnamed,
-                                  ladder, parse_line, read_names, read_rules, remove_name, rule_line, unnamed_ladders)
+from .parts.automod.rules import (FOREVER, NAME, NAME_STRIKE, TIME, RuleError, add_name, change_rule,
+                                  describe_unnamed, is_count, ladder, least_ban, parse_line, read_names, read_rules,
+                                  remove_name, rule_line, unnamed_ladders)
 from .permissions import (LISTED, ROLES, TITLES, PermissionsError, add_player, all_commands,
                           load_permissions, make_commands_toml, player_notes, remove_player, set_command_off,
                           set_command_role, set_top)
@@ -511,7 +512,7 @@ class FileScreens:
                 elif answer == "T":
                     await self._try_line(rules)
                 elif answer.isdigit() and 1 <= int(answer) <= len(rules):
-                    await self._change_rule(path, rules[int(answer) - 1])
+                    await self._change_rule(path, rules[int(answer) - 1], rules)
             except (RuleError, OSError) as error:
                 self.note(f"Not changed: {error}", "yellow")
                 await self.wait_any_key(6)
@@ -542,7 +543,9 @@ class FileScreens:
         mute_after: int | None = None
         mutes: list[str] = []
         if await self.prompt_yes_no("  Muted at some point?", False):
-            mute_after = await self._strike_count("How many strikes before the first mute? (0: muted the first time)")
+            overlap = "; a kick time past it still removes them, and the mute starts once they're back" if kicks else ""
+            mute_after = await self._strike_count(f"How many strikes before the first mute? (0: muted the first "
+                                                  f"time{overlap})")
             if mute_after is None:
                 return None
             mutes = await self._times("  How long each mute lasts, in order (like 1d, 3d, 7d; the last repeats; perm "
@@ -551,7 +554,10 @@ class FileScreens:
                 return None
         ban_after: int | None = None
         if await self.prompt_yes_no("  Banned for good at some point?", False):
-            ban_after = await self._strike_count("How many strikes before the ban? (0: banned the first time)")
+            least = least_ban(kicks, mute_after, mutes)
+            ban_after = await self._strike_count(
+                f"How many strikes before the ban? (at least {least}, so every kick and mute time comes first)"
+                if least else "How many strikes before the ban? (0: banned the first time)", least)
             if ban_after is None:
                 return None
         return kicks, mute_after, mutes, ban_after
@@ -568,21 +574,32 @@ class FileScreens:
                 continue
             return times
 
-    async def _strike_count(self, prompt: str) -> int | None:
+    async def _strike_count(self, prompt: str, least: int = 0) -> int | None:
+        """A number of strikes, `least` or more (Enter: `least`, when that's more than 0); None to back out."""
         while True:
-            text = await self.prompt_line(f"  {prompt}")
+            text = await self.prompt_line(f"  {prompt}", str(least) if least else "")
             if not text:
                 return None
-            if text.strip().isdigit() and int(text) <= MAX_STRIKES:
+            if is_count(text.strip()) and int(text) >= least:
                 return int(text)
-            self.note(f"A number from 0 to {MAX_STRIKES}.", "yellow")
+            self.note(f"A number, {least} or more." if least else "A number, 0 or more.", "yellow")
 
-    async def _rule_name(self, now: str = "") -> str | None:
-        text = await self.prompt_line("  Its name: one word players see and moderators type in !strike (letters, "
-                                      "digits, - or _" + ("; - for none" if now else "; Enter for none") + ")", now)
-        if text is None:
-            return None
-        return "" if text.strip() == "-" else text.strip().lower()
+    async def _rule_name(self, now: str = "", taken: tuple[str, ...] = ()) -> str | None:
+        """A rule's name, asked again until the list can take it: "" for none, None to back out."""
+        while True:
+            text = await self.prompt_line("  Its name: one word players see and moderators type in !strike (letters, "
+                                          "digits, - or _" + ("; - for none" if now else "; Enter for none") + ")", now)
+            if text is None:
+                return None
+            name = "" if text.strip() == "-" else text.strip().lower()
+            if name and not NAME.fullmatch(name):
+                self.note("One word, up to 32 characters: letters, digits, - or _.", "yellow")
+            elif name == NAME_STRIKE:
+                self.note(f"Not {NAME_STRIKE}: !strike <player> {NAME_STRIKE} bans a player's name.", "yellow")
+            elif name and name != now and name in taken:
+                self.note(f"A rule is called {name} already: pick another name.", "yellow")
+            else:
+                return name
 
     async def _save_rule(self, path: Path, line: int | None, text: str, verb: str, done: str) -> bool:
         """Show the rule as players will meet it, and write it once the host says so."""
@@ -613,16 +630,12 @@ class FileScreens:
         steps = await self._rule_steps()
         if steps is None:
             return
-        name = await self._rule_name()
+        name = await self._rule_name(taken=tuple(r.name for r in rules))
         if name is None:
-            return
-        if name and any(r.label == name for r in rules):
-            self.note(f"A rule is called {name} already: pick another name.", "yellow")
-            await self.wait_any_key(5)
             return
         await self._save_rule(path, None, rule_line(words, *steps, name), "Add", "Added")
 
-    async def _change_rule(self, path: Path, rule: Any) -> None:
+    async def _change_rule(self, path: Path, rule: Any, rules: list[Any]) -> None:
         self.heading("Huragok", "Vergil's word list", rule.label or rule.name, note="; ".join(ladder(rule)))
         choice = await self.choose("Change what?", [("W", "Its words", ", ".join(rule.words)),
                                                     ("S", "What each strike does"),
@@ -648,7 +661,7 @@ class FileScreens:
                 return
             steps = new
         elif choice == "N":
-            picked = await self._rule_name(rule.label)
+            picked = await self._rule_name(rule.label, tuple(r.name for r in rules if r is not rule))
             if picked is None or picked == rule.label:
                 return
             if rule.label:

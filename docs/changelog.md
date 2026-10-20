@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.4.4
+**The servers run at High priority, Vergil's rules can be as long as you like, and a
+strike can kick and mute.** It also fixes the log reader stopping each time a player
+connected. Install it with U: your `automod.txt` reads as it did (every line that
+worked means what it meant), and `settings.toml` gets one new line, `[process] priority`.
+
+- **High priority for the servers.** Windows started them at Normal, level with
+  everything else on the PC (a browser, Steam's downloads, a virus scan), so any of
+  it could take processor time from the game. Huragok now keeps every process of
+  each server it runs at High, the game's own included (Windows doesn't pass High on
+  to the processes a program starts, so Huragok looks again every 5 seconds for new
+  ones). `[process] priority` picks another: `realtime` puts the servers ahead of
+  Windows' own disk, network and input work too, but Windows only gives it to a
+  Huragok started as administrator (otherwise it gives High, and Huragok says so,
+  as `check` does), and a server that runs away with the processor can leave the PC
+  unresponsive; also `above_normal`, `normal`, `below_normal`, or `off` (Huragok
+  leaves it alone, for a host who sets it some other way: otherwise a priority
+  changed in Task Manager is put back). One server can have its own, on its page
+  in D, applied at once; V shows what each runs at. Huragok adds the line, with
+  what each choice does, to your `settings.toml` as it starts.
+
+- **No limit on the counts.** The strikes before the mutes and before the ban were
+  capped at 20, so a rule with 15 kicks and 15 mutes (a ban after 30) couldn't be
+  written. Now any number goes; a line is refused only when a kick or mute time it
+  lists would never be reached before the ban.
+- **A kick and a mute on the same strike.** List more kick times than strikes before
+  the mutes, and the ones past the start of the mutes go with them: that strike
+  removes the player for its kick time, then mutes them once they're back. The
+  mute's time starts when the kick's ends, so it isn't used up while they're out,
+  and Vergil puts it on as they join again. `!pardonplayer` lifts both. Lines like
+  this were refused before ("15 kick times but only 5 kicks before the mutes").
+- **D → A, a new rule**: the ban question says the fewest strikes it can be (Enter
+  takes that), so every kick and mute time comes first; a count too small or a name
+  that can't be used is asked again, instead of the whole rule being refused at the
+  end. Strikes in a row that do the same are shown as one ("16th to 20th: muted for
+  1 day").
+
+- **Fixed: every player who connected stopped Huragok reading the server's log.**
+  The player's name in the "connected from" and "joined the server" lines clashed
+  with Huragok's own event name, so the log reader failed ("got multiple values for
+  argument 'name'" in `huragok.log`) and was restarted 5 seconds later. Each time,
+  the lines read with that one were lost, and the watchdog never saw anyone connect
+  or join, so its check for a server that lets players in but nobody stays could
+  not work.
+
 ## 0.4.3
 **D is now where every setting is changed, a step at a time: Huragok's own files as
 well as each server's, with no file format to know.** D lists Huragok's files above

@@ -76,5 +76,6 @@ class EventBus:
                     log.exception("A listener for %s failed on %s", pattern, event.name)
         return event
 
-    def emit(self, name: str, server: str | None = None, **data: Any) -> Event:
+    def emit(self, name: str, server: str | None = None, /, **data: Any) -> Event:
+        # Positional-only: a log line's own `name` (the player's) or `server` is data, never the event's.
         return self.publish(Event(name, server, data))

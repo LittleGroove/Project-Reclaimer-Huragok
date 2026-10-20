@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from .odst import describe as describe_odst
 from .permissions import PLAYER_ID
+from .priority import DEFAULT as DEFAULT_PRIORITY, PRIORITIES
 from .tomledit import change_server_settings, read_toml, remove_server_setting, set_server_setting, set_table_key, \
     set_top_key
 
@@ -210,6 +211,10 @@ SETTINGS: list[Setting] = [
       default=True),
     S("daily_restart", "huragok", "time", "huragok", "a restart every day at this time (24-hour clock); empty: "
       "none for this server; - takes its own out, so [restarts] daily_restart applies", "huragok"),
+    S("priority", "huragok", "choice", "huragok", "how much of the processor it gets before the rest of this PC: "
+      "high puts it ahead of everything at normal; realtime ahead of Windows' own work too (needs Huragok run as "
+      "administrator; a runaway server can starve the PC); off leaves it as it starts. - takes its own out, so "
+      "[process] priority applies", "huragok", choices=PRIORITIES),
 ]
 
 SERVER_SETTINGS = [s for s in SETTINGS if s.scope == "server"]
@@ -391,6 +396,9 @@ def current(data: dict[str, Any], setting: Setting, server_name: str,
             return settings.restarts.daily_restart, "[restarts]"
         if setting.key == "workshop_updates":
             return settings.workshop_updates.install, "[workshop_updates]"
+        if setting.key == "priority":
+            return (str(settings.backend_options.get("priority", DEFAULT_PRIORITY))
+                    if settings.backend == "process" else "off"), "[process]"
     else:
         table = data.get(setting.scope, {})
         if isinstance(table, dict) and setting.key in table:

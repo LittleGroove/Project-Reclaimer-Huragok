@@ -33,6 +33,7 @@ import psutil
 from .config import ConfigError, KeepaliveSettings, ServerConfig, Settings, Table
 from .events import EventBus
 from .files import FileTail, parse_console_line
+from .priority import PriorityKeeper
 from .state import ServerState
 
 if TYPE_CHECKING:
@@ -226,6 +227,10 @@ class Backend:
     def drain(self, server: ServerConfig) -> None:
         """Turn new console output into events."""
 
+    def priority_text(self, server: ServerConfig) -> str:
+        """The priority its processes run at, for the window ("" when the backend doesn't set one)."""
+        return ""
+
     def last_console_lines(self, server: ServerConfig, count: int = 200) -> list[str]:
         return []
 
@@ -389,6 +394,7 @@ class ProcessBackend(Backend):
     clean stop is Ctrl+Break (Windows) or SIGINT (Linux): `dedicated` prints
     "Stopping every server... All servers stopped." and exits in under a second.
     On Linux the program runs through `wine` unless [process] command says otherwise.
+    Its processes are kept at [process] priority (High unless set otherwise; priority.py).
     """
 
     name = "process"
@@ -410,6 +416,7 @@ class ProcessBackend(Backend):
         # its dedicated.toml, or by `servers = [...]`): kept as they were, so the server can be picked up again.
         self.kept: dict[str, dict[str, Any]] = {}
         self.breakaway = True  # False once Windows refused to start a server outside Huragok's job object
+        self.priorities = PriorityKeeper()
 
     # The command ------------------------------------------------------------------
 
@@ -673,6 +680,7 @@ class ProcessBackend(Backend):
                                          "told to stop and then ended")
         self.drain(server)
         self.managed.pop(server.name, None)
+        self.priorities.forget(server.name)
         self.states[server.name].pid = None
         self._save()
         self.bus.emit("server.stopped", server.name, expected=True, exit_code=managed.exit_code)
@@ -682,6 +690,7 @@ class ProcessBackend(Backend):
         if managed is None:
             return
         self.drain_managed(managed)
+        self.priorities.forget(server.name)
         self.states[server.name].pid = None
         self._save()
         self.bus.emit("server.stopped", server.name, expected=False, exit_code=managed.exit_code)
@@ -702,6 +711,11 @@ class ProcessBackend(Backend):
         managed = self.managed.get(server.name)
         if managed is not None:
             self.drain_managed(managed)
+            if not managed.stopping:
+                self.priorities.keep(server.name, managed.pid, self.settings.priority_for(server))
+
+    def priority_text(self, server: ServerConfig) -> str:
+        return self.priorities.text(server.name) if server.name in self.managed else ""
 
     def drain_managed(self, managed: Managed) -> None:
         for line in managed.console.read_lines():

@@ -326,6 +326,16 @@ stop_timeout = 30
 # disturbed, and starting it again picks them up. start.cmd stop stops both.
 # true: closing Huragok stops the servers too.
 stop_servers_on_exit = false
+# How much of the processor the servers get before everything else on this PC.
+# "high": ahead of everything that runs at normal (browsers, Steam, Huragok).
+# "realtime": ahead of Windows' own disk, network and input work too. Windows
+# only gives it to a Huragok started as administrator (otherwise: High), and a
+# server that runs away with the processor can leave the PC unresponsive.
+# Also "above_normal", "normal", "below_normal", or "off" (left as it starts,
+# for a host who sets it some other way). One server can have its own: D in the
+# window, or priority in its [[server]] block below. On Linux these are nice
+# values, and above normal needs root or CAP_SYS_NICE.
+priority = "high"
 
 [docker]
 # In each server's folder. The server's service name is set in its [[server]] block
@@ -355,5 +365,6 @@ command_timeout = 10
 # service = "server-1"            # its docker compose service
 # data = "data/reclaimer-slayer"  # its data folder (from its server folder), when not found by itself
 # workshop_updates = "off"        # instead of [workshop_updates] install
+# priority = "realtime"           # instead of [process] priority
 # rcon_host = "127.0.0.1"
 # rcon_port = 49176

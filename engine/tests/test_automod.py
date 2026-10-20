@@ -18,6 +18,7 @@ from huragok.parts.automod.automod import MIGRATIONS, check_messages
 from huragok.parts.automod.matcher import Matcher, normalise
 from huragok.parts.automod.rules import (Rule, RuleError, Step, describe_seconds, parse_line, parse_text, read_names,
                                          read_rules)
+from huragok.parts.automod.rules import ladder as described
 from huragok.rcon import Reply
 from huragok.state import Player, ServerState
 from huragok.storage import Storage
@@ -98,15 +99,41 @@ def test_other_shapes() -> None:
     assert ladder("w | | | 2", 3) == ["kick", "kick", "ban"]
 
 
+def test_kick_times_past_the_start_of_the_mutes_kick_then_mute() -> None:
+    # The host's rule: out 1 day, 2 days… 15 days; from the 6th strike muted a day as well; banned on the 21st.
+    times = ", ".join(f"{n}d" for n in range(1, 16))
+    r = rule(f"w | {times} | 5, 1d | 20 | r")
+    steps = [r.step_for(n) for n in range(22)]
+    assert steps[4] == Step("kick", "5d") and steps[5] == Step("mute", "1d", "6d")
+    assert steps[14] == Step("mute", "1d", "15d")
+    assert steps[15] == steps[19] == Step("mute", "1d") and steps[20] == steps[21] == Step("ban")
+    assert steps[5].describe() == "removed for 6 days, then muted for 1 day" and str(steps[5]) == "kick 6d + mute 1d"
+    assert described(r)[4:6] == ["5th: removed for 5 days", "6th: removed for 6 days, then muted for 1 day"]
+    assert described(r)[-2:] == ["16th to 20th: muted for 1 day", "21st: banned for good"]
+    # Lines that worked before mean what they did: the last kick time repeats up to the mutes, never with them.
+    assert ladder("w | 1h | 2, 1d", 4) == ["kick 1h", "kick 1h", "mute 1d", "mute 1d"]
+    assert ladder("w | 1h, 1d | 1, 1d", 3) == ["kick 1h", "kick 1d + mute 1d", "mute 1d"]
+    assert ladder("w | 1h | 0, 1d, perm", 3) == ["kick 1h + mute 1d", "mute perm", "mute perm"]
+    assert rule("w | 1h | 0, perm").step_for(0).describe() == "removed for 1 hour, then muted for good"
+
+
+def test_no_limit_on_the_counts() -> None:
+    r = rule("w | | 100, 1d | 1000 | x")
+    assert r.mute_after == 100 and r.ban_after == 1000 and r.strike_text(500) == "strike 500 of 1000"
+    assert r.step_for(99) == Step("kick") and r.step_for(999) == Step("mute", "1d") and r.step_for(1000) == Step("ban")
+    assert described(r) == ["1st to 100th: kicked", "101st to 1000th: muted for 1 day", "1001st: banned for good"]
+    assert described(rule("w | | | 1000000000"))[-1] == "1000000001st: banned for good"  # worked out, not counted
+
+
 def test_severity_order() -> None:
-    order = [Step("kick"), Step("kick", "1h"), Step("kick", "7d"), Step("mute", "1h"), Step("mute", "7d"),
-             Step("mute"), Step("ban")]
+    order = [Step("kick"), Step("kick", "1h"), Step("kick", "7d"), Step("mute", "1h"), Step("mute", "1h", "1d"),
+             Step("mute", "7d"), Step("mute"), Step("ban")]
     assert sorted(reversed(order), key=lambda s: s.severity) == order
 
 
 @pytest.mark.parametrize("line, message", [
     ("w | 1h, 1d, 7d | | 2", "3 kick times but only 2 kicks before the ban"),
-    ("w | 1h, 1d | 1, 1d", "2 kick times but only 1 kick before the mutes"),
+    ("w | 1h, 1d, 7d | 0, 1d | 2", "3 kick times but only 2 kicks before the ban"),  # with the mutes or not
     ("w | 1h, 1d, 7d | 2 | slurs", "3 timers but 2 chances"),  # the 0.2 layout says it the 0.2 way
     ("w | | 0 | x | y | z", "at most 5 parts"),
     ("w | 1 hour", "isn't a time"),
@@ -115,9 +142,9 @@ def test_severity_order() -> None:
     ("w | | 1d, 3d", "mutes start with how many strikes"),
     ("w | | 0", "list how long each mute lasts"),
     ("w | | 0, perm, 1d", "perm can only be the last"),
-    ("w | | 99, 1d", "must be a number from 0 to 20"),
+    ("w | | \u00b2, 1d", "mutes start with how many strikes"),  # ² is a digit to isdigit(), not to int()
     ("w | | | lots |", "the strikes before the ban must be a number"),
-    ("w | | | 99 |", "must be a number from 0 to 20"),
+    ("w | | | \u00b2 |", "the strikes before the ban must be a number, 0 or more"),
     ("w | | 3, 1d | 2 |", "the mutes start after 3 strikes but the ban comes after 2"),
     ("w | | 1, 1d, 3d, 7d | 3 |", "3 mute times but only 2 mutes before the ban"),
     ("| 1h", "no words"),
@@ -942,6 +969,52 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
     run(scenario())
 
 
+def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        (tmp_path / "automod.txt").write_text("badword | 1h, 2h | 1, 1d | | slurs\nrudeword | 30m | 0, 1d | | rude\n",
+                                              encoding="utf-8")
+        async with running(tmp_path, '[automod]\nenabled = true\ncooldown_seconds = 0\n') as (sup, fake, seen):
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.states[SERVER].players) == 5)
+            part = sup.runners["automod"].part
+            for n in range(2):
+                await fake.chat(BRAVO, "Bravo", "badword")
+                await wait_for(lambda: len(fake.named("ban")) == n + 1)
+            first, second = (b["args"] for b in fake.named("ban"))
+            assert first[:2] == [BRAVO, "1h"] and second[:2] == [BRAVO, "2h"]
+            assert second[2] == ("KEEP IT CLEAN! That isn't allowed here (slurs, strike 2): removed for 2 hours, then "
+                                 "muted for 1 day. Next time: muted for 1 day.")
+            assert [e["action"] for e in seen if e.name == "automod.strike"] == ["kick 1h", "kick 2h + mute 1d"]
+            await fake.leave(4)  # the server takes them out
+            await wait_for(lambda: all(p.id != BRAVO for p in sup.states[SERVER].players.values()))
+            row = part.active_mute(BRAVO)
+            assert row["kick"] == "2h" and row["duration"] == "1d"
+            assert abs(row["expires"] - (row["time"] + 2 * 3600 + 86400)) < 1  # the day starts once they're back
+
+            # Back once the 2 hours are up: muted for the day, not for what's left of a day from the strike.
+            part.ctx.db.execute("UPDATE automod_strikes SET time = time - 7200, expires = expires - 7200 "
+                                "WHERE kick IS NOT NULL")
+            before = len(mutes_of(fake, BRAVO))
+            await fake.join(4, "Bravo", BRAVO)
+            await wait_for(lambda: len(mutes_of(fake, BRAVO)) > before)
+            again = mutes_of(fake, BRAVO)[-1]
+            assert 86400 - 60 < int(again[1][:-1]) <= 86400
+            assert again[2].startswith("KEEP IT CLEAN! You're still muted (slurs): 23 hours 59 minutes")
+
+            # !pardonplayer lifts both: the removal, and the mute waiting for them.
+            await fake.chat(ALICE, "Alice", "rudeword")  # rude's 1st: out 30 minutes, then muted a day
+            await wait_for(lambda: len(fake.named("ban")) == 3)
+            assert fake.named("ban")[2]["args"][:2] == [ALICE, "30m"]
+            await fake.leave(3)
+            await wait_for(lambda: all(p.id != ALICE for p in sup.states[SERVER].players.values()))
+            await fake.chat(ADMIN, "Admin", "!pardonplayer alice")
+            await wait_for(lambda: "1 strike cleared (rude); ban lifted, unmuted." in told(fake, ADMIN))
+            assert fake.named("unban")[0]["args"] == [ALICE] and fake.named("unmute")[-1]["args"] == [ALICE]
+            assert not part.active_mute(ALICE) and all(e["id"] != ALICE for e in fake.ban_list)
+
+    run(scenario())
+
+
 # Messages, unnamed lines, cooldowns, forgetting --------------------------------------------
 
 def test_a_brace_in_a_custom_message_is_found_before_it_breaks_a_strike(tmp_path: Path) -> None:
@@ -1031,6 +1104,27 @@ def test_a_database_from_0_2_gets_the_lifted_columns_and_keeps_its_strikes(tmp_p
     storage = Storage(path)
     storage.migrate("automod", MIGRATIONS)
     rows = storage.query("SELECT * FROM automod_strikes")
-    assert len(rows) == 1 and rows[0]["player_id"] == BRAVO and rows[0]["lifted"] is None
-    assert storage.query("SELECT version FROM schema_versions WHERE owner = 'automod'")[0]["version"] == 2
+    assert len(rows) == 1 and rows[0]["player_id"] == BRAVO and rows[0]["lifted"] is None and rows[0]["kick"] is None
+    assert storage.query("SELECT version FROM schema_versions WHERE owner = 'automod'")[0]["version"] == 3
     storage.close()
+
+
+def test_a_database_from_0_4_still_reads_after_a_roll_back(tmp_path: Path) -> None:
+    """The kick column (a mute that came with a kick) is added to 0.4's database, and a release that doesn't know
+    it (the start loop putting the previous one back) skips the step it hasn't got and goes on writing strikes."""
+    path = tmp_path / "huragok.sqlite"
+    old = Storage(path)
+    old.migrate("automod", MIGRATIONS[:2])  # as 0.4.0 to 0.4.3 left it
+    old.close()
+    storage = Storage(path)
+    storage.migrate("automod", MIGRATIONS)
+    storage.execute("INSERT INTO automod_strikes (time, player_id, rule, grp, source, by, action, duration, kick, "
+                    "dry_run, ok) VALUES (1, ?, 'slurs', 'slurs', 'chat', 'Vergil', 'mute', '1d', '2h', 0, 1)",
+                    (BRAVO,))
+    storage.close()
+    back = Storage(path)
+    back.migrate("automod", MIGRATIONS[:2])
+    back.execute("INSERT INTO automod_strikes (time, player_id, rule, grp, source, by, action, dry_run, ok) "
+                 "VALUES (2, ?, 'slurs', 'slurs', 'chat', 'Vergil', 'kick', 0, 1)", (BRAVO,))
+    assert [r["kick"] for r in back.query("SELECT * FROM automod_strikes ORDER BY time")] == ["2h", None]
+    back.close()

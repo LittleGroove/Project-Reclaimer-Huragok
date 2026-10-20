@@ -83,7 +83,7 @@ class PartContext:
         ref = player.id if isinstance(player, Player) else player
         await self._core.clients[server].command("tell", ref, text)
 
-    def emit(self, name: str, server: str | None = None, **data: Any) -> None:
+    def emit(self, name: str, server: str | None = None, /, **data: Any) -> None:
         """An event for the other parts, always named '<part>.<name>'."""
         if not name.startswith(self.name + "."):
             name = f"{self.name}.{name}"

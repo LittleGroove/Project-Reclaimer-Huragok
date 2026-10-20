@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .priority import DEFAULT as DEFAULT_PRIORITY, PRIORITIES
 from .tomledit import read_toml, remove_table_key, remove_top_key, set_table_key, set_top_key
 
 APPLIES = "when Huragok starts again (the servers keep running meanwhile)"
@@ -94,6 +95,11 @@ SETTINGS: list[HostSetting] = [
       default=[], backend="process"),
     H("process", "stop_timeout", "float", "seconds to wait for a clean stop before ending the process", "running",
       default=30, low=1, high=3600, backend="process"),
+    H("process", "priority", "choice", "how much of the processor the servers get before the rest of this PC: "
+      "high (ahead of everything at normal), realtime (ahead of Windows' own disk, network and input work too: needs "
+      "Huragok run as administrator, and a runaway server can starve the PC), above_normal, normal, below_normal, or "
+      "off (left as it starts). One server can have its own, on its page", "running", choices=PRIORITIES,
+      default=DEFAULT_PRIORITY, backend="process"),
     H("process", "stop_servers_on_exit", "bool", "closing Huragok stops the servers too (off: they keep running, "
       "and starting Huragok again picks them up)", "running", default=False, backend="process"),
     H("docker", "compose_file", "str", "the compose file, in each server's folder", "running",

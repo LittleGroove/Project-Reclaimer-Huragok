@@ -204,6 +204,8 @@ def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> 
                             "4th: banned for good"]
     assert ladder(parse_line("w | | 0, 1d, 3d", 1)) == ["1st: muted for 1 day", "2nd and after: muted for 3 days"]
     assert ladder(parse_line("w", 1)) == ["every time: kicked"]
+    assert ladder(parse_line("w | | 2, 1d | 9", 1)) == ["1st and 2nd: kicked", "3rd to 9th: muted for 1 day",
+                                                        "10th: banned for good"]  # strikes that do the same, as one
     path = template_root(tmp_path).parent / "automod.txt"
     header = path.read_text(encoding="utf-8")
     change_rule(path, None, "badword | 1h | | | rude")
@@ -442,9 +444,10 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
             "1", "ENTER", "W", *"badword, rudeword", "ENTER", "Y",  # its words
             "1", "ENTER", "N", "BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE", *"insults", "ENTER", "Y",  # its name
             "2", "ENTER", "X", "Y",  # threats taken out
-            "A", "ENTER", *"slur", "ENTER", "1", *"insults", "ENTER", "x",  # a name taken already
+            "A", "ENTER", *"slur", "ENTER", "1", *"insults", "ENTER", "ESC",  # a name taken already: asked again
             "A", "ENTER", *"spam", "ENTER", "5", *"soon", "ENTER", *"1h, 2h", "ENTER", "Y", *"x", "ENTER", *"1", "ENTER",
-            *"1d", "ENTER", "N", "ENTER", "x",  # not a time, not a number; then two kicks before one mute: refused
+            *"1d", "ENTER", "Y", "1", "ENTER", "ENTER",  # not a time, not a number, too few for the ban; Enter: enough
+            *"name", "ENTER", "ENTER", "N",  # a name !strike keeps; then none, and it isn't added
             "ESC", "N", "ENTER",
             "A", "ENTER", *"***", "ENTER", "x",  # nothing left of it: would catch everyone
             "T", "ENTER", *"Charlie", "ENTER", "x",
@@ -455,7 +458,10 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
     assert [line_of(r) for r in read_rules(words)] == ["badword, rudeword | 1h | | | insults"]
     assert "Strikes players have under rude stay under that name" in text and "Taken out." in text
     assert "A rule is called insults already" in text and "'soon' isn't a time" in text
-    assert "A number from 0 to 20." in text and "That rule can't be used: 2 kick times but only 1 kick" in text
+    assert "A number, 0 or more." in text and "at least 2, so every kick and mute time comes first" in text
+    assert "A number, 2 or more." in text and "Not name: !strike <player> name bans a player's name." in text
+    assert "The line: spam | 1h, 2h | 1, 1d | 2" in text  # Enter: the least the ban can be
+    assert "2nd: removed for 2 hours, then muted for 1 day" in text and "3rd: banned for good" in text
     assert "it would catch everyone" in text and "That name is fine." in text
 
 

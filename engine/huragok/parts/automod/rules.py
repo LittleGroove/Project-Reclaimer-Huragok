@@ -7,14 +7,15 @@
     kickword
 
 Each strike moves a player one step down the line's ladder: kicks first, then
-mutes, then the ban.
+mutes, then the ban. Kick times listed past the start of the mutes overlap them:
+those strikes remove the player for that long, then mute them once they're back.
 
 words    separated by commas. `word*` also catches it at the start of longer
          words, `*word*` anywhere inside one. `-word` is never caught by that line.
 kicks    how long each kick keeps the player out, in order (30m, 1h, 1d, 2w); the
-         last repeats. Empty: the server's own kick (out 10, 30, 60, then 120
-         minutes). A kick with a time is a timed ban underneath, since the
-         server's kick times are fixed.
+         last repeats until the mutes. Empty: the server's own kick (out 10, 30,
+         60, then 120 minutes). A kick with a time is a timed ban underneath,
+         since the server's kick times are fixed.
 mutes    how many strikes come before the mutes start (0: muted the first time),
          then how long each mute lasts, in order; the last repeats, and `perm`
          (last only) is muted for good. Empty: never muted. A muted player stays
@@ -25,7 +26,10 @@ name     what players read, and what moderators type in !strike. Optional.
 
 So "badword, otherword | 1h, 1d | 2, 1d, 7d | 5 | slurs" is 1st: out 1 hour,
 2nd: out 1 day, 3rd: muted 1 day, 4th and 5th: muted 7 days, 6th: banned.
-"kickword" alone is a plain kick every time.
+"w | 1h, 1d, 2d | 1, 1d | 4" is 1st: out 1 hour, 2nd: out 1 day then muted 1 day,
+3rd: out 2 days then muted 1 day, 4th: muted 1 day, 5th: banned.
+"kickword" alone is a plain kick every time. There's no limit on the counts or
+on how many times a line lists, only that every time comes before the ban.
 
 The 0.2 layout, "words | timers | chances | name" (no mutes), is still read the
 same way it always was: a line in four parts whose last part is a name.
@@ -43,7 +47,6 @@ TIME = re.compile(r"(\d+)([smhdw])")
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 FOREVER = "perm"
 NAME_STRIKE = "name"  # `!strike <player> name` bans their name, so no line may be called that
-MAX_STRIKES = 20
 PARTS = "words | kicks | mutes | ban | name"
 
 
@@ -78,14 +81,19 @@ def describe_seconds(seconds: float) -> str:
 @dataclass(frozen=True)
 class Step:
     """What one strike does: a kick (for `duration`, or the server's plain kick), a mute
-    (for `duration`, or for good), or a ban for good."""
+    (for `duration`, or for good; after a timed `kick` when one comes with it), or a ban for good."""
 
     action: str  # kick | mute | ban
     duration: str | None = None
+    kick: str | None = None  # a mute's: removed for this long first, the mute starting once they're back
 
     @property
     def seconds(self) -> int | None:
         return None if self.duration is None else seconds_of(self.duration)
+
+    @property
+    def kick_seconds(self) -> int:
+        return 0 if self.kick is None else seconds_of(self.kick)
 
     @property
     def severity(self) -> tuple[int, float]:
@@ -93,19 +101,20 @@ class Step:
         if self.action == "ban":
             return (3, 0)
         if self.action == "mute":
-            return (2, float("inf") if self.duration is None else self.seconds or 0)
+            return (2, float("inf") if self.duration is None else (self.seconds or 0) + self.kick_seconds)
         return (1, self.seconds or 0)
 
     def describe(self) -> str:
         if self.action == "ban":
             return "banned for good"
         if self.action == "mute":
-            return f"muted for {describe_time(self.duration)}" if self.duration else "muted for good"
+            muted = f"muted for {describe_time(self.duration)}" if self.duration else "muted for good"
+            return f"removed for {describe_time(self.kick)}, then {muted}" if self.kick else muted
         return f"removed for {describe_time(self.duration)}" if self.duration else "kicked"
 
     def __str__(self) -> str:
         if self.action == "mute":
-            return f"mute {self.duration or FOREVER}"
+            return (f"kick {self.kick} + " if self.kick else "") + f"mute {self.duration or FOREVER}"
         return self.action + (f" {self.duration}" if self.duration else "")
 
 
@@ -128,8 +137,19 @@ class Rule:
             return Step("ban")
         if self.mute_after is not None and previous >= self.mute_after:
             time = self.mutes[min(previous - self.mute_after, len(self.mutes) - 1)]
-            return Step("mute", None if time == FOREVER else time)
+            # A kick time listed for this strike still kicks, the mute after it; the last doesn't repeat here.
+            kick = self.kicks[previous] if previous < len(self.kicks) else None
+            return Step("mute", None if time == FOREVER else time, kick)
         return Step("kick", self.kicks[min(previous, len(self.kicks) - 1)] if self.kicks else None)
+
+    def changes(self) -> list[int]:
+        """The strikes (counted from 0) where what a strike does may change: past the last, it never does."""
+        points = set(range(len(self.kicks) + 1))
+        if self.mute_after is not None:
+            points.update(range(self.mute_after, self.mute_after + len(self.mutes) + 1))
+        if self.ban_after is not None:
+            points.add(self.ban_after)
+        return sorted(points)
 
     def strike_text(self, number: int) -> str:
         if self.ban_after and number <= self.ban_after:
@@ -152,9 +172,14 @@ def _codes(text: str) -> str:
     return " ".join(f"U+{ord(c):04X}" for c in text[:6])
 
 
+def is_count(text: str) -> bool:
+    """0, 1, 2…: digits alone (not ² or ½, which isdigit() lets through and int() can't read)."""
+    return text.isascii() and text.isdigit()
+
+
 def _count(text: str, where: str, what: str) -> int:
-    if not text.isdigit() or int(text) > MAX_STRIKES:
-        raise RuleError(f"{where}: {what} must be a number from 0 to {MAX_STRIKES}")
+    if not is_count(text):
+        raise RuleError(f"{where}: {what} must be a number, 0 or more")
     return int(text)
 
 
@@ -176,7 +201,7 @@ def parse_line(text: str, number: int) -> Rule | None:
     if len(fields) > 5:
         raise RuleError(f"{where}: at most 5 parts: {PARTS}")
     # The 0.2 layout: four parts, the last a name (in five parts the fourth is a number).
-    old = len(fields) == 4 and bool(fields[3]) and not fields[3].isdigit()
+    old = len(fields) == 4 and bool(fields[3]) and not is_count(fields[3])
     if old:
         fields = [fields[0], fields[1], "", fields[2], fields[3]]
     fields += [""] * (5 - len(fields))
@@ -198,7 +223,7 @@ def parse_line(text: str, number: int) -> Rule | None:
     mute_after, mutes = None, []
     if fields[2]:
         first, _, rest = fields[2].partition(",")
-        if not first.strip().isdigit():
+        if not is_count(first.strip()):
             raise RuleError(f"{where}: mutes start with how many strikes come first (0: muted the first time), "
                             f"then how long each mute lasts, like 0, 1d, 3d, 7d")
         mute_after = _count(first.strip(), where, "the strikes before the mutes")
@@ -220,13 +245,12 @@ def parse_line(text: str, number: int) -> Rule | None:
             raise RuleError(f"{where}: {_many(len(mutes), 'mute time')} but only "
                             f"{_many(ban_after - mute_after, 'mute')} before the ban; one time per mute at most")
 
-    stops = [n for n in (mute_after, ban_after) if n is not None]
-    if stops and len(kicks) > min(stops):
-        before = "the mutes" if mute_after is not None and mute_after == min(stops) else "the ban"
+    # Kick times may run past the start of the mutes (those strikes kick, then mute), but not past the ban.
+    if ban_after is not None and len(kicks) > ban_after:
         if old:
             raise RuleError(f"{where}: {len(kicks)} timers but {ban_after} chances; one timer per chance at most")
-        raise RuleError(f"{where}: {_many(len(kicks), 'kick time')} but only {_many(min(stops), 'kick')} "
-                        f"before {before}; one time per kick at most")
+        raise RuleError(f"{where}: {_many(len(kicks), 'kick time')} but only {_many(ban_after, 'kick')} "
+                        f"before the ban; one time per kick at most")
 
     name = fields[4].lower()
     if name and not NAME.fullmatch(name):
@@ -319,20 +343,32 @@ def ordinal(number: int) -> str:
 
 
 def ladder(rule: Rule) -> list[str]:
-    """What each strike does, in order, until it stops changing: ["1st: kicked", "2nd and after: muted for 1 day"]."""
-    steps = [rule.step_for(previous) for previous in range(MAX_STRIKES + 2)]
+    """What each strike does, in order, until it stops changing, strikes in a row that do the same as one:
+    ["1st and 2nd: kicked", "3rd to 9th: muted for 1 day", "10th and after: muted for 7 days"]."""
+    runs: list[tuple[int, Step]] = []  # (its first strike, counted from 0; what that strike and the run's others do)
+    for point in rule.changes():
+        step = rule.step_for(point)
+        if not runs or runs[-1][1] != step:
+            runs.append((point, step))
     out: list[str] = []
-    for number, step in enumerate(steps):
-        if all(later == step for later in steps[number:]):  # the same every time from here on
+    for (first, step), following in zip(runs, [*(start for start, _ in runs[1:]), None]):
+        if following is None:  # the same every time from here on
             if step.action == "ban":  # banned for good: no strike comes after it
-                out.append(f"{ordinal(number + 1)}: {step.describe()}")
-            elif number == 0:
-                out.append(f"every time: {step.describe()}")
+                out.append(f"{ordinal(first + 1)}: {step.describe()}")
             else:
-                out.append(f"{ordinal(number + 1)} and after: {step.describe()}")
-            break
-        out.append(f"{ordinal(number + 1)}: {step.describe()}")
+                out.append(f"every time: {step.describe()}" if first == 0 else
+                           f"{ordinal(first + 1)} and after: {step.describe()}")
+        elif following - first == 1:
+            out.append(f"{ordinal(first + 1)}: {step.describe()}")
+        else:
+            joined = " and " if following - first == 2 else " to "
+            out.append(f"{ordinal(first + 1)}{joined}{ordinal(following)}: {step.describe()}")
     return out
+
+
+def least_ban(kicks: list[str], mute_after: int | None, mutes: list[str]) -> int:
+    """The fewest strikes before the ban that leave room for every kick and mute time."""
+    return max(len(kicks), 0 if mute_after is None else mute_after + len(mutes))
 
 
 def rule_line(words: list[str], kicks: list[str], mute_after: int | None, mutes: list[str], ban_after: int | None,

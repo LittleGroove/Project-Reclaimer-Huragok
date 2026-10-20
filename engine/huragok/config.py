@@ -33,6 +33,7 @@ from typing import Any
 
 from .livesettings import plays_kind, plays_of
 from .permissions import PLAYER_ID, Permissions, PermissionsError, load_permissions
+from .priority import DEFAULT as DEFAULT_PRIORITY, PRIORITIES
 
 SETTINGS_FILE = "settings.toml"
 COMMANDS_FILE = "commands.toml"
@@ -48,8 +49,8 @@ PROGRAM_RELEASES = "ProjectReclaimer/project-reclaimer-releases"
 IGNORED_PREFIXES = (".", "_")  # SERVERS/.something and SERVERS/_something are never servers (set aside, being made)
 PART_SWITCHES = {"enabled", "dry_run", "handler_timeout"}
 SERVER_KEYS = {"name", "autostart", "daily_restart", "service", "data", "rcon_host", "rcon_port", "warn_seconds",
-               "min_uptime_seconds", "workshop_updates"}  # what a settings.toml [[server]] block can set
-PROCESS_KEYS = {"executable", "command", "stop_timeout", "stop_servers_on_exit"}
+               "min_uptime_seconds", "workshop_updates", "priority"}  # what a settings.toml [[server]] block can set
+PROCESS_KEYS = {"executable", "command", "stop_timeout", "stop_servers_on_exit", "priority"}
 # Every setting of settings.toml, by section ("" is above the first [section]). A key that isn't one does nothing,
 # and the host who typed `[relay] enable = true` or appended `daily_restart = "04:00"` at the end (where it lands in
 # the last section) thinks it does: `check` and the start name each one. The parts' sections come from the parts.
@@ -250,6 +251,7 @@ class ServerConfig:
     workshop_items: list[int] = field(default_factory=list)  # [workshop] items
     workshop_check_minutes: int | None = None  # [workshop] update_check_minutes; None: the program's 60
     workshop_updates: str | None = None  # settings.toml's [[server]] workshop_updates; None: [workshop_updates]
+    priority: str | None = None  # settings.toml's [[server]] priority; None: [process] priority
 
     @property
     def host_key_path(self) -> Path:
@@ -462,6 +464,13 @@ class Settings:
             return self.servers[int(number) - 1]
         raise KeyError(name)
 
+    def priority_for(self, server: ServerConfig) -> str:
+        """The priority this server's processes run at: its own [[server]] priority, or [process] priority. Only the
+        process backend runs them, so only it sets one."""
+        if self.backend != "process":
+            return "off"
+        return server.priority or str(self.backend_options.get("priority", DEFAULT_PRIORITY))
+
     def workshop_install(self, server: ServerConfig) -> str:
         """How this server's Workshop updates are installed: its own [[server]] workshop_updates, or the default."""
         return server.workshop_updates or self.workshop_updates.install
@@ -551,6 +560,7 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
         folder = extra.get("data", str, None)
         daily = extra.get("daily_restart", str, None)
         workshop_updates = extra.get("workshop_updates", str, None)  # checked as settings.toml is read
+        priority = extra.get("priority", str, None)  # so is this
         plays = plays_of(block)
         server = ServerConfig(
             name=name,
@@ -574,6 +584,7 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
             workshop_check_minutes=check_minutes if isinstance(check_minutes, int) and
             not isinstance(check_minutes, bool) else None,
             workshop_updates=workshop_updates,
+            priority=priority,
         )
         if not server.rcon_password:
             server.errors.append(f"RCON is off in {path.name}: set [rcon] password. The Superintendent needs it to "
@@ -986,6 +997,8 @@ def check_backend_options(backend: str, options: dict[str, Any]) -> None:
             _check_placeholders(word, set(PROCESS_PLACEHOLDERS), "[process] command")
         table.at_least("stop_timeout", 30.0, MIN_STOP_TIMEOUT)
         table.get("stop_servers_on_exit", bool, False)
+        if table.get("priority", str, DEFAULT_PRIORITY) not in PRIORITIES:
+            raise ConfigError(f"[process] priority: must be one of {', '.join(PRIORITIES)}")
     elif backend in ("command", "docker"):
         table = Table(options, backend)
         for action in COMMAND_ACTIONS:
@@ -1020,7 +1033,7 @@ def _server_overrides(top: Table) -> dict[str, dict[str, Any]]:
         entry = Table(block, f"{SETTINGS_FILE} [[server]] {name}")
         override = dict(block)
         for key, kind in (("autostart", bool), ("daily_restart", str), ("service", str), ("rcon_host", str),
-                          ("rcon_port", int), ("workshop_updates", str)):
+                          ("rcon_port", int), ("workshop_updates", str), ("priority", str)):
             entry.get(key, kind, None)
         entry.path("data", None)
         if "daily_restart" in block:  # "5:00" read as "05:00", as [restarts] daily_restart is
@@ -1028,6 +1041,8 @@ def _server_overrides(top: Table) -> dict[str, dict[str, Any]]:
                                                          f"{SETTINGS_FILE} [[server]] {name} daily_restart")
         if block.get("workshop_updates", "after_game") not in WORKSHOP_INSTALLS:
             raise ConfigError(f"[[server]] {name} workshop_updates: must be one of {', '.join(WORKSHOP_INSTALLS)}")
+        if block.get("priority", DEFAULT_PRIORITY) not in PRIORITIES:
+            raise ConfigError(f"[[server]] {name} priority: must be one of {', '.join(PRIORITIES)}")
         if "rcon_port" in block and not 1 <= block["rcon_port"] <= 65535:
             raise ConfigError(f"{SETTINGS_FILE} [[server]] {name}.rcon_port must be a port number, 1 to 65535")
         if "warn_seconds" in block:  # as [restarts] reads them: the manager counts down with these

@@ -15,7 +15,7 @@ from ...state import Player
 
 from .matcher import Hit, Matcher, normalise
 from .rules import (NAME_STRIKE, PARTS, BannedName, Rule, RuleError, Step, add_name, describe_seconds, describe_unnamed,
-                    read_names, read_rules, remove_name, unnamed_ladders)
+                    read_names, read_rules, remove_name, seconds_of, unnamed_ladders)
 
 MIGRATIONS = [
     """
@@ -30,6 +30,10 @@ MIGRATIONS = [
     """
     ALTER TABLE automod_strikes ADD COLUMN lifted REAL;
     ALTER TABLE automod_strikes ADD COLUMN lifted_by TEXT;
+    """,
+    # A mute that came with a kick: how long the kick kept them out (the mute's expires counts from its end).
+    """
+    ALTER TABLE automod_strikes ADD COLUMN kick TEXT;
     """,
 ]
 
@@ -458,29 +462,30 @@ class AutoMod(Part):
                     dry, ok, text = action.dry_run, action.ok, action.text
             away = not places  # the server's kick needs them on: the strike still counts
             ok = ok and not away
-        elif step.action == "mute":
+        elif step.action == "mute" and not step.kick:
             # If they're on no server, it starts when they next join.
             for where, who in places:
                 action = await moderation.mute(where, who, step.duration, message, by=actor, evidence=evidence)
                 if where == places[0][0]:
                     dry, ok, text = action.dry_run, action.ok, action.text
             pending = not places
-        else:  # a timed removal, or a ban: the server's ban, for that long or for good
+        else:  # a timed removal (a mute to follow it, perhaps), or a ban: the server's ban, for that long or for good
             where, who = places[0] if places else (server, player)
             if who.number and not self.ctx.dry_run:
                 try:
                     await self.ctx.tell(where, who, message)  # they may read it before the ban lands
                 except Exception:  # noqa: BLE001
                     pass
-            action = await moderation.ban(where, who, step.duration, message, by=actor, evidence=evidence)
+            # A mute that comes with a kick starts as they join again (Vergil's own mute list, kept by this row).
+            action = await moderation.ban(where, who, step.kick or step.duration, message, by=actor, evidence=evidence)
             dry, ok, text = action.dry_run, action.ok, action.text
         now = time.time()
-        expires = now + step.seconds if step.seconds else None
+        expires = now + step.kick_seconds + step.seconds if step.seconds else None
         self.ctx.db.execute(
             "INSERT INTO automod_strikes (time, server, player_id, player_name, rule, grp, source, evidence, by, "
-            "action, duration, expires, dry_run, ok) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "action, duration, kick, expires, dry_run, ok) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (now, server, player.id, player.name, rule.name, rule.name, source, evidence, actor, step.action,
-             step.duration, expires, int(dry), int(ok)))
+             step.duration, step.kick, expires, int(dry), int(ok)))
         result = (" (dry run)" if dry else " (not on now: muted when they next join)" if pending
                   else " (not on now: nobody to kick; the strike counts)" if away else "" if ok else f" FAILED: {text}")
         self.log.info("[%s] %s: %s %s → %s%s", server, player.name, rule.name, rule.strike_text(number), step,
@@ -528,7 +533,7 @@ class AutoMod(Part):
                                                 evidence=evidence)
         if self.ctx.dry_run:
             result = "dry run, not sent"
-        elif step.action == "mute" and not self._online(player.id) and not player.number:
+        elif step.action == "mute" and not step.kick and not self._online(player.id) and not player.number:
             result = "not on now: muted when they next join"
         elif step.action == "kick" and not step.duration and not self._online(player.id) and not player.number:
             result = "not on now, so nobody was kicked; the strike counts"
@@ -677,7 +682,8 @@ class AutoMod(Part):
         live = [r for r in rows if r["ok"]]
         # Bans automod gave that may still be in force: timed out ones too (the server may have run them).
         banned = [r for r in rows if (r["action"] == "ban" and not r["duration"])
-                  or (r["action"] in ("ban", "kick") and r["duration"] and (r["expires"] or 0) > now)]
+                  or (r["action"] in ("ban", "kick") and r["duration"] and (r["expires"] or 0) > now)
+                  or (r["kick"] and r["time"] + seconds_of(r["kick"]) > now)]
         if banned:
             lifted.append(await self._lift_bans(call, player_id, name, banned))
         if any(r["action"] == "mute" and r["lifted"] is None and (r["expires"] is None or r["expires"] > now)

@@ -32,12 +32,28 @@ within seconds.
 A strike is the next step down its line: the kicks come first, then the mutes, then
 the ban. The numbers in **mutes** and **ban** count the strikes that come before
 them, so `0` is the first offence: `| | | 0 |` bans the first time, `| | 0, 1d |` mutes
-the first time.
+the first time. They can be as large as you like; the only check is that every kick
+and mute time you list comes before the ban.
+
+**A kick and a mute on the same strike.** List more kick times than there are
+strikes before the mutes, and the ones past the start of the mutes go with them:
+that strike removes the player for its kick time, then mutes them once they're back
+(the mute's time starts when the kick's ends, so a short mute isn't used up while
+they're out). Once the kick times run out, the mutes go on alone:
+
+```text
+badword | 1d, 2d, 3d, 4d, 5d, 6d, 7d | 5, 1d | 10 | slurs
+```
+
+is 1st to 5th: out 1 to 5 days; 6th: out 6 days, then muted 1 day; 7th: out 7 days,
+then muted 1 day; 8th to 10th: muted 1 day; 11th: banned for good. Before the mutes,
+the last kick time repeats as it always has (`1h | 3, 1d` is out an hour three times,
+then muted); past their start, a kick time is used once.
 
 | Part | |
 | --- | --- |
 | **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated and lookalike letters, invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
-| **kicks** | How long each kick keeps them out, in order: `30m`, `1h`, `1d`, `2w`. The last one repeats. Blank: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. At most one time per kick before the mutes or the ban. |
+| **kicks** | How long each kick keeps them out, in order: `30m`, `1h`, `1d`, `2w`. The last one repeats until the mutes start. Blank: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Times past the start of the mutes kick, then mute (above). At most one time per strike before the ban. |
 | **mutes** | How many strikes come before the mutes (`0`: muted the first time), then how long each mute lasts, in order: `0, 1d, 3d, 7d`. The last one repeats; `perm` (last only) is muted for good. Blank: never muted. At most one time per mute before the ban. |
 | **ban** | How many strikes come before the ban for good (`0`: banned the first time). Blank: never banned. |
 | **name** | One word that players read and moderators type in `!strike`, so nobody has to type the word itself. Optional, but name every line whose strikes add up (it mutes, bans, or has more than one kick time): a line without one is `rule1`, `rule2`… by its place in the list, its strikes are kept under that, and they move to another line if you add a line above it. `check`, the start and each reload point such lines out. It can't be `name`, which `!strike` keeps for names. |

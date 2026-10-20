@@ -1287,6 +1287,7 @@ class ServerManager:
         """One of Huragok's own settings for this server, in its settings.toml [[server]] block (None takes it out,
         so the general setting applies again). In force at once."""
         from .config import WORKSHOP_INSTALLS, ConfigError, check_clock_time
+        from .priority import PRIORITIES
         from .tomledit import remove_server_setting, set_server_setting
 
         try:
@@ -1294,9 +1295,11 @@ class ServerManager:
                 value = check_clock_time(str(value), "daily_restart")
             elif key == "workshop_updates" and value is not None and value not in WORKSHOP_INSTALLS:
                 raise ConfigError(f"workshop_updates: one of {', '.join(WORKSHOP_INSTALLS)}")
+            elif key == "priority" and value is not None and value not in PRIORITIES:
+                raise ConfigError(f"priority: one of {', '.join(PRIORITIES)}")
             elif key == "autostart":
                 value = bool(value) if value is not None else True
-            elif key not in ("daily_restart", "workshop_updates"):
+            elif key not in ("daily_restart", "workshop_updates", "priority"):
                 raise ConfigError(f"{key} isn't one of Huragok's per-server settings")
         except ConfigError as error:
             return Result(False, str(error))
@@ -1434,7 +1437,8 @@ class ServerManager:
             "connected": state.connected, "errors": list(self.server.errors),
             "health_reasons": list(self.health_reasons), "flags": list(self.flags.values()),
             "history": [list(h) for h in self.record.history[-12:]], "address": state.address or "",
-            "pid": self.pid, "planned": (f"{self.planned.when.replace('_', ' ')}: {self.planned.reason or 'no reason'}"
+            "pid": self.pid, "priority": self.backend.priority_text(self.server),
+            "planned": (f"{self.planned.when.replace('_', ' ')}: {self.planned.reason or 'no reason'}"
                                          if self.planned is not None else ""),
             "daily": self.next_daily_text(), "fail_count": self.record.fail_count,
             "fault_reason": self.record.fault_reason if self.record.faulted else "",

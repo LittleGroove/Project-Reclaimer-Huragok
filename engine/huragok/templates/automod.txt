@@ -4,7 +4,8 @@
 #
 # words    The words, separated by commas.
 # kicks    How long each kick keeps them out, in order: 30m, 1h, 1d, 2w.
-#          The last one repeats. Blank: the server's plain kick.
+#          The last one repeats until the mutes. Blank: the server's plain kick.
+#          A time past the start of the mutes kicks, then mutes once they're back.
 # mutes    How many strikes come before the mutes (0: muted the first time), then
 #          how long each mute lasts, in order: 0, 1d, 3d, 7d. The last one repeats;
 #          perm (last only) is muted for good. Blank: never muted.
@@ -26,6 +27,10 @@
 #
 #   badword, otherword | 1h       | 1, 1d, 7d     | 3 | slurs
 #     1st: out 1 hour    2nd: muted 1 day    3rd: muted 7 days    4th: banned for good
+#
+#   meanword          | 1h, 1d   | 1, 3d         | 4 | insults
+#     1st: out 1 hour    2nd: out 1 day, then muted 3 days    3rd and 4th: muted 3 days
+#     5th: banned for good
 #
 #   kickword
 #     every time: kicked, never muted or banned

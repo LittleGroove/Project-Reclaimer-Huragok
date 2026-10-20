@@ -306,3 +306,24 @@ def test_a_say_that_reads_like_a_roster_loss_restarts_nothing(tmp_path: Path, ru
                    f"server. Reason: {forged}\n")
     watcher.poll_log()
     assert seen == ["log.rcon_command", "log.rcon_command"]
+
+
+def test_a_player_connecting_reaches_the_bus_and_the_lines_after_them_too(tmp_path: Path) -> None:
+    # The live 0.4.3 host: the line's `name` (the player's) clashed with emit()'s own, so every connect killed the
+    # file watcher and lost the lines read with it.
+    data = write_server_folder(tmp_path / "server", free_port())
+    settings = load(write_settings(tmp_path, tmp_path / "server"))
+    bus = EventBus()
+    seen: list[tuple[str, str | None, Any]] = []
+    bus.subscribe("log.*", lambda event: seen.append((event.name, event.server, event.get("name"))))
+    server = settings.servers[0]
+    watcher = FileWatcher(server, ServerState(server.name), bus)
+    (data / "server.log").write_text("", encoding="utf-8")
+    watcher.poll_log()
+    with (data / "server.log").open("a", encoding="utf-8") as file:
+        file.write(f"17:12:11 Bravo connected from 203.0.113.4 (player ID {'d' * 64}, ping 31 ms).\n")
+        file.write("17:12:30 Community roster: Bravo joined the server\n")
+        file.write("17:12:31 Host roster lost 1 of 1 player in one update (0 now present)\n")
+    watcher.poll_log()
+    assert seen == [("log.connected", server.name, "Bravo"), ("log.joined", server.name, "Bravo"),
+                    ("log.roster_lost", server.name, None)]
