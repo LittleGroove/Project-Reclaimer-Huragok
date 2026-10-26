@@ -33,6 +33,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from ...core.background import background
 from ...core.events import Event
 from ...core.part import command, every, on
 from ...core.text import is_player_id
@@ -46,7 +47,15 @@ from ..who import from_console, through_console, who
 from .base import CommandsBase
 from .lists import Kick
 
-ECHO_SECONDS = 15.0  # an event for something this part just sent on (a kick, a ban) isn't sent on again
+# How long something this part passed on to a server waits for that server's own event for it (its echo). An echo
+# is matched to what was sent, one for one, not to a moment: a server frozen with its console still connected works
+# through what it held once it thaws, and its events come late (the simulation, 26 October: 60 s late, past the 15 s
+# this used to be, the ban was taken for a new one, put on every server again and an !unban given meanwhile undone).
+# A server frozen past [keepalive] hang_seconds (180 s) is restarted, which drops what it held: 15 minutes is ample.
+ECHO_SECONDS = 900.0
+DECIDED_KEPT = 500  # events whose echo was decided: several handlers ask about one event, and get one answer
+UNBAN_RETRY_SECONDS = 30.0  # an unban for a server whose list didn't answer: asked again this often…
+UNBAN_RETRIES = 20  # …this many times (10 minutes), from its queue (behind whatever it holds)
 SHARED_RECORD = "shared-ban-lists.json"  # records/: the shared lists repair.own_bans gave servers a copy of
 LIFTS_KEPT = 30 * 86400.0  # a server down this long after a ban came off Huragok's list keeps it (then: !unban there)
 
@@ -55,18 +64,49 @@ class AcrossServers(CommandsBase):
     def _across(self) -> bool:
         return bool(self.ctx.part_option("automod", "across_servers", True))
 
-    def _across_sent(self) -> dict[tuple[str, str, str], float]:
-        """(server, kind, player ID or address) -> when this part sent it there."""
+    def _across_sent(self) -> dict[tuple[str, str, str], list[float]]:
+        """(server, kind, player ID or address) -> when this part sent each still waiting for its echo there."""
         if not hasattr(self, "_across_echoes"):
-            self._across_echoes: dict[tuple[str, str, str], float] = {}
+            self._across_echoes: dict[tuple[str, str, str], list[float]] = {}
         return self._across_echoes
 
-    def _across_echo(self, server: str, kind: str, target: str) -> bool:
-        sent = self._across_sent().get((server, kind, target.lower()))
-        return sent is not None and time.monotonic() - sent < ECHO_SECONDS
+    def _across_decided(self) -> dict[tuple[Any, ...], bool]:
+        if not hasattr(self, "_across_decisions"):
+            self._across_decisions: dict[tuple[Any, ...], bool] = {}
+        return self._across_decisions
+
+    def _across_echo(self, server: str, kind: str, target: str, event: Event | None = None) -> bool:
+        """Whether `event` is `server`'s own answer to something this part passed on to it. The first event for a
+        pass-on uses it up, so a later one (someone banning the same player there again) is never taken for one;
+        every handler asking about the same event gets the same answer. Without an event: whether something passed
+        on there still waits for its answer."""
+        key = (server, kind, target.lower())
+        if event is not None:
+            decided = self._across_decided().get((*key, event.name, event.time))
+            if decided is not None:
+                return decided
+        now = time.monotonic()
+        waiting = self._across_sent().get(key)
+        if waiting:
+            waiting[:] = [t for t in waiting if now - t < ECHO_SECONDS]
+        echo = bool(waiting)
+        if event is not None:
+            if echo and waiting:
+                waiting.pop(0)
+            decisions = self._across_decided()
+            decisions[(*key, event.name, event.time)] = echo
+            while len(decisions) > DECIDED_KEPT:
+                decisions.pop(next(iter(decisions)))
+        return echo
 
     def _across_mark(self, server: str, kind: str, target: str) -> None:
-        self._across_sent()[(server, kind, target.lower())] = time.monotonic()
+        self._across_sent().setdefault((server, kind, target.lower()), []).append(time.monotonic())
+
+    def _across_unmark(self, server: str, kind: str, target: str) -> None:
+        """What was passed on was refused (the server answered no): no echo will come for it."""
+        waiting = self._across_sent().get((server, kind, target.lower()))
+        if waiting:
+            waiting.pop()
 
     # Kicks -----------------------------------------------------------------------------------------------------
 
@@ -95,7 +135,7 @@ class AcrossServers(CommandsBase):
     async def _across_kicked(self, event: Event) -> None:
         """A kick on one server: off every other one they're on now."""
         player_id = str(event.get("id") or "").lower()
-        if not player_id or not event.server or not self._across() or self._across_echo(event.server, "kick", player_id):
+        if not player_id or not event.server or not self._across() or self._across_echo(event.server, "kick", player_id, event):
             return
         if not from_console(event.get("by"), self.ctx.servers, event.server):
             return  # the game's own /kick, a vote's, the server's: this server's alone
@@ -194,7 +234,9 @@ class AcrossServers(CommandsBase):
         try:
             reply = await self.ctx.rcon(server).command("ban", *args, by=row["by"] or None)
             ok, text = reply.ok, reply.text
-        except RconError as error:
+            if not ok:
+                self._across_unmark(server, "ban", row["target"])  # refused: no echo comes
+        except RconError as error:  # no answer: a server frozen with its console up may still do it, later
             ok, text = False, str(error)
         self.ctx.log.info("[%s] %s's ban (by %s on %s) put on this server's list%s", server, row["name"] or
                           row["target"][:8], row["by"], row["server"] or "a shared list, before 0.5.0",
@@ -205,7 +247,7 @@ class AcrossServers(CommandsBase):
     async def _across_banned(self, event: Event) -> None:
         """A ban through Huragok (a ! command, Vergil, the relay): on Huragok's list, and every server's."""
         target = str(event.get("id") or event.get("ip") or "").lower()
-        if not target or not event.server or not self._across() or self._across_echo(event.server, "ban", target):
+        if not target or not event.server or not self._across() or self._across_echo(event.server, "ban", target, event):
             return
         if not from_console(event.get("by"), self.ctx.servers, event.server):
             return  # the game's own /ban: this server's alone (!banall makes it every server's)
@@ -229,7 +271,7 @@ class AcrossServers(CommandsBase):
         """An unban through Huragok lifts Huragok's ban everywhere: off its list, and off every server's. Another
         server's own /ban of them stays (the host's call, 25 October: !unban says where)."""
         target = str(event.get("target") or "").strip()
-        if not target or not event.server or self._across_echo(event.server, "unban", target):
+        if not target or not event.server or self._across_echo(event.server, "unban", target, event):
             return
         if not from_console(event.get("by"), self.ctx.servers, event.server):
             return
@@ -241,17 +283,35 @@ class AcrossServers(CommandsBase):
             self.ctx.outbox.send(server, f"the unban of {target} (given on {event.server})",
                                  lambda server=server: self._unban_on(server, target, event.server, by))
 
-    async def _unban_on(self, server: str, target: str, origin: str, by: str) -> bool:
-        """An unban through Huragok on `origin`, passed on to `server`: only a ban Huragok put there."""
-        entries, _ = await self._read_bans(server)
-        mine = [e for e in entries or [] if self._names(e, target) and through_console(e.get("banned_by"))]
+    async def _unban_on(self, server: str, target: str, origin: str, by: str, tries: int = 0) -> bool:
+        """An unban through Huragok on `origin`, passed on to `server`: only a ban Huragok put there. A list that
+        doesn't answer is asked again from the server's queue (behind whatever it holds) until it does: a server
+        frozen with its console up works through a ban it held once it thaws, after the unban was given, and that
+        ban mustn't stand (the simulation, 26 October). Asking stops once Huragok bans them again meanwhile."""
+        entries, why = await self._read_bans(server)
+        if entries is None:
+            if tries < UNBAN_RETRIES and self.ctx.server(server).connected:
+                self.ctx.log.info("[%s] its ban list didn't answer (%s): the unban of %s is tried again in %.0f s",
+                                  server, why, target, UNBAN_RETRY_SECONDS)
+
+                async def again() -> None:
+                    await asyncio.sleep(UNBAN_RETRY_SECONDS)
+                    if self.every_server("ban", target):
+                        return  # banned again through Huragok since: that ban stands
+                    self.ctx.outbox.send(server, f"the unban of {target} (given on {origin}), again",
+                                         lambda: self._unban_on(server, target, origin, by, tries + 1))
+
+                background(again(), f"[{server}] the unban of {target} asked again", self.ctx.log)
+            return False
+        mine = [e for e in entries if self._names(e, target) and through_console(e.get("banned_by"))]
         if not mine:
-            return False  # not banned there, or a /ban there (that server's), or its list didn't answer: as it
-            # next connects, a ban Huragok put there is taken off (_every_server_bans)
+            return False  # not banned there, or a /ban there (that server's)
         self._across_mark(server, "unban", target)
         try:
             reply = await self.ctx.rcon(server).command("unban", target, by=by)
             ok, text = reply.ok, reply.text
+            if not ok:
+                self._across_unmark(server, "unban", target)
         except RconError as error:
             ok, text = False, str(error)
         self.ctx.log.info("[%s] unban of %s on %s by %s passed on here%s", server, target, origin, by,
@@ -325,7 +385,7 @@ class AcrossServers(CommandsBase):
         """A pardon the server announces: off the kick list there; one through Huragok (the window's, the relay's)
         lets them back on every server, as !pardon does."""
         target = str(event.get("id") or event.get("target") or "").strip()
-        if not target or not event.server or self._across_echo(event.server, "pardon", target):
+        if not target or not event.server or self._across_echo(event.server, "pardon", target, event):
             return
         listed = self._kicks_list()
         for kick in [k for k in listed if k.server == event.server
@@ -351,7 +411,7 @@ class AcrossServers(CommandsBase):
         target = str(event.get("id") or event.get("target") or "").lower()
         if not FULL_ID.fullmatch(target) or not event.server or not self._across() \
                 or not from_console(event.get("by"), self.ctx.servers, event.server) \
-                or self._across_echo(event.server, "admin", target):
+                or self._across_echo(event.server, "admin", target, event):
             return
         by = who(event.get("by"))
         if verb == "add":
@@ -373,6 +433,8 @@ class AcrossServers(CommandsBase):
         try:
             reply = await self.ctx.rcon(server).command("admin", verb, target, by=by)
             ok, text = reply.ok, reply.text
+            if not ok:
+                self._across_unmark(server, "admin", target)
         except RconError as error:
             ok, text = False, str(error)
         self.ctx.log.info("[%s] admin %s %s (by %s on %s) passed on here%s", server, verb, target[:8], by, origin,

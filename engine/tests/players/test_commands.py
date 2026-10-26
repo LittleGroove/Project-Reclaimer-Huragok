@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, free_port, staff, wait_for, write_server_folder, write_settings
-from testkit.commands import FrozenServer, OtherServer
+from testkit.commands import FrozenServer, OtherServer, ThawingServer
 from testkit.running import everyone_joins, running, says, tells_to
 
 from huragok.core.events import Event, EventBus
@@ -675,6 +675,64 @@ def test_two_frozen_servers_hold_up_neither_a_ban_nor_the_commands(tmp_path: Pat
     run(scenario())
 
 
+def test_a_frozen_servers_late_echo_neither_bans_again_nor_undoes_an_unban(tmp_path: Path, run,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """The simulation's B5 (26 October): a server frozen with its console up holds the ban Huragok passed on, and an
+    !unban is given meanwhile. Once it thaws it carries out the ban and announces it, a minute after it was sent:
+    that used to be taken for a new console ban (past a 15 s window) and put on every server again, the unban undone.
+    Now an echo is matched to what was sent, whenever it comes, and the unban is asked again of a list that didn't
+    answer until it does: the player is banned nowhere, Huragok's list has nothing for them, their record one ban."""
+    from huragok.players.commands import across
+
+    class Clock:  # across's own clock, a minute ahead from the thaw on (the event loop's untouched)
+        ahead = 0.0
+
+        @staticmethod
+        def monotonic() -> float:
+            return time.monotonic() + Clock.ahead
+
+        @staticmethod
+        def time() -> float:
+            return time.time()
+
+    monkeypatch.setattr(across, "time", Clock)
+    monkeypatch.setattr(across, "UNBAN_RETRY_SECONDS", 0.5, raising=False)  # (raising: so it runs on the old code too)
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (sup, fake, _):
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
+            other = OtherServer()
+            thawing = ThawingServer(1.0, lambda event, data: sup.bus.emit(event, "Thawing", **data))
+            for name, client in (("Other", other), ("Thawing", thawing)):
+                sup.superintendent.clients[name] = client  # type: ignore[assignment]
+                sup.superintendent.states[name] = ServerState(name, connected=True, admins=set())
+            try:
+                await fake.chat(OWNER, "Owner", "!ban bravo 2h echo test")
+                await wait_for(lambda: BRAVO in other.banned)
+                await wait_for(lambda: thawing.named("ban"))
+                await fake.chat(OWNER, "Owner", f"!unban {BRAVO}")
+                await wait_for(lambda: BRAVO not in other.banned, 15)
+                await asyncio.sleep(2)  # the unban's read of Thawing's list times out: asked again later
+                Clock.ahead = 60.0
+                thawing.thaw()  # the held ban, carried out and announced a minute late
+                await wait_for(lambda: BRAVO not in thawing.banned, 15)  # the unban, asked again, lifts it
+                await asyncio.sleep(1.5)
+                assert BRAVO not in other.banned  # not put on every server again
+                commands = sup.runners["commands"].part
+                assert not commands.every_server("ban", BRAVO)  # Huragok's list: nothing in force
+                rows = sup.storage.query("SELECT kind FROM commands_every_server WHERE target = ?", (BRAVO,))
+                assert [r["kind"] for r in rows] == ["ban"]  # one row, lifted: none for the echo
+                bans = sup.storage.query("SELECT server FROM actions WHERE target_id = ? AND kind = 'ban'", (BRAVO,))
+                assert len(bans) == 1, bans  # their record: the one ban
+            finally:
+                for name in ("Other", "Thawing"):
+                    sup.superintendent.states.pop(name, None)
+                    sup.superintendent.clients.pop(name, None)
+
+    run(scenario())
+
+
 def test_banall_holds_to_the_ranks_and_a_name_ending_rcon_isnt_the_console(tmp_path: Path, run) -> None:
     """!banall outranks no one !ban couldn't: an admin can't spread the game's own /ban of an owner. A ban whose time
     has run out is said so, not a failure of the part. And a player who names themselves "Mallory (RCON)" isn't the
@@ -1111,7 +1169,10 @@ def test_admins_switch_each_voice_channel_in_this_servers_own_block(tmp_path: Pa
             assert not sup.storage.query("SELECT * FROM commands_timed_settings")
             await fake.chat(ADMIN, "Admin", "!toggleglobal")
             await wait_for(lambda: "Admin turned global voice (V) on." in says(fake))
-            assert _block(tmp_path)["voice_global"] is True
+            # Back to what [defaults] gives, and the block didn't set it before: its own key comes out again, so a
+            # later change to [defaults] reaches this server (the simulation's finding 7, 26 October).
+            assert "voice_global" not in _block(tmp_path)
+            assert not sup.storage.query("SELECT * FROM commands_toggled")
 
             await fake.chat(ADMIN, "Admin", "!toggleteam off")
             await wait_for(lambda: _block(tmp_path).get("voice_team") is False)
@@ -1130,7 +1191,7 @@ def test_admins_switch_each_voice_channel_in_this_servers_own_block(tmp_path: Pa
 
             # The server refusing the file (another edit broke it) reaches the admin who toggled, once.
             await fake.chat(ADMIN, "Admin", "!toggleproxy on")
-            await wait_for(lambda: _block(tmp_path).get("voice_proximity") is True)
+            await wait_for(lambda: "voice_proximity" not in _block(tmp_path))
             await fake.event("control", action="reload", ok=False,
                              text="Configuration not reloaded; the servers keep their settings. max_players: 300")
             await wait_for(lambda: _told(fake, ADMIN, "LG Test Server didn't apply it and keeps its settings: "
@@ -1139,6 +1200,40 @@ def test_admins_switch_each_voice_channel_in_this_servers_own_block(tmp_path: Pa
             await fake.event("control", action="reload", ok=False, text="again")
             await asyncio.sleep(0.2)
             assert not _told(fake, ADMIN, "settings: again")
+
+    run(scenario())
+
+
+def test_a_hosts_own_key_stays_and_a_toggled_one_follows_defaults_again(tmp_path: Path, run) -> None:
+    """A key the host set in the block is theirs: switched off and on by hand it stays, as they wrote it. One only
+    the toggles wrote comes out once switched back, and the server follows [defaults] again when the host changes
+    it; a timed toggle after hand ones remembers the block as it was before the first of them."""
+    from huragok.core.tomledit import set_array_block_key, set_table_key
+
+    config = tmp_path / "server" / "dedicated.toml"
+
+    async def scenario() -> None:
+        async with running(tmp_path, prepare=lambda f: f.admins_configured.append(ADMIN)) as (sup, fake, _):
+            set_array_block_key(config, ("server",), SERVER, "voice_team", True)  # the host's own
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
+            await fake.chat(ADMIN, "Admin", "!toggleteam off")
+            await wait_for(lambda: _block(tmp_path).get("voice_team") is False)
+            await fake.chat(ADMIN, "Admin", "!toggleteam on")
+            await wait_for(lambda: _block(tmp_path).get("voice_team") is True)  # kept: the host's line
+            await fake.chat(ADMIN, "Admin", "!toggleglobal off")
+            await wait_for(lambda: _block(tmp_path).get("voice_global") is False)
+            await fake.chat(ADMIN, "Admin", "!toggleglobal on 5m")  # timed, after a hand toggle
+            await wait_for(lambda: _block(tmp_path).get("voice_global") is True)
+            _timers_due(sup)
+            await wait_for(lambda: _block(tmp_path).get("voice_global") is False)  # back off, as before the 5m
+            await fake.chat(ADMIN, "Admin", "!toggleglobal on")
+            await wait_for(lambda: "voice_global" not in _block(tmp_path))
+            set_table_key(config, "defaults", "voice_global", False)  # the host's later change reaches it
+            from huragok.core.tomledit import read_toml
+            from huragok.program.settings import current, find
+
+            assert current(read_toml(config), find("voice_global", "server"), SERVER)[0] is False
 
     run(scenario())
 
@@ -1211,13 +1306,14 @@ def test_togglevoice_turns_voice_off_for_ten_minutes_or_back_on(tmp_path: Path, 
                                          "false, back on in 9 minutes"))
             await fake.chat(ADMIN, "Admin", "!togglevoice")  # back on at once, for good
             await wait_for(lambda: "Admin turned voice chat on." in says(fake))
-            assert _block(tmp_path)["voice"] is True and not sup.storage.query("SELECT * FROM commands_timed_settings")
+            assert "voice" not in _block(tmp_path)  # back to [defaults]: its own key out again (finding 7)
+            assert not sup.storage.query("SELECT * FROM commands_timed_settings")
 
             await fake.chat(ADMIN, "Admin", "!togglevoice")
-            await wait_for(lambda: _block(tmp_path)["voice"] is False)
+            await wait_for(lambda: _block(tmp_path).get("voice") is False)
             _timers_due(sup)  # as if Huragok had been down past the time: put back at its first look
             await wait_for(lambda: "Voice chat is back on after 10 minutes." in says(fake))
-            assert _block(tmp_path)["voice"] is True  # as the block had it (!togglevoice on wrote it there)
+            assert "voice" not in _block(tmp_path)  # as the block had it: no key of its own, [defaults] applies
 
     run(scenario())
 

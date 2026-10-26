@@ -157,6 +157,65 @@ def test_a_crash_backs_off_then_faults(world, run) -> None:
     run(scenario())
 
 
+def test_a_ban_list_the_program_cant_read_is_named_as_the_cause(world, run, caplog) -> None:
+    """The simulation's finding 3 (26 October): the program refuses to start on a ban list it can't read, and the host
+    read only "5 starts in a row failed". Its own line is recognised now: said once as it happens, and the fault's
+    reason, with the file and where in it."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    console = ["──── 2026-10-26 12:00:00 UTC · started by the Superintendent · project-reclaimer.exe dedicated run ────",
+               "Error: H:\\Hosts\\SERVERS\\LG Test Server\\../../bans.json is not a valid ban list: UUID parsing "
+               "failed: invalid length: found 12 at line 9 column 29",
+               "Error: Dedicated supervisor stopped (exit code: 1)"]
+    backend.last_console_lines = lambda server, count=200: console[-count:]  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        backend.up.clear()  # died while starting
+        await cycle(manager, clock)
+        assert manager.phase == "backoff"
+        await cycle(manager, clock, 5)
+        backend.up.clear()
+        await cycle(manager, clock)
+        assert manager.phase == "faulted"
+        reason = manager.record.fault_reason
+        assert "can't read its ban list" in reason and "line 9 column 29" in reason and "bans.json" in reason
+        said = [r.message for r in caplog.records if "it won't start" in r.message]
+        assert len(said) == 1  # once, not at every try
+
+    run(scenario())
+
+
+def test_known_cause_reads_the_programs_own_line() -> None:
+    from huragok.servers.server import known_cause
+
+    assert known_cause(["Starting…", "Error: D:\\x\\bans.json is not a valid ban list: expected value at line 1."]) \
+        .startswith("the server program can't read its ban list (")
+    assert known_cause(["Error: Dedicated supervisor stopped (exit code: 1)"]) == ""
+
+
+def test_check_reads_a_ban_list_as_the_program_would(tmp_path: Path) -> None:
+    import json
+
+    from huragok.content.gamefiles import ban_list_problems
+
+    good = {"players": [{"id": "a" * 64, "name": "Bravo", "reason": "x", "banned_by": "Owner (RCON)",
+                         "banned_at": 1793013102, "group": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}], "ips": []}
+    path = tmp_path / "bans.json"
+    path.write_text(json.dumps(good), encoding="utf-8")
+    assert ban_list_problems(path) == [] and ban_list_problems(tmp_path / "none.json") == []
+    bad = json.loads(json.dumps(good))
+    bad["players"][0]["group"] = "87d90988ab12"
+    bad["players"].append({"id": "Bravo", "banned_at": "yesterday"})
+    path.write_text(json.dumps(bad), encoding="utf-8")
+    problems = ban_list_problems(path)
+    assert any("entry 1: group '87d90988ab12' isn't a UUID" in p for p in problems)
+    assert any("entry 2: id 'Bravo' isn't a player ID" in p for p in problems)
+    assert any("entry 2: banned_at isn't a number" in p for p in problems)
+    path.write_text("{\"players\": [", encoding="utf-8")
+    assert "isn't JSON (line 1" in ban_list_problems(path)[0]
+
+
 def test_a_record_that_cant_be_written_never_counts_a_crash_twice(world, run, monkeypatch, caplog) -> None:
     """Antivirus holding records/servers/<slug>.json for a moment: the crash is counted once and the step carries on
     (it used to stop half way and count the crash again at every tick until a write got through)."""

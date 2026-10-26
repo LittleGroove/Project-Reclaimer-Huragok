@@ -535,7 +535,9 @@ def catalogue(config: Path, server_name: str, settings: Settings | None = None) 
 def summary(entries: list[tuple[Setting, Any, str]], group: str, limit: int = 4) -> str:
     """A group's most telling values in one line, for the list of groups."""
     picked = [(s, v) for s, v, _ in entries if s.group == group][:limit]
-    return " · ".join(f"{s.key} {display(s, v)}" for s, v in picked)
+    # Its label when it has one: two settings with one key (host_name, this server's and every server's) read as one
+    # said twice otherwise (the simulation's window tests, 26 October).
+    return " · ".join(f"{s.label or s.key} {display(s, v)}" for s, v in picked)
 
 
 def effective(data: dict[str, Any], key: str, server_name: str, scope: str = "server") -> Any:

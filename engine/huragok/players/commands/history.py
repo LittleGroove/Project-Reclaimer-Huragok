@@ -84,7 +84,7 @@ class HistoryCommands(CommandsBase):
     @on("rcon.kick")
     async def _history_kick(self, event: Event) -> None:
         player_id = str(event.get("id") or "").lower()
-        if self._across_echo(event.server, "kick", player_id):
+        if self._across_echo(event.server, "kick", player_id, event):
             return  # passed on from another server: that one's on the record
         seconds = event.get("seconds")
         self._history_seen(event, "kick", target=player_id, name=str(event.get("name") or ""),
@@ -95,7 +95,7 @@ class HistoryCommands(CommandsBase):
     @on("rcon.ban")
     async def _history_ban(self, event: Event) -> None:
         target = str(event.get("id") or event.get("ip") or "").lower()
-        if self._across_echo(event.server, "ban", target):
+        if self._across_echo(event.server, "ban", target, event):
             return
         seconds = _seconds(event.get("expires"))
         self._history_seen(event, "ban", target=target, name=str(event.get("name") or event.get("ip") or ""),

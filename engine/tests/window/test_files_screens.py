@@ -75,8 +75,9 @@ def test_a_change_is_checked_as_huragok_reads_the_file_before_it_is_made(tmp_pat
         hs.write(path, hs.find("", "server_folder"), "no-such-folder")
     assert path.read_text(encoding="utf-8") == unchanged
     assert not list(path.parent.glob(".settings.toml.*"))  # no copy left behind
-    # A problem the file had already isn't the change's: it doesn't stop an unrelated one.
-    (path.parent / "automod.txt").write_text("bad | 5x\n", encoding="utf-8")
+    # A problem the file had already isn't the change's: it doesn't stop an unrelated one. (A word list without its
+    # file stops Vergil; one bad line in it doesn't any more: that line is left out, finding 2.)
+    (path.parent / "automod.txt").unlink()
     assert hs.problems(path) and "automod" in hs.problems(path)[0]
     hs.write(path, hs.find("restarts", "daily_restart"), "04:00")
     assert read_toml(path)["restarts"]["daily_restart"] == "04:00"
@@ -359,10 +360,12 @@ def test_d_says_what_it_cant_read(tmp_path: Path, run) -> None:
     path = template_root(tmp_path)
     (path.parent / "automod.txt").write_text("bad | 5x\n", encoding="utf-8")
     (path.parent / "commands.toml").unlink()
-    menu, terminal = screen(path, ["A", "ENTER", "x", "C", "ENTER", "N", "ESC"])
+    menu, terminal = screen(path, ["A", "ENTER", "ESC", "C", "ENTER", "N", "ESC"])
     run(menu.screen_settings())
     text = text_of(terminal)
-    assert "can't be read: automod.txt line 1" in text and "O opens it, to put it right by hand." in text
+    # A line that doesn't read is left out, not the whole list (finding 2): D counts it, A says why.
+    assert "0 rules: none yet · 1 line left out" in text
+    assert "Left out: line 1: '5x' isn't a time" in text and "Vergil runs without it; O opens the file" in text
     assert "not there: every command has its default role" in text and "There's no commands.toml" in text
     assert not (path.parent / "commands.toml").exists()
 

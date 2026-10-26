@@ -8,6 +8,7 @@ import pytest
 from conftest import ADMIN, MOD, free_port, free_ports, staff, write_root, write_server_folder, write_settings
 from testkit.fake_rcon import PASSWORD
 
+from huragok import __version__
 from huragok.commandline import firstrun
 from huragok.core.serverfolders import discover_servers, slugify
 from huragok.core.settings import load
@@ -182,6 +183,11 @@ def _root(tmp_path: Path, body: str, servers: list[tuple[str, int]] | None = Non
     ('[[relay.user]]\nname = "Alice"\npassword = "a long passphrase"\npasswd = "x"',
      "[[relay.user]] passwd isn't a setting"),
     ("[setup]\nshares = [\"game\"]", "(did you mean share?)"),
+    # Like nothing here: most often a newer version's, left by an update that was put back (the simulation's
+    # finding 6, 26 October), and said so.
+    ("[updates]\nnightly_channel = true", "[updates] nightly_channel isn't a setting, so it does nothing in Huragok "
+                                          f"{__version__} (a newer version's? An update that was put back leaves the "
+                                          "settings it added; they're harmless here)"),
 ])
 def test_a_key_that_isnt_a_setting_is_named(tmp_path: Path, body: str, expected: str) -> None:
     settings = load(_root(tmp_path, body))

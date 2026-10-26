@@ -39,7 +39,7 @@ from ...players.automod.automod import name_rules, same_name
 from ...players.automod.matcher import NAME_MATCHES, Matcher, normalise
 from ...players.automod.rules import (
     FOREVER, NAME, NAME_STRIKE, RuleError, add_name, change_rule, describe_unnamed, is_count, ladder, least_ban,
-    parse_line, read_names, read_rules, remove_name, rule_line, unnamed_ladders,
+    parse_line, read_names, read_rules_lenient, remove_name, rule_line, unnamed_ladders,
 )
 from ...players.messages.intervals import (
     MIN_SECONDS, MessageError, add_message, describe_every, own_file, read_messages, remove_message, seconds_every,
@@ -79,9 +79,10 @@ class FileScreens(Screens):
                  ("C", "Roles and commands", COMMANDS_FILE, self._commands_summary(settings))]
         words, names = self._words_path(settings), self._names_path(settings)
         try:
-            rules = read_rules(words)
+            rules, left = read_rules_lenient(words)
             about = f"{len(rules)} rule{'s' if len(rules) != 1 else ''}" + (
-                f" ({sum(1 for r in rules if r.label)} named)" if rules else ": none yet")
+                f" ({sum(1 for r in rules if r.label)} named)" if rules else ": none yet") + (
+                f" · {len(left)} line{'s' if len(left) != 1 else ''} left out" if left else "")
         except (RuleError, OSError) as error:
             about = f"can't be read: {error}"
         files.append(("A", "Vergil's word list", words.name, about))
@@ -491,7 +492,7 @@ class FileScreens(Screens):
         path = self._words_path(settings)
         while True:
             try:
-                rules = read_rules(path) if path.exists() else []
+                rules, left = read_rules_lenient(path) if path.exists() else ([], [])
             except (RuleError, OSError) as error:
                 self.note(f"{error}. O opens it, to put it right by hand.", "red")
                 await self.wait_any_key(8)
@@ -499,6 +500,8 @@ class FileScreens(Screens):
             self.heading("Huragok", "Vergil's word list",
                          note=f"{path.name} · Vergil reads it again within seconds; disguised words (b4dw0rd, "
                               "b a d w o r d) are caught without listing them")
+            for item in left:
+                self.note(f"Left out: {item.why}. Vergil runs without it; O opens the file to put it right.", "red")
             rows = [(rule.label or f"({rule.name})", ", ".join(rule.words) + (
                 f" (never: {', '.join(rule.allow)})" if rule.allow else ""), "; ".join(ladder(rule)))
                     for rule in rules]
@@ -743,7 +746,7 @@ class FileScreens(Screens):
                       "yellow")
         elif (options := settings.parts["automod"].options).get("check_names", True):
             try:
-                rules = read_rules(self._words_path(settings))
+                rules = read_rules_lenient(self._words_path(settings))[0]
             except (RuleError, OSError):
                 rules = []
             mode = options.get("name_match", "anywhere")

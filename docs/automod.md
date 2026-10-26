@@ -67,8 +67,13 @@ many letters as digits (`b4d`) and one made of symbols still are. A listed word 
 is all digits, like a hate number, is matched as written.
 
 The first start writes the file with these notes at the top. Edits
-apply within five seconds while Huragok runs. If a line has a mistake, the
-log says which line and what's wrong, and the list from before stays in force. A
+apply within five seconds while Huragok runs. If an edit brings a line with a mistake,
+the log says which line and what's wrong, and the list from before stays in force. A
+line with a mistake when Huragok starts (or one still there from then) doesn't stop
+the rest: Vergil runs with the lines that read and says, in the log, in `check` and on
+the word list's page in D, which line it left out and why; an edit to the other lines
+still applies, and putting that line right brings it in. Two lines named alike is such
+a mistake: the first keeps the name, the second is left out. A
 word that is nothing once accents and invisible characters are taken out (a
 zero-width space or a lone accent pasted from the web) is such a mistake: it would
 catch every line of chat, so the line is refused, named with the character's code.

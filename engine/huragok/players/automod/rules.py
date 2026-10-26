@@ -274,6 +274,57 @@ def parse_text(text: str) -> list[Rule]:
     return rules
 
 
+@dataclass(frozen=True)
+class LeftOut:
+    """A line Vergil runs without: it doesn't read, or it takes a name a line above it has."""
+
+    line: int
+    text: str
+    why: str
+
+
+def parse_lenient(text: str) -> tuple[list[Rule], list[LeftOut]]:
+    """The lines that read, and those left out with why. One mistake used to stop the whole list, and with it all of
+    Vergil until Huragok restarted, even once the file was fixed (the simulation's finding 2, 26 October: a host's
+    new line named like one already there). A left-out line keeps its place in the count, so an unnamed line below it
+    keeps its rule<n> and its strikes; of two lines named alike, the first keeps the name."""
+    lines = lines_of(text)
+    rules: list[Rule] = []
+    left: list[LeftOut] = []
+    place = 0
+    for number, line in enumerate(lines, 1):
+        try:
+            rule = parse_line(line, number)
+        except RuleError as error:
+            place += 1
+            left.append(LeftOut(number, line, str(error)))
+            continue
+        if rule is None:
+            continue
+        place += 1
+        if not rule.name:
+            rule.name = f"rule{place}"
+        rules.append(rule)
+    named: dict[str, int] = {}
+    kept: list[Rule] = []
+    for rule in rules:
+        if rule.name in named:
+            left.append(LeftOut(rule.line, lines[rule.line - 1],
+                                f"line {rule.line}: line {named[rule.name]} is named {rule.name} already (one name a "
+                                "line: give this one another)"))
+            continue
+        named[rule.name] = rule.line
+        kept.append(rule)
+    return kept, sorted(left, key=lambda item: item.line)
+
+
+def read_rules_lenient(path: Path) -> tuple[list[Rule], list[LeftOut]]:
+    try:
+        return parse_lenient(read_text(path, RuleError))
+    except FileNotFoundError:
+        raise RuleError(f"{path} not found: starting Huragok writes one, or set words in [automod]") from None
+
+
 def unnamed_ladders(rules: list[Rule]) -> list[Rule]:
     """Lines with no name whose strikes change what happens next. Their strikes are kept under the name the
     line's place gives it (rule2), so a line added above one moves everyone's strikes to another line."""

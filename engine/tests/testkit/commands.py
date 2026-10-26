@@ -39,6 +39,50 @@ class OtherServer:
         return [args for command, args, _ in self.sent if command == name]
 
 
+class ThawingServer(OtherServer):
+    """A server frozen with its console up that thaws: while frozen, each command waits `seconds` and times out (as
+    RconClient's would) but is kept; thaw() works through what it kept, in order, and from then on it answers. Like
+    a real server it announces each ban and unban it carries out (`announce(event, data)`), the console's named
+    "<by> (RCON)" (the simulation's B5, 26 October)."""
+
+    def __init__(self, seconds: float, announce: Any) -> None:
+        super().__init__()
+        self.seconds = seconds
+        self.frozen = True
+        self.held: list[tuple[str, tuple[str, ...], str | None]] = []
+        self.announce = announce
+
+    async def command(self, command: str, *args: str, by: str | None = None, timeout: float | None = None) -> Reply:
+        if self.frozen:
+            self.sent.append((command, args, by))
+            self.held.append((command, args, by))
+            await asyncio.sleep(self.seconds)
+            raise RconTimeout(f"{command}: no answer in {self.seconds} s")
+        reply = await super().command(command, *args, by=by, timeout=timeout)
+        self._announce(command, args, by)
+        return reply
+
+    def thaw(self) -> None:
+        self.frozen = False
+        for command, args, by in self.held:
+            if command == "ban" and args:
+                self.banned.append(args[0].lower())
+                self.details[args[0].lower()] = {"banned_by": f"{by} (RCON)" if by else "RCON",
+                                                 "banned_at": int(time.time())}
+            elif command == "unban" and args:
+                self.banned = [i for i in self.banned if i != args[0].lower()]
+            self._announce(command, args, by)
+        self.held.clear()
+
+    def _announce(self, command: str, args: tuple[str, ...], by: str | None) -> None:
+        console = f"{by} (RCON)" if by else "RCON"
+        if command == "ban" and args:
+            self.announce("rcon.ban", {"id": args[0].lower(), "name": "", "by": console, "reason": args[-1],
+                                       "expires": 0})
+        elif command == "unban" and args:
+            self.announce("rcon.unban", {"target": args[0].lower(), "by": console})
+
+
 class FrozenServer(OtherServer):
     """A server frozen with its console still connected (a live failure mode): every command waits `seconds` and
     then times out, as RconClient's would."""

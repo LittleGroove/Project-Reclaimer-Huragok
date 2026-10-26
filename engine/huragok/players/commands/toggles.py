@@ -127,10 +127,19 @@ class SettingToggles(CommandsBase):
         if now == was and timer is None:
             await call.reply(f"{_capital(toggle.label)} is already {_state(now)} on {call.server}.")
             return
+        # Whether the block set the key itself before the toggles first touched it (a key a toggle wrote isn't the
+        # host's): switched back by hand to what [defaults] gives, a key only the toggles wrote comes out again.
+        origin = self._toggled(call.server, toggle.key)
+        own_before = bool(origin["had_own"]) if origin is not None else had_own
+        take_out = not own_before and length is None and now == _inherited(data, call.server, toggle.key)
         # (Already so with a timer running: a time sets a new one, none makes it stay.)
         if now != was:
             try:
-                await asyncio.to_thread(_write, config, call.server, toggle.key, now)
+                await asyncio.to_thread(_take_out if take_out else _write, config, call.server, toggle.key, now)
+                if take_out:
+                    self._forget_toggled(call.server, toggle.key)
+                elif origin is None:
+                    self._remember_toggled(call.server, toggle.key, had_own)
             except LookupError:
                 await call.reply(f"Couldn't: {config.name} has no [[server]] block named {call.server} now.")
                 return
@@ -142,7 +151,7 @@ class SettingToggles(CommandsBase):
         if length:
             keep = now == was and timer is not None  # a new time for the same change: put back what was before it
             self._set_timer(call.server, toggle.key, now, bool(timer["before"]) if keep else was,
-                            bool(timer["had_own"]) if keep else had_own, length, call.player.name)
+                            bool(timer["had_own"]) if keep else own_before, length, call.player.name)
         else:
             self._drop_timer(call.server, toggle.key)
         spoken = f" for {describe_time(length)}" if length else ""
@@ -204,6 +213,17 @@ class SettingToggles(CommandsBase):
     def _drop_timer(self, server: str, key: str) -> None:
         self.ctx.db.execute("DELETE FROM commands_timed_settings WHERE server = ? AND key = ?", (server, key))
 
+    def _toggled(self, server: str, key: str) -> sqlite3.Row | None:
+        rows = self.ctx.db.query("SELECT * FROM commands_toggled WHERE server = ? AND key = ?", (server, key))
+        return rows[0] if rows else None
+
+    def _remember_toggled(self, server: str, key: str, had_own: bool) -> None:
+        self.ctx.db.execute("INSERT OR REPLACE INTO commands_toggled (server, key, had_own, time) VALUES (?, ?, ?, ?)",
+                            (server, key, int(had_own), time.time()))
+
+    def _forget_toggled(self, server: str, key: str) -> None:
+        self.ctx.db.execute("DELETE FROM commands_toggled WHERE server = ? AND key = ?", (server, key))
+
     @every(seconds=2)
     async def toggles_due(self) -> None:
         """Put back what a timed toggle changed, once its time is up."""
@@ -238,6 +258,13 @@ class SettingToggles(CommandsBase):
         if not done:
             self.log.info("[%s] %s was changed since %s's toggle: left as it is", server, toggle.label, row["by"])
             return
+        try:
+            own_now = (await asyncio.to_thread(_read, config, server, key))[2]
+        except (LookupError, OSError, ValueError):
+            own_now = True
+        if not row["had_own"] and not own_now:
+            self._forget_toggled(server, key)  # its own key came out again: as before any toggle
+        # (Put back to a value [defaults] doesn't give, the key stays, and stays the toggles': the record stays.)
         self.log.info("[%s] %s back %s after %s (%s's toggle)", server, toggle.label, _state(before), row["length"],
                       row["by"])
         await self._say(server, f"{_capital(toggle.label)} is {'back on' if before else 'off again'} after "
@@ -292,6 +319,23 @@ def _read(config: Path, server: str, key: str) -> tuple[dict[str, Any], bool, bo
 def _write(config: Path, server: str, key: str, value: bool) -> None:
     _block_named(read_toml(config), server)  # never a new block (tomledit adds one for a name it can't find)
     write(config, server, find(key, "server"), value)
+
+
+def _inherited(data: dict[str, Any], server: str, key: str) -> bool:
+    """What the server gets for `key` without its own block's value: [defaults]'s, else the program's own."""
+    blocks = [({k: v for k, v in b.items() if k != key}
+               if isinstance(b, dict) and str(b.get("name", "")).lower() == server.lower() else b)
+              for b in (data.get("server") if isinstance(data.get("server"), list) else [])]
+    return bool(current({**data, "server": blocks}, find(key, "server"), server)[0])
+
+
+def _take_out(config: Path, server: str, key: str, value: bool) -> None:
+    """The block's own key out, so [defaults] applies again; written after all if that wouldn't give `value`."""
+    _block_named(read_toml(config), server)
+    setting = find(key, "server")
+    reset(config, server, setting)
+    if _read(config, server, key)[1] != value:
+        write(config, server, setting, value)
 
 
 def _restore(config: Path, server: str, key: str, value: bool, before: bool, had_own: bool) -> bool:

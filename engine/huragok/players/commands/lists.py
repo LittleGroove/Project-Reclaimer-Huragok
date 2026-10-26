@@ -189,7 +189,7 @@ class ListCommands(CommandsBase):
         player_id = str(event.get("id") or "").lower()
         if not player_id or not event.server:
             return
-        if self._across_echo(event.server, "kick", player_id):
+        if self._across_echo(event.server, "kick", player_id, event):
             return  # a kick on another server, passed on here (across.py): the one there is the one that counts
         seconds = event.get("seconds")
         seconds = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else 600.0

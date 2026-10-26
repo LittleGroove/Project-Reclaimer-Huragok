@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from .commandsfile import Permissions, PermissionsError, load_permissions
 from .priority import PRIORITIES
 from .priority import DEFAULT as DEFAULT_PRIORITY
@@ -587,7 +588,13 @@ def unknown_settings(top: Table) -> list[str]:
             text = places[0] if len(places) == 1 else ", ".join(places[:-1]) + " or " + places[-1]
             return f": it belongs {text}" + (" (a line belongs to the [section] heading above it)" if section else "")
         close = difflib.get_close_matches(key, sorted(known.get(section, set())), n=1, cutoff=0.6)
-        return f" (did you mean {close[0]}?)" if close else ""
+        if close:
+            return f" (did you mean {close[0]}?)"
+        # Most often a newer version's setting: an update that couldn't start was put back, and the lines it added
+        # stay (they do nothing here, and are in force again once that version runs). The simulation's finding 6:
+        # right after a failed update, "does nothing" alone read like something broke.
+        return (f" in Huragok {__version__} (a newer version's? An update that was put back leaves the settings it "
+                "added; they're harmless here)")
 
     found = []
 

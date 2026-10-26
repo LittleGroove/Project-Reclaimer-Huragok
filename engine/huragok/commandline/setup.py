@@ -307,10 +307,18 @@ def cmd_playlist(args: argparse.Namespace, load: Callable[[str], Settings], laun
     if not args.name:
         out.fail("Name the playlist file to use, e.g. playlists/infection.playlist.json")
         return 2
-    path = args.name if args.name.endswith(".json") else f"playlists/{args.name}.playlist.json"
-    if not (server.folder / path).is_file():
-        out.fail(f"{server.folder / path} isn't there")
+    # By its file, its file's stem, or its name, as `playlist new` named the file ("Night Shift" is night-shift: the
+    # simulation's finding 1, 26 October: `use` looked only for "Night Shift.playlist.json").
+    from ..games.halo3 import resolve as resolve_playlist
+
+    found = resolve_playlist(server.folder, args.name)
+    if not found.is_file():
+        out.fail(f"No playlist {args.name!r} in {server.folder / 'playlists'}: {launcher} playlist list shows them")
         return 2
+    try:
+        path = found.relative_to(server.folder).as_posix()
+    except ValueError:
+        path = str(found)
     from ..program.plays import applies_when, check_plays, write_plays
 
     check = check_plays(tool, server, {"playlist": path})

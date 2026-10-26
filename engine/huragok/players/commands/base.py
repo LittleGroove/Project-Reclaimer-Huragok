@@ -16,6 +16,7 @@ from ..targets import FOREVER, TIME
 if TYPE_CHECKING:
     from collections import deque
 
+    from ...core.events import Event
     from ..targets import Candidate
     from .lists import Kick
 
@@ -87,10 +88,13 @@ class CommandsBase(Part):
     def _across(self) -> bool:
         raise NotImplementedError("AcrossServers's")
 
-    def _across_echo(self, server: str, kind: str, target: str) -> bool:
+    def _across_echo(self, server: str, kind: str, target: str, event: Event | None = None) -> bool:
         raise NotImplementedError("AcrossServers's")
 
     def _across_mark(self, server: str, kind: str, target: str) -> None:
+        raise NotImplementedError("AcrossServers's")
+
+    def _across_unmark(self, server: str, kind: str, target: str) -> None:
         raise NotImplementedError("AcrossServers's")
 
     async def _banned_elsewhere(self, server: str, target: str) -> tuple[list[str], list[str]]:

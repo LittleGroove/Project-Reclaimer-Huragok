@@ -32,4 +32,12 @@ MIGRATIONS = [
         had_own INTEGER NOT NULL, until REAL NOT NULL, length TEXT NOT NULL, by TEXT, time REAL NOT NULL,
         PRIMARY KEY (server, key));
     """,
+    # 5 (0.5.0): a key the toggles put in a server's own block, and whether the block set it itself before the first
+    # of them (toggles.py): one switched back by hand to what [defaults] gives comes out again, so a later change to
+    # [defaults] reaches that server (the simulation's finding 7, 26 October).
+    """
+    CREATE TABLE commands_toggled (
+        server TEXT NOT NULL, key TEXT NOT NULL, had_own INTEGER NOT NULL, time REAL NOT NULL,
+        PRIMARY KEY (server, key));
+    """,
 ]

@@ -28,8 +28,8 @@ from ..targets import PICK, Candidate, offer, outranked, plain, split
 from ..who import acting_name, from_console
 from .matcher import NAME_MATCHES, Hit, Matcher, normalise
 from .rules import (
-    FOREVER, NAME_STRIKE, PARTS, BannedName, Rule, RuleError, Step, add_name, change_rule, describe_unnamed, ladder,
-    line_of, parse_line, read_names, read_rules, remove_name, unnamed_ladders,
+    FOREVER, NAME_STRIKE, PARTS, BannedName, LeftOut, Rule, RuleError, Step, add_name, change_rule, describe_unnamed,
+    ladder, line_of, parse_line, read_names, read_rules_lenient, remove_name, unnamed_ladders,
 )
 
 MIGRATIONS = [
@@ -77,6 +77,7 @@ NEW_LINE_HELP = ("kick times | strikes before the mutes, then each mute's time |
 NAME_RETRY = 60.0  # a name kick the server refused, or a mute that didn't show, is tried again after this long
 KEPT_TWICE_SECONDS = 15.0  # a mute recorded from Huragok's !mute, then announced by the server: kept once
 MUTE_MARGIN = 60.0  # a mute of Vergil's with less than this left isn't put back when the server's runs out
+FORGET_AFTER = 3600.0  # what Vergil keeps about a player for moments (forget_the_past) goes after this long
 BAN_MATCH_SECONDS = 120.0  # a ban in the server's list this close to a strike of the same `by` is that strike's
 PLACEHOLDERS = {"detail": "slurs, strike 1 of 3", "label": "slurs", "strike": "strike 1 of 3",
                 "action": "removed for 1 hour", "next": " Next time: removed for 1 day.", "by": "Alice",
@@ -106,10 +107,17 @@ def check_messages(messages: Any) -> dict[str, str]:
     return {**MESSAGES, **{key: str(text) for key, text in messages.items()}}
 
 
-def load_rules(config: dict[str, Any], home: Path) -> tuple[list[Rule], list[BannedName], list[Path]]:
-    """The rules in the word list, the banned names, and the files to watch for edits."""
+def load_rules_lenient(config: dict[str, Any], home: Path) -> tuple[list[Rule], list[BannedName], list[Path],
+                                                                   list[LeftOut]]:
+    """The rules in the word list (the lines that read: one that doesn't is left out and said, instead of stopping
+    them all), the banned names, and the files to watch for edits."""
     words, names = home / str(config["words"]), home / str(config["names"])
-    return read_rules(words), read_names(names), [words, names]
+    rules, left = read_rules_lenient(words)
+    return rules, read_names(names), [words, names], left
+
+
+def left_out_text(left: LeftOut, file: str) -> str:
+    return f"{file} {left.why}: Vergil runs without that line until it's fixed (the other lines are in force)"
 
 
 def name_rules(names: list[BannedName]) -> list[Rule]:
@@ -188,10 +196,12 @@ class AutoMod(Part):
         if not isinstance(config["across_servers"], bool):
             raise ValueError("across_servers must be true or false")
         try:
-            rules, _, _ = load_rules(config, home)
+            rules, _, _, left = load_rules_lenient(config, home)
         except (RuleError, OSError) as error:
             raise ValueError(str(error)) from None
-        warnings = [] if rules else [f"{config['words']} has no words yet"]
+        warnings = [left_out_text(item, str(config["words"])) for item in left]
+        if not rules:
+            warnings.append(f"{config['words']} has no words yet")
         old = [str(r.line) for r in rules if r.old_layout]
         if old:
             warnings.append(f"{config['words']} line{'s' if len(old) > 1 else ''} {', '.join(old)}: the 0.2 "
@@ -218,9 +228,13 @@ class AutoMod(Part):
         self._kept_lately: dict[str, tuple[float, str, float | None]] = {}  # player ID -> (when, by, expires)
         self._unread = ""  # a word list that couldn't be read, last said
         try:
-            self._install(*load_rules(self.config, self.ctx.home))
+            rules, names, paths, left = load_rules_lenient(self.config, self.ctx.home)
         except (RuleError, OSError) as error:
             raise ValueError(str(error)) from None
+        self._install(rules, names, paths)
+        self.left_out = left  # lines Vergil runs without; an edit leaving only these out still applies
+        for item in left:
+            self.ctx.log.error("%s", left_out_text(item, str(self.config["words"])))
 
     def _install(self, rules: list[Rule], names: list[BannedName], paths: list[Path]) -> None:
         self.rules = rules
@@ -259,11 +273,32 @@ class AutoMod(Part):
                       or (" · dry run" if self.ctx.dry_run else ""))
         self._warn_unnamed()
 
+    @every(minutes=10)
+    async def forget_the_past(self) -> None:
+        """What Vergil keeps about each player only matters for moments (a line split over two within split_seconds,
+        a strike's cooldown, the join a name kick or a put-back mute was for), but it was kept for every player ever
+        seen, for as long as Huragok ran: a slow climb on a busy server (the simulation's soak, 26 October). Kept
+        an hour, and names found fine only for players on now."""
+        cutoff = time.time() - FORGET_AFTER
+        for table, when in ((self.recent, lambda v: v[-1][0] if v else 0.0), (self.last_strike, lambda v: v),
+                            (self.name_kicks, lambda v: v[1]), (self.mutes_restored, lambda v: v[0]),
+                            (self._kept_lately, lambda v: v[0])):
+            for player_id in [k for k, v in table.items() if when(v) < cutoff]:
+                del table[player_id]
+        on = {(p.id, p.name) for state in self.ctx.servers.values() for p in state.players.values()}
+        self.names_checked &= on
+
     @every(seconds=5)
     async def reload_if_changed(self) -> None:
         if any(mtime(f) != m for f, m in self.watched.items()):
             try:
-                loaded = load_rules(self.config, self.ctx.home)
+                rules, names, paths, left = load_rules_lenient(self.config, self.ctx.home)
+                # A mistake the edit brings keeps the rules in force (a typo mustn't drop a line that worked); one
+                # already left out (since the start, or an edit since) doesn't hold up an edit to the other lines.
+                known = {item.text.strip() for item in getattr(self, "left_out", [])}
+                if new := [item for item in left if item.text.strip() not in known]:
+                    raise RuleError("; ".join(item.why for item in new))
+                loaded = (rules, names, paths)
             except OSError as error:
                 # An editor holding the file while it saves: the old rules stay, and the next pass tries again.
                 problem = (f"{Path(error.filename or '').name or 'a word list'} can't be read right now "
@@ -278,7 +313,9 @@ class AutoMod(Part):
             else:
                 self._unread = ""
                 self._install(*loaded)
-                self.log.info("rules reloaded: %s rules, %s banned names", len(self.rules), len(self.names))
+                self.left_out = left
+                self.log.info("rules reloaded: %s rules, %s banned names%s", len(self.rules), len(self.names),
+                              f" ({len(left)} line{'' if len(left) == 1 else 's'} still left out)" if left else "")
                 self._warn_unnamed()
         await self.check_names()
 
@@ -892,7 +929,7 @@ class AutoMod(Part):
         """The word list as the file is now (an edit made in the last few seconds included); none yet without one.
         Raises RuleError or OSError."""
         try:
-            return read_rules(self.words_path)
+            return read_rules_lenient(self.words_path)[0]  # a line left out doesn't hold up a change to the others
         except RuleError:
             if not self.words_path.exists():
                 return []
@@ -900,7 +937,9 @@ class AutoMod(Part):
 
     def _reload_words(self) -> None:
         """A change made from the game applies at once, not at the next look at the file."""
-        self._install(*load_rules(self.config, self.ctx.home))
+        rules, names, paths, left = load_rules_lenient(self.config, self.ctx.home)
+        self._install(rules, names, paths)
+        self.left_out = left
 
     def _lines(self) -> str:
         return ", ".join(r.name for r in self.rules) or "none yet"

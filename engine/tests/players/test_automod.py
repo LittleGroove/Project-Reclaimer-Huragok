@@ -167,6 +167,81 @@ def test_the_whole_file() -> None:
         parse_text("a | | | | slurs\nb | | | | slurs\n")
 
 
+def test_a_line_that_doesnt_read_is_left_out_not_the_whole_list() -> None:
+    """The simulation's finding 2 (26 October): one mistake used to stop the whole word list, and all of Vergil with
+    it. The lines that read are kept; a left-out line keeps its place in the count (an unnamed line below keeps its
+    rule<n>, and its strikes); of two lines named alike, the first keeps the name."""
+    from huragok.players.automod.rules import parse_lenient
+
+    rules, left = parse_lenient("a | | | | slurs\nfoo | 0x\nunnamed\nb | | | | slurs\nc\n")
+    assert [r.name for r in rules] == ["slurs", "rule3", "rule5"]
+    assert [(item.line, item.text) for item in left] == [(2, "foo | 0x"), (4, "b | | | | slurs")]
+    assert "'0x' isn't a time" in left[0].why and "line 1 is named slurs already" in left[1].why
+    assert [r.name for r in parse_lenient("x\ny\n")[0]] == [r.name for r in parse_text("x\ny\n")]  # as before when all read
+
+
+def test_vergil_starts_with_the_lines_that_read_and_keeps_watching(tmp_path: Path, run, caplog) -> None:
+    """A word list with a mistake at start: Vergil runs the lines that read and says which one it left out. An edit to
+    the other lines applies though that one is still out; an edit that brings a new mistake keeps what's in force;
+    the fix brings the left-out line in."""
+    words = tmp_path / "automod.txt"
+    words.write_text("badword | | | | slurs\nrudeword | | | | slurs\nkickword\n", encoding="utf-8")
+
+    def edit(text: str) -> None:
+        words.write_text(text, encoding="utf-8")
+        later = time.time() + 2
+        os.utime(words, (later, later))  # a new mtime, however coarse the file system's clock
+
+    async def scenario() -> None:
+        async with running(tmp_path, "[automod]\nenabled = true\ncooldown_seconds = 0\n") as (sup, fake, _):
+            assert "automod" in sup.runners and "automod" not in sup.part_problems
+            vergil = sup.runners["automod"].part
+            assert [r.name for r in vergil.rules] == ["slurs", "rule3"]
+            assert any("line 2: line 1 is named slurs already" in r.message and "runs without that line" in r.message
+                       for r in caplog.records)
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
+            await fake.chat(BRAVO, "Bravo", "badword")
+            await wait_for(lambda: any(k["args"][0] == BRAVO for k in fake.named("kick")))
+            edit("badword | | | | slurs\nrudeword | | | | slurs\nkickword, newword\n")  # line 2 still out
+            await wait_for(lambda: any("newword" in r.words for r in vergil.rules), 15)
+            edit("badword | | | | slurs\nrudeword | | | | slurs\nkickword, newword | 0x\n")  # a new mistake
+            await wait_for(lambda: any("keeping the old ones" in r.message for r in caplog.records), 15)
+            assert any("newword" in r.words for r in vergil.rules)  # what was in force stays
+            edit("badword | | | | slurs\nrudeword | | | | rude\nkickword, newword\n")  # line 2 put right
+            await wait_for(lambda: [r.name for r in vergil.rules] == ["slurs", "rude", "rule3"], 15)
+            assert vergil.left_out == []
+
+    run(scenario())
+
+
+def test_vergil_forgets_what_only_mattered_for_moments(tmp_path: Path, run) -> None:
+    """The simulation's soak (26 October): what Vergil kept about each player (their last lines, strike cooldown, the
+    join a name kick or a put-back mute was for) stayed for every player ever seen. After an hour it goes, and names
+    found fine are kept only for players on now."""
+    from collections import deque
+
+    async def scenario() -> None:
+        async with running(tmp_path, setup_words(tmp_path)) as (sup, fake, _):
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
+            vergil = sup.runners["automod"].part
+            old, gone = time.time() - 7200, "e" * 64
+            vergil.recent[gone] = deque([(old, "hi", "hi")], maxlen=3)
+            vergil.recent[BRAVO] = deque([(time.time(), "hi", "hi")], maxlen=3)
+            vergil.last_strike[gone] = old
+            vergil.name_kicks[gone] = ("Gone", old, old)
+            vergil.mutes_restored[gone] = (old, old)
+            vergil._kept_lately[gone] = (old, "Mod", None)
+            vergil.names_checked.add((gone, "Gone"))
+            await vergil.forget_the_past()
+            assert all(gone not in table for table in (vergil.recent, vergil.last_strike, vergil.name_kicks,
+                                                         vergil.mutes_restored, vergil._kept_lately))
+            assert BRAVO in vergil.recent and (gone, "Gone") not in vergil.names_checked
+
+    run(scenario())
+
+
 def test_check_points_out_the_old_layout(tmp_path: Path) -> None:
     (tmp_path / "automod.txt").write_text("badword | 1h | 3 | slurs\nrudeword | | 0, 1d | | rude\n", encoding="utf-8")
     warnings = PARTS["automod"].preflight({}, tmp_path)

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -187,6 +188,27 @@ def since_start(lines: list[str]) -> list[str]:
     return lines[starts[-1] + 1:] if starts else lines
 
 
+# What the server program says when it won't start, and what Huragok tells the host for it. Without one of these the
+# host reads "5 starts in a row failed" and has to open the faulted file (the simulation, 26 October: a ban list
+# with one entry the program couldn't read stopped every server sharing it, three at once).
+BAN_LIST_UNREADABLE = re.compile(r"(?:Error: )?(?P<path>.+?) is not a valid ban list: (?P<reason>.+?)\.?$")
+
+
+def known_cause(lines: list[str]) -> str:
+    """Why the program won't start, in the host's words, from its last lines ("" when none is recognised)."""
+    for line in reversed(lines):
+        if found := BAN_LIST_UNREADABLE.search(line.strip()):
+            path = found.group("path").strip()
+            try:
+                path = str(Path(path).resolve())
+            except OSError:
+                pass
+            return (f"the server program can't read its ban list ({path}: {found.group('reason')}). Nothing was "
+                    "changed in it: fix that entry, or move the file aside (the program starts a new, empty one), "
+                    "then start the server again")
+    return ""
+
+
 def warning_text(seconds: float, label: str, coming_back: bool) -> str:
     seconds = int(seconds)
     if seconds >= 60:
@@ -240,6 +262,7 @@ class ServerManager:
         self.task_error: str | None = None
         self.task_kind = ""
         self.backoff_until = 0.0  # monotonic
+        self.cause_said = ""  # the cause of its failed starts last told (known_cause), so it's said once
         self.stop_failed = ""  # why the last stop left the process running ("" when it didn't)
         self.revive = False  # the next start follows a death or a failed start: see Backend.revive
         self.started: float | None = None  # when this run began (Unix seconds)
@@ -605,6 +628,7 @@ class ServerManager:
         if self.started is None:
             self.started = self.backend.started_at(self.server) or now
         took = format_duration(now - (self.record.last_start or now))
+        self.cause_said = ""  # it started: a cause seen again is said again
         if self.client.stopped_reason:
             log.error("[%s] up, but its console can't be used: %s", self.name, self.client.stopped_reason)
         else:
@@ -878,13 +902,19 @@ class ServerManager:
                      plan.when.replace("_", " "), plan.reason or "no reason given", how)
 
     def _register_failure(self) -> None:
-        """Crashes back off, and several in a row mean stop trying rather than thrash all night."""
+        """Crashes back off, and several in a row mean stop trying rather than thrash all night. A cause the program
+        names (known_cause) is said once, and is the fault's reason when it comes to that."""
         self.record.fail_count += 1
         self._save()
+        cause = known_cause(since_start(self.backend.last_console_lines(self.server, 40)))
+        if cause and cause != self.cause_said:
+            log.error("[%s] it won't start: %s", self.name, cause)
+        self.cause_said = cause
         limit = int(self.setting("max_failures"))
         fails = self.record.fail_count
         if fails >= limit:
-            self._enter_faulted(f"{fails} starts in a row failed or died soon after starting.")
+            self._enter_faulted(f"{fails} starts in a row failed: {cause}." if cause
+                                else f"{fails} starts in a row failed or died soon after starting.")
             return
         ladder = [float(d) for d in self.setting("backoff_seconds")] or [5.0]
         delay = ladder[min(fails - 1, len(ladder) - 1)]

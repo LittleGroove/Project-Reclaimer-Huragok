@@ -52,6 +52,34 @@ def test_a_playlist_the_server_cant_play_isnt_used(tmp_path, capsys) -> None:
     assert read_toml(server.config_path)["server"][0]["playlist"] == "playlists/slayer.playlist.json"
 
 
+def test_playlist_use_finds_a_playlist_by_the_name_it_was_made_with(tmp_path, capsys) -> None:
+    """The simulation's finding 1 (26 October): `playlist new "Night Shift"` writes night-shift.playlist.json, and
+    `playlist use "Night Shift"` looked for "Night Shift.playlist.json". It takes the name now, the file's stem or the
+    file, in any case; one that isn't there is said so, with how to list them."""
+    import json
+
+    from testkit.setup import setup_root
+
+    from huragok.commandline import cli
+    from huragok.core.settings import load
+    from huragok.core.tomledit import read_toml
+
+    settings_path = setup_root(tmp_path)
+    server = load(settings_path).servers[0]
+    (server.folder / "playlists" / "night-shift.playlist.json").write_text(json.dumps({
+        "version": 2, "name": "Night Shift", "games": [{"map": "Guardian", "game": "Slayer"},
+                                                       {"map": "Valhalla", "game": "Slayer"},
+                                                       {"map": "Narrows", "game": "Slayer"}]}), encoding="utf-8")
+    for given in ("Night Shift", "night shift", "night-shift", "playlists/night-shift.playlist.json"):
+        assert cli.main(["-c", str(settings_path), "playlist", "use", given]) == 0, given
+        assert read_toml(server.config_path)["server"][0]["playlist"] == "playlists/night-shift.playlist.json"
+        assert cli.main(["-c", str(settings_path), "playlist", "use", "slayer"]) == 0
+    capsys.readouterr()
+    assert cli.main(["-c", str(settings_path), "playlist", "use", "Day Shift"]) == 2
+    said = capsys.readouterr()
+    assert "No playlist 'Day Shift'" in said.out + said.err and "playlist list" in said.out + said.err
+
+
 def test_the_gate_asks_the_servers_own_program_and_counts_only_what_the_change_brings(tmp_path) -> None:
     """Decision 3 (25 October): nothing is written that the server's program would refuse; a problem the server
     has already, and that the change doesn't touch, doesn't hold the change up."""

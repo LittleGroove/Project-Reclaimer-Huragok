@@ -446,6 +446,49 @@ and no messages until you add some.
   - Linux: SteamCMD's saved sign-in is found in `~/Steam`, where `steamcmd.sh` keeps it,
     and installing SteamCMD works on any Python 3.11 (3.11.0 to 3.11.3 lack the tar filter
     it used).
+- **Found by running a simulated busy host.** A host set up at 0.4.4 and used for weeks
+  (in minutes: five real servers and three stand-ins with scripted players, bans, mutes,
+  strikes, renames, a relay moderator), then updated to this version the way hosts are,
+  window open and players on, and put through what live servers go through: frozen and
+  crashed servers, a killed Huragok, games stuck and players dropped, a release that
+  can't start, half an hour of busy chat. The update itself went through clean every way
+  (with U, with a countdown under way, by itself at start, and put back). What it found:
+  - **A server frozen with its console up could undo an `!unban` on every server.** It
+    held the ban Huragok passed on and carried it out once it thawed, past the 15 s in
+    which Huragok took a server's own word for one it sent as an echo: the ban looked new,
+    went on Huragok's list and every server's again, and the player's record showed two.
+    An echo is matched to what was sent now, however late it comes. And an `!unban` for a
+    server whose list doesn't answer is asked again from that server's queue until it
+    does, so a ban it was holding is lifted once it's carried out (it stops if the player
+    is banned again meanwhile).
+  - **One mistake in `automod.txt` at start no longer stops Vergil.** Two lines named
+    alike (or any line that doesn't read) used to keep Vergil from starting at all, until
+    Huragok was restarted, even once the file was put right. It runs with the lines that
+    read now, and says which it left out and why (the log, `check`, D's word list); an
+    edit to the other lines applies meanwhile, and the fix brings the line in. An edit
+    that brings a new mistake still keeps the list in force, as before.
+  - **A ban list the server program can't read is named.** One entry it refuses (a hand
+    edit, another tool) stops every server using that list from starting, and the window
+    said only "5 starts in a row failed". The program's own reason is read now: said once
+    as it happens, and the fault's reason, with the file and where in it; `check` reads
+    each ban list the way the program does and names what it would refuse.
+  - **`playlist use "<name>"` finds a playlist by the name it was made with.** `playlist
+    new "Night Shift"` writes `night-shift.playlist.json`, and `use "Night Shift"` looked
+    for `Night Shift.playlist.json` (0.4.x did too). The name, the file's stem or the file
+    all work now, in any case.
+  - **A voice key switched back by hand leaves the server following `[defaults]` again.**
+    `!toggleglobal on` after `!toggleglobal off` left `voice_global = true` in the server's
+    block, so a later change to `[defaults]` didn't reach it. Back to what `[defaults]`
+    gives, a key only the toggles wrote comes out again (one the host wrote stays). The
+    commands' database gains a 5th step for it; a version before reads it as it was.
+  - After an update that was put back, the version before named the new settings it
+    doesn't know "not a setting, so it does nothing", which read like something broke. A
+    key with no setting near it says it may be a newer version's, harmless here.
+  - Vergil kept a little about every player it ever saw (their last lines, a strike's
+    cooldown, the join a name kick was for) for as long as Huragok ran: a slow climb on a
+    busy server. Only moments of it ever mattered; it's let go after an hour now.
+  - A server's settings in D listed "host_name Dedicated server" twice: this server's and
+    every server's, which share the key. Each is named for which it is.
 
 ## 0.4.4
 **The servers run at High priority, Vergil's rules can be as long as you like, and a

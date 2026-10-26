@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -96,6 +97,46 @@ def read_paths(folder: Path, config_name: str) -> ServerPaths | None:
     return ServerPaths(folder, config, game, (folder / game).resolve(), content, (folder / content).resolve(), bans,
                        (folder / bans).resolve(), str(workshop.get("steamcmd") or ""),
                        str(workshop.get("username") or ""))
+
+
+UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+PLAYER_ID = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def ban_list_problems(path: Path) -> list[str]:
+    """What in a ban list the server program would refuse it for, as far as can be told without it: the program
+    reads the whole file or none of it, and one it can't read stops every server using it from starting (the
+    simulation, 26 October: an entry's `group` that wasn't a UUID). [] for a list that isn't there (the program
+    makes an empty one) or one that reads."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        return [f"{path} can't be read: {error}"]
+    except json.JSONDecodeError as error:
+        return [f"{path} isn't JSON (line {error.lineno}, column {error.colno}): {error.msg}"]
+    if not isinstance(data, dict):
+        return [f"{path} isn't a ban list (an object with players and ips)"]
+    problems = []
+    for kind in ("players", "ips", "devices"):
+        rows = data.get(kind, [])
+        if not isinstance(rows, list):
+            problems.append(f"{path}: {kind} isn't a list")
+            continue
+        for number, entry in enumerate(rows, 1):
+            where = f"{path}: {kind} entry {number}"
+            if not isinstance(entry, dict):
+                problems.append(f"{where} isn't an object")
+                continue
+            if kind == "players" and not PLAYER_ID.match(str(entry.get("id", ""))):
+                problems.append(f"{where}: id {str(entry.get('id'))!r} isn't a player ID (64 hex digits)")
+            if "group" in entry and not UUID.match(str(entry["group"])):
+                problems.append(f"{where}: group {str(entry['group'])!r} isn't a UUID")
+            for key in ("banned_at", "expires"):
+                if key in entry and (isinstance(entry[key], bool) or not isinstance(entry[key], (int, float))):
+                    problems.append(f"{where}: {key} isn't a number")
+    return problems
 
 
 def missing_kinds(paths: ServerPaths, plays_kind: str) -> list[str]:

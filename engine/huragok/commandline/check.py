@@ -123,6 +123,11 @@ def cmd_check(args: argparse.Namespace) -> int:
                      + (f" · daily restart {server.daily_restart}" if server.daily_restart else "")),
         ]
         problems = [error for error in server.errors if "RCON" not in error] + _backend_problems(backend, server)
+        from ..content.gamefiles import ban_list_problems, read_paths
+
+        if (paths := read_paths(server.folder, settings.config_name)) is not None:
+            problems += [f"its ban list won't be read by the server program, and it won't start: {problem}"
+                         for problem in ban_list_problems(paths.bans)[:5]]
         if endpoint:
             rows.append(("RCON", f"{endpoint.host}:{endpoint.port} · password set · host key "
                                  f"{'found' if server.host_key() else 'not found (server not started?)'}"))
