@@ -8,17 +8,19 @@ from typing import Any
 
 import pytest
 
-from huragok import lore
-from huragok.menu import Menu, key_rows, pack, render
-from huragok.tui import CONTINUED, RecentLog
+from testkit.window import FakeController, FakeKeyboard, FakeTerminal, row
 
-from test_menu import FakeController, FakeKeyboard, FakeTerminal, row
+from huragok import lore
+from huragok.commandline import common
+from huragok.core import lock as lock_module
+from huragok.core.logs import CONTINUED, RecentLog
+from huragok.window.dashboard import Menu, key_rows, pack, render
 
 
 @pytest.mark.parametrize("logger, tag", [
-    ("huragok.manager", "SUPT"), ("part.watchdog", "SUPT"), ("huragok.lifecycle", "SUPT"), ("superintendent", "SUPT"),
-    ("part.automod", "VRGL"), ("part.commands", "VRGL"), ("huragok.relay", "VRGL"), ("huragok.moderation", "VRGL"),
-    ("huragok.newserver", "HRGK"), ("huragok.updates", "HRGK"), ("huragok.menu", "HRGK"), ("websockets", "HRGK"),
+    ("huragok.servers.fleet", "SUPT"), ("part.watchdog", "SUPT"), ("huragok.servers.backends", "SUPT"), ("superintendent", "SUPT"),
+    ("part.automod", "VRGL"), ("part.commands", "VRGL"), ("huragok.players.relay", "VRGL"), ("huragok.players.ledger", "VRGL"),
+    ("huragok.content.newserver", "HRGK"), ("huragok.updates.engine", "HRGK"), ("huragok.window.dashboard", "HRGK"), ("websockets", "HRGK"),
     ("huragok.managerial", "HRGK"),  # a prefix match is by whole names, not letters
 ])
 def test_each_logger_speaks_as_its_part(logger: str, tag: str) -> None:
@@ -27,7 +29,7 @@ def test_each_logger_speaks_as_its_part(logger: str, tag: str) -> None:
 
 def test_the_dashboard_lines_carry_the_tag_and_line_up() -> None:
     recent = RecentLog()
-    recent.emit(logging.LogRecord("huragok.manager", logging.INFO, __file__, 1, "[Alpha] up\nsecond line", None, None))
+    recent.emit(logging.LogRecord("huragok.servers.fleet", logging.INFO, __file__, 1, "[Alpha] up\nsecond line", None, None))
     recent.emit(logging.LogRecord("part.automod", logging.WARNING, __file__, 1, "[Alpha] Bob: strike", None, None))
     (_, first), (_, second), (level, third) = recent.recent(3)
     assert first[8:] == " SUPT INFO    [Alpha] up"
@@ -119,12 +121,12 @@ def test_the_commands_wear_it_too(tmp_path, monkeypatch, capsys) -> None:
 
     from conftest import free_port, write_root, write_server_folder
 
-    from huragok import cli
-    from huragok.config import load
+    from huragok.commandline import cli
+    from huragok.core.settings import load
 
     first = tmp_path / "first"
     write_server_folder(first / "SERVERS" / "Alpha", free_port(), exe=True)
-    assert cli.main(["-c", str(first / "settings.toml"), "start"]) == cli.SET_UP
+    assert cli.main(["-c", str(first / "settings.toml"), "start"]) == common.SET_UP
     out = capsys.readouterr().out
     assert lore.BANNER[1] in out and "HURAGOK" in out and "THE FIRST DROP" in out and "Feet first into hell." in out
 
@@ -134,7 +136,7 @@ def test_the_commands_wear_it_too(tmp_path, monkeypatch, capsys) -> None:
     settings.records.mkdir(parents=True, exist_ok=True)
     (settings.records / "live.json").write_text(json.dumps(
         {"updated": time.time(), "version": "9.9", "backend": "process", "servers": [row("Alpha")]}), encoding="utf-8")
-    monkeypatch.setattr(cli, "running_supervisor", lambda settings: 4242)
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)
     assert cli.main(["-c", str(root / "settings.toml"), "status"]) == 0
     out = capsys.readouterr().out
     assert "HURAGOK 9.9" in out and "[^_^] SUPERINTENDENT · KEEP IT CLEAN! · 1 of 1 server up, 3 players on" in out
@@ -150,8 +152,8 @@ def test_what_the_old_name_left_behind_is_still_understood(tmp_path, monkeypatch
 
     from conftest import free_port, write_root
 
-    from huragok import desktop
-    from huragok.config import load
+    from huragok.core import desktop
+    from huragok.core.settings import load
 
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))

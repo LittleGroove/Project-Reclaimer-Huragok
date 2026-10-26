@@ -25,7 +25,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fake_rcon import PASSWORD  # noqa: E402
+from testkit.fake_rcon import PASSWORD  # noqa: E402
 
 # Real servers' ports (49175-49185 on this PC) and the ones next to them, which Windows also hands out as
 # ephemeral ports (from 49152 up): free_port() never returns one, and the network guard refuses them.
@@ -263,7 +263,7 @@ def stays_on_this_machine() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def no_github(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests never ask GitHub for releases; test_updates.py hands out its own."""
-    from huragok import updates
+    from huragok.updates import engine as updates
 
     monkeypatch.setattr(updates, "latest_release", lambda *args, **kwargs: None)
 
@@ -273,10 +273,11 @@ def not_this_pcs_installs(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pyt
     """Steam, MCC and SteamCMD are found only where a test puts them, never this PC's own (C:\\steamcmd's
     config.vdf names real accounts; Steam's own records name the real MCC). The lookups themselves are tested
     against folders made in the test (test_content.py). New servers' ports are picked past the real servers'."""
-    from huragok import contentimport, newserver, steamsetup
+    from huragok.content import mccimport as contentimport, newserver
+    from huragok import steam as steamsetup
 
     nowhere = tmp_path_factory.getbasetemp() / "nothing-is-installed-here"
-    monkeypatch.setattr(contentimport, "_steam_roots", lambda: [])
+    monkeypatch.setattr(steamsetup, "_steam_roots", lambda: [])
     monkeypatch.setattr(steamsetup, "STANDARD_WINDOWS", nowhere / "steamcmd")
     monkeypatch.setattr(steamsetup, "depot_folders", lambda executable, depot: [
         executable.parent / "steamapps" / "content" / f"app_{steamsetup.MCC_APP}" / f"depot_{depot}"])

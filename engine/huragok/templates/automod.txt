@@ -37,8 +37,12 @@
 #
 # Mutes last through restarts and follow the player to every server: Vergil mutes
 # them again as they join, until the time is up.
-# Names: a player whose name has a listed word in it is kicked as they join, every
-# time, until they change it; no strike, no ban. Banned names are in names.txt.
+# Names: a player whose name has a listed word in it (anywhere in it, DasHitler for
+# hitler; [automod] name_match in settings.toml) is kicked as they join, every
+# time, until they change it; no strike, no ban. Other banned names are in names.txt.
+#
+# Admins add a word to a line from the game: !banword word slurs; make a new line:
+# !banword word | 1h 1d | 2, 1d 7d | 5 | slurs; and take one off: !unbanword word.
 #
 # Disguised words (b4dw0rd, b a d w o r d, badwords) are caught without listing them.
 # word* also catches longer words that start with it. -word is never caught.

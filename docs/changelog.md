@@ -1,5 +1,452 @@
 # Changelog
 
+## 0.5.0
+**Moderation you can rely on: every command picks the right player (names with spaces,
+players who share a name told apart and picked by number), mutes that last through
+restarts, a kick or ban that reaches every server, a ban list of its own for every
+server, and the word list changed from the game.** It also checks every mod before a
+game trips over it, and says your interval messages (a Discord link, the rules) on
+every server or just one. Install it with U: your files read as they did. `settings.toml`
+gets two lines under `[automod]` (`name_match`, `across_servers`), `beta = false` under
+`[updates]`, and `"bans"` taken out of `[setup] share`, `commands.toml` has `!banname` moved to `[admin]` as Huragok
+starts, and the new commands listed a couple of minutes later. Servers that shared one
+ban list each get a copy of it as they next start: nobody is unbanned. Huragok's
+folder and every server folder get an `intervalmessages.txt`, with how to set them up
+and no messages until you add some.
+
+- **Interval messages.** `intervalmessages.txt` in Huragok's folder holds the messages
+  every server says, and the one in each server folder that server's own: one per
+  line, how often, a bar, then the message as players read it
+  (`30m | Join us on Discord: discord.gg/yourserver`). Each is said to everyone on the
+  server again and again, after its own time (`30s`, `10m`, `1h`, `1d`, or `1h30m`;
+  once a minute at most), and a long one goes out as a few lines. Messages with the
+  same time take turns: two every 30 minutes go out 15 minutes apart, each every 30
+  minutes, a server's own taking turns with the ones for every server. A message's
+  clock starts when Huragok first sees the server up, and one that comes due while
+  nobody's on (or while the server is down) waits for its next time, so nobody joins
+  to a pile of them. Edits apply within a few seconds, and a message that was there
+  keeps its time. A line that can't be read is left out and named (in the log and in
+  `check`); the others are still said. **D → I** adds messages (a time picked from a
+  list, or typed) and takes them off; a server's page in D has **I** for its own. O
+  opens either file. `check` lists every server's with any line left out and why. The
+  update writes both files, with their notes and no messages; a new server gets its
+  own as it's made. There are no in-game commands for them yet.
+
+- **Is each mod good to go?** Huragok reads every server's mods the way the server
+  program does and says, for each, good to go or what's wrong, before a game trips
+  over it: a map the server skips because no description names it (the server pairs
+  a map with the `multiplayer/*.json` whose `ScenarioFile` ends in the map's file
+  name), an old copy of a map left beside the new one (the live server's
+  `fixedHugeGrassTrapasRemix-old.map`, skipped at every start), a mod made for another
+  game (ignored without a word), a Workshop item missing files or copied in by hand,
+  two maps with one map ID, a Forge layout made on a map that isn't installed, a mod
+  too big for players to download, character mods without Halo 3's 27 multiplayer
+  maps. It shows in G → the server → 3, in `check`, and in the log as Huragok starts
+  and whenever a mod's verdict changes.
+- **What the server says about mods while it runs** is now read: characters or a mod
+  package left out, mods it doesn't share, too many mod maps for one session, Forge
+  objects left out, unreadable variant files. Each is a warning once a start, with
+  what it means. A Workshop download or install that fails (incomplete, an account
+  without MCC, a different item, another game's mod…) is a warning with what to do;
+  some were logged as plain information before.
+- **Why a mod map was skipped, in detail.** When the server can't read a mod's map
+  it says only "its tag index is damaged" (or "its cache is damaged", "it is not a
+  Halo 3 cache", "it has no scenario"), and each of those covers many faults. Huragok
+  now reads the map file the way the server does and adds a `why:` line under the
+  warning naming the part that is broken (a tag table that runs past the end of the
+  map's tag data, more tags than the server takes, a file cut short before its
+  header's length…), with the Workshop upload's date to quote to its author, and
+  what to do. The Workshop screen says the same. A broken upload of HugeGrass
+  Rebalance on 20 October, replaced by its author 45 minutes later, showed the
+  server's reason alone wasn't enough to act on.
+- **Admins change the word list from the game.** `!banword newword slurs` adds a
+  word to the `slurs` line, with its steps (`slur` finds it too); a line that isn't
+  there gets an answer with the command to make it. A new line is written as the
+  file has them: `!banword newword | 10m 30m 1h 1d 7d | 5, 1h, 1d, 3d, 7d | 10 | hate`
+  (in game the times can be split by spaces). It applies at once, in chat and to anyone on with the
+  word in their name; a word the list already catches isn't written twice, and a
+  mistake is answered with what's wrong and nothing written. `!unbanword <word>`
+  takes one off (a line left with no words goes too). Both are admins'.
+- **One list for words and names.** A word in `automod.txt` already kept a name
+  with it out, but only standing alone: with `hitler` listed, the live server's
+  Hitler was kicked and DasHitler and HiElleHitler weren't. Now a listed word
+  catches a name anywhere in it (DasHitler, xXhitlerXx, HITLERFAN), which is the
+  new `[automod] name_match = "anywhere"`. A server that lists short words can pick
+  `"words"`: the name is taken apart where its capitals and digits change and the
+  word must stand on its own (DasHitler yes, dashitler no). Either way a listed
+  number isn't caught inside a longer one (`88` isn't in Mike1988), and a line's
+  `-word` exceptions still let a name through. Every name kick now reads "banned
+  name", whichever list caught it. `names.txt` stays, for a name that isn't a word
+  to ban in chat. Huragok adds the `name_match` line, with what each choice does,
+  to your `settings.toml`.
+- **`!banname` is an admin's command** now, beside `!banword`. If your
+  `commands.toml` has it under `[moderator]` (where every version from 0.4.0 put
+  it), Huragok moves it to `[admin]` once; put it back to keep it your moderators'.
+  Moderators still ban a player's name with `!strike <player> name`.
+- **Names with spaces work in every command.** `!strike nate higgers name` read
+  "nate" as the player and "higgers" as the rule, and so did `!warn`, `!mute`,
+  `!kick`, `!ban` and `!pardonplayer` with any name of more than one word (quotes
+  worked, but nobody knew). The player is now the longest name the line starts
+  with, of someone on the server or a name Vergil has seen: `!mute nate higgers 30m
+  being rude`. A typo after a shorter name (`!kick nate higgins spam`, with Nate and
+  Nate Higgers both on) acts on nobody and asks for the `#number`. Apostrophes in
+  names and reasons stay as typed (they were mangled in `!team`, `!admin add` and
+  some reasons). `!whois` finds someone who left, by a name they used, and
+  `!startvote kick` takes a player as `!kick` does: never by a name's start, never
+  someone of your role or above.
+- **Players who share a name are told apart.** Every command that takes a player now
+  finds them the same way, and when a name is more than one player's it acts on
+  nobody: you get each of them with how their name is written, their team, how long
+  they've been on (or when they were last here, or the server they're on), their
+  role, a mute and the start of their player ID, numbered: `#4` for someone on this
+  server, `@1` for someone who isn't. `!ban @1 7d cheating` bans exactly that one, by
+  player ID. A command declares the player it takes, so every new one gets the same
+  guards (and rank: nobody acts on their own role or above).
+- **Lists to pick from.** `!bans` (admins: who banned, why, how long is left),
+  `!kicks` and `!mutes` (moderators) and `!bannames` number their entries, so `!unban
+  @2`, `!pardon @1`, `!unmute @3` and `!unbanname @1` lift exactly the one picked;
+  given a name that's on more than one entry, `!unban` and `!pardon` ask. `!players
+  nate` lists only the players with "nate" in their name, with their #numbers, team
+  and time on: a busy server has more players than one answer shows.
+- **The word list and banned names from the game.** `!rules` shows each line's name,
+  words and what its strikes do (`!rules slurs` one in full); `!bannames` lists the
+  banned names; `!changebanword slurs | 30m 2h | 1, 1d 3d | 5` gives a line new steps,
+  its words and name kept (admins).
+- **What a player said.** `!said <player> [lines]` (moderators) shows the last lines
+  they typed in chat, on any server, even after they left. Every player's chat line
+  is kept 30 days in Huragok's records for it.
+- **A mute lasts its time, and reaches someone who left.** The server forgets every
+  mute when it restarts, so `!mute Bravo 1d` ended at the next crash, daily restart
+  or watchdog restart. Vergil now keeps every mute as it keeps its own (a
+  moderator's `!mute`, an admin's own in game, one from the relay or the console),
+  muting the player again as they join until the time is up (no time: until
+  `!unmute`). `!mute` on someone who isn't on puts it on the list for their player ID,
+  to start as they next join, never on whoever takes the name meanwhile. The automod
+  database gains a 4th step (a table of these mutes), the commands' their 1st (the
+  chat lines; a 2nd, below); a version before reads them as they were.
+- **Vergil on, dry run or off for each server**, on the server's page in the window
+  (Huragok's own), applied at once: a server without its own follows `[automod]
+  dry_run`. Mutes already decided still follow players everywhere. The window's top
+  line and the status card show each server's.
+- **`!` for every server, `/` for one.** What Huragok does reaches every server
+  (`[automod] across_servers`, on by default, changed in the window): a `!mute` or
+  Vergil's mute follows the player to any server they join; a `!kick` keeps them off
+  every server until its time is up, kicked as they join one with where and why; a
+  `!ban` reaches every server with a ban list of its own, and so does an `!unban`.
+  The game's own `/kick` and `/ban` (and a `/mute`, when the game has one) and votes
+  stay on the server they were used on: Huragok writes them on the player's record
+  and does nothing else with them. The server tells the two apart for Huragok: it
+  names an admin in game "LilGremlin", and anything through the console "LilGremlin
+  (RCON)". Each server's moderation commands stay its own: `!kick` and `!mute` for
+  someone on another server say where they are. Huragok adds the line, with what it
+  does, to your `settings.toml`.
+- **Every server keeps its own ban list, and Huragok keeps one of its own.** Up to
+  0.4.4 new servers shared one `bans.json` at the root, so a `/ban` on one server
+  was every server's and a `/ban` couldn't stay on one. Now every server has a ban
+  list of its own, always: it isn't a setting (`[setup] share` takes `"game"` and
+  `"content"` only, and Huragok takes `"bans"` out of yours). Huragok keeps a list
+  of the bans it gives (`!ban`, Vergil, the relay, the window's console) and puts
+  each on every server's: as it's given, again whenever a server's console connects
+  and every 10 minutes (a server added since, or a list that was reset), and on a
+  player who joins a server that doesn't have it yet. Where a ban was given, that
+  server's own list rules. An `!unban` takes one off Huragok's list and every
+  server's. An admin made with `!admin add` or `!promote` is one on every server the
+  same way (and taken off them all with `!admin remove` or `!demote`). A server that
+  shares the old list gets a copy of it as it next starts, the moment the server
+  reads where its list is (never while it runs), with everything on it: no ban,
+  admin, vote-kick immunity or VPN allowance is lost, and the shared file stays
+  where it was. VPN allowances are each server's from then on. The commands'
+  database gains a 2nd step (Huragok's list); a version before reads it as it was.
+- **A `/ban` made every server's.** `!bans` says of each ban whether it's on every
+  server or only this one, and `!banall @2` (or a name or player ID; admins) puts
+  one of this server's on Huragok's list, and so on every server's, with its time
+  left, its reason and who gave it: for when instinct reached for `/ban`. The
+  window's B screen does the same with E (by the player ID, address or name the
+  list shows), and says which of its choices reach every server.
+- **Checked again for one server or every server.** After the ban lists split, every
+  command was gone over again for anything still assuming one server or one shared
+  list. `!whois` says where someone is banned now from every server's own list ("banned
+  on every server, 6d left (by Owner: cheating)", "banned on Other, 3d left (/ban by
+  LilGremlin: spam)"); before, it took the latest ban or unban anywhere. A `!kick` keeps
+  the player off every server, and now so does its pardon: `!kicks` on any server
+  lists the `!` kicks keeping someone off it, and `!pardon` (or a pardon from the
+  window or the relay) lifts it where it was given. `!pardonplayer` lifts Vergil's
+  kick or ban on the server where Vergil gave it, not the one it's typed on. An admin
+  added or removed from the window or the relay is every server's, as `!admin`'s are.
+  A server that was down when a ban or an admin came off Huragok's list has it taken
+  off as it connects again. `!unmute` of someone on another server says where they
+  are, as `!mute` does, instead of leaving them muted there. Only an unmute through
+  the console ends a mute Vergil keeps for every server: the game's own (a `/unmute`,
+  when it has one) is that server's.
+- **Your calls on what that audit found.** Only a ban through Huragok (`!ban`,
+  Vergil's, the relay's, the window's) takes a player's roles away; the game's own
+  `/ban` is that server's, and the roles stay. A player is protected by the highest
+  role they hold on any server: admins are each server's own, and a `!` command
+  reaches every one, so an admin of one server can't `!ban` an admin of another, and
+  `!roles` lists every server's admins ("(on LG Testing Grounds)" for one who isn't
+  an admin everywhere). `!unban` lifts Huragok's ban on every server and leaves
+  another server's own `/ban` of the player, saying where it is ("Still banned on
+  Other by LilGremlin (/ban: spam)"). The bans your servers shared before this
+  version go on Huragok's list as Huragok starts (they were every server's when
+  given), so a server you add later gets them too and `!bans` says "every server";
+  each list is read once, so a ban taken off later stays off. The commands' database
+  gains a 3rd step for it.
+- **A player's whole record.** Every kick, mute, ban and warning goes in Huragok's
+  ledger however it was given (a `!` command, the game's `/kick` or `/ban`, Vergil,
+  a vote, the relay or console), with who did it, why, for how long and on which
+  server. `!whois <player>` reads it back as a rap sheet: who they are and where (on
+  a server, or when they were last here), their other names, what's on them now (a
+  mute and how long it has left, a kick still keeping them out, a ban), the totals
+  ("1 ban, 2 kicks, 1 mute, 1 warn: 2 by !, 1 by /, 1 by vote"), their strikes on
+  each line, and the latest entries, each saying how (`!kick`, `/kick`, Vergil, a
+  vote, the console): `!whois bravo 15` shows more.
+- **Admins switch voice from the game.** `!toggleglobal` (V, everyone hears),
+  `!toggleteam` (B, teammates) and `!toggleproxy` (N, players nearby) turn that
+  channel on or off on the server they're typed on; `on` or `off` after one sets it
+  rather than switching it over, and a time (`10m`, `2h`, `1d`) switches it back once
+  that's up, either way. `!togglevoice` turns all voice off for 10 minutes, for
+  stopping voice spam: it comes back on by itself, or at once when typed again.
+  Everyone reads each change as a `[Server]` line, with how long, and again when it
+  switches back. Each writes the key in that server's own block of `dedicated.toml`
+  (never `[defaults]`, which every server in the file reads), and the server applies
+  it within seconds: no restart, nobody dropped. A timed toggle lasts through a
+  restart of Huragok, and someone changing the setting meanwhile wins. The admin is
+  told when `voice = false` keeps everyone quiet anyway, when all three channels are
+  off, when the file's `auto_reload` is off (it waits for `!reload`), and why, if the
+  server refuses the file. They're listed under `[admin]` in `commands.toml` a
+  couple of minutes after Huragok starts, as the other new commands.
+- **Admins restart the server from the game.** `!restartserver [reason]` restarts
+  the server it's typed on when it's running poorly and needs a fresh start: the
+  same restart as the window's R with players on, so everyone reads the usual
+  countdown (`[restarts] warn_seconds`, 5 minutes unless you changed it) with the
+  reason and who asked ("Server restarting in 5 minutes: lag (requested by
+  Alice)."), and it goes at once if everyone leaves. A countdown already under way
+  keeps its time and ends in a restart. A person's restart, it isn't counted
+  against `restarts_per_hour` (the budget that stops automatic restarts looping).
+  Listed under `[admin]` in `commands.toml` as the other new commands.
+- **The relay holds the ranks.** A moderator using the relay could kick or mute an
+  owner, since the server's console acts with the host's authority. `kick`, `ban`,
+  `banip`, `mute` and `startvote kick` through the relay are now refused on anyone of
+  the user's role or above, as in game.
+- **An update that has to be put back can always start.** Up to 0.4.4 a command in
+  `commands.toml` that the running version didn't have stopped Huragok starting.
+  Huragok lists each new command in your `commands.toml` as it updates, so a new
+  version that failed to start and was put back would have met `!banword` there and
+  stopped. New commands are now listed only once the new version has been up two
+  and a half minutes, past the point where it would be put back (until then they
+  work all the same, under their default role). And from this version on, a
+  command the file lists that Huragok doesn't have (a typo, or a newer version's)
+  is a warning in `check` and the log, and that line does nothing.
+- **New installs look for a new Huragok every hour** (`[updates] check_hours = 1`, was
+  6). A host's own `settings.toml` keeps the value it has: set `check_hours = 1`
+  there (or in D) for hourly looks.
+- **Beta releases, for hosts who want them.** `[updates] beta = true` (D → Huragok's
+  own → Huragok's updates) offers Huragok's beta releases too, to try what's coming
+  before it's a full release; a beta can have bugs the full release won't. It's off
+  unless you turn it on: then only full releases are offered, as before (and as every
+  version up to 0.4.4 does, whatever this says: they ask GitHub for its latest full
+  release). With it on, the newest version wins, so a full release passes the betas
+  that led up to it. Turning it off doesn't go back to the last full release: the
+  beta you have stays until a full release newer than it is out. The window's HURAGOK
+  line and `start.cmd update` say when what's offered is a beta. The update adds the
+  line, off, to your `settings.toml` (a `# beta = …` you wrote yourself is left as it
+  is). Versions are now compared with their beta part: 0.5.0-beta.1 comes before
+  0.5.0-beta.2, which comes before 0.5.0.
+- **Huragok's code is laid out by its three named parts.** Nothing you see or keep
+  changed: the window, the commands, every file of yours and what each setting does
+  are as they were. Inside `engine/huragok`, `huragok.py` builds the Superintendent
+  (`superintendent.py`, the servers) and then Vergil (`vergil.py`, the players), and
+  every other module sits in the folder of what it serves: `servers/`, `players/`,
+  `games/` (one module per game), `program/` (the server program), `content/`,
+  `updates/`, `window/`, `commandline/`, with `core/` under them all. Each folder uses
+  only the ones below it, and a test fails if one reaches up. The tests are laid out
+  the same way. `docs/development.md` says where everything is. Two things come of it
+  for hosts: an update from now on loads all of the running version before it swaps
+  the files, so the old Huragok never runs a piece of the new one while it waits to
+  restart, and the files an update from 0.4.0 to 0.4.4 still needs are kept where
+  those versions look for them (checked by a test). `huragok.log` names the new
+  modules (`servers.server:` where it said `manager:`); a second window still tags an
+  older version's lines.
+- **What a server plays, put right in several places.**
+  - A custom game played on its own (D → What it plays → a saved custom game, or G →
+    Custom games → P) now picks its maps. One map plays it every game; three or more
+    make a playlist players vote on, checked by the server program before it's
+    saved. Two maps can't be played: the server has no rotation without a vote, and
+    a playlist needs three games. It used to play on Guardian every game, because
+    nothing named a map.
+  - Halo 3's own 49 game variants (`team_slayer`, `multi_flag`, `HARDCORE TS`…) are
+    in G's and D's lists again. From 0.9.20 the server's listing only counts them;
+    Huragok now asks for them.
+  - An ODST server from 0.9.21 takes `map`, `mode`, `load`, `nextmap` and `endgame`
+    from its console, so Huragok passes them on and leaves the rest to the server's
+    own answer. On older versions they're refused as before.
+  - Picking ODST again in D keeps what D doesn't ask about (0.9.21's Firefight
+    options, story characters). Switching between Firefight and a campaign mission
+    says what it left out.
+  - A playlist is checked by the server program before it's used (G → U, D → What it
+    plays, `playlist use`). One the server can't play is named, with what's wrong,
+    and the playlist it plays stays as it was.
+  - After a change, the message says when it applies, from the kind of game it played
+    before: from the next vote, from the next game, or once nobody is on.
+  - A package saved from a server keeps the custom games and map variants that its
+    playlist (or the server itself) names by name.
+  - A custom game a server plays by name can't be deleted.
+  - `playlist list` shows a playlist the server can't read, and why.
+  - `check` names files in a server's content folder that aren't MCC variant files
+    (the server skips each at every start). `check --set-aside`, or the window's C,
+    moves them to a "content set aside" folder beside it; nothing is deleted.
+- **Nothing the server would refuse is saved, and no playlist is lost.**
+  - Every change to what a server plays is checked first by that server's own
+    program, the way its start and its reload check it: a playlist as it's saved or
+    used, one map and game type, a custom game, campaign, ODST. The check runs on a
+    draft beside the server's file (its own port, nothing started), and only what the
+    change brings counts: a problem the server has already doesn't hold it up. Two
+    games the same are caught at once, whatever each is called. A playlist the server
+    can't play used to be saved anyway when no server played it yet; now it never is.
+  - When the check refuses a playlist, the window stays on it. Each problem is named
+    with the game it's about ("game 2 (Slayer on Atlantis): Map 'Atlantis' was not
+    found"), and the fixes are right there: take those games out and check again,
+    change them in the editor, or leave it unsaved, with the draft kept.
+  - Every version of every playlist is kept, with how it was made and where it came
+    from: saved in G, a package, the labels written at a start, a version put back, a
+    change made by hand (found the next time Huragok looks), a draft left unsaved.
+    G → Playlists → H shows them, with what each holds, and puts one back through the
+    same check. They're in `records/playlists/`.
+  - Choices in a playlist are written as numbers, which every program version takes
+    the same; the window shows their names. A playlist written with names keeps them
+    until Huragok next saves it, and its history keeps the original.
+- **What's playing, and what players pick.**
+  - Huragok reads each playlist ballot from the server's log: the ballot opening, the
+    game picked, and how many of that game's own rules and options were applied. V's
+    "What it plays" shows the game the last ballot picked, what's up next (a game set
+    from the console, or "players are voting now"), the playlist's most picked games,
+    and, in red, a change the server refused, with what it plays meanwhile.
+  - Every pick is kept, by playlist. G → Playlists → P shows each game of a playlist
+    with how often it was picked and its share, marks the ones never picked, and lists
+    picks of games the playlist no longer has. It counts every server that plays a
+    playlist of that name, from when Huragok first saw one of its ballots.
+- **G is where everything about what a server plays lives.** It's called "What it
+  plays" now. A server's page opens on what it's set to, what's on now and next, and
+  what players pick. W sets what it plays (the same steps D had), and D → What it
+  plays opens the same page.
+  - A playlist (G → Playlists → C) or a custom game (G → Custom games → O) can be copied
+    to every other server or the ones picked. Each copy is checked first by that
+    server's own program, against its own content: a server that lacks a map or
+    variant the playlist names keeps what it has, and says what's missing. A playlist
+    a server had of its own under that name is replaced only when asked, and stays in
+    its history.
+- **The watchdog counts memory as the window does.** `[watchdog] memory_mb` was
+  compared with a count in millions of bytes, while V and the dashboard show megabytes
+  as Task Manager does (1,048,576 bytes each), so a limit set from the number V shows
+  acted about 5% early. Both now use the same count, and a helper process that ends
+  while it's being counted no longer leaves that minute's check without a number.
+- **Fixed in the audit before 0.5.0.**
+  - An update from 0.4.0 to 0.4.4 could leave the old Huragok, still running while it
+    waited to restart, unable to start or stop a server on Windows (it couldn't load the
+    new folder's `winproc.py`): a countdown's stop failed, and a server that crashed then
+    couldn't be started until the new version ran. The file now loads in that old process.
+  - `!banall` let an admin spread the game's own `/ban` of an owner, or of a fellow admin,
+    to every server: it now holds to the ranks as `!ban` does. On a ban whose time had run
+    out it failed instead of saying so (and failures switch the commands off for a while).
+  - A player could name themselves `Someone (RCON)`, which is how the server marks what
+    came through the console: their own `/ban` or `/kick` was then taken for Huragok's,
+    put on every server, and the target's roles taken away. A name a player on that
+    server has is never taken for the console now.
+  - A package someone shared could set `admins` or `rcon_password` under `[defaults]`,
+    making its author an admin of every server built from it, or giving them its console:
+    a package can't set those there either now (it never could under `[server]`).
+  - Clean up (U → 4) offered `records/previous-files/`, the copies of your files from
+    before each update brought them up to date, as "an older Huragok": it never does now.
+  - A watchdog case seen while a server was busy (say, everyone dropped during a stop's
+    countdown) could start the server again after a person stopped it, or hold up a
+    Huragok closing or updating. It only restarts a server that's running.
+  - A restart of your own (R, S, `!restartserver`) after a server faulted for too many
+    automatic restarts in an hour faulted it again for the next hour: only automatic
+    restarts are held to `restarts_per_hour` now.
+  - With all of Huragok in dry run (`dry_run = true` at the top of `settings.toml`), a
+    server set to Vergil "on" told players of strikes that were never carried out, and
+    its strikes never went past the first: it's in dry run too now ("off" stays off).
+  - A character pasted from the web that Python counts as a line break (U+2028) in
+    `automod.txt` or `names.txt` could turn a note's tail into a live rule, and make
+    `!unbanword` or a change from the window take out the wrong line.
+  - `!banname #9` for a player who had just left banned the name "9", kicking everyone
+    with a 9 in their name: it says nobody is #9 now. A time of `0m` in the word list is
+    never sent to the server, which might read 0 as no end: a kick of `0m` is the server's
+    plain kick, a mute of `0m` kicks instead (as the line does without mutes), `check` and
+    the log name the line, and a new `0m` isn't written (`!banword`, the window). A word list
+    with one still loads. `!pardonplayer` says again when the server's ban list couldn't be
+    read.
+  - `check --set-aside` (and the window's offer to move unreadable content aside) stopped
+    at the first file it couldn't move: the others still move, and each that couldn't is
+    named. A mod's files in a folder called `mods` (not `Mods`) are no longer taken for
+    unreadable variants. Mod descriptions and custom games saved with a byte-order mark
+    (as some Windows editors do) are read. A number like `²` typed into the window, or in
+    a mod's description, is refused instead of failing.
+  - The check of what a server plays ran its draft on the server's own console port and
+    with its Workshop items: now on a port of its own and without them. A playlist whose
+    name has a `"` in it is listed as readable; ballot playlists named like `1.10` and a
+    count of 0 overrides are read as they are.
+  - `start.cmd say` and `start.cmd rcon` without Huragok running stopped at a server whose
+    console connection broke, instead of saying so and going on. A failed install no
+    longer leaves U answering "not installed" until Huragok restarts. Copying a playlist or
+    custom game to another server no longer holds the window up while it finds that
+    server's program, and says when the servers picked aren't among the choices.
+  - Typing `inf` or `nan` for a number setting in D is refused; SteamCMD's folder is put
+    on PATH for a Windows account with an apostrophe in its name; a console command passed
+    on from the game (`!map`, `!servername`…) refuses new lines, as the relay does.
+  - **A frozen server no longer holds up the others.** What Huragok passes on to every
+    server (a ban, an unban, an admin, a kick, a pardon, its list put back as a server
+    connects) used to go to each server in turn, waiting for each: a server frozen with its
+    console still connected made each one wait out the console's timeout, and two of them
+    were enough to run a command past the in-game commands' time limit, which counts as a
+    failure (five switch the commands off for a while). Each server has a queue of its own
+    now, worked through in the background a moment apart: the other servers get it at
+    once, the frozen one only holds up itself, and the command answers straight away.
+    `!banall` says which servers haven't taken the ban yet; `!unban` names the servers
+    that didn't answer when it looks for their own bans (6 seconds at most).
+  - **Lookalike letters, in the word list and in names.** Capital Greek letters (`ΒΑΝΗΑΜΜΕR`),
+    small capitals (`ʙᴀɴʜᴀᴍᴍᴇʀ`) and "fancy text" makers' boxed and circled letters got past
+    the word list: they're read as the letters they look like now. And a name that only
+    looks like the one typed is never acted on: `!kick bravo` for a player who wrote
+    `ΒRAVO` (a Greek Β) answers that nobody is called that and lists who looks like it, to
+    pick by number; with the real Bravo on too, it lists both, so an impersonator can't get
+    the real player kicked.
+  - `!whois Player 2` read the 2 as a number of lines when "Player 2" was on: it's his
+    name now, and with "Player" on too it asks which was meant.
+  - Work Huragok starts to run by itself (a reply in game, a restart, an install, a ban
+    passed on: 21 places) is kept until it ends, a failure is logged at once saying what it
+    was, and it's called off cleanly as Huragok closes, before its database closes.
+  - A beta whose tag and version are written differently (`v0.5.1-beta.1`, `0.5.1b1`) is
+    one version everywhere: one that failed to start isn't installed again every hour.
+    Clean up keeps the newest beta's backup (0.5.0-beta.10 is newer than beta.2).
+  - Huragok unzipped by hand over an older one (0.4.x's `parts/` folder left in place)
+    stops with a message saying to delete the `engine` folder first, instead of running a
+    mix of two versions.
+  - Vergil's own strikes reach the other servers a player is on through each server's
+    queue too (the server they said it on is acted on at once), and so do its name kicks
+    and the mutes it puts back: a frozen server could otherwise hold the automod up past its
+    time limit, again and again, until it switched itself off.
+  - Copying a playlist or custom game over one the other server plays now says so before
+    replacing it (and that it plays the copy from its next vote or game). A custom game a
+    server plays by its file name without the extension counts as played, so it isn't
+    deleted from under it. Leaving a draft unsaved no longer shows the playlist as "changed
+    outside Huragok" afterwards. G's line saying how the server is doing stays up to date,
+    and V's card and G are put together without holding the window up.
+  - Halo 3's, ODST's and the campaign's files are never fetched into MCC's own folder (a
+    `game/` that's a link to it): the server waits and says why. Making a new server that
+    copies Halo 3's files from MCC puts them into `game/` beside what's there (ODST's
+    files, or what's being fetched), instead of deleting it first.
+  - A server's record, or the list of running servers, that can't be written for a moment
+    (antivirus, a full disk) no longer counts one crash several times, or leaves a server
+    that just started running with nobody looking after it. A daily restart close to
+    midnight (23:45) is still made when the server was busy until just after it.
+  - With `[updates] beta` off, a beta published by mistake as a full release isn't
+    offered; and only the release's own `huragok-<version>.zip` (with its checksum) or
+    GitHub's zip of the tag is ever downloaded, never another zip attached to it.
+  - Linux: SteamCMD's saved sign-in is found in `~/Steam`, where `steamcmd.sh` keeps it,
+    and installing SteamCMD works on any Python 3.11 (3.11.0 to 3.11.3 lack the tar filter
+    it used).
+
 ## 0.4.4
 **The servers run at High priority, Vergil's rules can be as long as you like, and a
 strike can kick and mute.** It also fixes the log reader stopping each time a player

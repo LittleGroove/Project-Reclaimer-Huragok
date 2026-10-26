@@ -1,67 +1,45 @@
-"""Windows: start `dedicated` so it outlives us, and stop it cleanly with Ctrl+Break.
+"""Kept at this path for Huragok 0.4.0 to 0.4.4.
 
-Tested against v0.9.18:
-- Ending `dedicated` ends its servers too, so `dedicated` must not depend on us:
-  it gets its own window-less console and process group, and writes its output
-  to a file (a pipe would break if we exited, and a program writing to a broken
-  pipe can crash).
-- Ctrl+Break makes it print "Stopping every server… All servers stopped." and exit
-  in well under a second. Windows only delivers console signals to processes on
-  the same console, so a small helper process attaches to `dedicated`'s console
-  and sends it. That works after our own restart too.
+An update swaps engine/huragok while the old Huragok is still running (it installs the Python packages, then waits
+for any server part way through a restart before it restarts on the new version). Its imports inside functions then
+read this folder, and the first start or stop of a server on Windows imports `huragok.winproc`: these names, with
+the same meaning, keep that working. Everything new imports `huragok.core.winproc`.
+
+In that old process `huragok.core` is 0.4.x's own core.py, a module and not this folder's package, so
+`huragok.core.winproc` can't be imported there: core/winproc.py (the standard library only, the same code as every
+0.4.x winproc.py) is then loaded by its path.
+tests/updates/test_from_0_4.py checks that what 0.4.x imports from here is still here, and loads in such a process.
 """
 
-from __future__ import annotations
-
-import os
-import subprocess
+import importlib.util
 import sys
-
-CTRL_BREAK_EVENT = 1
-CREATE_NEW_PROCESS_GROUP = 0x00000200
-CREATE_NO_WINDOW = 0x08000000
-DETACHED_PROCESS = 0x00000008
-CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-ERROR_ACCESS_DENIED = 5  # what CreateProcess says to a breakaway the job doesn't allow
+from pathlib import Path
+from types import ModuleType
 
 
-def creation_flags(*, breakaway: bool = False) -> int:
-    """`dedicated`'s own process group, no window; with breakaway, outside the job object Huragok runs in (if any:
-    without one the flag does nothing), so ending that job doesn't end the servers."""
-    flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    return flags | CREATE_BREAKAWAY_FROM_JOB if breakaway else flags
+def _core_winproc() -> ModuleType:
+    core = sys.modules.get(f"{__package__}.core")
+    if core is None or hasattr(core, "__path__"):  # this version's own process: core/ is the package
+        from .core import winproc
+
+        return winproc
+    path = Path(__file__).with_name("core") / "winproc.py"
+    spec = importlib.util.spec_from_file_location(f"{__package__}._winproc_for_0_4", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"can't load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def send_ctrl_break(pid: int) -> int:
-    """Run inside the helper process: attach to pid's console and send Ctrl+Break.
-
-    Returns 0 on success. Only call this in a process of its own: it gives up
-    the caller's console.
-    """
-    import ctypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.FreeConsole()
-    if not kernel32.AttachConsole(pid):
-        return 2
-    kernel32.SetConsoleCtrlHandler(None, True)  # don't stop ourselves
-    ok = kernel32.GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)
-    kernel32.FreeConsole()
-    return 0 if ok else 3
-
-
-def ctrl_break_helper_command(pid: int) -> list[str]:
-    """The command that runs send_ctrl_break(pid) in a process of its own."""
-    if getattr(sys, "frozen", False):  # a bundled build: the executable is our CLI
-        return [sys.executable, "_ctrl-break", str(pid)]
-    return [sys.executable, "-m", "huragok", "_ctrl-break", str(pid)]
-
-
-def ctrl_break(pid: int, timeout: float = 10.0) -> bool:
-    """Ask the process (and its process group) to stop cleanly. True if it was sent."""
-    if os.name != "nt":
-        raise OSError("Ctrl+Break is Windows-only")
-    result = subprocess.run(ctrl_break_helper_command(pid), creationflags=DETACHED_PROCESS,
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, timeout=timeout)
-    return result.returncode == 0
+_winproc = _core_winproc()
+CREATE_BREAKAWAY_FROM_JOB = _winproc.CREATE_BREAKAWAY_FROM_JOB
+CREATE_NEW_PROCESS_GROUP = _winproc.CREATE_NEW_PROCESS_GROUP
+CREATE_NO_WINDOW = _winproc.CREATE_NO_WINDOW
+CTRL_BREAK_EVENT = _winproc.CTRL_BREAK_EVENT
+DETACHED_PROCESS = _winproc.DETACHED_PROCESS
+ERROR_ACCESS_DENIED = _winproc.ERROR_ACCESS_DENIED
+creation_flags = _winproc.creation_flags
+ctrl_break = _winproc.ctrl_break
+ctrl_break_helper_command = _winproc.ctrl_break_helper_command
+send_ctrl_break = _winproc.send_ctrl_break

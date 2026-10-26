@@ -1,0 +1,1 @@
+"""Huragok's updates: its own engine (engine.py), the Workshop's items (workshop.py), and the host's own files brought up to date after an update (hostfiles.py). The server program's releases are program/releases.py."""

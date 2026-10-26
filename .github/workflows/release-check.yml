@@ -1,0 +1,78 @@
+name: Release check
+
+# The rule (docs/development.md, "Releasing"): a beta is always a GitHub pre-release. Hosts with [updates] beta off,
+# and every Huragok up to 0.4.4, ask GitHub for its latest release, which never names a pre-release: that mark alone
+# keeps a beta from them. A beta published without it is marked here at once, and the run fails so it's seen.
+# Also checked: the release carries huragok-<version>.zip (GitHub lists its SHA-256, which Huragok checks), and the
+# version inside it is the tag's.
+
+on:
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: write  # to mark a beta as a pre-release
+
+jobs:
+  release:
+    name: a beta is a pre-release, and the zip is the tag's version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
+      DRAFT: ${{ github.event.release.draft }}
+    steps:
+      - name: a beta tag is a pre-release
+        run: |
+          kind=$(python3 - "$TAG" <<'PY'
+          import re, sys
+          tag = sys.argv[1]
+          found = re.match(r"\s*v?(\d+(?:\.\d+)*)(.*)", tag)
+          if not found:
+              print("not-a-version")
+          else:
+              rest = found.group(2).split("+", 1)[0].strip()
+              print("beta" if rest else "full")
+          PY
+          )
+          echo "$TAG is $kind (pre-release: $PRERELEASE, draft: $DRAFT)"
+          if [ "$kind" = "not-a-version" ]; then
+            echo "::error::$TAG isn't a version number: Huragok can't offer it (tags are v0.5.1, v0.5.1-beta.1)"
+            exit 1
+          fi
+          if [ "$kind" = "beta" ] && [ "$PRERELEASE" != "true" ] && [ "$DRAFT" != "true" ]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
+            echo "::error::$TAG is a beta but was published as a full release: it is marked as a pre-release now."
+            exit 1
+          fi
+          if [ "$kind" = "full" ] && [ "$PRERELEASE" = "true" ]; then
+            echo "::error::$TAG is a full release marked as a pre-release: only hosts with beta on are offered it."
+            exit 1
+          fi
+      - name: the release's zip holds the tag's version
+        if: ${{ github.event.release.draft == false }}
+        run: |
+          version="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "huragok-*.zip" --dir /tmp/zip \
+            || { echo "::error::$TAG has no huragok-<version>.zip: hosts would get GitHub's source zip, unchecked"; exit 1; }
+          unzip -q /tmp/zip/huragok-*.zip -d /tmp/release
+          init=$(find /tmp/release -path "*/engine/huragok/__init__.py" | head -1)
+          inside=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$init")
+          python3 - "$version" "$inside" <<'PY'
+          import re, sys
+          RANKS = {"dev": 0, "a": 1, "alpha": 1, "b": 2, "beta": 2, "c": 3, "pre": 3, "preview": 3, "rc": 3}
+          def key(text):  # as engine/huragok/core/web.py version_key reads a version
+              found = re.match(r"\s*v?(\d+(?:\.\d+)*)(.*)", text)
+              numbers = tuple(int(n) for n in found.group(1).split("."))
+              rest = found.group(2).split("+", 1)[0].strip().lower()
+              if not rest:
+                  return numbers, 4, 0
+              stage = re.match(r"[-._]?([a-z]+)[-._]?(\d*)", rest)
+              return (numbers, 0, 0) if not stage else (numbers, RANKS.get(stage.group(1), 0), int(stage.group(2) or 0))
+          tag, inside = sys.argv[1], sys.argv[2]
+          if key(tag) != key(inside):
+              sys.exit(f"::error::the zip says __version__ = {inside!r}, the tag says {tag}: Huragok refuses to install it")
+          print(f"the zip is {inside}, as the tag says")
+          PY

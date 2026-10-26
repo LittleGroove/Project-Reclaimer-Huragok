@@ -9,15 +9,16 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from conftest import ALICE, BRAVO, free_port, wait_for, write_server_folder, write_settings
-from fake_rcon import PASSWORD, FakeRcon
 from websockets.asyncio.server import serve
 
+from conftest import ALICE, BRAVO, free_port, wait_for, write_server_folder, write_settings
+from testkit.fake_rcon import PASSWORD, FakeRcon
+
 from huragok import rcon
-from huragok.config import load
-from huragok.events import Event, EventBus
+from huragok.core.events import Event, EventBus
+from huragok.core.settings import load
 from huragok.rcon import RconClient, RconUnavailable, Reply, is_lockout, one_shot, url_for
-from huragok.state import Player, StateTracker
+from huragok.servers.state import Player, StateTracker
 
 
 def _client(tmp_path: Path, port: int, host_key: str | None = "k" * 64) -> tuple[RconClient, list[Event]]:
@@ -282,6 +283,28 @@ def test_the_console_never_goes_through_a_proxy(tmp_path: Path, run, monkeypatch
     run(scenario())
 
 
+def test_a_one_shot_whose_connection_breaks_is_an_rcon_error(tmp_path: Path, run) -> None:
+    """`start.cmd say all …` without Huragok: a console that closes mid-answer, or something on the port that
+    answers in anything but JSON, is an RconError, so the command says so and goes on to the next server."""
+    async def closes(ws: Any) -> None:
+        await ws.recv()
+        await ws.close()
+
+    async def babbles(ws: Any) -> None:
+        await ws.recv()
+        await ws.send("this isn't JSON")
+
+    async def scenario() -> None:
+        for handler in (closes, babbles):
+            port = free_port()
+            async with serve(handler, "127.0.0.1", port, subprotocols=["reclaimer-rcon"]):
+                client, _ = _client(tmp_path / handler.__name__, port)
+                with pytest.raises(rcon.RconError, match="the console connection failed"):
+                    await one_shot(client.server, "say", "hello")
+
+    run(scenario())
+
+
 # The live picture the console keeps (state.py) ----------------------------------------------------------------
 
 class Held:
@@ -428,3 +451,23 @@ def test_moves_to_the_host_spot_when_the_key_appears(tmp_path: Path, run) -> Non
             await asyncio.wait_for(task, 3)
 
     run(scenario())
+
+
+def test_the_ban_list_in_one_shape(run) -> None:
+    """rcon.ban_list: what every reader of the console's `bans` gets, entries that aren't dicts left out."""
+
+    class Console:
+        def __init__(self, reply: Any) -> None:
+            self.reply = reply
+
+        async def command(self, *words: str) -> Any:
+            assert words == ("bans",)
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+    listed = Reply(True, "", {"players": [{"id": "ab12"}, "junk"], "ips": None}, {})
+    assert run(rcon.ban_list(Console(listed))) == ({"players": [{"id": "ab12"}], "ips": []}, "")
+    assert run(rcon.ban_list(Console(Reply(False, "not now", None, {})))) == (None, "not now")
+    assert run(rcon.ban_list(Console(RconUnavailable("not connected")))) == (None, "not connected")
+

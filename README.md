@@ -61,7 +61,7 @@ console, its files and its `dedicated` command), and it changes a server's
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   SUPERINTENDENT  [S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server
   VERGIL          [P] Players  [M] Message  [A] Console  [B] Bans & admins
-  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check
+  HURAGOK         [N] New server  [G] What it plays  [I] SteamCMD  [D] Settings  [C] Check
                   [O] Open  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   RECENT EVENTS  ·  SUPT Superintendent  VRGL Vergil  HRGK Huragok  ·  logs/huragok.log has them all
@@ -109,7 +109,8 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
    ```text
    C:\reclaimer\                  the root: Huragok
      start.cmd  start.sh          ← how your servers start from now on
-     settings.toml  commands.toml  automod.txt  names.txt    yours, written on the first start
+     settings.toml  commands.toml  automod.txt  names.txt  intervalmessages.txt
+                                  ↑ yours, written on the first start
      SERVERS\                     one folder per server
        Big Team Battle\           what `dedicated init` makes: dedicated.toml,
        Slayer\                    project-reclaimer.exe, game\, data\, bans.json…
@@ -124,7 +125,7 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
    `dedicated.toml` usually holds one `[[server]]`; two folders must not use the
    same server name or port. Switch RCON on in each: set `[rcon] password`.
 3. **Start it** (Windows: double-click `start.cmd`; Linux: `./start.sh`). The first
-   time, it installs what it needs (into `engine\.venv`), writes four files and the
+   time, it installs what it needs (into `engine\.venv`), writes five files and the
    `PACKAGES\` folder for you, and stops with the window held open to read them
    (Windows may first warn that the publisher couldn't be verified, because the
    file came from the internet: choose **Run**):
@@ -135,6 +136,7 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
    | `commands.toml` | Who's who among your players, and which in-game commands each role can use |
    | `automod.txt` | automod's word list |
    | `names.txt` | the banned names |
+   | `intervalmessages.txt` | interval messages every server says (a Discord link, the rules); each server folder has one of its own |
    | `PACKAGES\` | seven starter packages for new servers (Team Slayer, Big Team Battle, MLG Hardcore, Infection, Scripted Modes, Campaign Co-op, ODST Firefight); see [docs/setup.md](docs/setup.md) |
 
 4. **Make yourself owner:** put your player ID under `[owner]` in `commands.toml`
@@ -180,7 +182,7 @@ The face shows the worst thing going on:
 
 Every screen is laid out the same way: a title naming the part whose screen it is
 (`SUPERINTENDENT › RESTART`, `VERGIL › BANS, ADMINS AND THE VPN BLOCK`), headings
-that show where you are as a path (`LG Test Server › Game content › Playlists`),
+that show where you are as a path (`LG Test Server › What it plays › Playlists`),
 numbered lists, and a block of `[key]` options with the way back beneath it. Log
 lines and server events that arrive while a question waits are held, shown
 together once they stop, and the question is asked again beneath them: a question
@@ -200,12 +202,12 @@ on the screen is always still waiting for you.
 | **A** | the console: type RCON commands (`players`, `mute Bravo 30m`, `map Guardian`…) through Huragok's own connection, so no moderator's spot is used; the server's events scroll in as they happen, and your name goes on what you do ("kicked by Alice"). See [docs/managing.md](docs/managing.md) |
 | **B** | bans, admins and the VPN block: the lists, unban, ban someone offline, pardon a kick, add or remove an admin, let a player through the VPN block |
 | | **Huragok** |
-| **N** | a **new server**: a folder in `SERVERS/` made with the server program's `dedicated init`, from a package in `PACKAGES/` (its playlist, game types, maps, Workshop items), sharing the root's Halo 3 files and ban list (and one content folder, if you choose), checked, then started. See [docs/setup.md](docs/setup.md) |
-| **G** | what a server plays: browse its maps, mod maps, variants and game types as numbered lists; build and edit playlists by picking from them; Workshop items and mods (and the Forge layouts mods ship); `dedicated check`; save it as a package; import MCC's own matchmaking map and game variants (MLG, Hardcore, Infection…) into its content |
+| **N** | a **new server**: a folder in `SERVERS/` made with the server program's `dedicated init`, from a package in `PACKAGES/` (its playlist, game types, maps, Workshop items), sharing the root's Halo 3 files (and one content folder, if you choose; never a ban list: every server keeps its own), checked, then started. See [docs/setup.md](docs/setup.md) |
+| **G** | **what a server plays**: what it's set to, what's on now and next, and what players pick on its ballots; **W** sets it (a playlist, one map and game type, a custom game on one map or on three or more to vote on, campaign, ODST); browse its maps, mod maps, variants and game types as numbered lists; build and edit playlists by picking from them, every version of each kept (**H**) and what players pick on each (**P**); copy a playlist or a custom game to other servers; nothing is saved that the server's own program would refuse, and its problems are shown with the fixes; Workshop items and mods (and the Forge layouts mods ship); `dedicated check`; save it as a package; import MCC's own matchmaking map and game variants (MLG, Hardcore, Infection…) into its content |
 | **I** | SteamCMD: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), tell every server about it; and **Halo 3's files**, the campaign missions and ODST's, copied from MCC on this PC or downloaded with SteamCMD. See [docs/setup.md](docs/setup.md#steamcmd-i-in-the-window) |
-| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: owners, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try. Then every server: its `dedicated.toml` in groups, changed while it runs (player cap, join password, voice, votes, welcome, what it plays, anti-cheat…; a value the server program would refuse, or one its version is too old for, is refused before anything is written; the screen says when each applies and the events show the server's answer), and its playlists, custom games, bans and mods switched on or off. See [docs/managing.md](docs/managing.md#settings-d) |
+| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: owners, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try; **I** `intervalmessages.txt`: the interval messages every server says, added and taken off. Then every server: its `dedicated.toml` in groups, changed while it runs (player cap, join password, voice, votes, welcome, what it plays, anti-cheat…; a value the server program would refuse, or one its version is too old for, is refused before anything is written; the screen says when each applies and the events show the server's answer), and its playlists, custom games, bans, mods switched on or off and its own interval messages. See [docs/managing.md](docs/managing.md#settings-d) |
 | **C** | a server's own `dedicated check`: game files, settings, playlists, maps, ports |
-| **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, or any server's folder, `dedicated.toml`, playlists and ban list in your editor, for what D doesn't change (the server applies most edits by itself; the result shows in the events) |
+| **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt`, or any server's folder, `dedicated.toml`, playlists and ban list in your editor, for what D doesn't change (the server applies most edits by itself; the result shows in the events) |
 | **U** | four things: **Huragok** itself (servers keep running), the **server program** (a new Project Reclaimer release for the servers that don't install it themselves, each restarted after its game), **Workshop mods** (new versions, installed after the game) and **clean up** (what updates and mods leave behind). See [docs/managing.md](docs/managing.md#updates-u) |
 | **W** | start at boot: Windows puts a small file in the Startup folder; Linux a systemd user unit |
 | **H / Q** | help: who's who, every key by part, what the colours mean; close the window. **The servers keep running**, but unsupervised |
@@ -376,9 +378,14 @@ commands; every role can also use the commands of the roles before it:
 | --- | --- | --- |
 | `everyone` | every player | `!help` `!strikes` |
 | `member` | the player IDs you list | no commands of their own yet: no vote can kick them |
-| `moderator` | the player IDs you list | `!players` `!whois` `!warn` `!mute` `!unmute` `!kick` `!pardon` `!strike` `!health` |
-| `admin` | the server's own admins (`admins` in `dedicated.toml`, or `!admin add` in game) | `!ban` `!unban` `!say` `!map` `!mode` `!load` `!nextmap` `!endgame` `!endround` `!shuffle` `!team` `!teamcount` `!maxping` `!startvote` `!cancelvote` `!passvote` `!servername` `!pardonplayer` `!unbanname` |
+| `moderator` | the player IDs you list | `!players` `!whois` `!said` `!warn` `!mute` `!unmute` `!mutes` `!kick` `!kicks` `!pardon` `!strike` `!rules` `!bannames` `!promote` `!demote` `!roles` `!health` |
+| `admin` | the server's own admins (`admins` in `dedicated.toml`, or `!admin add` in game) | `!ban` `!unban` `!bans` `!say` `!map` `!mode` `!load` `!nextmap` `!endgame` `!endround` `!shuffle` `!team` `!teamcount` `!maxping` `!startvote` `!cancelvote` `!passvote` `!servername` `!restartserver` `!toggleglobal` `!toggleteam` `!toggleproxy` `!togglevoice` `!banword` `!unbanword` `!changebanword` `!banname` `!unbanname` `!pardonplayer` |
 | `owner` | the player IDs you list (you) | `!admin` `!reload` |
+
+A name with spaces needs no quotes, and when a name is more than one player's,
+nobody is acted on: you get each of them with their team, time on and the start of
+their player ID, numbered `#4` (on this server) or `@1` (not on), and type that.
+`!bans`, `!kicks` and `!mutes` number their entries the same way (`!unban @2`).
 
 Move a command to another role's list to change who can use it, or put it in
 `[off]` to switch it off. Edits apply within seconds. Roles follow the player ID, never the
@@ -412,11 +419,31 @@ server names Vergil as the one who acted:
 > KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. Next time: muted for 3 days.
 
 Moderators use `!strike <player> <rule>` for what's said in **voice**, which the
-server can't show anyone. **Names** are kicked, never struck: a name with a listed
-word in it, or one in `names.txt`, is kicked each time it joins until the player
-changes it. `!strike <player> name` adds a player's name to `names.txt`. The first
+server can't show anyone. Admins change the list from the game: `!banword word |
+1h 1d | 2, 1d 7d | 5 | slurs` adds a line (or `!banword word | slurs` adds to one),
+`!unbanword word` takes one off. **Names** are kicked, never struck: a name with a
+listed word in it (anywhere in it, so DasHitler with `hitler` listed, or as a word of
+its own: `name_match`), or one in `names.txt`, is kicked each time it joins until the
+player changes it. `!strike <player> name` adds a player's name to `names.txt`. The first
 start writes `dry_run = true` under `[automod]`, so automod starts in dry run,
 logging what it would do. See [docs/automod.md](docs/automod.md).
+
+## Interval messages
+A Discord link, the rules, anything you want every player to read now and then:
+one message per line in `intervalmessages.txt`, how often, then the message.
+
+```text
+30m | Join us on Discord: discord.gg/yourserver
+1h  | Be nice: no slurs, no cheating. Vergil is listening.
+```
+
+The one in Huragok's folder is said on every server; the one in each server's folder
+only there (a server says both). Each message is said to everyone on the server,
+again and again after its own time (once a minute at most); messages with the same
+time take turns, and they're only said while someone's on. Edits apply within a few
+seconds. **D → I** adds and takes them off without the file (a server's page has its
+own **I**), and `check` lists them. See
+[docs/managing.md](docs/managing.md#interval-messages-i).
 
 ## The folder
 ```text
@@ -425,7 +452,8 @@ reclaimer/                the root
   settings.toml           \
   commands.toml            | yours: written on the first start; an update brings them up to date
   automod.txt              | and never takes away what you wrote (see Updating)
-  names.txt               /
+  names.txt               |
+  intervalmessages.txt    /  (each server folder has its own too)
   SERVERS/                one folder per server (yours); a folder starting with . or _ is ignored
   PACKAGES/               server packages: seven starters on the first start, and the ones you save
   game/  bans.json        written by the first new server you make: Halo 3's files once and one
@@ -477,6 +505,22 @@ To have it install new versions by itself, as soon as it finds them, set
 0.4.1 and earlier called it `install_on_server_restart` and waited for a server to
 restart, which a server that keeps failing to start never does: the next start renames
 the line and keeps your value).
+To try what's coming before it's a full release, set `beta = true` under `[updates]`
+(D → Huragok's own → Huragok's updates): Huragok's beta releases are offered too, and a
+full release still passes the betas before it. It's off unless you turn it on, so only
+full releases are offered; turning it off later keeps the beta you have until a full
+release newer than it is out.
+
+**Trying a beta from 0.4.x.** Versions up to 0.4.4 only ever look for full releases, so
+the first beta is installed by hand:
+
+1. Close the window (**Q**, or `start.cmd close`): the servers keep running.
+2. Delete the `engine` folder (your settings, servers and records aren't in it), unzip
+   the beta's `huragok-<version>.zip`, and copy what's in its `huragok` folder into
+   Huragok's folder, replacing `start.cmd`, `start.sh`, `docs`, `README.md` and `LICENSE`.
+   Unzipped over the old `engine` without deleting it first, Huragok stops and says so.
+3. Start it as usual, then set `beta = true` under `[updates]` (D → Huragok's own →
+   Huragok's updates) so the next betas are offered. Full releases reach you either way.
 
 ### Coming from Reclaimer Supervisor 0.2.1
 0.2.1 can't update itself to this version (the program was renamed), so install
@@ -502,11 +546,13 @@ setup mounts `/huragok` now, not `/supervisor`
 ([docs/docker-compose.example.yaml](docs/docker-compose.example.yaml)).
 
 ## Development
-The code is in [engine/huragok](engine/huragok): the
-per-server state machines (`manager.py`), the backends (`lifecycle.py`), the
-window (`menu.py`, `tui.py`), who's who (`lore.py`: the parts' names, tags,
-colours, notices and faces), and the parts: the in-game commands, automod, the
-watchdog and the event log.
+The code is in [engine/huragok](engine/huragok), laid out by the three named
+parts: `huragok.py` (the program) builds the Superintendent (`superintendent.py`,
+with `servers/`: each server's state machine, the backends, the watchdog) and
+Vergil (`vergil.py`, with `players/`: the in-game commands, automod, the relay),
+and who's who is `lore.py` (the parts' names, tags, colours, notices and faces).
+`games/`, `program/`, `content/`, `updates/`, `window/` and `commandline/` hold
+the rest, with `core/` under them all.
 [docs/development.md](docs/development.md) explains how it's put together and how
 to add a command or a part; [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) has the checklist.
 

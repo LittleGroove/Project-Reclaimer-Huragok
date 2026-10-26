@@ -1,4 +1,4 @@
-"""Generate huragok/gameoptions_data.py from tests/data/game-options-probe.txt: the server program's own words.
+"""Generate huragok/games/halo3_options_data.py from tests/data/game-options-probe.txt: the server program's own words.
 
 After a Project Reclaimer release that adds or renames game options, probe again with tools/reprobe_gameoptions.py
 (`mode-check` with one option at 99999 per game type, and `dedicated playlist show` on scratch playlists that
@@ -9,7 +9,7 @@ from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parents[1]
 PROBE = ENGINE / "tests" / "data" / "game-options-probe.txt"
-OUT = ENGINE / "huragok" / "gameoptions_data.py"
+OUT = ENGINE / "huragok" / "games" / "halo3_options_data.py"
 text = PROBE.read_text(encoding="utf-8")
 probed = re.search(r"server program (\d[\w.+-]*)", text.splitlines()[0])
 VERSION = probed.group(1) if probed else "0.9.18"

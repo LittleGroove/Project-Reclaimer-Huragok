@@ -34,7 +34,7 @@ dependencies = [
 test = ["pytest>=9"]  # 9: faulthandler_exit_on_timeout
 
 [project.scripts]
-huragok = "huragok.cli:main"
+huragok = "huragok.commandline.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["huragok*"]

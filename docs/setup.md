@@ -73,10 +73,16 @@ once, for every server made this way:
 | At the root | What | Made when |
 | --- | --- | --- |
 | `game/` | Halo 3's files (5.5 GB): **hard-linked** from the first server folder that has them (no space used on the same drive), or copied from MCC with `dedicated init --from` | the first new server |
-| `bans.json` | one ban list, so bans, console-added admins and VPN allowances reach every server at once (what the server program expects: "every server sharing the ban list") | the first new server |
 | `content/` | only when `[setup] share` names it: one content folder every server plays from | the first new server |
 
-`[setup] share` in `settings.toml` picks which (`["game", "bans"]` by default; add
+Never the ban list: **every server keeps one of its own**, so an in-game `/ban` is that
+server's alone. Huragok keeps a list of its own of the bans it gives (`!ban`, Vergil,
+the relay, the window's console) and the admins it makes, and puts them on every
+server's, a new server's as it first connects. Servers made by 0.4.0 to 0.4.4 shared
+one `bans.json` at the root: from 0.5.0 each gets a copy of it as it next starts, with
+every ban, admin and VPN allowance on it, and the shared file stays where it was.
+
+`[setup] share` in `settings.toml` picks which (`["game"]` by default; add
 `"content"` to share one content folder; `--own` on the command line gives a server its
 own copies of everything). A server with its own content folder gets its Workshop mods'
 new versions after its own games, and its custom games stay its own; a server sharing
@@ -168,9 +174,23 @@ its `[[server]]` block, its playlist, the content files and Workshop items the
 playlist names. That's how you clone a server, or hand a setup to another host.
 
 ## What a server plays: G in the window
-**G** picks a server, reads everything it can play (`dedicated content`, the mods in
-its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod maps,
-57 map variants, 10 game types, 55 game variants, 1 mods, 0 Workshop items`. Then:
+**G** picks a server (or **D → What it plays** opens it for the server you're on) and
+opens on **what it plays**: what it's set to, what's on now (the game the last ballot
+picked, and how many of that game's own rules and options were applied), what's up next
+(a game set from the console, or players voting), the playlist's most picked games, and
+in red a change the server refused, with what it plays meanwhile. It reads everything
+the server can play (`dedicated content`, the mods in its content folder, its Workshop
+items) and shows the counts: `27 maps, 1 mod maps, 57 map variants, 10 game types, 55
+game variants, 1 mods, 0 Workshop items` (Halo 3's own 49 game variants included). Then:
+
+- **W** sets what it plays: a playlist, one map and game type, a saved custom game,
+  campaign co-op or Halo 3: ODST, each picked from numbered lists. A custom game asks
+  for its maps: one map plays it every game; three or more make a playlist players vote
+  on (the server has no rotation without a vote, and a playlist needs three games, so
+  two maps can't be played). Every change is checked first by the server's own program,
+  the way its start and reload check it; what it would refuse is named and nothing is
+  written. After a change it says when it applies: from the next vote, from the next
+  game, or once nobody is on (a change of kind).
 
 1. **browse what it can play**: numbered lists of Halo 3's maps, mod maps, map
    variants, game types, game variants, the mods (what each brings: its maps, its
@@ -182,8 +202,8 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
    - **build one from numbered lists**: name, vote seconds, then pick maps by number
      (Halo 3's, mod maps, variants), then game types or variants by number; every
      pair becomes a game; leave out the pairs you don't want, set weights
-     (`1=3 4=2`), and it's checked with `dedicated playlist show`, saved, then
-     offered to the server;
+     (`1=3 4=2`), and it's checked by the server's own program, saved, then offered to
+     the server;
    - **build one from a mod's maps**: the same, but the maps come from the installed mod
      maps, written the way the server names them (`workshop:<item>/<map>`), so the
      right mod is found (a playlist takes up to 23 mod maps from 16 mods);
@@ -197,12 +217,12 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
        respawning, powerups, the flag carrier, the infected…) in Shields & health,
        Weapons & damage, Movement, Sensors and Appearance, Team characters, and World
        (sprint). Every choice is listed numbered with its label; a number shows its
-       range; R puts back the game type's own value. Choices are written by their
-       label (`"player.primary_weapon": "Battle rifle"`), so the file stays readable;
-       the one exception is the character set, written as its number, because its
-       label differs between program versions ("Vanilla characters" before 0.9.19,
-       "Halo 3" from it) and every version takes the number. As it starts a server,
-       the Superintendent also puts any label in its playlists the way that server's
+       range; R puts back the game type's own value. Choices are written as their
+       numbers (`"player.primary_weapon": 0`), which every program version takes the
+       same, and shown by their names: a name can change between versions ("Vanilla
+       characters" before 0.9.19, "Halo 3" from it), a number never does. A playlist
+       written with names keeps them until Huragok next saves it; as it starts a server,
+       the Superintendent also puts any name in its playlists the way that server's
        program calls it.
        A game variant's own game type is known from the listing, so a `.bin` such as
        `2V2 HARDCORE TS` gets Slayer's options;
@@ -210,21 +230,38 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
        JPEG (4 MiB at most; 32 different ones per playlist);
      - its **base map** (a Forge map made on a mod map), **anti-cheat off** for that
        game, or **take out every change**.
-   - **show** one as the server sees it, **use** one for this server (applies from
-     the next vote; its `map`, `game`, `variant`, `campaign` or `odst` is taken out
-     in the same write, since the program won't start a server that has both),
-     **open** one in the editor.
+   - **show** one as the server sees it, **use** one for this server (checked by its
+     program first; its `map`, `game`, `variant`, `campaign` or `odst` is taken out in
+     the same write, since the program won't start a server that has both), **open**
+     one in the editor;
+   - **history** (**H**): every version kept, newest first, with what each holds, how
+     it was made and where it came from (saved in G, a package, the names written at a
+     start, a copy from another server, a version put back, a change made by hand,
+     found the next time Huragok looks, a draft left unsaved); **put one back**, through
+     the same check as any save. They're in `records/playlists/<server>/`;
+   - **picks** (**P**): each of its games with how often players picked it on the
+     ballots and its share, the ones never picked marked, and picks of games it no
+     longer has, counted on every server that plays a playlist of that name;
+   - **copy** (**C**) one to every other server or the ones you pick: each copy is
+     checked by that server's own program against its own content first; a server that
+     lacks a map or variant it names keeps what it has, and says what's missing.
 
-   Every playlist is checked by the server program as a draft (`dedicated playlist
-   show` on a copy beside it) before it's saved. When the program can't play some of
-   its games, they're named and can be dropped. A playlist a server plays is never
-   replaced by one it refuses: the choice is **Leave it unsaved** (the server keeps
-   the one it has); one no server plays can be kept as it is, to fix with **E**.
+   Nothing is saved that the server's own program would refuse: before each save it
+   checks the playlist the way the server's start and reload do (on a draft beside its
+   file, on a port of its own; two games the same are caught however each is called).
+   When it refuses, the window stays on the playlist with each problem named by the
+   game it's about, and the fixes there: **T** takes those games out and checks again,
+   **E** changes them in the editor, **L** leaves it unsaved (the playlist stays as it
+   was; the draft goes in its history).
 3. **Workshop items and mods**: the SteamCMD status (is it installed, which account,
    how many servers are set up for it; **S** opens the setup), the `[workshop] items`
    of its `dedicated.toml` with **what the server last said about each** ("ready",
    "installed", an error, or "its map was skipped: Map needs matching .mapinfo
-   metadata", which is the item's own packaging), the mods installed with their maps
+   metadata", which is the item's own packaging; for a map file the server couldn't
+   read, such as "its tag index is damaged", Huragok reads the file itself and says
+   which part is broken and which Workshop upload it is, to pass on to its author),
+   the mods installed with their maps, **whether each mod is good to go** (or what's
+   wrong with it: see "Is each mod good to go?" in managing.md)
    and Forge layouts, and **install a mod's Forge layouts**: a Workshop item often
    ships saved Forge maps in a `Project Reclaimer Layouts` folder that the server
    never installs by itself; this copies them into `content/Maps/<mod>/`, where the
@@ -263,8 +300,10 @@ its content folder, its Workshop items) and shows the counts: `27 maps, 1 mod ma
    (playlists and **D → What it plays** can name it). **New**: pick the game type
    (numbered), name it, then the same rules-and-options screens as a playlist game;
    **copy** one (the shipped scripted modes too: their options are editable, their
-   scripts are files for **O**), **edit**, **show** what one changes, **play** it on
-   this server, **delete** (refused while a server plays it: give it something else
+   scripts are files for **O**), **copy one to other servers** (each checked by that
+   server's own program first), **edit**, **show** what one changes, **play** it on
+   this server (on one map, or on three or more for a playlist to vote on), **delete**
+   (refused while a server plays it, in a playlist or by name: give it something else
    to play first). Before saving, the server program checks it (`mode-check`); the
    file is written whole and moved into place, so a hard-linked copy in another
    server's content folder keeps its own version.
@@ -341,7 +380,7 @@ the rest (`start.cmd dedicated -s Slayer vpn`, `start.cmd dedicated -s Slayer ba
 ## Editing a server's files: E
 **E** lists Huragok's four files (`settings.toml`, `commands.toml`, `automod.txt`,
 `names.txt`), then each server: its `dedicated.toml`,
-each playlist, its ban list (or the shared one), `disabled-mods.json`, saved game
+each playlist, its ban list, `disabled-mods.json`, saved game
 types. They open in Notepad (Windows) or the desktop's editor (Linux). Since Project
 Reclaimer 0.9.18 the server re-checks `dedicated.toml`, the playlists and the content
 folder a couple of seconds after a save (`auto_reload = true`): most settings apply at
@@ -351,10 +390,10 @@ dashboard's events**: `settings reloaded: max_players 16 → 12`, or `settings N
 reloaded, nothing changed: …` with what's wrong.
 
 ## A server folder from somewhere else
-A server Huragok made shares this folder's `game/` and `bans.json`: its
-`dedicated.toml` says `game = "../../game"` and `bans = "../../bans.json"`. Copy or move
-just that server folder into another Huragok folder (or onto another PC) and those
-paths point at nothing. The server program then refuses to start ("missing files
+A server Huragok made shares this folder's `game/`: its `dedicated.toml` says `game =
+"../../game"` (and, made by 0.4.0 to 0.4.4 and not started since, `bans =
+"../../bans.json"`). Copy or move just that server folder into another Huragok folder
+(or onto another PC) and those paths point at nothing. The server program then refuses to start ("missing files
 copied from your own MCC installation"), and it reads a missing ban list as an empty
 one, so the bans the server had are gone without a word.
 
@@ -363,7 +402,7 @@ start (with `backend = "process"`; in a container the paths aren't this PC's):
 
 | What's missing | What Huragok does |
 | --- | --- |
-| the ban list | makes an empty one where the file says; when even its folder isn't on this PC, points the server at this folder's shared `bans.json` (made if need be). The log says so, and that the old bans stayed where the folder came from: copy that `bans.json` over this one to keep them |
+| the ban list | gives the server an empty one of its own, `bans.json` in its folder. The log says so, and that the old bans stayed where the folder came from: copy that `bans.json` over this one to keep them. Huragok's own bans and admins are put on it as the server connects |
 | the content folder | makes it, with `Maps`, `Game Modes`, `Images` and `Mods` |
 | Halo 3's files | points the server at a game folder here that has them (this folder's `game/` first). With none, gets them into `game/`: copied from MCC when it's on this PC, otherwise downloaded with SteamCMD (`[setup] download_game_files`, on by default; false downloads nothing without you). The server shows **WAITING** and why until they're in, and its failed starts aren't counted. With no way to get them it waits and says to press I |
 | the campaign missions, ODST's files | the same, for a server that plays the campaign or ODST |

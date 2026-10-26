@@ -3,56 +3,49 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import struct
 import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Any
 
 import pytest
-from conftest import free_port, free_ports, staff, wait_for, write_root
-from test_manage import StubClient
-from test_setup import TEMPLATE_COMMAND, make_server_folder, setup_root
 
-from huragok import cli, desktop
-from huragok.config import load
-from huragok.contentimport import content_root_of, find_mcc, import_content, importable
-from huragok.dedicated import Dedicated, parse_content
-from huragok.events import EventBus
-from huragok.relay import SOURCE_AUTH, SOURCE_AUTH_RESPONSE, SOURCE_EXEC, SOURCE_RESPONSE, Relay
-from huragok.state import ServerState, StateTracker, describe_game
+from conftest import free_ports, staff, wait_for, write_root
+from testkit import FAKE, os_as
+from testkit.manage import StubClient
+from testkit.mcc import fake_mcc
+from testkit.setup import TEMPLATE_COMMAND, setup_root
 
-FAKE = Path(__file__).resolve().parent / "fake_dedicated.py"
+from huragok import steam as steamsetup
+from huragok.commandline import cli
+from huragok.content.mccimport import content_root_of, import_content, importable
+from huragok.core import desktop
+from huragok.core.events import EventBus
+from huragok.core.settings import load
+from huragok.players.relay import SOURCE_AUTH, SOURCE_AUTH_RESPONSE, SOURCE_EXEC, SOURCE_RESPONSE, Relay
+from huragok.program.dedicated import Dedicated
+from huragok.servers.state import ServerState, StateTracker, describe_game
+from huragok.steam import find_mcc
 
-
-def fake_mcc(folder: Path) -> Path:
-    halo3 = folder / "halo3"
-    for sub, files in (("hopper_map_variants", ["mlg_guardian_8.mvar", "team_hardcore_pit.mvar", "infection_zanzibar.mvar"]),
-                       ("hopper_game_variants", ["mlg_ts_v8.bin", "team_hardcore_010.bin", "infection_alpha.bin"]),
-                       ("map_variants", ["h3_hardcoreGuardian.mvar"]), ("game_variants", ["slayer-0_010.bin"])):
-        (halo3 / sub).mkdir(parents=True, exist_ok=True)
-        for name in files:
-            (halo3 / sub / name).write_bytes(b"variant " + name.encode())
-    (halo3 / "halo3.dll").write_bytes(b"dll")
-    return folder
 
 
 # Importing variants -----------------------------------------------------------------------------
 
 def test_importing_mccs_variants(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from huragok import contentimport
+    from huragok.content import mccimport as contentimport
 
     mcc = fake_mcc(tmp_path / "MCC")
     assert find_mcc(str(mcc)) == mcc
     assert find_mcc(str(tmp_path / "nowhere")) is None  # the hint is wrong, and Steam has no MCC (conftest)
     library = tmp_path / "Library"
-    fake_mcc(library / "steamapps" / "common" / contentimport.MCC_FOLDER)
-    monkeypatch.setattr(contentimport, "_steam_roots", lambda: [library])
+    fake_mcc(library / "steamapps" / "common" / steamsetup.MCC_FOLDER)
+    monkeypatch.setattr(steamsetup, "_steam_roots", lambda: [library])
     assert find_mcc(str(tmp_path / "nowhere")) is None  # Steam's folder has it, but no record of Steam's says so
-    (library / "steamapps" / f"appmanifest_{contentimport.MCC_APP}.acf").write_text(
-        f'"AppState"\n{{\n\t"installdir"\t\t"{contentimport.MCC_FOLDER}"\n}}\n', encoding="utf-8")
-    assert find_mcc(str(tmp_path / "nowhere")) == library / "steamapps" / "common" / contentimport.MCC_FOLDER  # Steam's
+    (library / "steamapps" / f"appmanifest_{steamsetup.MCC_APP}.acf").write_text(
+        f'"AppState"\n{{\n\t"installdir"\t\t"{steamsetup.MCC_FOLDER}"\n}}\n', encoding="utf-8")
+    assert find_mcc(str(tmp_path / "nowhere")) == library / "steamapps" / "common" / steamsetup.MCC_FOLDER  # Steam's
     items = importable(mcc)
     assert sorted(i.name for i in items if i.target == "Maps") == ["h3_hardcoreGuardian", "infection_zanzibar",
                                                                      "mlg_guardian_8", "team_hardcore_pit"]
@@ -193,5 +186,47 @@ def test_the_startup_item_works_whatever_the_folder_is_called(tmp_path: Path, ru
         result = subprocess.run(["cmd", "/c", str(probe)], capture_output=True, text=True, timeout=30)
         assert "FOUND" in result.stdout, result.stdout + result.stderr
     # From the window: off the event loop.
-    assert asyncio.iscoroutinefunction(desktop.enable_startup_async)
-    assert asyncio.iscoroutinefunction(desktop.disable_startup_async)
+    assert inspect.iscoroutinefunction(desktop.enable_startup_async)  # asyncio's is deprecated in 3.14
+    assert inspect.iscoroutinefunction(desktop.disable_startup_async)
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")  # 3.13 warns of the unfiltered path; 3.11.3 can't
+def test_steamcmds_tarball_unpacks_only_inside_its_folder_on_any_python_311(tmp_path: Path, monkeypatch) -> None:
+    """tarfile's "data" filter came in Python 3.11.4; Huragok runs on any 3.11, so on an older one the same refusals
+    are made by hand: a name with "..", a link leading out."""
+    import io
+    import tarfile
+
+    from huragok import steam
+
+    def tarball(name: str, link: str = "") -> tarfile.TarFile:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name)
+            if link:
+                info.type, info.linkname = tarfile.SYMTYPE, link
+                tar.addfile(info)
+            else:
+                info.size = 1
+                tar.addfile(info, io.BytesIO(b"x"))
+        buffer.seek(0)
+        return tarfile.open(fileobj=buffer, mode="r:gz")
+
+    monkeypatch.setattr(steam, "TAR_FILTER", False)  # as on Python 3.11.0 to 3.11.3 (3.14's tarfile needs its filter)
+    steam.extract_tar(tarball("linux32/steamcmd"), tmp_path / "ok")
+    assert (tmp_path / "ok" / "linux32" / "steamcmd").is_file()
+    for name, link in (("../evil", ""), ("lib", "../../etc")):
+        with pytest.raises(tarfile.TarError, match="would land outside"):
+            steam.extract_tar(tarball(name, link), tmp_path / "bad")
+
+
+def test_steamcmds_saved_sign_in_is_found_where_linux_keeps_it(tmp_path: Path, monkeypatch) -> None:
+    """steamcmd.sh keeps its config in ~/Steam on Linux, not beside itself: the saved sign-in is found there."""
+    from huragok import steam
+
+    monkeypatch.setattr(steam, "os", os_as("posix"))  # this module alone: never os.name itself
+    monkeypatch.setattr(steam.Path, "home", lambda: tmp_path / "home")
+    config = tmp_path / "home" / "Steam" / "config" / "config.vdf"
+    config.parent.mkdir(parents=True)
+    config.write_text('"InstallConfigStore"\n{\n\t"Accounts"\n\t{\n\t\t"host"\n\t\t{\n\t\t}\n\t}\n}\n', encoding="utf-8")
+    assert steam.cached_accounts(tmp_path / "steamcmd" / "steamcmd.sh") == ["host"]

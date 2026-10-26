@@ -1,0 +1,20 @@
+# This server's own interval messages: said to everyone on this server only, again
+# and again, each one after its own time. The ones for every server are in the
+# intervalmessages.txt in Huragok's folder; this server says those too.
+#
+#   how often | the message
+#
+# how often  30s, 10m, 1h, 1d, or put together: 1h30m. Once a minute at most.
+# message    As players read it, from [Server]. A long one goes out as a few lines.
+#
+# Examples:
+#
+#   45m | This server plays Big Team Battle all night: bring friends.
+#   2h  | Server restarts at 4:00 every morning.
+#
+# Messages with the same time take turns (with the ones for every server too): two
+# every 30m go out 15 minutes apart, each one every 30 minutes. They're only said
+# while someone is on, counting from when Huragok first sees the server up.
+# Edits apply within a few seconds. A # starts a note.
+#
+# Interval messages go below.

@@ -59,22 +59,32 @@ VISR = (
     ("magenta", "restarts and countdowns"),
 )
 
-# Which part speaks, by logger name (without the "huragok." prefix). The first match wins; the rest is Huragok's.
+# Which part speaks, by logger name (without the "huragok." prefix): the code's folders are the parts. servers/
+# and each server's console link are the Superintendent's, players/ Vergil's, everything else Huragok's; parts log
+# as "part.<name>". The first match wins, by whole dotted names.
 SPEAKERS: tuple[tuple[str, Persona], ...] = (
-    ("part.automod", VERGIL), ("part.commands", VERGIL), ("chat", VERGIL), ("moderation", VERGIL),
-    ("permissions", VERGIL), ("relay", VERGIL), ("storage", VERGIL),
-    ("part.watchdog", SUPERINTENDENT), ("part.eventlog", SUPERINTENDENT), ("manager", SUPERINTENDENT),
-    ("lifecycle", SUPERINTENDENT), ("state", SUPERINTENDENT), ("runner", SUPERINTENDENT),
-    ("mailbox", SUPERINTENDENT), ("rcon", SUPERINTENDENT), ("winproc", SUPERINTENDENT), ("events", SUPERINTENDENT),
-    ("files", SUPERINTENDENT), ("core", SUPERINTENDENT), ("supervisor", SUPERINTENDENT),
-    ("superintendent", SUPERINTENDENT), ("vergil", VERGIL),
+    ("part.automod", VERGIL), ("part.commands", VERGIL), ("part.messages", VERGIL),
+    ("part.watchdog", SUPERINTENDENT), ("part.eventlog", SUPERINTENDENT),
+    ("players", VERGIL), ("vergil", VERGIL),
+    ("servers", SUPERINTENDENT), ("superintendent", SUPERINTENDENT), ("rcon", SUPERINTENDENT),
+    ("core.runner", SUPERINTENDENT), ("core.mailbox", SUPERINTENDENT), ("core.events", SUPERINTENDENT),
+    ("core.winproc", SUPERINTENDENT),
 )
+# The module names before the engine was laid out by part (0.4.4 and earlier), matched whole: huragok.log keeps the
+# logger's name, and a second window reads an older version's lines back.
+OLD_LOGGERS = {
+    **dict.fromkeys(("chat", "moderation", "permissions", "relay", "storage"), VERGIL),
+    **dict.fromkeys(("manager", "lifecycle", "state", "runner", "mailbox", "winproc", "events", "files", "core",
+                     "supervisor"), SUPERINTENDENT),
+}
 TAGS = {persona.tag: persona for persona in PERSONAS}
 
 
 def speaker(logger: str) -> Persona:
-    """The part behind a logger: `huragok.manager` and `part.watchdog` are the Superintendent's."""
+    """The part behind a logger: `huragok.servers.fleet` and `part.watchdog` are the Superintendent's."""
     name = logger.removeprefix("huragok.")
+    if name in OLD_LOGGERS:
+        return OLD_LOGGERS[name]
     for prefix, persona in SPEAKERS:
         if name == prefix or name.startswith(prefix + "."):
             return persona
@@ -138,7 +148,7 @@ class Mood:
 
 def _players(row: dict[str, Any]) -> int:
     count = str(row.get("players") or "").split("/")[0].strip()
-    return int(count) if count.isdigit() else 0
+    return int(count) if count.isdecimal() else 0
 
 
 def _named(rows: list[dict[str, Any]], what: str) -> str:

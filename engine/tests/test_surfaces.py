@@ -21,44 +21,59 @@ from typing import Any
 
 import psutil
 import pytest
-from conftest import (ALICE, ProgramLifecycle, free_port, free_ports, staff, wait_for, write_root, write_server_folder,
-                      write_settings)
-from fake_rcon import FakeRcon
-from test_extras import fake_mcc
-from test_manage import ManageController, manage_root, program_release, self_updating_root, serve_program
-from test_manager import SERVER, Clock, FakeBackend, FakeClient, cycle
-from test_menu import FakeController, FakeKeyboard, FakeTerminal, row
-from test_setup import ALPHA, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root
-from test_updates import RELEASE, make_install, make_release_zip
 
-from huragok import cli, desktop, mailbox, serverupdates, steamsetup, updates
-from huragok import manager as manager_module
-from huragok import menu_manage as menu_manage_module
-from huragok import menu_setup as menu_setup_module
+from conftest import (
+    ALICE, ProgramLifecycle, free_port, free_ports, staff, wait_for, write_root, write_server_folder, write_settings,
+)
+from testkit.fake_rcon import FakeRcon
+from testkit.fleet import SERVER, Clock, FakeBackend, FakeClient, cycle
+from testkit.manage import ManageController, manage_root, program_release, self_updating_root, serve_program
+from testkit.mcc import fake_mcc
+from testkit.releases import RELEASE, make_install, make_release_zip
+from testkit.setup import ALPHA, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root
+from testkit.window import FakeController, FakeKeyboard, FakeTerminal, row
+
 from huragok import rcon as rcon_module
-from huragok.catalogue import Catalogue, Entry
-from huragok.chat import CommandRouter
-from huragok.config import load
-from huragok.core import Supervisor
-from huragok.dedicated import ToolResult
-from huragok.events import Event, EventBus
-from huragok.files import FileTail
-from huragok.lifecycle import CommandBackend, Keepalive, LifecycleError, LifecycleUnavailable, Managed, ProcessBackend
-from huragok.livesettings import SERVER_SETTINGS
-from huragok.manager import Fleet, Result
-from huragok.menu import Menu, RemoteController
-from huragok.newserver import SetupError
-from huragok.part import Part
-from huragok.playlists import Playlist, PlaylistError, new_playlist
+from huragok import steam as steamsetup
+from huragok.commandline import cli, common, firstrun, logsetup
+from huragok.commandline import launcher as launcher_module
+from huragok.commandline import run as run_module
+from huragok.commandline.watch import follow
+from huragok.content.catalogue import Catalogue, Entry
+from huragok.content.newserver import SetupError
+from huragok.core import desktop, mailbox
+from huragok.core import lock as lock_module
+from huragok.core.events import Event, EventBus
+from huragok.core.logs import RecentLog
+from huragok.core.part import Part
+from huragok.core.requests import Result
+from huragok.core.runner import PartRunner
+from huragok.core.settings import load
+from huragok.core.web import UpdateError
+from huragok.games.halo3 import Playlist, PlaylistError, new_playlist
+from huragok.huragok import Huragok
+from huragok.players.relay import Relay
+from huragok.players.router import CommandRouter
+from huragok.program import releases as serverupdates
+from huragok.program.dedicated import ToolResult
+from huragok.program.releases import ProgramRelease
 from huragok.rcon import RconClient, RconUnavailable, Reply
-from huragok.relay import Relay
-from huragok.runner import PartRunner
-from huragok.serverupdates import ProgramRelease, ProgramUpdateService
-from huragok.state import Player, ServerState, StateTracker
-from huragok.steamsetup import SteamStatus
-from huragok.tui import Interruptions, RecentLog, format_listing, wrap_cell
-from huragok.updates import UpdateError, UpdateService
-from huragok.watch import follow
+from huragok.servers import server as manager_module
+from huragok.servers.backends import CommandBackend, LifecycleError, LifecycleUnavailable, Managed, ProcessBackend
+from huragok.servers.fleet import Fleet
+from huragok.servers.keepalive import Keepalive
+from huragok.servers.logs import FileTail
+from huragok.servers.state import Player, ServerState, StateTracker
+from huragok.steam import SteamStatus
+from huragok.updates import engine as updates
+from huragok.updates import program as program_updates_module
+from huragok.updates.engine import UpdateService
+from huragok.updates.program import ProgramUpdateService
+from huragok.window.controllers import RemoteController
+from huragok.window.dashboard import Menu
+from huragok.window.screens import manage as menu_manage_module
+from huragok.window.screens import setup as menu_setup_module
+from huragok.window.tui import Interruptions, format_listing, wrap_cell
 
 PROGRAM_RELEASE = ProgramRelease("0.9.19", "https://example.invalid/releases/v0.9.19", "- a fix",
                                  "https://example.invalid/project-reclaimer-dedicated-v0.9.19.exe",
@@ -97,7 +112,7 @@ def test_the_start_summary_warns_about_no_owner_and_no_servers(tmp_path: Path, c
     (root / "SERVERS").mkdir(parents=True)
     settings = load(write_settings(root))
     with caplog.at_level(logging.INFO):
-        cli._summary(settings)
+        run_module.summary(settings)
     text = messages(caplog)
     assert "Running: commands" in text and "Nobody is owner yet: put your player ID under [owner] players" in text
     assert f"Each server is one folder in {root / 'SERVERS'}" in text
@@ -106,17 +121,17 @@ def test_the_start_summary_warns_about_no_owner_and_no_servers(tmp_path: Path, c
 def test_the_second_window_takes_over_when_the_first_closes(tmp_path: Path, monkeypatch, capsys) -> None:
     root = tmp_path / "reclaimer"
     path = write_root(root, [("Alpha", free_port())])
-    cli.write_files(root)
-    monkeypatch.setattr(cli, "running_supervisor", lambda settings: 4242)
-    monkeypatch.setattr(cli, "_want_menu", lambda args: True)
-    monkeypatch.setattr(cli, "_remote_window", lambda settings: "takeover")
-    monkeypatch.setattr(cli, "_start_loop", lambda args, settings: 0)
+    firstrun.write_files(root)
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)
+    monkeypatch.setattr(common, "want_menu", lambda args: True)
+    monkeypatch.setattr(run_module, "second_window", lambda settings: "takeover")
+    monkeypatch.setattr(launcher_module, "start_loop", lambda args, settings: 0)
     assert cli.main(["-c", str(path), "start"]) == 0
     assert "The supervising window closed; this one takes over." in both(capsys)
 
 
 def test_the_start_loop_runs_the_new_version_after_an_update(tmp_path: Path, monkeypatch, capsys) -> None:
-    codes = [cli.RELAUNCH, 0]
+    codes = [common.RELAUNCH, 0]
     started: list[list[str]] = []
 
     class FakeChild:
@@ -129,11 +144,11 @@ def test_the_start_loop_runs_the_new_version_after_an_update(tmp_path: Path, mon
         def poll(self) -> int:
             return 0
 
-    monkeypatch.setattr(cli.subprocess, "Popen", FakeChild)
-    monkeypatch.setattr(cli.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(launcher_module.subprocess, "Popen", FakeChild)
+    monkeypatch.setattr(launcher_module.signal, "signal", lambda *args: None)
     settings = load(write_root(tmp_path / "reclaimer", [("Alpha", free_port())]))
     args = argparse.Namespace(config=str(settings.path), verbose=False, no_menu=True)
-    assert cli._start_loop(args, settings) == 0
+    assert launcher_module.start_loop(args, settings) == 0
     assert len(started) == 2 and "--child" in started[0] and "--no-menu" in started[0]
     assert "Starting the new version…" in both(capsys)
 
@@ -142,19 +157,19 @@ def test_a_second_supervisor_in_the_same_folder_is_refused(tmp_path: Path, monke
     path = write_root(tmp_path / "reclaimer", [("Alpha", free_port())])
 
     def taken(settings: Any) -> Path:
-        raise cli.AlreadyRunning(4242)
+        raise lock_module.AlreadyRunning(4242)
 
-    monkeypatch.setattr(cli, "_take_lock", taken)
-    monkeypatch.setattr(cli, "_setup_logging", lambda *args, **options: None)
+    monkeypatch.setattr(lock_module, "take", taken)
+    monkeypatch.setattr(logsetup, "setup", lambda *args, **options: None)
     args = argparse.Namespace(config=str(path), verbose=False, no_menu=True)
-    assert cli._run_supervisor(args) == cli.ALREADY_RUNNING
+    assert run_module.run_huragok(args) == common.ALREADY_RUNNING
     assert "Huragok is already running from this folder (process 4242)." in both(capsys)
 
 
 def test_update_program_asks_before_installing(tmp_path: Path, monkeypatch, capsys) -> None:
     path = write_root(tmp_path / "reclaimer", [("Alpha", free_port())])
     answers: list[str] = []
-    monkeypatch.setattr("huragok.tui.is_terminal", lambda: True)
+    monkeypatch.setattr("huragok.window.tui.is_terminal", lambda: True)
     monkeypatch.setattr("builtins.input", lambda prompt="": answers.pop(0))
     sent: list[str] = []
 
@@ -166,7 +181,7 @@ def test_update_program_asks_before_installing(tmp_path: Path, monkeypatch, caps
 
     monkeypatch.setattr(cli.mailbox, "send", send)
     # A supervisor is running: it does the install, once the host says yes.
-    monkeypatch.setattr(cli, "running_supervisor", lambda settings: 4242)
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)
     answers.append("n")
     assert cli.main(["-c", str(path), "update", "--program"]) == 0
     assert "Not installed." in both(capsys) and sent == ["check_program_update"]
@@ -175,7 +190,7 @@ def test_update_program_asks_before_installing(tmp_path: Path, monkeypatch, caps
     text = both(capsys)
     assert "Asking Huragok (process 4242) to install it…" in text and "restarting now" in text
     # No supervisor: the release is fetched here, and put in place only after a yes.
-    monkeypatch.setattr(cli, "running_supervisor", lambda settings: None)
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: None)
     monkeypatch.setattr(serverupdates, "latest_program_release", lambda repository: PROGRAM_RELEASE)
     answers.append("n")
     assert cli.main(["-c", str(path), "update", "--program"]) == 0
@@ -188,21 +203,21 @@ def test_update_program_asks_before_installing(tmp_path: Path, monkeypatch, caps
     monkeypatch.setattr(serverupdates, "download_program", offline)
     assert cli.main(["-c", str(path), "update", "--program", "--yes"]) == 1
     assert "Not installed: couldn't reach GitHub: offline" in both(capsys)
-    monkeypatch.setattr("huragok.tui.is_terminal", lambda: False)  # from a script: nothing to ask
+    monkeypatch.setattr("huragok.window.tui.is_terminal", lambda: False)  # from a script: nothing to ask
     assert cli.main(["-c", str(path), "update", "--program"]) == 1
     assert "To install it:" in both(capsys)
 
 
 def test_update_asks_then_hands_the_install_to_the_running_supervisor(tmp_path: Path, monkeypatch, capsys) -> None:
     path = write_root(tmp_path / "reclaimer", [("Alpha", free_port())])
-    monkeypatch.setattr(updates, "latest_release", lambda repository: RELEASE)
+    monkeypatch.setattr(updates, "latest_release", lambda repository, **options: RELEASE)
     monkeypatch.setattr(updates, "installed_here", lambda home: True)
-    monkeypatch.setattr("huragok.tui.is_terminal", lambda: True)
+    monkeypatch.setattr("huragok.window.tui.is_terminal", lambda: True)
     answers = ["n", "y"]
     monkeypatch.setattr("builtins.input", lambda prompt="": answers.pop(0))
     assert cli.main(["-c", str(path), "update"]) == 0
     assert "Not installed." in both(capsys)
-    monkeypatch.setattr(cli, "running_supervisor", lambda settings: 4242)
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)
     monkeypatch.setattr(cli.mailbox, "send",
                         lambda *args, **options: mailbox.Reply(False, "an install is already under way"))
     assert cli.main(["-c", str(path), "update"]) == 1
@@ -219,7 +234,7 @@ def test_say_rcon_and_status_refuse_clearly(tmp_path: Path, capsys) -> None:
     assert "No server named Nope" in both(capsys)
     empty = tmp_path / "empty"
     (empty / "SERVERS").mkdir(parents=True)
-    assert cli.main(["-c", str(write_settings(empty)), "status"]) == cli.NOT_RUNNING
+    assert cli.main(["-c", str(write_settings(empty)), "status"]) == common.NOT_RUNNING
     text = both(capsys)
     assert "not running" in text and f"Each server is one folder in {empty / 'SERVERS'}" in text
 
@@ -415,7 +430,9 @@ def test_a_running_command_is_cancelled_with_esc(tmp_path: Path, run) -> None:
     controller = SetupController(settings_path)
     terminal = FakeTerminal()
     menu = Menu(controller, terminal, EscapingKeyboard([]), RecentLog())  # type: ignore[arg-type]
-    result = run(menu._dedicated(fake_tool(), controller.settings.servers[0].folder, "check"))
+    # `slow` (the fake program's: a line every half second) is still running when Esc comes, on any machine;
+    # `check` could end before it on a fast one.
+    result = run(menu._dedicated(fake_tool(), controller.settings.servers[0].folder, "slow"))
     assert result.code == 130
     text = printed(terminal)
     assert "cancelling…" in text and "cancelled." in text
@@ -427,7 +444,9 @@ def test_the_content_screen_copes_with_an_unreadable_listing(tmp_path: Path, run
     def unreadable(*args: Any, **options: Any) -> Catalogue:
         raise ValueError("the listing has no Maps: section")
 
-    monkeypatch.setattr(menu_setup_module, "load_catalogue", unreadable)
+    from huragok.window.screens import base as screens_base
+
+    monkeypatch.setattr(screens_base, "load_catalogue", unreadable)  # the pickers every screen shares
     menu, terminal, _ = setup_menu(settings_path, ["1", "ENTER", "x"])
     run(menu.screen_content())
     assert "couldn't read the content listing: the listing has no Maps: section" in printed(terminal)
@@ -513,24 +532,32 @@ def test_saving_a_playlist_reports_what_the_server_program_cannot_play(tmp_path:
         menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
         return run(menu._save_playlist(tool, server, playlist)), printed(terminal)
 
-    # Every game names a map the server doesn't have: dropping them would leave nothing.
+    # Every game names a map the server doesn't have: taking them out would leave nothing, so it isn't offered.
     nowhere = new_playlist(server.folder, "Nowhere")
     for number in range(3):
         nowhere.add(f"Nowhere {number}", "Slayer")
-    ok, text = save_with([], nowhere)
-    assert not ok and "The server can't play 3 of its games:" in text
-    assert "Dropping them would leave fewer than 3 games; add others with [E] edit." in text
-    # The program refuses the file without naming a game.
-    monkeypatch.setattr(menu_setup_module, "problems_from_show", lambda text: {})
-    ok, text = save_with([], nowhere)
-    assert not ok and "The server program can't play it as it is; the file is saved, fix it with [E] edit." in text
+    ok, text = save_with(["L"], nowhere)
+    assert not ok and "The server program won't play it as it is, so it isn't saved:" in text
+    assert "game 1 (Slayer on Nowhere 0):" in text and "Take out" not in text
+    assert "Not saved: playlists/nowhere.playlist.json stays as it was; the draft is in its history" in text
+    assert not nowhere.path.exists()  # nothing refused is ever written
+    # The program refuses the file without naming a game: what it said, as it said it.
+    from huragok.program import plays as plays_module
+
+    monkeypatch.setattr(plays_module, "_refusals", lambda text, name: [])
+    ok, text = save_with(["L"], nowhere)
+    assert not ok and "won't play it as it is" in text and "Take out" not in text
+    monkeypatch.undo()
     # The file can't be written.
+    fine = new_playlist(server.folder, "Fine")
+    for map_name in ("Guardian", "Valhalla", "The Pit"):
+        fine.add(map_name, "Slayer")
 
     def locked(self: Playlist) -> Path:
         raise PlaylistError("locked")
 
     monkeypatch.setattr(Playlist, "save", locked)
-    ok, text = save_with([], nowhere)
+    ok, text = save_with([], fine)
     assert not ok and "Not saved: locked" in text
 
 
@@ -575,7 +602,7 @@ def test_a_failing_command_reply_is_logged(run, caplog) -> None:
     assert "command reply failed" in messages(caplog)
 
 
-_never_run: list[Supervisor] = []  # made by supervisor_on: their database is closed after the test
+_never_run: list[Huragok] = []  # made by supervisor_on: their database is closed after the test
 
 
 @pytest.fixture(autouse=True)
@@ -585,12 +612,12 @@ def _close_supervisors_never_run() -> Any:
         _never_run.pop().storage.close()
 
 
-def supervisor_on(tmp_path: Path, servers: list[tuple[str, int]] | None = None, body: str = "") -> Supervisor:
+def supervisor_on(tmp_path: Path, servers: list[tuple[str, int]] | None = None, body: str = "") -> Huragok:
     """A Supervisor over a root with these servers (Alpha alone by default), made but not run."""
     root = tmp_path / "reclaimer"
     path = write_root(root, [("Alpha", free_port())] if servers is None else servers, body, staff())
-    cli.write_files(root)
-    supervisor = Supervisor(load(path))
+    firstrun.write_files(root)
+    supervisor = Huragok(load(path))
     _never_run.append(supervisor)
     return supervisor
 
@@ -604,19 +631,84 @@ def test_the_supervisor_logs_folder_changes_and_what_the_servers_say(tmp_path: P
         sup.bus.emit("server.map_skipped", "Alpha", path="C:/x/Workshop/123/odd.map", reason="not a map package")
         sup.bus.emit("server.workshop", "Alpha", item=123, text="installed")
         write_server_folder(root / "SERVERS" / "Alpha Two", free_port(), name="Alpha")  # the same name twice
-        sup.discover()
+        sup.superintendent.discover()
         assert any("two servers are called 'Alpha'" in problem for problem in sup.problems)
         shutil.rmtree(root / "SERVERS" / "Alpha Two")
         shutil.rmtree(root / "SERVERS" / "Alpha")
-        sup.discover()
-        assert "Alpha" not in sup.fleet.managers and not sup.problems
+        sup.superintendent.discover()
+        assert "Alpha" not in sup.superintendent.fleet.managers and not sup.problems
     text = messages(caplog)
     assert "[Alpha] settings reloaded: playlist re-read" in text
     assert "[Alpha] settings NOT reloaded, nothing changed: dedicated.toml line 3: bad value" in text
     assert "[Alpha] a mod map can't be used: odd.map (not a map package)" in text
+    assert "[Alpha]   why: the item's own packaging (Workshop 123); ask its author" in text
     assert "[Alpha] Workshop 123: installed" in text
     assert "Server folders: two servers are called 'Alpha'" in text
     assert "[Alpha] its server folder is gone" in text
+
+
+def test_the_supervisor_says_which_check_a_skipped_mod_map_failed(tmp_path: Path, caplog, run) -> None:
+    from testkit.mapfiles import broken, written
+
+    sup = supervisor_on(tmp_path)
+    path = written(tmp_path / "content" / "Mods" / "Workshop" / "3820687243" / "maps", broken("table"),
+                   "fixedHugeGrassTrapasRemix.map")
+
+    async def skipped() -> None:  # as the console reader publishes it: on the loop, which doesn't wait for the read
+        sup.bus.emit("server.map_skipped", "Alpha", path=str(path), reason="its tag index is damaged")
+        assert "why:" not in messages(caplog)
+        await asyncio.gather(*sup._tasks)
+
+    with caplog.at_level(logging.INFO):
+        run(skipped())
+    text = messages(caplog)
+    assert "[Alpha] a mod map can't be used: fixedHugeGrassTrapasRemix.map (its tag index is damaged)" in text
+    assert "[Alpha]   why: its tag table (600 tags) runs to 0x1ca1a12c0, past the end of the map's tag data" in text
+    assert "ask its author (Workshop 3820687243) for a fixed upload; Huragok installs the fixed version" in text
+
+
+def test_the_servers_mod_troubles_are_said_once_a_start_with_what_to_do(tmp_path: Path, caplog) -> None:
+    sup = supervisor_on(tmp_path)
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):  # the program says it again every couple of minutes
+            sup.bus.emit("log.mod_problem", "Alpha", kind="forge", text="Left out of the Forge library: Arena.")
+        sup.bus.emit("log.mod_problem", "Alpha", kind="content", text="Skipped content file x.bin: Expected an MCC BLF "
+                                                                      "variant file")
+        sup.bus.emit("server.starting", "Alpha")
+        sup.bus.emit("log.mod_problem", "Alpha", kind="forge", text="Left out of the Forge library: Arena.")
+        sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="Workshop installation 3820687243 is incomplete "
+                                                                      "(maps/x.map); remove the item folder and retry")
+        sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="update failed: Steam gave littlegroove no key "
+                                                                      "for MCC's Workshop content")
+        sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="installed")
+    text = messages(caplog)
+    assert text.count("[Alpha] Left out of the Forge library: Arena.") == 2  # once a start
+    assert "[Alpha]   why: Forge offers fewer objects: those maps' objects are left out of the Forge library" in text
+    assert "[Alpha]   why: a map or game variant file the server can't read is left out" in text
+    assert ("[Alpha]   why: files are missing from the installed copy: fetch it again (G → the server → 3 Workshop "
+            "items and mods → I)") in text
+    assert "[Alpha]   why: SteamCMD's account doesn't own MCC: sign in with one that does (I, SteamCMD)" in text
+    levels = {r.getMessage(): r.levelno for r in caplog.records}
+    assert levels["[Alpha] Workshop 3820687243: installed"] == logging.INFO
+    assert levels["[Alpha] Workshop 3820687243: update failed: Steam gave littlegroove no key for MCC's Workshop "
+                  "content"] == logging.WARNING
+
+
+def test_the_supervisor_says_when_a_mod_stops_or_starts_being_good_to_go(tmp_path: Path) -> None:
+    from testkit.mods import a_map, a_mod
+
+    sup = supervisor_on(tmp_path)
+    content = sup.settings.servers[0].content_dir
+    assert content is not None
+    mod = a_mod(content / "Mods" / "HugeGrass", {"fixedHugeGrassTrapasRemix": a_map(8752),
+                                                 "fixedHugeGrassTrapasRemix-old": a_map(8752)},
+                {"hugegrass": "fixedHugeGrassTrapasRemix"}, title="HugeGrass Rebalance")
+    first = sup.mods.changes()
+    assert first[0] == ("[Alpha] mod HugeGrass Rebalance: 1 problem · 1 map", logging.WARNING)
+    assert first[1][0].startswith("[Alpha]   warning: fixedHugeGrassTrapasRemix-old.map looks like an old copy")
+    assert sup.mods.changes() == []  # nothing changed: nothing said
+    (mod / "maps" / "fixedHugeGrassTrapasRemix-old.map").unlink()
+    assert sup.mods.changes() == [("[Alpha] mod HugeGrass Rebalance: good to go · 1 map", logging.INFO)]
 
 
 def test_auto_update_switched_in_the_file_is_noticed(tmp_path: Path, caplog) -> None:
@@ -624,7 +716,7 @@ def test_auto_update_switched_in_the_file_is_noticed(tmp_path: Path, caplog) -> 
     alpha = tmp_path / "reclaimer" / "SERVERS" / "Alpha" / "dedicated.toml"
     alpha.write_text("auto_update = true\n" + alpha.read_text(encoding="utf-8"), encoding="utf-8")
     with caplog.at_level(logging.INFO):
-        sup.discover()
+        sup.superintendent.discover()
         assert sup.settings.server("Alpha").auto_update
         sup.bus.emit("server.updating", "Alpha")
     text = messages(caplog)
@@ -635,9 +727,10 @@ def test_auto_update_switched_in_the_file_is_noticed(tmp_path: Path, caplog) -> 
 def test_workshop_update_surfaces(tmp_path: Path, run, caplog) -> None:
     """The Workshop service's quieter lines: not looking, Steam unreachable, all up to date, a leftover lock,
     a restart that can't be planned, a server that updated the item itself."""
-    from test_workshop_updates import ALPHA as WS_ALPHA, ITEM, NEW, OLD, FakeLifecycle, service_for, workshop_root
+    from testkit.workshop import ALPHA as WS_ALPHA, ITEM, NEW, OLD, FakeLifecycle, service_for, workshop_root
 
-    from huragok.workshopupdates import SteamItem, WorkshopUpdateService
+    from huragok.steam import SteamItem
+    from huragok.updates.workshop import WorkshopUpdateService
 
     settings_path, folder = workshop_root(tmp_path)
     content = folder / "content"
@@ -718,18 +811,18 @@ def test_a_broken_server_folder_is_left_out_and_never_stops_the_others(tmp_path:
     (typo / "dedicated.toml").write_text('[[server]]\nname = "Typo\n', encoding="utf-8")
     with caplog.at_level(logging.INFO):
         sup = supervisor_on(tmp_path)
-        assert list(sup.fleet.managers) == ["Alpha"]
+        assert list(sup.superintendent.fleet.managers) == ["Alpha"]
         assert any("Typo" in p and "left out until that's fixed" in p for p in sup.problems)
         # Alpha's own file breaks while it runs: it's kept as it was, not forgotten.
         alpha = root / "SERVERS" / "Alpha" / "dedicated.toml"
         good = alpha.read_text(encoding="utf-8")
         alpha.write_text(good + "\nport = = 1\n", encoding="utf-8")
-        sup.discover()
-        assert "Alpha" in sup.fleet.managers and any("Alpha" in p for p in sup.problems)
+        sup.superintendent.discover()
+        assert "Alpha" in sup.superintendent.fleet.managers and any("Alpha" in p for p in sup.problems)
         alpha.write_text(good, encoding="utf-8")
         write_server_folder(typo, free_port(), name="Typo")  # fixed: picked up
-        sup.discover()
-        assert sorted(sup.fleet.managers) == ["Alpha", "Typo"] and not sup.problems
+        sup.superintendent.discover()
+        assert sorted(sup.superintendent.fleet.managers) == ["Alpha", "Typo"] and not sup.problems
     text = messages(caplog)
     assert "Server folders:" in text and "Its servers are left out until that's fixed" in text
     assert "its server folder is gone" not in text
@@ -749,8 +842,8 @@ def test_a_failing_task_a_closed_window_and_a_failing_backend_close_are_logged(t
         raise RuntimeError("no such thing")
 
     async def scenario() -> None:
-        await sup._spawn("the thing", boom, restart=False)
-        sup.backend.close = failing_close  # type: ignore[method-assign]
+        await sup.spawn("the thing", boom, restart=False)
+        sup.superintendent.backend.close = failing_close  # type: ignore[method-assign]
         await asyncio.wait_for(sup.run(menu=Window()), 15)
 
     with caplog.at_level(logging.INFO):
@@ -1107,7 +1200,7 @@ def test_the_watchdog_reports_and_says_what_it_would_do(tmp_path: Path, caplog, 
 
 
 def test_watchdog_settings_are_checked_and_the_old_switch_still_counts() -> None:
-    from huragok.parts.watchdog import Watchdog
+    from huragok.servers.watchdog import Watchdog
 
     home = Path(".")
     assert Watchdog.preflight({}, home) == []
@@ -1284,7 +1377,7 @@ def test_the_check_on_self_updating_servers_says_what_it_sees(tmp_path: Path, ru
     bus = EventBus()
     service = ProgramUpdateService(settings, bus, lifecycle, {"Alpha": ServerState("Alpha"),  # type: ignore[arg-type]
                                                               "Beta": ServerState("Beta")}, {})
-    later = time.time() + serverupdates.OVERDUE + 1
+    later = time.time() + program_updates_module.OVERDUE + 1
 
     async def scenario() -> None:
         bus.emit("server.self_update", "Alpha", text="Automatic updates requested, but the update feed is disabled "
@@ -1326,7 +1419,7 @@ def test_the_check_on_self_updating_servers_says_what_it_sees(tmp_path: Path, ru
         assert await service.take_over("Alpha", release, "asked for") == (True, "Alpha installs 0.9.19 at its "
                                                                                 "next start")
         # The look that goes wrong is logged and goes on.
-        monkeypatch.setattr(serverupdates, "REVIEW_SECONDS", 0.01)
+        monkeypatch.setattr(program_updates_module, "REVIEW_SECONDS", 0.01)
         monkeypatch.setattr(service, "review", lambda **k: 1 / 0)
         loop = asyncio.ensure_future(service._review_loop())
         await asyncio.sleep(0.05)
@@ -1369,7 +1462,7 @@ def test_self_updating_servers_huragok_cant_update_are_named(tmp_path: Path, run
         bus.emit("rcon.connected", "Alpha", version="0.9.18")
         bus.emit("rcon.connected", "Beta", version="0.9.18")
         await service.check(quiet=False)
-        assert service.review(now=time.time() + serverupdates.OVERDUE + 1) == []
+        assert service.review(now=time.time() + program_updates_module.OVERDUE + 1) == []
         assert lifecycle.restarts == [] and lifecycle.jobs == {}
         ok, message = await service.install(when="now")
         assert not ok and "every server updates itself" in message
@@ -1483,7 +1576,7 @@ def test_updates_say_when_they_are_off_unreachable_or_fail(tmp_path: Path, run, 
     settings = load(write_root(tmp_path / "reclaimer", [("Alpha", free_port())], "[updates]\ncheck = false\n"))
     service = UpdateService(settings, EventBus(), lambda: None)
 
-    def offline(repository: str) -> None:
+    def offline(repository: str, **options: Any) -> None:
         raise UpdateError("couldn't reach GitHub: offline")
 
     def bad_zip(home: Path, release: Any) -> str:
@@ -1512,7 +1605,7 @@ def test_updates_say_when_they_are_off_unreachable_or_fail(tmp_path: Path, run, 
 
 def test_a_download_is_written_and_a_half_done_install_is_put_back(tmp_path: Path, monkeypatch, caplog) -> None:
     archive = make_release_zip(tmp_path / "release.zip")
-    monkeypatch.setattr(updates, "_get", lambda url, timeout, accept=None: archive.read_bytes())
+    monkeypatch.setattr(updates, "fetch", lambda url, timeout, accept=None: archive.read_bytes())
     path = updates.download(updates.Release("99.0.0", "page", "notes", "https://example.invalid/r.zip"),
                             tmp_path / "downloads")
     assert path.is_file() and path.name == "huragok-99.0.0.zip"

@@ -173,6 +173,20 @@ forget_after_days = 0                # strikes older than this stop counting; 0:
 name = "Vergil"                      # players read "removed by Vergil"
 exempt_roles = ["admin", "owner"]    # never acted on (roles as in commands.toml; "player" is everyone)
 check_names = true                   # kick names with a word from automod.txt in them (names.txt always applies)
+# How a word from automod.txt catches a player's name. "anywhere": anywhere in
+# it, so hitler catches Hitler, DasHitler and xXhitlerXx; a short word catches
+# more than you mean (ass in Classic) unless its line lists -classic. "words":
+# only as a word of its own, the name taken apart where its capitals and digits
+# change, so hitler catches DasHitler but not dashitler. Either way a listed
+# number isn't caught inside a longer one (88 isn't in Mike1988).
+name_match = "anywhere"
+# Huragok's moderation reaches every server: a mute by a ! command or Vergil
+# follows the player to any server they join, a kick keeps them off every server
+# until its time is up, and a ban reaches servers with a ban list of their own
+# (servers sharing one have it already). The game's own /kick and /ban, and votes,
+# stay on their server; Huragok only writes them on the player's record. false:
+# Huragok's stay on their server too. Each server's own Vergil is on its page in D.
+across_servers = true
 cooldown_seconds = 10                # lines this close together count as one strike
 split_seconds = 10                   # a word split over lines this close together is caught
 
@@ -210,11 +224,15 @@ source_port_offset = 2000
 # program is replaced: your settings, commands, word list and records stay, and the
 # new version brings them up to date.
 check = true
-check_hours = 6
+check_hours = 1
 # true: a new version installs itself as soon as Huragok finds it, rather than
 # waiting for you (the servers keep running; a version that failed to install or
 # to start isn't tried again by itself). false: it waits for U.
 auto_update = false
+# true: beta releases too (GitHub pre-releases), to try what's coming before it's
+# a full release; a beta can have bugs the full release won't. false: full releases
+# only. Turning it off doesn't go back: a beta stays until a full release passes it.
+beta = false
 repository = "LittleGroove/Project-Reclaimer-Huragok"
 
 [server_updates]
@@ -274,12 +292,14 @@ check_minutes = 5
 # What new servers take from this folder instead of carrying their own copy:
 #   game     Halo 3's files (5.5 GB), once, at game/: linked from a server that has
 #            them, or copied from MCC with dedicated init
-#   bans     one bans.json: one ban list, one admin list, one VPN allowance list
 #   content  one content/ folder (maps, game types, mods, images) for every server. Left
 #            out by default: each server keeps its own, so its Workshop mods can be
 #            updated after its own games and its custom games stay its own (D gives a
 #            server that shares one its own copy: hard links, no space used)
-share = ["game", "bans"]
+# Every server keeps a ban list of its own (bans.json in its folder): a /ban in game
+# is that server's. Huragok keeps its own list of the bans it gives (! commands,
+# Vergil) and the admins it makes, and puts them on every server's.
+share = ["game"]
 # Your MCC folder, for copying Halo 3's files when no server has them yet. Empty
 # means Steam's default folder; leave the line out to link from an existing server.
 # mcc_folder = 'D:\SteamLibrary\steamapps\common\Halo The Master Chief Collection'

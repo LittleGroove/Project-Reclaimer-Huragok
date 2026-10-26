@@ -52,7 +52,7 @@ then muted); past their start, a kick time is used once.
 
 | Part | |
 | --- | --- |
-| **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated and lookalike letters, invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
+| **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated letters, lookalike letters (Greek and Cyrillic ones, capitals too, small capitals like `ʙᴀᴅᴡᴏʀᴅ`, fullwidth, styled, circled and boxed letters from "fancy text" makers), invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
 | **kicks** | How long each kick keeps them out, in order: `30m`, `1h`, `1d`, `2w`. The last one repeats until the mutes start. Blank: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Times past the start of the mutes kick, then mute (above). At most one time per strike before the ban. |
 | **mutes** | How many strikes come before the mutes (`0`: muted the first time), then how long each mute lasts, in order: `0, 1d, 3d, 7d`. The last one repeats; `perm` (last only) is muted for good. Blank: never muted. At most one time per mute before the ban. |
 | **ban** | How many strikes come before the ban for good (`0`: banned the first time). Blank: never banned. |
@@ -101,23 +101,70 @@ the strike still counts toward the next step. It reaches a player who has left
 too (by a name Vergil has seen them use, or their player ID). `!pardonplayer`
 clears the strikes and unmutes them.
 
+**A moderator's `!mute` goes on the same list.** `!mute Bravo 1d spam` meant a day,
+but the server forgot it at its next restart; now Vergil mutes Bravo again as they
+join until the day is up, and they read `KEEP IT CLEAN! You're still muted (muted by
+Alice: spam): 23 hours left.` A `!mute` with no time lasts until `!unmute`. A newer
+`!mute` replaces the older one (a moderator shortening a mute gets the shorter one),
+`!unmute` ends it, and `!strikes <player>` shows it (`Muted (!mute by Alice: spam)`).
+It's no strike, and `!pardonplayer` leaves it alone: it isn't automod's. Vergil puts
+it back whatever it is on the server they join (on, dry run or off), since it's the
+moderator's call, not Vergil's. The same goes for a mute from anywhere else: an admin's
+own in game, the relay, the console (the server announces each one; Vergil's own
+aren't counted twice).
+
+**Someone who left** can be muted too: `!mute <name> 1d` for a player who isn't on
+puts the mute on the list for their player ID, and it starts as they next join (the
+day counts from now). Someone else who takes the name meanwhile isn't muted: when
+several players have used the name, the moderator picks the one with an `@number`
+(see [commands.md](commands.md#using-commands)). Someone on another server is that
+server's to mute.
+
+**Across servers** (`across_servers`, on by default): a mute on the list follows the
+player to any server they join. With it off, a mute is put back only on the server
+it was given on, and a strike's kick, mute or ban lands only there.
+
+`!mutes` (moderators) lists everyone muted now, numbered: `!unmute @2` lifts that one.
+
 ## Names
 A name is never struck, muted or banned: the name is the problem, so the player is
 kicked as they join, every time, until they change it. Vergil lets them straight
 back in after each kick (the server's kick would otherwise keep them out 10 minutes
 or more), so they can come back as soon as they've picked another name. They read
-`KEEP IT CLEAN! Change your name, it isn't allowed here (slurs). Join again with
-another one.`
+`KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). Join again
+with another one.`, whichever list caught it.
 
 A name is kicked when it has:
 
 - a word from `automod.txt` in it (with `check_names = true`, the default), or
 - a name from `names.txt` in it: Vergil's banned names, one per line.
 
-`!banname <#number | name>` (moderators) adds a name to `names.txt`: a player on
-the server named by `#number` or exact name has theirs banned and is kicked; any
-other text is banned as the name itself. `!strike <player> name [note]` does the same
-for a player, with a note. Anyone joining with that name after them is kicked too. The same disguises are caught as in
+So one list does both: a word you put in `automod.txt` is struck in chat and keeps
+a name with it out of the game. Players write their names run together, so how a
+word catches a name is a setting, `name_match` under `[automod]`:
+
+| `name_match` | `hitler` listed catches | Doesn't catch |
+| --- | --- | --- |
+| `"anywhere"` (the default) | Hitler, Adolf Hitler, DasHitler, HiElleHitler, xXhitlerXx, HITLERFAN, H1tl3r | |
+| `"words"` | Hitler, Adolf Hitler, DasHitler, HiElleHitler, H1tl3r | dashitler, xXhitlerXx, HITLERFAN |
+
+`"anywhere"` catches the word anywhere in a name, as if it were listed `*word*`. A
+short word then catches more than you mean (`ass` in Classic and Assassin), so list
+the names that should pass on its line with a minus: `ass, -classic, -assassin`.
+`"words"` takes the name apart where its capitals and digits change (DasHitler is
+"Das Hitler", Sniper1488 is "Sniper 1488") and then wants the word on its own, as
+in chat: fewer names caught by mistake, but a name written all in one case slips
+through. Either way a listed number is never caught inside a longer one: `88`
+catches Sniper88 and xX88Xx, not Mike1988. In the window, D → N → T tries a name
+against both lists.
+
+`names.txt` is for a name that isn't a word to ban in chat: a player impersonating
+someone, say. Its names are matched as written (inside a longer name too, as a word
+of their own), whatever `name_match` says. `!banname <#number | name>` (admins)
+adds a name to it: a player on the server named by `#number` or exact name has
+theirs banned and is kicked; any other text is banned as the name itself.
+`!strike <player> name [note]` (moderators) does the same for a player, with a
+note. Anyone joining with that name after them is kicked too. The same disguises are caught as in
 `automod.txt` (`BR4VO` for `Bravo`), and so is the name inside a longer one; `*name*`
 also catches it inside a word. Vergil writes the date, the moderator and their note
 above each name it adds:
@@ -134,6 +181,51 @@ one off; if the name is also caught by `automod.txt` or by a wider entry like
 
 The server announces each kick in the game's chat, with the name, as it announces
 each join; that can't be switched off from here.
+
+## Changing the word list from the game
+Admins add words without leaving the game. Most of the time the line is there
+already (its steps set up once), and a new word just joins it:
+
+```text
+!banword newword slurs
+```
+
+The last word is the line, the words before it join it (several with commas:
+`!banword word1, word2 slurs`), and from then on they lead down that line's steps,
+counted with its other words. `slur` finds `slurs` too. A line that isn't there yet
+gets an answer saying so, with the lines there are and the whole command to make
+it, your word already in it; a word with no line gets asked which.
+
+A new line is written out in full, as `automod.txt` has it:
+
+```text
+!banword newword | 10m 30m 1h 1d 7d | 5, 1h, 1d, 3d, 7d | 10 | hate
+```
+
+That's out 10 minutes, 30 minutes, an hour, a day, a week; from the 6th strike
+muted an hour, a day, 3 days, then a week each time; banned on the 11th. In game the
+times can be split by spaces or commas; Vergil writes them into `automod.txt` the
+way the file has them, as a new line at the end, and the change applies at once:
+in chat, and to anyone on now whose name has the word in it. The last part is the
+line's name (one word: `racist slurs` is written `racist-slurs`).
+
+- `!banword newword, otherword | slurs` (with a bar) adds to the `slurs` line too.
+  So does the whole line with that name and the same ladder (or the ladder left
+  out); another ladder under a name already used is refused, with what that line
+  does now (`!changebanword` changes a line's steps).
+- A line that kicks every time and nothing more: `!banword newword | | | | kicks`.
+- A word the list catches already, disguised or not (`b4dw0rd` when `badword` is
+  listed), isn't written twice: the answer says which line has it.
+- A mistake (a time like `1x`, more kick times than strikes before the ban, a line
+  called `name`) is answered with what's wrong, and nothing is written.
+
+`!unbanword <word>` takes a word off, as the file lists it; a line left with no
+words goes too. If the word isn't listed itself but is caught by another entry
+(`b4dw0rd`, caught by `badword`), it says which entry, and that `-b4dw0rd` on that
+line lets it through. Strikes already given stay; `!pardonplayer` clears them.
+
+Everyone in the chat sees the command line, the word included, as with every
+command. The window's D → A changes the list without that.
 
 ## What players read
 The reason they see, without ever repeating the word:
@@ -158,6 +250,22 @@ Tested against a real night's chat: the n-word on one line caught all four lines
 that used it (digits for letters, spaced out, a slang plural, and one mixed with
 another slur) and a player's name, with nothing caught by mistake in 761 lines.
 
+## Vergil on each server
+Each server has its own Vergil, on its page in the window (D → the server →
+Huragok's own → `automod`), applied at once:
+
+| | What Vergil does on that server |
+| --- | --- |
+| `on` | Acts on the word list in chat and in names: strikes, kicks, mutes, bans |
+| `dry_run` | Watches and logs what it would do, sends nothing; its strikes there are kept apart and never count where it's on |
+| `off` | Leaves that server's chat and names alone; `!strike` answers that Vergil is off there |
+
+A server without its own follows `[automod] dry_run`. Either way, mutes already
+decided (a moderator's, an admin's, a strike's where Vergil is on) are put back on
+it as `across_servers` says, and the moderators' commands work as everywhere. The
+window's top line shows each server's (`VRGL … automod (on: Alpha; dry run: Bravo)`),
+and so does the status card (V → Safety → Vergil).
+
 ## Commands
 | Command | Default role | |
 | --- | --- | --- |
@@ -165,15 +273,23 @@ another slur) and a player's name, with nothing caught by mistake in 761 lines.
 | `!strikes <player>` | moderator | Someone else's |
 | `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next kick, mute or ban |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
-| `!banname <#number \| name>` | moderator | Bans a player's name (kicking them), or a name itself, in `names.txt`. No strike, no ban |
+| `!banword <words> \| [kicks] \| [mutes] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
+| `!unbanword <word>` | admin | Takes a word off `automod.txt` (a line left with no words goes too) |
+| `!banname <#number \| name>` | admin | Bans a player's name (kicking them), or a name itself, in `names.txt`. No strike, no ban. A moderator's command up to 0.4.4 |
 | `!pardonplayer <player \| player ID> [rule \| all] [reason]` | admin | Clears their strikes (all, or one named line's) and lifts what automod did: unbans, unmutes, and lets a kicked player back in |
-| `!unbanname <name>` | admin | Takes a name off `names.txt` |
+| `!unbanname <name \| @number>` | admin | Takes a name off `names.txt`; `@number` from `!bannames` |
+| `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do (the answer is yours alone); `!rules slurs` shows one line in full |
+| `!bannames [text]` | moderator | The banned names in `names.txt`, newest first, numbered for `!unbanname` |
+| `!changebanword <line \| word> \| kicks \| mutes \| ban` | admin | New steps for a line, its words and name kept (its strikes count toward the new steps): `!changebanword slurs \| 30m 2h \| 1, 1d 3d \| 5`. A part left blank is none: `!changebanword rude \| \| 0, perm` mutes for good from the first strike |
+| `!mutes` | moderator | Everyone muted now: Vergil's list and the server's own, numbered for `!unmute` |
 
 `!strike`, `!strikes` and `!pardonplayer` work on players who aren't on the server:
-name them by player ID (or its first 8 characters or more), or by a name Vergil has
-seen them use. The start of a name alone picks nobody: `!strike bobb slurs` answers
-"Nobody here is called 'bobb'. Did you mean Bobby (#4)? Use #4." rather than
-striking Bobby, who may not be the one meant. A strike's kick, mute or ban lands on the
+name them by player ID (or its first 8 characters or more), by a name Vergil has
+seen them use, or by an `@number` when that name is more than one player's. The
+start of a name alone picks nobody: `!strike bobb slurs` answers "Nobody here is
+called 'bobb'. Did you mean Bobby (#4)? Use #4." rather than striking Bobby, who may
+not be the one meant. See [commands.md](commands.md#using-commands) for naming
+players. A strike's kick, mute or ban lands on the
 server the player is on now, wherever the moderator typed it; a kick for someone on
 no server kicks nobody (the strike still counts, and the reply says so), and a mute
 starts as they next join.
@@ -194,10 +310,11 @@ doesn't kick, mute, ban or tell anyone. A `settings.toml` without that line (or
 without an `[automod]` section at all) runs automod live, so keep the line until
 you mean it. Watch its lines for a while (in the window they're tagged `VRGL`; in
 `logs/huragok.log` they start `part.automod:`), then set `dry_run = false` and start
-Huragok again (`settings.toml` is read as it starts). Dry-run strikes and mutes
-are kept apart: going live starts everyone from zero. `!strike <player> name` still
-writes the name to `names.txt` in dry run (the list is yours either way); nobody is
-kicked for it until dry run is off.
+Huragok again (`settings.toml` is read as it starts), or switch one server at a
+time on its page in D (applied at once, see [Vergil on each server](#vergil-on-each-server)).
+Dry-run strikes and mutes are kept apart: going live starts everyone from zero. `!strike <player> name`,
+`!banname`, `!banword` and `!unbanword` still change their file in dry run (the
+lists are yours either way); nobody is kicked for it until dry run is off.
 
 ## Settings
 In `settings.toml`, under `[automod]` (in the file's VERGIL part; the section kept
@@ -212,6 +329,8 @@ its name):
 | `name` | `"Vergil"` | Who players read as acting ("banned by Vergil"). A `settings.toml` written before 0.4.0 says `"AutoMod"` |
 | `exempt_roles` | `["admin", "owner"]` | Never acted on, in chat or by name |
 | `check_names` | `true` | Kick names with a word from `automod.txt` in them. `names.txt` applies either way |
+| `name_match` | `"anywhere"` | How a word from `automod.txt` catches a name: `"anywhere"` in it, or `"words"` (only as a word of its own, the name taken apart at its capitals and digits). See [Names](#names) |
+| `across_servers` | `true` | Huragok's moderation (`!` commands, Vergil, the relay, the window's console) reaches every server: a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), and so does an admin Huragok makes. The game's own `/kick` and `/ban`, and votes, stay on their server (only written on the player's record; `!banall` puts a `/ban` on every server). `false`: Huragok's stay on theirs too |
 | `cooldown_seconds` | `10` | Lines this close together count as one strike |
 | `split_seconds` | `10` | Catch a word split over lines this close together |
 | `messages` | | Change what players read: `chat`, `name`, `manual`, `next`, `muted`, using `{detail}`, `{label}`, `{strike}`, `{action}`, `{next}`, `{by}`, and `{left}` in `muted`. For a brace players should read, write `{{` or `}}`: `check` names a message with a stray one, and while running such a message falls back to the default rather than stopping automod |
@@ -224,4 +343,5 @@ by default, the `database` setting) with the line that caused them, and every
 action is in the shared record with its reason. There's one database per root (the
 folder with `start.cmd`), so the mutes follow a player to every server this
 Huragok runs. Other parts can listen for `automod.strike`, `automod.pardon`,
-`automod.name`, `automod.name_banned` and `automod.name_allowed` events.
+`automod.name`, `automod.name_banned`, `automod.name_allowed`,
+`automod.words_banned`, `automod.word_allowed` and `automod.rule_changed` events.

@@ -1,0 +1,21 @@
+# Interval messages: said to everyone on every server, again and again, each one
+# after its own time. A Discord link, the rules, anything you like.
+#
+#   how often | the message
+#
+# how often  30s, 10m, 1h, 1d, or put together: 1h30m. Once a minute at most.
+# message    As players read it, from [Server]. A long one goes out as a few lines.
+#
+# Examples:
+#
+#   30m | Join us on Discord: discord.gg/yourserver
+#   1h  | Be nice: no slurs, no cheating. Vergil is listening.
+#
+# Messages with the same time take turns: two every 30m go out 15 minutes apart, each
+# one every 30 minutes. They're only said while someone is on, counting from when
+# Huragok first sees the server up.
+# Each server folder has an intervalmessages.txt of its own, for messages that are
+# only that server's; this one's are said on every server.
+# Edits apply within a few seconds. A # starts a note.
+#
+# Interval messages go below.

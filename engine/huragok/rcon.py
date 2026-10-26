@@ -30,8 +30,10 @@ from typing import Any
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, WebSocketException
 
-from .config import ServerConfig
-from .events import Event, EventBus
+from .core.background import background
+from .core.errors import ServerError
+from .core.events import Event, EventBus
+from .core.serverfolders import ServerConfig
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ def masked(line: str) -> str:
     return f"{words[0]} ********" if len(words) == 2 and words[0].lower() in SECRET_COMMANDS else line
 
 
-class RconError(Exception):
+class RconError(ServerError):
     pass
 
 
@@ -231,7 +233,7 @@ class RconClient:
         self._stop.set()
         self._wake.set()
         if self._ws is not None:
-            asyncio.ensure_future(self._ws.close())
+            background(self._ws.close(), f"closing {self.server.name}'s console connection", log)
 
     async def _session(self) -> None:
         endpoint = self.server.rcon_endpoint()
@@ -361,10 +363,19 @@ class RconClient:
 async def one_shot(server: ServerConfig, command: str, *args: str, by: str | None = None,
                    timeout: float = 10.0) -> Reply:
     """Sign in, run one command, sign out. Uses a normal spot: a running supervisor
-    holds the one kept for this machine."""
+    holds the one kept for this machine. A connection that breaks, a handshake something else on the port answers,
+    or a message that isn't JSON is an RconError, as RconClient takes them: `say` to every server goes on to the
+    next one."""
     endpoint = server.rcon_endpoint()
     if endpoint is None:
         raise RconError(f"{server.name} has no RCON password: set [rcon] password in dedicated.toml")
+    try:
+        return await _one_shot(endpoint, command, args, by, timeout)
+    except (WebSocketException, ValueError) as error:  # ConnectionClosed and InvalidHandshake among them
+        raise RconError(f"the console connection failed ({type(error).__name__}: {error})") from None
+
+
+async def _one_shot(endpoint: Any, command: str, args: tuple[str, ...], by: str | None, timeout: float) -> Reply:
     async with connect(url_for(endpoint.host, endpoint.port), subprotocols=["reclaimer-rcon"], open_timeout=5,
                        max_size=1 << 20, **NO_PROXY) as ws:
         await ws.send(json.dumps({"type": "auth", "password": endpoint.password}))
@@ -383,3 +394,19 @@ async def one_shot(server: ServerConfig, command: str, *args: str, by: str | Non
                 return Reply(bool(message.get("ok")), str(message.get("text", "")), message.get("data"), message)
             if message.get("type") == "error":
                 raise RconError(str(message.get("text")))
+
+
+async def ban_list(client: RconClient, *, strict: bool = False) -> tuple[dict[str, list[dict[str, Any]]] | None, str]:
+    """The server's ban list, as its console's `bans` gives it: {"players": [...], "ips": [...]}, every entry a dict
+    (a player's has `id`, an address's `ip`; both `banned_by`, `reason`, `banned_at`, `group`...). None and why when
+    it couldn't be read; `strict`: also when the answer has no list of players (lifting a ban mustn't take that for
+    "not banned")."""
+    try:
+        reply = await client.command("bans")
+    except RconError as error:
+        return None, str(error)
+    if not reply.ok or not isinstance(reply.data, dict):
+        return None, reply.text
+    if strict and not isinstance(reply.data.get("players"), list):
+        return None, reply.text or "the answer has no list of players"
+    return {kind: [e for e in reply.data.get(kind) or [] if isinstance(e, dict)] for kind in ("players", "ips")}, ""

@@ -1,0 +1,67 @@
+Map variants: map = "…"; each plays on its own map
+  From Halo 3:
+  "Boundless"        map variant · a map that is not installed
+  "Epilogue"         map variant · a map that is not installed
+  "MLG Amplified 8"  map variant · a map that is not installed
+  "MLG CStruct TS8"  map variant · a map that is not installed
+  "MLG Construct 8"  map variant · a map that is not installed
+  "MLG Heretic 8"    map variant · a map that is not installed
+  "MLG Heretic FFA"  map variant · a map that is not installed
+  "MLG Narrows 8"    map variant · a map that is not installed
+  "MLG Onslaught 8"  map variant · a map that is not installed
+  "MLG Pit 8"        map variant · a map that is not installed
+  "Pit Stop"         map variant · a map that is not installed
+  "SAND TARP"        map variant · a map that is not installed
+Game types: game = "…", or a playlist game's "game"
+  "Oddball"
+  "King of the Hill"
+  "Infection"
+  "Territories"
+  "Escalation Slayer"
+Game variants: game = "…"
+  From your content folder:
+  "Flood Infection"     game variant · Slayer
+  "Growth"              game variant · Slayer
+  "One in the Chamber"  game variant · Slayer
+  "UNSC vs Covenant"    game variant · Slayer
+  "Zone Control"        game variant · Slayer
+  From Halo 3:
+  "2V2 HARDCORE TS"                          game variant · Slayer
+  "DUALS"                                    game variant · Escalation Slayer
+  "ESCALATION"                               game variant · Escalation Slayer
+  "FIESCALATION"                             game variant · Escalation Slayer
+  "HARDCORE BALL"                            game variant · Oddball
+  "HARDCORE CON TS"                          game variant · Slayer
+  "h3_4v4_hardcoreFlag_heretic_5points.bin"  "HARDCORE CTF" · Capture the Flag
+  "h3_4v4_hardcoreFlag_narrows_3points.bin"  "HARDCORE CTF" · Capture the Flag
+  "h3_4v4_hardcoreFlag_pit_3points.bin"      "HARDCORE CTF" · Capture the Flag
+  "HARDCORE FFA"                             game variant · Slayer
+  "HARDCORE KING"                            game variant · King of the Hill
+  "HARDCORE TS"                              game variant · Slayer
+  "TEAM ESCALATION"                          game variant · Escalation Slayer
+  "alpha_zombie"                             game variant · Infection
+  "attrition_assau"                          game variant · Assault
+  "attrition_ctf"                            game variant · Capture the Flag
+  "elimination"                              game variant · Slayer
+  "escort"                                   game variant · VIP
+  "flag_rally"                               game variant · Territories
+  "hide_and_seek"                            game variant · Infection
+  "infection-0_010.bin"                      "infection" · Infection
+  "king"                                     game variant · King of the Hill
+  "land_grab"                                game variant · Territories
+  "low_ammo_infect"                          game variant · Infection
+  "lowball"                                  game variant · Oddball
+  "mosh_pit"                                 game variant · King of the Hill
+  "ninja_ball"                               game variant · Oddball
+  "oddball-0_010.bin"                        "oddball" · Oddball
+  "one_bomb"                                 game variant · Assault
+  "one_flag"                                 game variant · Capture the Flag
+  "one_sided_vip"                            game variant · VIP
+  "rocketball"                               game variant · Oddball
+  "rockets"                                  game variant · Slayer
+  "sandbox_editor"                           game variant · Forge
+  "team_king"                                game variant · King of the Hill
+  "team_oddball"                             game variant · Oddball
+  "territories-0_010.bin"                    "territories" · Territories
+
+Names ignore case. Put map variants in C:\reclaimer\content\Maps and game variants in C:\reclaimer\content\Game Modes; Workshop mods appear once installed (dedicated mods).
