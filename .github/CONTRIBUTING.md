@@ -47,6 +47,8 @@ A few things that keep Huragok dependable:
   existing file up to date, with a test from `tests/data/host-0.4.0`
   (docs/development.md, "Hosts' files across updates"). A change to a host's file
   goes through `tomledit`, which writes only what reads back as exactly that change.
+  Huragok's notes in those files are brought up to date by every update without a step:
+  after changing one, run `python engine/tools/notes_history.py`.
 - **A beta is always a GitHub pre-release** (`gh release create … --prerelease`), tagged
   with its pre-release version (`v0.5.1-beta.1`, the same as `__version__`). That mark
   is the only thing keeping a beta from hosts with `[updates] beta` off and from every

@@ -77,6 +77,30 @@ def test_kicks_then_mutes_then_the_ban() -> None:
     assert ladder("w | | 0, 1d, perm | 4", 5) == ["mute 1d", "mute perm", "mute perm", "mute perm", "ban"]
 
 
+def test_a_number_last_in_the_mutes_is_the_strikes_before_muted_for_good() -> None:
+    # The host's example: kicked 5 times, muted 1 day, 3 days, 7 days, then for good, never banned.
+    r = rule("w | | 5, 1d, 3d, 7d, 8 | | mean")
+    assert r.mute_after == 5 and r.mutes == ["1d", "3d", "7d"] and r.mute_forever_after == 8 and r.ban_after is None
+    assert [str(r.step_for(n)) for n in range(10)] == ["kick"] * 5 + ["mute 1d", "mute 3d", "mute 7d", "mute perm",
+                                                                      "mute perm"]
+    assert r.step_for(500) == Step("mute") and r.step_for(8).describe() == "muted for good"
+    assert described(r) == ["1st to 5th: kicked", "6th: muted for 1 day", "7th: muted for 3 days",
+                            "8th: muted for 7 days", "9th and after: muted for good"]
+    assert r.strike_text(8) == "strike 8 of 8" and r.strike_text(9) == "strike 9"  # counted toward it, as the ban
+    # Without it the last time repeats, as it always has.
+    assert ladder("w | | 5, 1d, 3d, 7d", 10)[-2:] == ["mute 7d", "mute 7d"] and rule("w | | 0, 1d").strike_text(1) == \
+        "strike 1"
+    # A later number: the last time repeats until then.
+    assert described(rule("w | | 0, 1d, 7d, 5 | | x")) == ["1st: muted for 1 day", "2nd to 5th: muted for 7 days",
+                                                           "6th and after: muted for good"]
+    # Kick times, and a ban after it.
+    assert ladder("w | 1h, 1d | 1, 1d, 2 | 4 | x", 6) == ["kick 1h", "kick 1d + mute 1d", "mute perm", "mute perm",
+                                                          "ban", "ban"]
+    assert rule("w | 1h | 0, 1d, 2 | 4 | x").strike_text(4) == "strike 4 of 4"  # the ban's count wins
+    # In game, separated by spaces: !changebanword reads it as the file does.
+    assert rule("w | | 5, 1d, 3d, 7d, 8").mute_forever_after == 8
+
+
 def test_a_word_alone_is_a_plain_kick_forever() -> None:
     r = rule("kickword")
     assert {r.step_for(n) for n in range(50)} == {Step("kick")} and r.step_for(0).describe() == "kicked"
@@ -149,6 +173,15 @@ def test_severity_order() -> None:
     ("w | | | \u00b2 |", "the strikes before the ban must be a number, 0 or more"),
     ("w | | 3, 1d | 2 |", "the mutes start after 3 strikes but the ban comes after 2"),
     ("w | | 1, 1d, 3d, 7d | 3 |", "3 mute times but only 2 mutes before the ban"),
+    ("w | | 5, 1d, 3d, 7d, 7", "3 mute times but only 2 mutes before muted for good.*8 or more"),
+    ("w | | 5, 1d, 3d, 7d, 5", "the mutes start after 5 strikes but are for good after 5.*8 or more"),
+    ("w | | 5, 1d, 3d, 7d, 2", "the mutes start after 5 strikes but are for good after 2"),
+    ("w | | 5, 8", "between the 5 and the 8 in mutes, list how long each mute lasts"),
+    ("w | | 5, 1d, 3, 7d", "'3' in mutes has no s, m, h, d or w.*can only be last"),
+    ("w | | 5, 1d, 3, 7d, 8", "'3' in mutes has no s, m, h, d or w"),
+    ("w | | 0, 1d, perm, 3", "perm and the 3 after it both say when the mutes are for good"),
+    ("w | | 0, 1d, 3 | 3", "the mutes are for good after 3 strikes but the ban comes after 3"),
+    ("w | | 0, 1d, \u00b2", "isn't a time"),  # ² isn't a count either
     ("| 1h", "no words"),
     ("-onlyallowed", "no words"),
     ("w | | | | two words", "one short word"),
@@ -814,6 +847,10 @@ def test_rules_bannames_and_changebanword_from_the_game(tmp_path: Path, run) -> 
                                         "then muted for 1 day; 3rd to 5th: muted for 3 days; 6th: banned for good")
             text = (tmp_path / "automod.txt").read_text(encoding="utf-8")
             assert "\nbadword | 30m, 2h | 1, 1d, 3d | 5 | slurs\n" in text
+            await fake.chat(ADMIN, "Admin", "!changebanword rude | | 1 1d 3d 4")  # a number last: then for good
+            await answered(fake, ADMIN, "The rude line now: 1st: kicked; 2nd: muted for 1 day; 3rd and 4th: muted for "
+                                        "3 days; 5th and after: muted for good")
+            assert "\nrudeword | | 1, 1d, 3d, 4 | | rude\n" in (tmp_path / "automod.txt").read_text(encoding="utf-8")
             await fake.chat(ADMIN, "Admin", "!changebanword rude | | 0, perm")  # by its name; blank parts: none
             await answered(fake, ADMIN, "The rude line now: every time: muted for good")
             await fake.chat(ADMIN, "Admin", "!changebanword nosuch | 1h")

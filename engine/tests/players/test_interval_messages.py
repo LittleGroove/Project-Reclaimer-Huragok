@@ -362,10 +362,14 @@ def test_a_host_from_before_gets_the_files_once_and_keeps_its_own(tmp_path: Path
     changed = up_to_date(settings_path)
     assert [line for line in changed if FILE in line] == [
         f"{FILE}: interval messages (for every server), written with how to set them up; none yet",
-        f"Alpha/{FILE}: interval messages (its own), written with how to set them up; none yet"]
+        f"Alpha/{FILE}: interval messages (its own), written with how to set them up; none yet",
+        f"Bravo/{FILE}: Huragok's notes as this version writes them"]
     assert (root / FILE).read_text(encoding="utf-8") == template("every")
     assert (root / "SERVERS" / "Alpha" / FILE).read_text(encoding="utf-8") == template("server")
-    assert (root / "SERVERS" / "Bravo" / FILE).read_text(encoding="utf-8") == "1h | Bravo's own\n"
+    # Bravo's own messages stay, with the notes a server's file has above them (an update brings them back).
+    assert (root / "SERVERS" / "Bravo" / FILE).read_text(encoding="utf-8") == template("server") + "1h | Bravo's own\n"
+    backup = root / "records" / "previous-files" / migrate.__version__ / "Bravo" / FILE
+    assert backup.read_text(encoding="utf-8") == "1h | Bravo's own\n"
     assert not (root / "SERVERS" / "_set aside" / FILE).exists() and not (root / "SERVERS" / "not a server" / FILE).exists()
     (root / FILE).unlink()  # the host took it out: it stays out
     assert [line for line in up_to_date(settings_path) if FILE in line] == []

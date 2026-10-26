@@ -214,6 +214,21 @@ def _comment(value: str) -> str:
     return "" if at is None else value[len(value[:at].rstrip()):]
 
 
+def line_kinds(lines: list[str]) -> list[_Line]:
+    """What each line of a TOML file is ("blank", "comment", "header", "key", "more" or "other"), as every edit here
+    reads it: the notes kept up to date by updates (updates/notes.py) work from the same reading."""
+    return _layout(lines)
+
+
+def split_comment(line: str, at: int) -> tuple[str, str]:
+    """A setting's line on its own (`at`: where its value starts): what TOML reads, and its own comment from the
+    `#` ("" without one). A `#` inside quotes is part of the value."""
+    _, quote, start = _scan(line[at:])
+    if start is None or quote is not None:
+        return line, ""
+    return line[:at + start].rstrip(), line[at + start:]
+
+
 def _differences(new: dict[str, Any], wanted: dict[str, Any]) -> str:
     keys = sorted({k for k in set(new) | set(wanted) if new.get(k) != wanted.get(k)})
     return ", ".join(f"[{k}]" if isinstance(wanted.get(k, new.get(k)), (dict, list)) else k for k in keys[:5])
@@ -597,9 +612,10 @@ def _list_line(edit: _Edit, table: str, key: str) -> tuple[int | None, tuple[int
     return edit.key_line(span[0] + 1, span[1], key, f"[{table}]"), span
 
 
-def add_to_list(path: Path, table: str, key: str, item: str, note: str = "") -> bool:
+def add_to_list(path: Path, table: str, key: str, item: str, note: str = "", *, width: int = 0) -> bool:
     """Put `item` in [table]'s `key` list on a line of its own (`"item",  # note`), the rest of the file as it
-    was, the host's comments included. False: it's in the list already (any case)."""
+    was, the host's comments included; `width`: the note lined up after an entry that wide, as commands.toml's
+    commands are. False: it's in the list already (any case)."""
     edit = _Edit(path, f"[{table}] {key}")
     current = edit.wanted.setdefault(table, {})
     if not isinstance(current, dict):
@@ -612,7 +628,7 @@ def add_to_list(path: Path, table: str, key: str, item: str, note: str = "") -> 
     values.append(item)
     entry = f"    {_toml_string(item)},"
     if note:
-        entry += f"  # {note.replace(chr(10), ' ')}"
+        entry = (f"    {entry.strip():<{width}} #" if width else f"{entry}  #") + f" {note.replace(chr(10), ' ')}"
     number, span = _list_line(edit, table, key)
     if span is None:  # no such table yet: at the end, as the file's own sections are written
         while edit.lines and not edit.lines[-1].strip():

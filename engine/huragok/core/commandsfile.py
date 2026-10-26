@@ -281,10 +281,15 @@ cooldown_seconds = 3    # between uses of a command, per player; admins and owne
 PLAYERS_EXAMPLE = '    # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",  # who this is\n'
 
 
+def entry_width(specs: Iterable[CommandSpec] | None = None) -> int:
+    """How wide a command's entry is written (`"changebanword",` and the spaces after it), so their notes line up."""
+    return max((len(s.name) for s in (all_commands().values() if specs is None else specs)), default=0) + 3
+
+
 def render_commands_toml(specs: Iterable[CommandSpec] | None = None) -> str:
     """commands.toml with every command under its default role, each with what it does."""
     specs = sorted(all_commands().values() if specs is None else specs, key=lambda s: s.name)
-    width = max((len(s.name) for s in specs), default=0) + 3
+    width = entry_width(specs)
     out = [HEADER]
     for role in ROLES:
         section = TITLES[role]
@@ -404,7 +409,7 @@ def set_command_role(path: Path, command: str, role: str) -> None:
         for section in SECTIONS:
             for written in _listed_as(copy, section, command, prefix):
                 remove_from_list(copy, section, "commands", written)
-        add_to_list(copy, TITLES[role], "commands", command, spec.help)
+        add_to_list(copy, TITLES[role], "commands", command, spec.help, width=entry_width())
 
     _checked(path, change, f"{command} for {role}")
 

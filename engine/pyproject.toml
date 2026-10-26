@@ -43,7 +43,7 @@ include = ["huragok*"]
 version = { attr = "huragok.__version__" }
 
 [tool.setuptools.package-data]
-huragok = ["templates/*.toml", "templates/*.txt", "templates/packages/*/*.toml",
+huragok = ["templates/*.toml", "templates/*.txt", "templates/*.json", "templates/packages/*/*.toml",
                         "templates/packages/*/playlists/*.json"]
 
 [tool.pytest.ini_options]

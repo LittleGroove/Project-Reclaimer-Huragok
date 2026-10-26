@@ -180,10 +180,13 @@ def test_who_is_who_and_who_may_use_which_command(tmp_path: Path) -> None:
 # automod.txt and names.txt ---------------------------------------------------------------------------------
 
 def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> None:
-    assert rule_line(["badword", "-badwordy"], ["1h"], 1, ["1d", "7d"], 3, "slurs") == \
+    assert rule_line(["badword", "-badwordy"], ["1h"], 1, ["1d", "7d"], None, 3, "slurs") == \
         "badword, -badwordy | 1h | 1, 1d, 7d | 3 | slurs"
-    assert rule_line(["kickword"], [], None, [], None, "") == "kickword"
-    assert rule_line(["word"], [], None, [], 0, "") == "word | | | 0"  # four parts ending in a number: not 0.2's
+    assert rule_line(["kickword"], [], None, [], None, None, "") == "kickword"
+    assert rule_line(["word"], [], None, [], None, 0, "") == "word | | | 0"  # four parts ending in a number: not 0.2's
+    assert rule_line(["meanword"], [], 5, ["1d", "3d", "7d"], 8, None, "mean") == "meanword | | 5, 1d, 3d, 7d, 8 | | mean"
+    mean = parse_line("meanword | | 5, 1d, 3d, 7d, 8 | | mean", 1)
+    assert mean is not None and line_of(mean) == "meanword | | 5, 1d, 3d, 7d, 8 | | mean"
     rule = parse_line("badword, -badwordy | 1h | 1, 1d, 7d | 3 | slurs", 1)
     assert rule is not None and line_of(rule) == "badword, -badwordy | 1h | 1, 1d, 7d | 3 | slurs"
     assert ladder(rule) == ["1st: removed for 1 hour", "2nd: muted for 1 day", "3rd: muted for 7 days",
@@ -434,7 +437,7 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
             "2", "ENTER", "X", "Y",  # threats taken out
             "A", "ENTER", *"slur", "ENTER", "1", *"insults", "ENTER", "ESC",  # a name taken already: asked again
             "A", "ENTER", *"spam", "ENTER", "5", *"soon", "ENTER", *"1h, 2h", "ENTER", "Y", *"x", "ENTER", *"1", "ENTER",
-            *"1d", "ENTER", "Y", "1", "ENTER", "ENTER",  # not a time, not a number, too few for the ban; Enter: enough
+            *"1d", "ENTER", "N", "Y", "1", "ENTER", "ENTER",  # not a time, not a number, too few for the ban; Enter: enough
             *"name", "ENTER", "ENTER", "N",  # a name !strike keeps; then none, and it isn't added
             "ESC", "N", "ENTER",
             "A", "ENTER", *"***", "ENTER", "x",  # nothing left of it: would catch everyone
@@ -451,6 +454,31 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
     assert "The line: spam | 1h, 2h | 1, 1d | 2" in text  # Enter: the least the ban can be
     assert "2nd: removed for 2 hours, then muted for 1 day" in text and "3rd: banned for good" in text
     assert "it would catch everyone" in text and "That name is fine." in text
+
+
+def test_d_word_list_mutes_for_good_after_a_number_of_strikes(tmp_path: Path, run) -> None:
+    path = template_root(tmp_path)
+    words = path.parent / "automod.txt"
+    keys = ["A", "ENTER",
+            "A", "ENTER", *"meanword", "ENTER", "5", "ENTER",  # your own: the server's plain kick
+            "Y", *"5", "ENTER", *"1d, 3d, 7d", "ENTER",  # muted after 5 strikes, 1 day, 3 days, 7 days
+            "Y", *"2", "ENTER", "ENTER",  # for good: too few for the times; Enter: the least, 8
+            "N", *"mean", "ENTER", "Y",  # never banned
+            "A", "ENTER", *"rudeword", "ENTER", "5", "ENTER",
+            "Y", *"0", "ENTER", *"1d", "ENTER", "Y", "ENTER",  # muted 1 day, then for good after 1
+            "Y", "ENTER", *"rude", "ENTER", "Y",  # the ban: Enter, the least it can be, after muted for good
+            "A", "ENTER", *"spam", "ENTER", "5", "ENTER",
+            "Y", *"0", "ENTER", *"1d, perm", "ENTER",  # perm last: for good already, so not asked
+            "N", *"spam", "ENTER", "Y",
+            "ESC", "ESC"]
+    menu, terminal = screen(path, keys)
+    run(menu.screen_settings())
+    text = text_of(terminal)
+    assert [line_of(r) for r in read_rules(words)] == ["meanword | | 5, 1d, 3d, 7d, 8 | | mean",
+                                                       "rudeword | | 0, 1d, 1 | 2 | rude", "spam | | 0, 1d, perm | | spam"]
+    assert "at least 8, so every mute time comes first" in text and "A number, 8 or more." in text
+    assert "9th and after: muted for good" in text and "3rd: banned for good" in text
+    assert "(no: 7d each time from then on)" in text and "(no: perm each time" not in text
 
 
 def test_d_a_servers_playlists_custom_games_and_bans(tmp_path: Path, run) -> None:

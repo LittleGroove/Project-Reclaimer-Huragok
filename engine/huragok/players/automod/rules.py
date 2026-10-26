@@ -1,9 +1,10 @@
 """Vergil's word list: one text file, one rule per line, in five parts.
 
-    # words                 | kicks        | mutes          | ban | name
-    badword, otherword      | 1h, 1d       | 2, 1d, 7d      | 5   | slurs
-    worstword               |              |                | 0   | threats
-    rudeword                |              | 0, 1d, 3d, 7d  |     | rude
+    # words                 | kicks        | mutes            | ban | name
+    badword, otherword      | 1h, 1d       | 2, 1d, 7d        | 5   | slurs
+    worstword               |              |                  | 0   | threats
+    rudeword                |              | 0, 1d, 3d, 7d    |     | rude
+    meanword                |              | 5, 1d, 3d, 7d, 8 |     | mean
     kickword
 
 Each strike moves a player one step down the line's ladder: kicks first, then
@@ -18,8 +19,10 @@ kicks    how long each kick keeps the player out, in order (30m, 1h, 1d, 2w); th
          since the server's kick times are fixed.
 mutes    how many strikes come before the mutes start (0: muted the first time),
          then how long each mute lasts, in order; the last repeats, and `perm`
-         (last only) is muted for good. Empty: never muted. A muted player stays
-         in the game; nobody hears their voice or reads their chat.
+         (last only) is muted for good. A number last, with no s, m, h, d or w, is
+         how many strikes come before muted for good, as the ban counts them: the
+         last time repeats until then. Empty: never muted. A muted player stays in
+         the game; nobody hears their voice or reads their chat.
 ban      how many strikes come before the ban for good (0: banned the first
          time). Empty: never banned.
 name     what players read, and what moderators type in !strike. Optional.
@@ -28,6 +31,8 @@ So "badword, otherword | 1h, 1d | 2, 1d, 7d | 5 | slurs" is 1st: out 1 hour,
 2nd: out 1 day, 3rd: muted 1 day, 4th and 5th: muted 7 days, 6th: banned.
 "w | 1h, 1d, 2d | 1, 1d | 4" is 1st: out 1 hour, 2nd: out 1 day then muted 1 day,
 3rd: out 2 days then muted 1 day, 4th: muted 1 day, 5th: banned.
+"meanword | | 5, 1d, 3d, 7d, 8" is 1st to 5th: kicked, 6th: muted 1 day, 7th: muted
+3 days, 8th: muted 7 days, 9th and after: muted for good, never banned.
 "kickword" alone is a plain kick every time. There's no limit on the counts or
 on how many times a line lists, only that every time comes before the ban.
 
@@ -104,6 +109,7 @@ class Rule:
     kicks: list[str] = field(default_factory=list)
     mute_after: int | None = None  # strikes before the mutes start; None: never muted
     mutes: list[str] = field(default_factory=list)  # each mute's time; "perm" last for good
+    mute_forever_after: int | None = None  # strikes before muted for good (the mutes' last number); None: never
     ban_after: int | None = None  # strikes before the ban; None: never banned
     line: int = 0
     old_layout: bool = False  # written as "words | timers | chances | name"
@@ -113,7 +119,10 @@ class Rule:
         if self.ban_after is not None and previous >= self.ban_after:
             return Step("ban")
         if self.mute_after is not None and previous >= self.mute_after:
-            time = self.mutes[min(previous - self.mute_after, len(self.mutes) - 1)]
+            if self.mute_forever_after is not None and previous >= self.mute_forever_after:
+                time = FOREVER
+            else:
+                time = self.mutes[min(previous - self.mute_after, len(self.mutes) - 1)]
             # A kick time listed for this strike still kicks, the mute after it; the last doesn't repeat here.
             kick = self.kicks[previous] if previous < len(self.kicks) else None
             if _timed(time) is not None:
@@ -132,13 +141,17 @@ class Rule:
         points = set(range(len(self.kicks) + 1))
         if self.mute_after is not None:
             points.update(range(self.mute_after, self.mute_after + len(self.mutes) + 1))
+        if self.mute_forever_after is not None:
+            points.add(self.mute_forever_after)
         if self.ban_after is not None:
             points.add(self.ban_after)
         return sorted(points)
 
     def strike_text(self, number: int) -> str:
-        if self.ban_after and number <= self.ban_after:
-            return f"strike {number} of {self.ban_after}"
+        """"strike 2 of 3": toward the ban, or toward muted for good on a line that never bans."""
+        last = self.ban_after if self.ban_after is not None else self.mute_forever_after
+        if last and number <= last:
+            return f"strike {number} of {last}"
         return f"strike {number}"
 
 
@@ -211,20 +224,41 @@ def parse_line(text: str, number: int) -> Rule | None:
     if FOREVER in kicks:
         raise RuleError(f"{where}: a kick can't be for good; that's the ban, in the 4th part")
 
-    mute_after, mutes = None, []
+    mute_after, mutes, forever_after = None, [], None
     if fields[2]:
         first, _, rest = fields[2].partition(",")
         if not is_count(first.strip()):
             raise RuleError(f"{where}: mutes start with how many strikes come first (0: muted the first time), "
                             f"then how long each mute lasts, like 0, 1d, 3d, 7d")
         mute_after = _count(first.strip(), where, "the strikes before the mutes")
-        mutes = _times(rest, where)
+        entries = [t.strip() for t in rest.split(",") if t.strip()]
+        if entries and is_count(entries[-1]):
+            forever_after = int(entries.pop())  # a number last: the strikes before muted for good
+        if count := next((t for t in entries if is_count(t)), None):
+            raise RuleError(f"{where}: '{count}' in mutes has no s, m, h, d or w: a number alone, the strikes "
+                            f"before muted for good, can only be last, like {mute_after}, 1d, 3d, 7d, 8")
+        mutes = _times(", ".join(entries), where)
+        if not mutes and forever_after is not None:
+            raise RuleError(f"{where}: between the {mute_after} and the {forever_after} in mutes, list how long "
+                            f"each mute lasts, like {mute_after}, 1d, 3d, 7d, {forever_after}")
         if not mutes:
             raise RuleError(f"{where}: after the {mute_after} in mutes, list how long each mute lasts, like "
                             f"{mute_after}, 1d, 3d, 7d (perm: for good). In the 0.2 layout the 3rd part was the "
                             f"chances before a ban; that is now the 4th: words | kicks | | ban | name")
         if FOREVER in mutes[:-1]:
             raise RuleError(f"{where}: perm can only be the last mute; nothing comes after for good")
+        if forever_after is not None:
+            if FOREVER in mutes:
+                raise RuleError(f"{where}: perm and the {forever_after} after it both say when the mutes are for "
+                                f"good; keep one")
+            if forever_after <= mute_after:
+                raise RuleError(f"{where}: the mutes start after {mute_after} strikes but are for good after "
+                                f"{forever_after}, so no mute time would be used; the last number counts every "
+                                f"strike, as the ban does: {mute_after + len(mutes)} or more here")
+            if len(mutes) > forever_after - mute_after:
+                raise RuleError(f"{where}: {_many(len(mutes), 'mute time')} but only "
+                                f"{_many(forever_after - mute_after, 'mute')} before muted for good; one time per "
+                                f"mute at most ({mute_after + len(mutes)} or more)")
 
     ban_after = None
     if fields[3]:
@@ -232,6 +266,9 @@ def parse_line(text: str, number: int) -> Rule | None:
         if mute_after is not None and mute_after >= ban_after:
             raise RuleError(f"{where}: the mutes start after {mute_after} strikes but the ban comes after "
                             f"{ban_after}, so they never would")
+        if forever_after is not None and forever_after >= ban_after:
+            raise RuleError(f"{where}: the mutes are for good after {forever_after} strikes but the ban comes after "
+                            f"{ban_after}, so they never would be")
         if mute_after is not None and len(mutes) > ban_after - mute_after:
             raise RuleError(f"{where}: {_many(len(mutes), 'mute time')} but only "
                             f"{_many(ban_after - mute_after, 'mute')} before the ban; one time per mute at most")
@@ -250,7 +287,7 @@ def parse_line(text: str, number: int) -> Rule | None:
         raise RuleError(f"{where}: a line can't be called '{NAME_STRIKE}': !strike <player> {NAME_STRIKE} "
                         f"bans a player's name")
     return Rule(name=name, label=name, words=words, allow=allow, kicks=kicks, mute_after=mute_after,
-                mutes=mutes, ban_after=ban_after, line=number, old_layout=old)
+                mutes=mutes, mute_forever_after=forever_after, ban_after=ban_after, line=number, old_layout=old)
 
 
 def lines_of(text: str) -> list[str]:
@@ -398,16 +435,25 @@ def ladder(rule: Rule) -> list[str]:
     return out
 
 
-def least_ban(kicks: list[str], mute_after: int | None, mutes: list[str]) -> int:
-    """The fewest strikes before the ban that leave room for every kick and mute time."""
-    return max(len(kicks), 0 if mute_after is None else mute_after + len(mutes))
+def least_ban(kicks: list[str], mute_after: int | None, mutes: list[str], forever_after: int | None = None) -> int:
+    """The fewest strikes before the ban that leave room for every kick and mute time, and for muted for good."""
+    return max(len(kicks), 0 if mute_after is None else mute_after + len(mutes),
+               0 if forever_after is None else forever_after + 1)
 
 
-def rule_line(words: list[str], kicks: list[str], mute_after: int | None, mutes: list[str], ban_after: int | None,
-              name: str) -> str:
+def least_forever(mute_after: int, mutes: list[str]) -> int:
+    """The fewest strikes before muted for good that leave room for every mute time."""
+    return mute_after + len(mutes)
+
+
+def rule_line(words: list[str], kicks: list[str], mute_after: int | None, mutes: list[str],
+              forever_after: int | None, ban_after: int | None, name: str) -> str:
     """A rule as its line in the word list. With a name it's written in all five parts (four parts ending in a
-    name read as the 0.2 layout); without one, the empty parts at the end are left off."""
-    parts = [", ".join(words), ", ".join(kicks), "" if mute_after is None else ", ".join([str(mute_after), *mutes]),
+    name read as the 0.2 layout); without one, the empty parts at the end are left off. `forever_after` goes last
+    in the mutes (the strikes before muted for good)."""
+    forever = [] if forever_after is None else [str(forever_after)]
+    parts = [", ".join(words), ", ".join(kicks),
+             "" if mute_after is None else ", ".join([str(mute_after), *mutes, *forever]),
              "" if ban_after is None else str(ban_after), name]
     while not name and len(parts) > 1 and not parts[-1]:
         parts.pop()
@@ -416,7 +462,7 @@ def rule_line(words: list[str], kicks: list[str], mute_after: int | None, mutes:
 
 def line_of(rule: Rule) -> str:
     return rule_line([*rule.words, *(f"-{w}" for w in rule.allow)], rule.kicks, rule.mute_after, rule.mutes,
-                     rule.ban_after, rule.label)
+                     rule.mute_forever_after, rule.ban_after, rule.label)
 
 
 def change_rule(path: Path, line: int | None, text: str | None) -> list[Rule]:

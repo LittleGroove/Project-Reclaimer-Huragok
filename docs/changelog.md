@@ -12,7 +12,8 @@ gets two lines under `[automod]` (`name_match`, `across_servers`), `beta = false
 starts, and the new commands listed a couple of minutes later. Servers that shared one
 ban list each get a copy of it as they next start: nobody is unbanned. Huragok's
 folder and every server folder get an `intervalmessages.txt`, with how to set them up
-and no messages until you add some.
+and no messages until you add some. The notes in all your files become this
+version's, with every note of your own kept where you put it.
 
 - **Interval messages.** `intervalmessages.txt` in Huragok's folder holds the messages
   every server says, and the one in each server folder that server's own: one per
@@ -67,6 +68,15 @@ and no messages until you add some.
   word in their name; a word the list already catches isn't written twice, and a
   mistake is answered with what's wrong and nothing written. `!unbanword <word>`
   takes one off (a line left with no words goes too). Both are admins'.
+- **Muted for good after a number of strikes.** The mutes part of a line can now end
+  with a number alone (no `s`, `m`, `h`, `d` or `w`): how many strikes come before the
+  player is muted for good, counted as the ban counts them. `meanword | | 5, 1d, 3d,
+  7d, 8 | | mean` kicks five times, mutes 1 day, 3 days, then 7 days, and mutes for
+  good from the 9th strike, with no ban. A bigger number repeats the last time until
+  then. A line without the number reads as before (the last time repeats, and `perm`
+  last is still for good from that mute). On a line with no ban, players read
+  "strike 7 of 8", as they do on the way to a ban. D → A asks for the number after
+  the mute times, and `!banword` and `!changebanword` take it (`5 1d 3d 7d 8`).
 - **One list for words and names.** A word in `automod.txt` already kept a name
   with it out, but only standing alone: with `hitler` listed, the live server's
   Hitler was kicked and DasHitler and HiElleHitler weren't. Now a listed word
@@ -237,6 +247,22 @@ and no messages until you add some.
   work all the same, under their default role). And from this version on, a
   command the file lists that Huragok doesn't have (a typo, or a newer version's)
   is a warning in `check` and the log, and that line does nothing.
+- **Huragok's notes in your files keep up with Huragok.** The notes in
+  `settings.toml`, `commands.toml`, `automod.txt`, `names.txt` and the
+  `intervalmessages.txt` files (the `#` lines saying how each works) were written once,
+  by the version your first start ran, and never brought up to date. Now the first start
+  of every version puts in its notes as it writes them, and keeps every note you wrote
+  where you put it: between Huragok's lines, at the end of a setting, right above a rule.
+  Huragok knows its own lines word for word (every note any version since 0.4.0 wrote);
+  any other note is yours. A line of Huragok's you reworded keeps your words. Notes of
+  Huragok's you deleted come back, and a setting you made a comment
+  (`# check_hours = 6`) gets its note above it. The note beside each command in
+  `commands.toml` says what the command does now, lined up. Your settings, rules,
+  names and messages never change: Huragok reads each file before and after, and
+  writes nothing if anything read would differ. Each file is copied to
+  `records/previous-files/0.5.0/` first, and `check` lists what the next start
+  would change. For a host since 0.4.0, `settings.toml` comes out exactly as this
+  version's would be for a new host, apart from your own values.
 - **New installs look for a new Huragok every hour** (`[updates] check_hours = 1`, was
   6). A host's own `settings.toml` keeps the value it has: set `check_hours = 1`
   there (or in D) for hourly looks.

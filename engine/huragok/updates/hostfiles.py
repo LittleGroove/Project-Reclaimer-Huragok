@@ -172,12 +172,13 @@ class Context:
     def commands_path(self) -> Path:
         return self.home / "commands.toml"
 
-    def backup(self, path: Path) -> None:
+    def backup(self, path: Path, name: str | None = None) -> None:
         """The file as it was before this version's first change to it, kept once (a later start doesn't refill
-        it with a file this version already changed)."""
+        it with a file this version already changed). `name`: where it's kept, when files share a name (each
+        server's intervalmessages.txt as "<its folder>/intervalmessages.txt")."""
         if self.dry or path in self.backed_up or not path.is_file():
             return
-        target = self.records / BACKUPS / __version__ / path.name
+        target = self.records / BACKUPS / __version__ / (name or path.name)
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
@@ -441,7 +442,7 @@ def banname_for_admins(ctx: Context) -> list[str]:
     for admins to say). 0.4.0 to 0.4.4 listed it under [moderator], their default; there it moves to [admin]. Listed
     anywhere else (or switched off), it's where the host put it, and it stays. The version before reads it either
     way, so this runs as Huragok starts."""
-    from ..core.commandsfile import _checked, _listed_as, all_commands, load_permissions
+    from ..core.commandsfile import _checked, _listed_as, all_commands, entry_width, load_permissions
     from ..core.tomledit import add_to_list, remove_from_list
 
     path = ctx.commands_path
@@ -464,7 +465,8 @@ def banname_for_admins(ctx: Context) -> list[str]:
         for entry in written:
             remove_from_list(copy, "moderator", "commands", entry)
         if not _listed_as(copy, BANNAME_ROLE_0_5_0, "banname", prefix):
-            add_to_list(copy, BANNAME_ROLE_0_5_0, "commands", "banname", all_commands()["banname"].help)
+            add_to_list(copy, BANNAME_ROLE_0_5_0, "commands", "banname", all_commands()["banname"].help,
+                        width=entry_width())
 
     _checked(path, change, "!banname for admins")
     return said
@@ -495,14 +497,10 @@ def beta_releases(ctx: Context) -> list[str]:
     return said
 
 
-def interval_messages(ctx: Context) -> list[str]:
-    """Interval messages from 0.5.0: intervalmessages.txt in Huragok's folder (for every server) and in each server
-    folder (that server's own), written with their notes and no messages, so the host finds them where they go. A
-    file that's there is left as it is. The version before doesn't read them."""
+def _server_folders(ctx: Context, data: dict[str, Any]) -> list[Path]:
+    """Every server folder settings.toml names (each one holding its dedicated.toml), Huragok's own folder left out."""
     from ..core.serverfolders import IGNORED_PREFIXES, SERVERS_FOLDER
-    from ..players.messages.intervals import FILE, write_template
 
-    data = _read(ctx.settings_path)
     config_name = str(data.get("dedicated_config") or "dedicated.toml")
     folders: list[Path] = []
     for key, default in (("servers_folder", SERVERS_FOLDER), ("server_folder", "")):
@@ -515,8 +513,17 @@ def interval_messages(ctx: Context) -> list[str]:
         elif folder.is_dir():
             folders.extend(child for child in sorted(folder.iterdir(), key=lambda p: p.name.lower())
                            if child.is_dir() and not child.name.startswith(IGNORED_PREFIXES))
-    targets = [(ctx.home / FILE, "every")] + [(folder / FILE, "server") for folder in folders
-                                              if (folder / config_name).is_file() and folder != ctx.home.resolve()]
+    return [folder for folder in folders if (folder / config_name).is_file() and folder != ctx.home.resolve()]
+
+
+def interval_messages(ctx: Context) -> list[str]:
+    """Interval messages from 0.5.0: intervalmessages.txt in Huragok's folder (for every server) and in each server
+    folder (that server's own), written with their notes and no messages, so the host finds them where they go. A
+    file that's there is left as it is. The version before doesn't read them."""
+    from ..players.messages.intervals import FILE, write_template
+
+    targets = [(ctx.home / FILE, "every")] + [(folder / FILE, "server")
+                                              for folder in _server_folders(ctx, _read(ctx.settings_path))]
     said: list[str] = []
     for path, kind in targets:
         if path.exists():
@@ -529,11 +536,55 @@ def interval_messages(ctx: Context) -> list[str]:
     return said
 
 
+def notes(ctx: Context) -> list[str]:
+    """Huragok's notes in the host's files as this version writes them, every note of the host's kept where they put
+    it (updates/notes.py). Once a version, at its first start: only notes change, so the version before reads every
+    file as it did. A file that can't be read is said, and tried again at the next start; the others are done."""
+    from ..players.messages.intervals import FILE
+    from .notes import NotesError, describe, read, refresh_text
+
+    data = _read(ctx.settings_path)
+    automod = data.get("automod") if isinstance(data.get("automod"), dict) else {}
+    words, names = (str(automod.get(key) or default) for key, default in (("words", "automod.txt"),
+                                                                           ("names", "names.txt")))
+    # (the file, what it is, how the log names it, where its copy is kept: None for its own name)
+    targets: list[tuple[Path, str, str, str | None]] = [
+        (ctx.settings_path, "settings.toml", ctx.settings_path.name, None),
+        (ctx.commands_path, "commands.toml", ctx.commands_path.name, None),
+        (ctx.home / words, "automod.txt", words, None), (ctx.home / names, "names.txt", names, None),
+        (ctx.home / FILE, "intervalmessages.txt", FILE, None)]
+    targets += [(folder / FILE, "intervalmessages-server.txt", f"{folder.name}/{FILE}", f"{folder.name}/{FILE}")
+                for folder in _server_folders(ctx, data)]
+    said: list[str] = []
+    problems: list[str] = []
+    for path, kind, label, kept_as in targets:
+        if not path.is_file():
+            continue
+        try:
+            text = read(path, kind)
+            result = refresh_text(kind, text)
+        except (NotesError, OSError) as error:
+            problems.append(f"{label}: {error}")
+            continue
+        if result.text == text:
+            continue
+        said.append(describe(label, result))
+        if not ctx.dry:
+            ctx.backup(path, kept_as)
+            write_atomic(path, result.text)
+    if problems:
+        if not ctx.dry:
+            for line in said:
+                log.info("Brought up to date for Huragok %s: %s", __version__, line)
+        raise RuntimeError("; ".join(problems))
+    return said
+
+
 def new_commands(ctx: Context) -> list[str]:
     """Commands newer than the host's commands.toml, put in their default role's list so the host sees them (a
     command in no list has its default role anyway: this changes nobody's rights)."""
     from ..core.commandsfile import SECTIONS, TITLES
-    from ..core.commandsfile import all_commands
+    from ..core.commandsfile import all_commands, entry_width
     from ..core.tomledit import add_to_list
 
     path = ctx.commands_path
@@ -554,7 +605,7 @@ def new_commands(ctx: Context) -> list[str]:
         said.append(f"{path.name}: !{spec.name} (new) listed under [{section}], its default")
         if not ctx.dry:
             ctx.backup(path)
-            add_to_list(path, section, "commands", spec.name, spec.help)
+            add_to_list(path, section, "commands", spec.name, spec.help, width=entry_width())
     return said
 
 
@@ -601,6 +652,8 @@ STEPS: list[Step] = [
     Step("0.5.0/banname-for-admins", "!banname moves to [admin] in commands.toml", banname_for_admins),
     Step("0.5.0/interval-messages", "intervalmessages.txt in Huragok's folder and each server's", interval_messages),
     Step("0.5.0/beta", "[updates] beta", beta_releases),
+    # Once for each version (the one key that changes with it), after the steps above have added what they add.
+    Step(f"{__version__}/notes", "Huragok's notes in your files, as this version writes them", notes),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True, settled=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

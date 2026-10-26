@@ -25,6 +25,7 @@ from huragok.core.tomledit import (
     TomlEditError, add_table_key, add_to_list, comment_out_table_key, read_toml, remove_from_list, replace_comments,
 )
 from huragok.updates import hostfiles as migrate
+from huragok.updates.notes import template_text
 
 TEMPLATE = ENGINE / "huragok" / "templates" / "settings.toml"
 # Keys the template has that an older host's settings.toml may go without, each with why. A key added to the
@@ -110,6 +111,8 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "intervalmessages.txt: interval messages (for every server), written with how to set them up; none yet",
         "settings.toml: [updates] beta = false added: true offers beta releases of Huragok too, before they're "
         "full releases (new in 0.5.0)",
+        *(f"{name}: Huragok's notes as this version writes them"
+          for name in ("settings.toml", "commands.toml", "automod.txt", "names.txt")),
         *new_command_lines()]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
@@ -128,17 +131,19 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     process = text[text.index("\n[process]\n"):text.index("\n[docker]\n")]
     assert process.rstrip().endswith("\nstop_servers_on_exit = false\n" + "\n".join(
         f"# {c}" for c in migrate.PRIORITY_COMMENT) + '\npriority = "high"')  # where a new host's file has it
-    automod = text[text.index("\n[automod]\n"):text.index("\n[relay]\n")]
-    assert automod == template[template.index("\n[automod]\n"):template.index("\n[relay]\n")]  # as a new host's
-    updates_table = text[text.index("\n[updates]\n"):text.index("\n[server_updates]\n")]
-    assert updates_table == template[template.index("\n[updates]\n"):template.index("\n[server_updates]\n")].replace(
-        "\ncheck_hours = 1\n", "\ncheck_hours = 6\n")  # as a new host's, but check_hours stays the host's (1 is new)
-    # The host's own values and every other line are as they were: only these went, only these came.
-    assert [line for line in text.splitlines() if line not in before.splitlines()] == added
-    assert [line for line in before.splitlines() if line not in text.splitlines()] == (
-        migrate.UPDATES_COMMENT_0_4_0 + migrate.INSTALL_ON_RESTART_COMMENT_0_4_0 + ["install_on_server_restart = false"]
-        + [c for c in migrate.SHARE_COMMENT_0_4_0 if c not in migrate.SHARE_COMMENT_0_5_0] + ['share = ["game", "bans"]']
-        + migrate.STEAMCMD_COMMENT_0_4_0)
+    # The file is now the one a new host's init writes, line for line, but for the host's own values (check_hours
+    # stays 6: 1 is new hosts' default). Every note is this version's.
+    new_host = template_text("settings.toml").splitlines()
+    assert len(text.splitlines()) == len(new_host)
+    assert [(a, b) for a, b in zip(new_host, text.splitlines()) if a != b] == [
+        ("servers_folder = ''", "servers_folder = 'SERVERS'"), ("backend = ''", "backend = 'process'"),
+        ("check_hours = 1", "check_hours = 6"), ("executable = ''", "executable = 'project-reclaimer.exe'"),
+        ("compose_file = ''", "compose_file = 'compose.yaml'")]
+    root = settings_path.parent
+    for name in ("automod.txt", "names.txt", "intervalmessages.txt"):
+        assert (root / name).read_text(encoding="utf-8") == template_text(name)
+    commands = (root / "commands.toml").read_text(encoding="utf-8").splitlines()
+    assert sorted(commands) == sorted(template_text("commands.toml").splitlines())  # the new commands come last
     backup = settings_path.parent / "records" / "previous-files" / __version__ / "settings.toml"
     assert backup.read_text(encoding="utf-8") == before
     record = json.loads((settings_path.parent / "records" / "files.json").read_text(encoding="utf-8"))
@@ -208,6 +213,8 @@ def test_a_file_from_before_0_4_0_loses_what_does_nothing(tmp_path: Path) -> Non
 
 
 def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> None:
+    """A setting the host made a comment stays one (no step adds it back), with this version's note above it; a note
+    of Huragok's they reworded stays as they wrote it, the rest of that note this version's."""
     settings_path = host(tmp_path)
     text = settings_path.read_text(encoding="utf-8")
     text = text.replace('steam_username = ""\n', 'steam_username = ""\n# download_game_files = false\n', 1)
@@ -222,14 +229,21 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     assert not any(part in line for line in changed for part in ("[setup]", "[process]", "[automod]")
                    if "share" not in line)
     after = settings_path.read_text(encoding="utf-8")
-    expected = text.replace('share = ["game", "bans"]', 'share = ["game"]')
-    expected = expected.replace("\n".join(migrate.SHARE_COMMENT_0_4_0), "\n".join(migrate.SHARE_COMMENT_0_5_0))
-    assert after[after.index("\n[setup]\n"):] == expected[expected.index("\n[setup]\n"):]
+    steamcmd = "\n".join(["# My SteamCMD notes (the window's I key sets this up: finds or installs",
+                          *migrate.STEAMCMD_COMMENT_0_4_1[1:], "# steamcmd = "])
+    assert steamcmd in after  # their wording in place of the line it rewords; the rest brought up to date
+    assert migrate.STEAMCMD_COMMENT_0_4_1[0] not in after
+    for comment, line in ((migrate.DOWNLOAD_GAME_FILES_COMMENT, "# download_game_files = false"),
+                          (migrate.PRIORITY_COMMENT, '# priority = "normal"'),
+                          (migrate.NAME_MATCH_COMMENT, '# name_match = "words"'),
+                          (migrate.ACROSS_COMMENT, "# across_servers = false")):
+        assert "\n".join([*(f"# {c}" for c in comment), line]) in after  # what it is, above their choice
     assert "name_match" not in read_toml(settings_path)["automod"]  # the default, anywhere, applies
     assert "across_servers" not in read_toml(settings_path)["automod"]
     assert load(settings_path).setup.download_game_files is True
     assert "priority" not in read_toml(settings_path)["process"]  # the default, High, applies
-    # The same for [updates]: an edited comment and a commented-out auto_update and beta stay as the host wrote them.
+    # The same for [updates]: their own line in Huragok's note stays, after it; their commented-out auto_update and
+    # beta stay commented out, each with its note.
     settings_path = host(tmp_path / "updates")
     text = settings_path.read_text(encoding="utf-8")
     text = text.replace("# It never installs one unless you say so", "# My own note: it never installs one", 1)
@@ -238,8 +252,13 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     settings_path.write_text(text, encoding="utf-8")
     assert not any("[updates]" in line for line in up_to_date(settings_path))
     after = settings_path.read_text(encoding="utf-8")
-    table = slice(after.index("\n[updates]\n"), after.index("\n[server_updates]\n"))
-    assert after[table] == text[text.index("\n[updates]\n"):text.index("\n[server_updates]\n")]
+    table = after[after.index("\n[updates]\n"):after.index("\n[server_updates]\n")]
+    assert table == "\n".join(["", "[updates]", *migrate.UPDATES_COMMENT_0_4_2,
+                               "# My own note: it never installs one: when one is out, the window says so;",
+                               "check = true", "check_hours = 6", *(f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT),
+                               "# auto_update = true", *(f"# {c}" for c in migrate.BETA_COMMENT), "# beta = true",
+                               'repository = "LittleGroove/Project-Reclaimer-Huragok"', ""])
+    assert "auto_update" not in read_toml(settings_path)["updates"] and "beta" not in read_toml(settings_path)["updates"]
 
 
 def test_a_file_that_cant_be_read_is_never_touched(tmp_path: Path, caplog) -> None:
@@ -389,7 +408,7 @@ def test_banname_moves_to_the_admins_once(tmp_path: Path) -> None:
     banname = all_commands()["banname"]
     assert load_permissions(commands).role_for(banname) == "moderator"  # 0.4.0's default
     assert any("commands.toml: !banname moved from [moderator] to [admin]" in line
-               for line in up_to_date(settings_path, settled=False))
+               for line in up_to_date(settings_path, settled=False, notes=False))
     after = commands.read_text(encoding="utf-8")
     assert load_permissions(commands).role_for(banname) == "admin"
     assert f'    "banname",      # {banname.help}' not in after.split("[admin]")[0]  # out of [moderator]

@@ -595,8 +595,8 @@ release changes what a host's file should say:
    anything (a second run changes nothing), changes TOML only through `tomledit`
    (`add_table_key`, `comment_out_table_key`, `replace_comments`, `set_table_key`), and
    calls `ctx.backup(path)` before its first change. Leave the host's own values and
-   comments alone: add what's missing, turn what does nothing into a comment that says
-   why, and replace only comment blocks that are exactly what an earlier version wrote.
+   comments alone: add what's missing, and turn what does nothing into a comment that
+   says why. A changed **note** needs no step (below).
 3. **Files the version before can still read.** The start loop puts back a new version
    that fails to start, and the version put back runs on the files as the steps left
    them: add keys (an older version names an unknown key, and runs), don't remove or
@@ -615,6 +615,21 @@ release changes what a host's file should say:
 than `commands.toml` (under their default role; settled, so 150 s after the start),
 starter packages newer than `PACKAGES/` (`records/files.json` remembers which were
 offered, so one the host removed stays removed).
+
+**Notes need no step of their own** (0.5.0). Once a version, at its first start, the
+`<version>/notes` step puts Huragok's notes in every host file as that version writes
+them (`settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, every
+`intervalmessages.txt`), and keeps the host's where they put them, between Huragok's
+lines too (`updates/notes.py` says how). It knows Huragok's lines word for word from
+`huragok/templates/notes-history.json`, every note line each version since 0.4.0 wrote,
+by the thing it was written above. So after changing a note in a template, in a step's
+comment or in a command's `help`, run
+
+    python engine/tools/notes_history.py
+
+which adds this version's lines to the history (it only ever grows: hosts' files still
+have the old ones). `tests/updates/test_notes.py` fails until you do. Never take a line
+out of the history, and never edit it by hand.
 
 A command whose default role changes doesn't move in a host's `commands.toml` by
 itself (the file lists it under the old role, and the file wins). When a release

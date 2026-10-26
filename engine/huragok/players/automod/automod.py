@@ -149,7 +149,7 @@ def _all_times(text: str) -> bool:
 
 
 def _ladder_of(rule: Rule) -> tuple[Any, ...]:
-    return (rule.kicks, rule.mute_after, rule.mutes, rule.ban_after)
+    return (rule.kicks, rule.mute_after, rule.mutes, rule.mute_forever_after, rule.ban_after)
 
 
 def line_called(rules: list[Rule], text: str) -> Rule | None:

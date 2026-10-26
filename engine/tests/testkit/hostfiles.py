@@ -27,11 +27,13 @@ def host(tmp_path: Path, *, packages: bool = True) -> Path:
     return root / "settings.toml"
 
 
-def up_to_date(settings_path: Path, *, settled: bool = True) -> list[str]:
+def up_to_date(settings_path: Path, *, settled: bool = True, notes: bool = True) -> list[str]:
     """What a start changes; with `settled`, then what the running Huragok changes once it's past the point where the
-    start loop would put the version before back (a new command in commands.toml)."""
+    start loop would put the version before back (a new command in commands.toml). `notes`: False leaves out the
+    step that brings Huragok's notes up to date, for a test of what another step changes."""
     root = settings_path.parent
-    changed = migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES")
+    steps = None if notes else [step for step in migrate.STEPS if not step.key.endswith("/notes")]
+    changed = migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES", steps)
     if settled:
-        changed += migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES", settled=True)
+        changed += migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES", steps, settled=True)
     return changed

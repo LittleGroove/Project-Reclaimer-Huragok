@@ -7,10 +7,11 @@ until the name changes. The list is one text file, `automod.txt` in the root (th
 folder with `start.cmd`), with one rule per line in five parts:
 
 ```text
-# words                 | kicks        | mutes          | ban | name
-badword, otherword      | 1h           | 1, 1d, 7d      | 3   | slurs
-rudeword                |              | 0, 1d, 3d, 7d  |     | rude
-worstword               |              |                | 0   | threats
+# words                 | kicks        | mutes            | ban | name
+badword, otherword      | 1h           | 1, 1d, 7d        | 3   | slurs
+rudeword                |              | 0, 1d, 3d, 7d    |     | rude
+meanword                |              | 5, 1d, 3d, 7d, 8 |     | mean
+worstword               |              |                  | 0   | threats
 kickword
 ```
 
@@ -20,6 +21,7 @@ What a player gets each time:
 | --- | --- | --- | --- | --- | --- |
 | `slurs` | out 1 hour | muted 1 day | muted 7 days | banned for good | |
 | `rude` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | muted 7 days: never banned |
+| `mean` | kicked | kicked | kicked | kicked | 5th: kicked; 6th: muted 1 day; 7th: 3 days; 8th: 7 days; 9th on: muted for good, never banned |
 | `threats` | banned for good | | | | |
 | `kickword` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
 
@@ -34,6 +36,16 @@ the ban. The numbers in **mutes** and **ban** count the strikes that come before
 them, so `0` is the first offence: `| | | 0 |` bans the first time, `| | 0, 1d |` mutes
 the first time. They can be as large as you like; the only check is that every kick
 and mute time you list comes before the ban.
+
+**Muted for good instead of banned.** End the mutes with a number alone, with no
+`s`, `m`, `h`, `d` or `w`: it's how many strikes come before the mute for good,
+counted the way the ban counts them. `5, 1d, 3d, 7d, 8` is kicked five times, then
+muted 1 day, 3 days and 7 days, and from the 9th strike muted for good. A larger
+number repeats the last time until then: `5, 1d, 3d, 7d, 10` is muted 7 days on the
+8th, 9th and 10th. The number must leave room for every time listed (`8` or more
+here). Without it, the mutes are as they always were: the last time repeats for
+ever, and `perm` as the last time is muted for good from that mute on (use one or
+the other). A line can still ban after it (`| 12 |`), as long as the ban comes later.
 
 **A kick and a mute on the same strike.** List more kick times than there are
 strikes before the mutes, and the ones past the start of the mutes go with them:
@@ -54,7 +66,7 @@ then muted); past their start, a kick time is used once.
 | --- | --- |
 | **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated letters, lookalike letters (Greek and Cyrillic ones, capitals too, small capitals like `ʙᴀᴅᴡᴏʀᴅ`, fullwidth, styled, circled and boxed letters from "fancy text" makers), invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
 | **kicks** | How long each kick keeps them out, in order: `30m`, `1h`, `1d`, `2w`. The last one repeats until the mutes start. Blank: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Times past the start of the mutes kick, then mute (above). At most one time per strike before the ban. |
-| **mutes** | How many strikes come before the mutes (`0`: muted the first time), then how long each mute lasts, in order: `0, 1d, 3d, 7d`. The last one repeats; `perm` (last only) is muted for good. Blank: never muted. At most one time per mute before the ban. |
+| **mutes** | How many strikes come before the mutes (`0`: muted the first time), then how long each mute lasts, in order: `0, 1d, 3d, 7d`. The last one repeats; `perm` (last only) is muted for good. A number alone at the end is how many strikes come before muted for good: `5, 1d, 3d, 7d, 8` (above). Blank: never muted. At most one time per mute before the ban, or before muted for good. |
 | **ban** | How many strikes come before the ban for good (`0`: banned the first time). Blank: never banned. |
 | **name** | One word that players read and moderators type in `!strike`, so nobody has to type the word itself. Optional, but name every line whose strikes add up (it mutes, bans, or has more than one kick time): a line without one is `rule1`, `rule2`… by its place in the list, its strikes are kept under that, and they move to another line if you add a line above it. `check`, the start and each reload point such lines out. It can't be `name`, which `!strike` keeps for names. |
 

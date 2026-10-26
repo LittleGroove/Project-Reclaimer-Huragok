@@ -8,7 +8,9 @@
 #          A time past the start of the mutes kicks, then mutes once they're back.
 # mutes    How many strikes come before the mutes (0: muted the first time), then
 #          how long each mute lasts, in order: 0, 1d, 3d, 7d. The last one repeats;
-#          perm (last only) is muted for good. Blank: never muted.
+#          perm (last only) is muted for good. Or end with a number alone (no s,
+#          m, h, d or w): how many strikes come before muted for good, counted as
+#          the ban counts them: 5, 1d, 3d, 7d, 8. Blank: never muted.
 #          Muted players stay in the game: nobody hears their voice or reads their chat.
 # ban      How many strikes come before the ban for good (0: banned the first time).
 #          Blank: never banned.
@@ -21,6 +23,10 @@
 #
 #   rudeword          |          | 0, 1d, 3d, 7d |   | rude
 #     1st: muted 1 day   2nd: muted 3 days   3rd and after: muted 7 days
+#
+#   meanword          |          | 5, 1d, 3d, 7d, 8 | | mean
+#     1st to 5th: kicked   6th: muted 1 day   7th: muted 3 days   8th: muted 7 days
+#     9th and after: muted for good, never banned
 #
 #   worstword         |          |               | 0 | threats
 #     1st: banned for good
