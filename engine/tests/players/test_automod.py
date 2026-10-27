@@ -604,7 +604,9 @@ def test_strike_finds_a_name_with_spaces(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!strike nate higgers slurs said it in voice")
             ban = await wait_for(lambda: fake.named("ban"))
             assert ban[0]["args"][:2] == [nate, "1h"] and ban[0]["by"] == "Mod"
-            assert sup.storage.actions_for(nate)[0]["evidence"] == "Mod: said it in voice"
+            # Written once the ban is sent: a slow runner (CI's Windows) can look before it is.
+            actions = await wait_for(lambda: sup.storage.actions_for(nate))
+            assert actions[0]["evidence"] == "Mod: said it in voice"
             await fake.join(6, "Nate Higgers", nate)  # back after the hour
             await fake.chat(MOD, "Mod", "!strike nate higgers name")
             await wait_for(lambda: any("The name Nate Higgers is banned now" in t for t in tells_to(fake, MOD)))

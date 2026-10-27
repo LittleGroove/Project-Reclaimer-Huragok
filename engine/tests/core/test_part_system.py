@@ -133,7 +133,7 @@ def test_a_part_switched_off_for_failing_is_on_again_after_a_while(run, caplog) 
     """Switched off for good, every `!` command answered "Unknown command" until Huragok restarted."""
     bus = EventBus()
     part = Flaky(Ctx("flaky"))
-    runner = PartRunner(part, bus, cool_down=0.2)
+    runner = PartRunner(part, bus, cool_down=1.0)
     seen: list[str] = []
     bus.subscribe("supervisor.*", lambda e: seen.append(e.name))
 
@@ -142,10 +142,12 @@ def test_a_part_switched_off_for_failing_is_on_again_after_a_while(run, caplog) 
         await asyncio.sleep(0.01)
         for n in range(5):
             bus.emit("rcon.chat", "Alpha", text=str(n))
-        await wait_for(lambda: not runner.enabled)
+        # The event, not the state: a runner slow to look (CI's Windows) could miss a short spell off.
+        await wait_for(lambda: "supervisor.part_disabled" in seen)
+        assert not runner.enabled
         part.failing = False
         bus.emit("rcon.chat", "Alpha", text="while it's off")  # not handled
-        await wait_for(lambda: runner.enabled, 2)
+        await wait_for(lambda: runner.enabled, 5)
         bus.emit("rcon.chat", "Alpha", text="back")
         await wait_for(lambda: part.handled)
         assert part.handled == ["back"] and runner.disabled_reason is None
@@ -155,8 +157,8 @@ def test_a_part_switched_off_for_failing_is_on_again_after_a_while(run, caplog) 
     with caplog.at_level(logging.INFO):
         run(scenario())
     assert seen == ["supervisor.part_disabled", "supervisor.part_enabled"]
-    assert "flaky switched off for 0 s: 5 failures in 10 minutes" in caplog.text
-    assert "flaky on again after 0 s off" in caplog.text
+    assert "flaky switched off for 1 s: 5 failures in 10 minutes" in caplog.text
+    assert "flaky on again after 1 s off" in caplog.text
 
 
 def test_a_part_whose_setup_fails_stays_off_and_a_silent_server_isnt_the_part_failing(run) -> None:

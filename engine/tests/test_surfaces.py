@@ -284,8 +284,12 @@ def test_setup_commands_refuse_with_the_reason(tmp_path: Path, capsys) -> None:
     (broken / "package.toml").write_text('name = "Broken"\n[server]\nname = "x"\n', encoding="utf-8")
     assert cli.main(["-c", str(settings_path), "new", "Delta", "--package", "broken", "--no-start"]) == 2
     assert "Package broken is broken:" in both(capsys)
-    assert cli.main(["-c", str(settings_path), "new", "Delta", "--port", str(free_port())]) == 0
-    text = both(capsys)
+    for _ in range(5):  # a port free a moment ago can be another program's by the time `new` looks (CI's Windows)
+        made = cli.main(["-c", str(settings_path), "new", "Delta", "--port", str(free_port())])
+        text = both(capsys)
+        if made == 0 or "already listens on port" not in text:
+            break
+    assert made == 0
     assert "Made" in text and "Feet first into hell." in text and "Start Huragok to run it:" in text
 
 

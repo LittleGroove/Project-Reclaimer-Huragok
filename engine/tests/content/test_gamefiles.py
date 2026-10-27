@@ -253,6 +253,8 @@ def test_halo3s_files_downloaded_with_steamcmd_keep_no_sound(tmp_path: Path, mon
         return folder
 
     monkeypatch.setattr(steamsetup, "download_depot", download)
+    # Room for it, whatever the disk the test runs on (GitHub's Ubuntu runners have about 8 GB free).
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: type("U", (), {"free": 100_000_000_000})())
     source = repair.Source("steamcmd", program, "lilgremlin")
     said = repair.fetch(settings, "halo3", source, settings.home / "game", fake_tool, lambda line: None)
     assert asked == [("lilgremlin", 976739)] and said.startswith("Halo 3's files are in")
