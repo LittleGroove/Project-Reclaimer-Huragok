@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.5.1
+**Every line players read is the Superintendent's now, and Vergil mutes before it
+kicks.** Each opens with its face and one of its own phrases from Halo 3: ODST
+(`[>_<] CRIME DOESN'T PAY!`), then says what happened and why; everyone on the server
+reads why when Vergil acts. The word list's parts are now `words | mutes | kicks | ban |
+name`: your `automod.txt` is read the new way at once and rewritten in that order a
+couple of minutes after the start. Install it with U: your files read as they did.
+
 **The Superintendent is watching.** Every line Huragok sends players now opens with
 the Superintendent's face, as its cameras showed the squad (`[>_<]`, `[^_^]`…), and one
 of its own phrases, word for word from Halo 3: ODST and Bungie's "KEEP IT CLEAN"
