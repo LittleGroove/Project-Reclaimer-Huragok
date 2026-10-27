@@ -1,5 +1,5 @@
 """automod: one word list, automod.txt in the supervisor's folder, one rule per line:
-its words, then the kicks, the mutes and the ban its strikes lead to (see
+its words, then the mutes, the kicks and the ban its strikes lead to (see
 rules.py). Mutes are Vergil's own list, put back as players join, since the
 server forgets its mutes when it restarts. Names: a name with a listed word in it
 (anywhere, or as a word of its own: [automod] name_match), or one in names.txt,

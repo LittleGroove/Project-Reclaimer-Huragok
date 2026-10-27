@@ -191,7 +191,7 @@ def test_slow_replies_dont_switch_the_commands_off(tmp_path: Path, run) -> None:
 # Every command, as the console receives it ------------------------------------------------------
 
 COMMANDS = [  # (caller, the line, the command the server gets, its args)
-    ("Mod", "!warn bravo spamming", "tell", [BRAVO, "Warning from Mod: spamming"]),
+    ("Mod", "!warn bravo spamming", "tell", [BRAVO, "[o_o] OBEY POSTED LIMITS! Warning from Mod: spamming"]),
     ("Mod", "!unmute bravo", "unmute", [BRAVO]),
     ("Mod", "!pardon Bravo", "pardon", ["Bravo"]),
     ("Owner", "!unban Bravo", "unban", ["Bravo"]),
@@ -1010,7 +1010,7 @@ def test_names_with_spaces_need_no_quotes(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!kick o'neil jr it's spam, isn't it")  # apostrophes stay as typed
             assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [oneil, "it's spam, isn't it"]
             await fake.chat(MOD, "Mod", '!warn "Nate Higgers" "last warning"')  # quotes work, as on the console
-            await wait_for(lambda: any(c["args"] == [nate, "Warning from Mod: last warning"]
+            await wait_for(lambda: any(c["args"] == [nate, "[o_o] OBEY POSTED LIMITS! Warning from Mod: last warning"]
                                        for c in fake.named("tell")))
             await fake.chat(OWNER, "Owner", "!ban long gone larry 7d cheating")  # seen: by their ID while away
             assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [gone, "7d", "cheating"]
@@ -1062,7 +1062,7 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!promote bravo")
             await wait_for(lambda: role() == "member")
             assert f'"{BRAVO}",  # Bravo: promoted by Mod on' in path.read_text(encoding="utf-8")
-            await said(BRAVO, "Mod made you a member here.")
+            await said(BRAVO, "[^_^] WELCOME! ACCESS GRANTED! Mod made you a member here.")
             await fake.chat(MOD, "Mod", "!promote bravo")
             await said(MOD, "Bravo would be a moderator, and you can promote players only to the role below yours "
                             "(a member at most).")
@@ -1164,11 +1164,11 @@ def test_admins_switch_each_voice_channel_in_this_servers_own_block(tmp_path: Pa
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
 
             await fake.chat(ADMIN, "Admin", "!toggleglobal")  # nothing set: on by default, so it goes off, and stays
-            await wait_for(lambda: "Admin turned global voice (V) off." in says(fake))
+            await wait_for(lambda: "[-.-] PLEASE REMAIN CALM! Admin turned global voice (V) off." in says(fake))
             assert _block(tmp_path)["voice_global"] is False and "voice_team" not in _block(tmp_path)
             assert not sup.storage.query("SELECT * FROM commands_timed_settings")
             await fake.chat(ADMIN, "Admin", "!toggleglobal")
-            await wait_for(lambda: "Admin turned global voice (V) on." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Admin turned global voice (V) on." in says(fake))
             # Back to what [defaults] gives, and the block didn't set it before: its own key comes out again, so a
             # later change to [defaults] reaches this server (the simulation's finding 7, 26 October).
             assert "voice_global" not in _block(tmp_path)
@@ -1245,17 +1245,17 @@ def test_a_channel_toggle_with_a_time_switches_back_once_its_up(tmp_path: Path, 
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
 
             await fake.chat(ADMIN, "Admin", "!toggleglobal 10m")
-            await wait_for(lambda: "Admin turned global voice (V) off for 10 minutes." in says(fake))
+            await wait_for(lambda: "[-.-] PLEASE REMAIN CALM! Admin turned global voice (V) off for 10 minutes." in says(fake))
             assert _block(tmp_path)["voice_global"] is False
             row = sup.storage.query("SELECT * FROM commands_timed_settings")[0]
             assert (row["key"], row["value"], row["before"], row["had_own"], row["by"]) == \
                 ("voice_global", 0, 1, 0, "Admin")
             assert 590 < row["until"] - time.time() <= 600
             await fake.chat(ADMIN, "Admin", "!toggleglobal off 2h")  # a new time for the same change
-            await wait_for(lambda: "Admin turned global voice (V) off for 2 hours." in says(fake))
+            await wait_for(lambda: "[-.-] PLEASE REMAIN CALM! Admin turned global voice (V) off for 2 hours." in says(fake))
             assert sup.storage.query("SELECT before FROM commands_timed_settings")[0]["before"] == 1
             _timers_due(sup)
-            await wait_for(lambda: "Global voice (V) is back on after 2 hours." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Global voice (V) is back on after 2 hours." in says(fake))
             assert "voice_global" not in _block(tmp_path)  # the block didn't set it: [defaults] or the default again
             assert not sup.storage.query("SELECT * FROM commands_timed_settings")
 
@@ -1263,23 +1263,23 @@ def test_a_channel_toggle_with_a_time_switches_back_once_its_up(tmp_path: Path, 
             await fake.chat(ADMIN, "Admin", "!toggleteam off")
             await wait_for(lambda: _block(tmp_path).get("voice_team") is False)
             await fake.chat(ADMIN, "Admin", "!toggleteam 90s")
-            await wait_for(lambda: "Admin turned team voice (B) on for 90 seconds." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Admin turned team voice (B) on for 90 seconds." in says(fake))
             _timers_due(sup)
-            await wait_for(lambda: "Team voice (B) is off again after 90 seconds." in says(fake))
+            await wait_for(lambda: "[-.-] PLEASE REMAIN CALM! Team voice (B) is off again after 90 seconds." in says(fake))
             assert _block(tmp_path)["voice_team"] is False
 
             # A toggle without a time ends the timer: it stays.
             await fake.chat(ADMIN, "Admin", "!toggleproxy 1h")
             await wait_for(lambda: _block(tmp_path).get("voice_proximity") is False)
             await fake.chat(ADMIN, "Admin", "!toggleproxy off")  # already off, now for good
-            await wait_for(lambda: says(fake)[-1] == "Admin turned proximity voice (N) off.")
+            await wait_for(lambda: says(fake)[-1] == "[-.-] PLEASE REMAIN CALM! Admin turned proximity voice (N) off.")
             assert not sup.storage.query("SELECT * FROM commands_timed_settings")
 
             # Someone changing it meanwhile (the window's D) wins: it isn't put back.
             await fake.chat(ADMIN, "Admin", "!toggleproxy on 5m")
             await wait_for(lambda: _block(tmp_path).get("voice_proximity") is True)
             # Said once it's written: counted before it arrives (CI's Windows), it would look like one said later.
-            await wait_for(lambda: "Admin turned proximity voice (N) on for 5 minutes." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Admin turned proximity voice (N) on for 5 minutes." in says(fake))
             from huragok.core.tomledit import set_server_setting
             set_server_setting(tmp_path / "server" / "dedicated.toml", SERVER, "voice_proximity", False)
             said = len(says(fake))
@@ -1297,7 +1297,7 @@ def test_togglevoice_turns_voice_off_for_ten_minutes_or_back_on(tmp_path: Path, 
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
 
             await fake.chat(ADMIN, "Admin", "!togglevoice")
-            await wait_for(lambda: "Admin turned voice chat off for 10 minutes." in says(fake))
+            await wait_for(lambda: "[-.-] PLEASE REMAIN CALM! Admin turned voice chat off for 10 minutes." in says(fake))
             assert _block(tmp_path)["voice"] is False
             row = sup.storage.query("SELECT * FROM commands_timed_settings")[0]
             assert row["key"] == "voice" and 590 < row["until"] - time.time() <= 600
@@ -1307,14 +1307,14 @@ def test_togglevoice_turns_voice_off_for_ten_minutes_or_back_on(tmp_path: Path, 
             await wait_for(lambda: _told(fake, ADMIN, "Note: voice chat is off on this server altogether (voice = "
                                          "false, back on in 9 minutes"))
             await fake.chat(ADMIN, "Admin", "!togglevoice")  # back on at once, for good
-            await wait_for(lambda: "Admin turned voice chat on." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Admin turned voice chat on." in says(fake))
             assert "voice" not in _block(tmp_path)  # back to [defaults]: its own key out again (finding 7)
             assert not sup.storage.query("SELECT * FROM commands_timed_settings")
 
             await fake.chat(ADMIN, "Admin", "!togglevoice")
             await wait_for(lambda: _block(tmp_path).get("voice") is False)
             _timers_due(sup)  # as if Huragok had been down past the time: put back at its first look
-            await wait_for(lambda: "Voice chat is back on after 10 minutes." in says(fake))
+            await wait_for(lambda: "[^_^] YOUR TAX DOLLARS AT WORK! Voice chat is back on after 10 minutes." in says(fake))
             assert "voice" not in _block(tmp_path)  # as the block had it: no key of its own, [defaults] applies
 
     run(scenario())
@@ -1330,7 +1330,7 @@ def test_a_voice_toggle_says_what_else_keeps_players_quiet(tmp_path: Path, run) 
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.chat(ADMIN, "Admin", "!toggleteam")
             await wait_for(lambda: _told(fake, ADMIN, "!reload or the next restart"))
-            assert "Admin turned team voice (B) off." in says(fake)
+            assert "[-.-] PLEASE REMAIN CALM! Admin turned team voice (B) off." in says(fake)
             assert _told(fake, ADMIN, "Note: voice chat is off on this server altogether (voice = false), so nobody")
 
             await fake.chat(ADMIN, "Admin", "!toggleglobal")
@@ -1338,7 +1338,7 @@ def test_a_voice_toggle_says_what_else_keeps_players_quiet(tmp_path: Path, run) 
             await wait_for(lambda: _block(tmp_path).get("voice_proximity") is False)
             await fake.chat(ADMIN, "Admin", "!togglevoice")  # voice on again, but no channel is
             await wait_for(lambda: _told(fake, ADMIN, "Note: V, B and N are all off, so nobody hears anyone yet"))
-            assert "Admin turned voice chat on." in says(fake)
+            assert "[^_^] YOUR TAX DOLLARS AT WORK! Admin turned voice chat on." in says(fake)
 
             # A server whose block isn't in its file any more (renamed by hand): never a new block without a port.
             config.write_text(config.read_text(encoding="utf-8").replace(f'name = "{SERVER}"', 'name = "Renamed"'),

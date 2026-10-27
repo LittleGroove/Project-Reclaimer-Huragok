@@ -10,7 +10,10 @@
 # Examples:
 #
 #   45m | This server plays Big Team Battle all night: bring friends.
-#   2h  | Server restarts at 4:00 every morning.
+#   2h  | PARDON OUR DUST! Server restarts at 4:00 every morning.
+#
+# The intervalmessages.txt in Huragok's folder lists some of the Superintendent's
+# words, as players read them in Huragok's own lines, for messages of your own.
 #
 # Messages with the same time take turns (with the ones for every server too): two
 # every 30m go out 15 minutes apart, each one every 30 minutes. They're only said

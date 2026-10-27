@@ -536,10 +536,96 @@ def interval_messages(ctx: Context) -> list[str]:
     return said
 
 
+def _words(ctx: Context) -> tuple[Path, str]:
+    """The word list ([automod] words: automod.txt unless the host named another), and how the log names it."""
+    automod = _read(ctx.settings_path).get("automod")
+    name = str((automod if isinstance(automod, dict) else {}).get("words") or "automod.txt")
+    return ctx.home / name, name
+
+
+def _rules_called(lines: list[str], numbers: list[int]) -> str:
+    """The word list's lines by their names, as the host knows them (their numbers change with the notes): "the hate
+    and slurs lines", "the hate line and line 51"."""
+    names, unnamed = [], []
+    for number in numbers:
+        parts = [part.strip() for part in lines[number - 1].split("|")]
+        if len(parts) == 5 and parts[4]:
+            names.append(parts[4])
+        else:
+            unnamed.append(str(number))
+
+    def joined(items: list[str]) -> str:
+        return ", ".join(items[:-1]) + f" and {items[-1]}" if len(items) > 1 else items[0]
+
+    said = [f"the {joined(names)} line" + ("s" if len(names) > 1 else "")] if names else []
+    if unnamed:
+        said.append(("lines " if len(unnamed) > 1 else "line ") + joined(unnamed))
+    return " and ".join(said)
+
+
+def automod_layout_note(ctx: Context) -> list[str]:
+    """A word list from before 0.5.1 with no note naming its parts (the host took Huragok's notes out) gets the one
+    its version wrote, `#   words | kicks | mutes | ban | name`, at the top. A list says its layout by that note, and
+    one with none is read as this version's (the mutes first), which this one's lines aren't until automod_order()
+    turns them. Only a note: the version before reads the list as it did."""
+    from ..core.files import read_text
+    from ..players.automod.rules import KICKS_FIRST_PARTS, says_layout
+
+    path, label = _words(ctx)
+    if not path.is_file():
+        return []
+    text = read_text(path, RuntimeError)  # one that can't be read: tried again at the next start
+    if says_layout(text):
+        return []
+    if not ctx.dry:
+        ctx.backup(path)
+        write_atomic(path, f"#   {KICKS_FIRST_PARTS}\n" + text)
+    return [f"{label}: a note naming its parts as they were up to 0.5.0 ({KICKS_FIRST_PARTS}) put at the top, so "
+            "its lines are read as they were written until they're rewritten with the mutes first"]
+
+
+def automod_order(ctx: Context) -> list[str]:
+    """The word list in this version's layout, the mutes before the kicks (words | mutes | kicks | ban | name), the
+    host's call (27 October): each line's mute times first, the strikes that came before the mutes now before the
+    kicks, then the kick times (rules.in_this_layout()), and Huragok's notes as this version writes them, every note
+    of the host's kept. The version before would take the mutes for kicks, so it waits until this one has settled;
+    until then Vergil reads the list in this layout all the same (rules.kicks_first())."""
+    from ..core.files import read_text
+    from ..players.automod.rules import PARTS, in_this_layout, kicks_first, lines_of
+    from .notes import NotesError, refresh_text
+
+    path, label = _words(ctx)
+    if not path.is_file():
+        return []
+    text = read_text(path, RuntimeError)  # one that can't be read: tried again at the next start
+    if not kicks_first(text):
+        return []
+    turned = in_this_layout(text)
+    try:
+        new = refresh_text("automod.txt", turned.text).text
+    except NotesError:
+        new = turned.text  # the lines are what's read: its notes stay as they were but the one naming its parts
+    if kicks_first(new):  # never: in_this_layout() names the parts this version's way
+        raise RuntimeError(f"{label} would still read as the layout up to 0.5.0")
+    lines = lines_of(text)
+    said = [f"{label}: the mutes come first now ({PARTS}): {_rules_called(lines, turned.turned)} rewritten so, the "
+            "strikes that came before the mutes now before the kicks; Huragok's notes as this version writes them"
+            if turned.turned else f"{label}: Huragok's notes as this version writes them, the mutes first ({PARTS})"]
+    said.extend(f"{label}: {_rules_called(lines, [number])}: kick time{'s' if len(cut) > 1 else ''} {', '.join(cut)} "
+                "left out, the ban coming before them now" for number, cut in turned.cut.items())
+    if not ctx.dry:
+        ctx.backup(path)
+        write_atomic(path, new)
+    return said
+
+
 def notes(ctx: Context) -> list[str]:
     """Huragok's notes in the host's files as this version writes them, every note of the host's kept where they put
     it (updates/notes.py). Once a version, at its first start: only notes change, so the version before reads every
-    file as it did. A file that can't be read is said, and tried again at the next start; the others are done."""
+    file as it did. A file that can't be read is said, and tried again at the next start; the others are done. A word
+    list from before 0.5.1 is left: this version's notes would name its parts the new way before its lines are
+    (automod_order() brings them, with its lines)."""
+    from ..players.automod.rules import kicks_first
     from ..players.messages.intervals import FILE
     from .notes import NotesError, describe, read, refresh_text
 
@@ -562,6 +648,8 @@ def notes(ctx: Context) -> list[str]:
             continue
         try:
             text = read(path, kind)
+            if kind == "automod.txt" and kicks_first(text):
+                continue
             result = refresh_text(kind, text)
         except (NotesError, OSError) as error:
             problems.append(f"{label}: {error}")
@@ -652,8 +740,11 @@ STEPS: list[Step] = [
     Step("0.5.0/banname-for-admins", "!banname moves to [admin] in commands.toml", banname_for_admins),
     Step("0.5.0/interval-messages", "intervalmessages.txt in Huragok's folder and each server's", interval_messages),
     Step("0.5.0/beta", "[updates] beta", beta_releases),
+    Step("0.5.1/automod-layout-note", "the word list's note naming its parts, where it had none",
+         automod_layout_note),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.
     Step(f"{__version__}/notes", "Huragok's notes in your files, as this version writes them", notes),
+    Step("0.5.1/automod-order", "the word list with the mutes before the kicks", automod_order, settled=True),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True, settled=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

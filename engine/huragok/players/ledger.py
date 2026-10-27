@@ -13,6 +13,7 @@ from typing import Any
 from ..core.events import EventBus
 from ..core.storage import Storage
 from ..core.text import is_player_id
+from ..lore import callout
 from ..rcon import RconClient, RconError
 from ..servers.state import Player, ServerState
 
@@ -92,8 +93,8 @@ class Moderation:
             client = self.clients[server]
             try:
                 if kind == "warn":
-                    reply = await client.command("tell", ref, f"Warning from {by}: {reason}" if reason
-                                                 else f"Warning from {by}.")
+                    reply = await client.command("tell", ref, callout("warn", f"Warning from {by}: {reason}" if reason
+                                                                      else f"Warning from {by}."))
                 else:
                     args = [ref]
                     if kind in ("mute", "ban") and duration:

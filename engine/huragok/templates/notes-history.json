@@ -163,7 +163,8 @@
      "# last through restarts (Vergil mutes them again as they join). A name with a",
      "# listed word in it, or one in names.txt, is kicked as it joins until it changes.",
      "# It starts in dry run: watch the window's VRGL lines (part.automod in",
-     "# logs/huragok.log) for what it would do, then set dry_run = false."
+     "# logs/huragok.log) for what it would do, then set dry_run = false.",
+     "# the mutes, the kicks and the ban its strikes lead to: see docs/automod.md. Mutes"
     ],
     "relay|enabled": [
      "# Vergil's console for moderators elsewhere, through Huragok: the official RCON",
@@ -519,7 +520,30 @@
      "# hitler; [automod] name_match in settings.toml) is kicked as they join, every",
      "# time, until they change it; no strike, no ban. Other banned names are in names.txt.",
      "# Admins add a word to a line from the game: !banword word slurs; make a new line:",
-     "# !banword word | 1h 1d | 2, 1d 7d | 5 | slurs; and take one off: !unbanword word."
+     "# !banword word | 1h 1d | 2, 1d 7d | 5 | slurs; and take one off: !unbanword word.",
+     "#   words | mutes | kicks | ban | name",
+     "# mutes    How long each mute lasts, in order from the first strike: 1d, 3d, 7d.",
+     "#          The last one repeats until the kicks; perm (last only) is muted for",
+     "#          good. Or end with a number alone (no s, m, h, d or w): how many strikes",
+     "#          come before muted for good, counted as the ban counts them: 1d, 3d, 7d, 8.",
+     "#          Blank: never muted.",
+     "# kicks    How many strikes come before the kicks (0: kicked the first time), then",
+     "#          how long each kick keeps them out, in order: 3, 30m, 1h, 1d. The last",
+     "#          one repeats. No times: the server's plain kick. No number: the kicks",
+     "#          start once every mute time is used. Blank: never kicked; with no",
+     "#          mutes either, the server's plain kick every time.",
+     "#          A mute time past the start of the kicks kicks, then mutes once they're back.",
+     "# Each strike is the next step on its line: the mutes, then the kicks, then the ban.",
+     "#   rudeword           | 1d, 3d, 7d    |           |   | rude",
+     "#   meanword           | 1d, 3d, 7d, 8 | 5         |   | mean",
+     "#     1st: muted 1 day   2nd: muted 3 days   3rd to 5th: muted 7 days",
+     "#     6th to 8th: kicked   9th and after: kicked, then muted for good, never banned",
+     "#   worstword          |               |           | 0 | threats",
+     "#   badword, otherword | 1d, 7d        | 2, 1h     | 3 | slurs",
+     "#     1st: muted 1 day   2nd: muted 7 days   3rd: out 1 hour   4th: banned for good",
+     "#   insultword         | 1d, 3d        | 1, 1h, 1d | 4 | insults",
+     "#     1st: muted 1 day   2nd: out 1 hour, then muted 3 days   3rd and 4th: out 1 day",
+     "# !banword word | 1d 7d | 2, 1h 1d | 5 | slurs; and take one off: !unbanword word."
     ]
    },
    "inline": {}
@@ -729,10 +753,12 @@
      "The bans in force, newest first, with who and why; @numbers for !unban"
     ],
     "banword": [
-     "Add words to a line of the word list (!banword badword slurs), or make a new line: words | kicks | mutes | ban | name. Names with them are kicked too"
+     "Add words to a line of the word list (!banword badword slurs), or make a new line: words | kicks | mutes | ban | name. Names with them are kicked too",
+     "Add words to a line of the word list (!banword badword slurs), or make a new line: words | mutes | kicks | ban | name. Names with them are kicked too"
     ],
     "changebanword": [
-     "New steps for a line of the word list: its kicks, mutes and ban, as !banword takes them"
+     "New steps for a line of the word list: its kicks, mutes and ban, as !banword takes them",
+     "New steps for a line of the word list: its mutes, kicks and ban, as !banword takes them"
     ],
     "restartserver": [
      "Restart this server, after the usual countdown for anyone on"
@@ -772,7 +798,23 @@
      "# Each server folder has an intervalmessages.txt of its own, for messages that are",
      "# only that server's; this one's are said on every server.",
      "# Edits apply within a few seconds. A # starts a note.",
-     "# Interval messages go below."
+     "# Interval messages go below.",
+     "#   30m | HELLO, TRAVELLER. MOMBASA WELCOMES YOU! Discord: discord.gg/yourserver",
+     "#   1h  | KEEP IT CLEAN! No slurs, no cheating: Vergil is listening.",
+     "#   45m | BE A HERO! REPORT VIOLATORS! Tell a moderator what you saw.",
+     "# Huragok speaks to players as New Mombasa's city AI, the Superintendent, in the",
+     "# words it put on the city's signs and speakers in Halo 3: ODST: PLEASE REMAIN",
+     "# CALM! before a restart, CRIME DOESN'T PAY! when Vergil removes someone. Yours",
+     "# can too. Some of its words, as it said them:",
+     "#   KEEP IT CLEAN!                    OBEY POSTED LIMITS!",
+     "#   BE A HERO! REPORT VIOLATORS!      YOUR TAX DOLLARS AT WORK!",
+     "#   CRIME DOESN'T PAY!                GOOD CITIZENS DO THEIR PART!",
+     "#   PLEASE REMAIN CALM!               PARDON OUR DUST!",
+     "#   YIELD TO UPHILL TRAFFIC!          RECYCLING! DO YOUR PART!",
+     "#   WATCH YOUR SPEED! CHILDREN AT PLAY!",
+     "#   HELLO, TRAVELLER. MOMBASA WELCOMES YOU!",
+     "#   NO PARKING! VIOLATORS WILL BE TICKETED AND TOWED!",
+     "#   ANXIOUS? STRESSED? PLEASE REMAIN CALM."
     ]
    },
    "inline": {}
@@ -794,7 +836,10 @@
      "# every 30m go out 15 minutes apart, each one every 30 minutes. They're only said",
      "# while someone is on, counting from when Huragok first sees the server up.",
      "# Edits apply within a few seconds. A # starts a note.",
-     "# Interval messages go below."
+     "# Interval messages go below.",
+     "#   2h  | PARDON OUR DUST! Server restarts at 4:00 every morning.",
+     "# The intervalmessages.txt in Huragok's folder lists some of the Superintendent's",
+     "# words, as players read them in Huragok's own lines, for messages of your own."
     ]
    },
    "inline": {}

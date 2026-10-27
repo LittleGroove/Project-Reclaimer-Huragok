@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+**The Superintendent is watching.** Every line Huragok sends players now opens with
+the Superintendent's face, as its cameras showed the squad (`[>_<]`, `[^_^]`…), and one
+of its own phrases, word for word from Halo 3: ODST and Bungie's "KEEP IT CLEAN"
+campaign, then says plainly what happened, why, and what comes next.
+A host's own `[automod] messages` keep their words.
+
+- **Automod's face and phrase harden with what Vergil does:** `[o_O] KEEP IT CLEAN!`
+  for a mute, `[>_<] CRIME DOESN'T PAY!` (Vergil's, over the Data Hive's speakers as the
+  corrupt officer dies) for a removal or a ban. A name kick reads `[o_O] KEEP IT CLEAN!`,
+  a muted player joining `[-_-] KEEP IT CLEAN!`.
+- **Everyone reads why.** Once a strike is acted on, everyone on that server reads
+  `[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3).` The server's
+  own line only said what was done. It's the new `public` message under
+  `[automod] messages`; `public = ""` turns it off. Messages can use `{notice}` (the
+  face and phrase) and `{player}`.
+- **The rest:** a countdown reads `[o_O] PLEASE REMAIN CALM!`, a restart planned for
+  after the game `[o_o] CONSTRUCTION AHEAD! EXPECT DELAYS!`, the restart itself
+  `[-.-] PARDON OUR DUST! Server is restarting now: join again in a minute or two.`, a
+  cancelled countdown `[^_^] … Keep it clean!`, a `!warn` `[o_o] OBEY POSTED LIMITS!`, a
+  promotion `[^_^] WELCOME! ACCESS GRANTED!`, a vote to kick a member refused
+  `[^_^] BE A HERO! REPORT VIOLATORS!`, and the voice toggles `[-.-] PLEASE REMAIN
+  CALM!` (off) and `[^_^] YOUR TAX DOLLARS AT WORK!` (on).
+- **For your own messages,** the notes in `intervalmessages.txt` list some of the
+  Superintendent's phrases, with examples that use them.
+
+**Vergil mutes first.** Each line of the word list now goes mutes, then kicks, then the
+ban: `words | mutes | kicks | ban | name`. Your word list is brought over by itself.
+
+- **The new order.** The mutes come first, from the first strike: `1d, 3d, 7d`, with a
+  number alone last for muted for good (`1d, 3d, 7d, 8`) as before. The kicks start
+  with how many strikes come before them, then each kick's time: `3, 1h, 1d` (with the
+  number left out, once the mute times are used; with a number alone, the server's own
+  kick). A mute time past the start of the kicks kicks, then mutes, as a kick time past
+  the mutes did. Muted for good counts every strike: on a line that kicks by then, each
+  strike after it kicks, then mutes for good.
+- **Your word list is brought over by itself.** Read the new way as soon as this
+  version starts, and rewritten so a couple of minutes later (the version before would
+  take the mutes for kicks), with this version's notes: each line's mute times move
+  first, and the strikes that came before the mutes now come before the kicks.
+  `word | 1d, 2d, 3d | 3, 4d, 5d, 6d, 6 | 10 | hate` becomes
+  `word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate`. A line that only muted still only
+  mutes, and one that only kicked still only kicks; kick times that would now come after
+  the ban are left out (the log says which line). The file as it was is kept in
+  `records/previous-files/`.
+- **`!banword` and `!changebanword`** take the parts in the new order:
+  `!banword word | 1d 7d | 2, 1h 1d | 5 | slurs`. A count first in the mutes, as the old
+  order had it, is refused with where it goes now. D → A asks about the mutes first.
+- **Of two lines one message trips,** the heavier next step counts: a mute, then a kick
+  (a mute after it or not), then the ban.
+
 ## 0.5.0
 **Moderation you can rely on: every command picks the right player (names with spaces,
 players who share a name told apart and picked by number), mutes that last through

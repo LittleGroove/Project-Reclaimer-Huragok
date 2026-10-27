@@ -1,41 +1,44 @@
 # Vergil's word list (automod): one rule per line, in five parts. KEEP IT CLEAN!
 #
-#   words | kicks | mutes | ban | name
+#   words | mutes | kicks | ban | name
 #
 # words    The words, separated by commas.
-# kicks    How long each kick keeps them out, in order: 30m, 1h, 1d, 2w.
-#          The last one repeats until the mutes. Blank: the server's plain kick.
-#          A time past the start of the mutes kicks, then mutes once they're back.
-# mutes    How many strikes come before the mutes (0: muted the first time), then
-#          how long each mute lasts, in order: 0, 1d, 3d, 7d. The last one repeats;
-#          perm (last only) is muted for good. Or end with a number alone (no s,
-#          m, h, d or w): how many strikes come before muted for good, counted as
-#          the ban counts them: 5, 1d, 3d, 7d, 8. Blank: never muted.
+# mutes    How long each mute lasts, in order from the first strike: 1d, 3d, 7d.
+#          The last one repeats until the kicks; perm (last only) is muted for
+#          good. Or end with a number alone (no s, m, h, d or w): how many strikes
+#          come before muted for good, counted as the ban counts them: 1d, 3d, 7d, 8.
+#          Blank: never muted.
 #          Muted players stay in the game: nobody hears their voice or reads their chat.
+# kicks    How many strikes come before the kicks (0: kicked the first time), then
+#          how long each kick keeps them out, in order: 3, 30m, 1h, 1d. The last
+#          one repeats. No times: the server's plain kick. No number: the kicks
+#          start once every mute time is used. Blank: never kicked; with no
+#          mutes either, the server's plain kick every time.
+#          A mute time past the start of the kicks kicks, then mutes once they're back.
 # ban      How many strikes come before the ban for good (0: banned the first time).
 #          Blank: never banned.
 # name     One word players see, and moderators type in !strike. Optional, but
 #          name every line whose strikes add up: an unnamed one's are kept under
 #          its place in the list (rule2), and move if a line is added above it.
 #
-# Each strike is the next step on its line: the kicks, then the mutes, then the ban.
+# Each strike is the next step on its line: the mutes, then the kicks, then the ban.
 # Examples, and what a player gets each time:
 #
-#   rudeword          |          | 0, 1d, 3d, 7d |   | rude
+#   rudeword           | 1d, 3d, 7d    |           |   | rude
 #     1st: muted 1 day   2nd: muted 3 days   3rd and after: muted 7 days
 #
-#   meanword          |          | 5, 1d, 3d, 7d, 8 | | mean
-#     1st to 5th: kicked   6th: muted 1 day   7th: muted 3 days   8th: muted 7 days
-#     9th and after: muted for good, never banned
+#   meanword           | 1d, 3d, 7d, 8 | 5         |   | mean
+#     1st: muted 1 day   2nd: muted 3 days   3rd to 5th: muted 7 days
+#     6th to 8th: kicked   9th and after: kicked, then muted for good, never banned
 #
-#   worstword         |          |               | 0 | threats
+#   worstword          |               |           | 0 | threats
 #     1st: banned for good
 #
-#   badword, otherword | 1h       | 1, 1d, 7d     | 3 | slurs
-#     1st: out 1 hour    2nd: muted 1 day    3rd: muted 7 days    4th: banned for good
+#   badword, otherword | 1d, 7d        | 2, 1h     | 3 | slurs
+#     1st: muted 1 day   2nd: muted 7 days   3rd: out 1 hour   4th: banned for good
 #
-#   meanword          | 1h, 1d   | 1, 3d         | 4 | insults
-#     1st: out 1 hour    2nd: out 1 day, then muted 3 days    3rd and 4th: muted 3 days
+#   insultword         | 1d, 3d        | 1, 1h, 1d | 4 | insults
+#     1st: muted 1 day   2nd: out 1 hour, then muted 3 days   3rd and 4th: out 1 day
 #     5th: banned for good
 #
 #   kickword
@@ -48,7 +51,7 @@
 # time, until they change it; no strike, no ban. Other banned names are in names.txt.
 #
 # Admins add a word to a line from the game: !banword word slurs; make a new line:
-# !banword word | 1h 1d | 2, 1d 7d | 5 | slurs; and take one off: !unbanword word.
+# !banword word | 1d 7d | 2, 1h 1d | 5 | slurs; and take one off: !unbanword word.
 #
 # Disguised words (b4dw0rd, b a d w o r d, badwords) are caught without listing them.
 # word* also catches longer words that start with it. -word is never caught.

@@ -28,9 +28,9 @@ from huragok.servers.state import Player, ServerState
 # The design: kicks with cascading times then a ban; mutes from the first strike and
 # never a ban; and a word that only ever gets a kick.
 WORDS = """\
-# words           | kicks        | mutes        | ban | name
-badword           | 1h, 1d, 7d   |              | 3   | slurs
-rudeword          |              | 0, 1d, 3d    |     | rude
+# words           | mutes        | kicks        | ban | name
+badword           |              | 1h, 1d, 7d   | 3   | slurs
+rudeword          | 1d, 3d       |              |     | rude
 kickword
 """
 ZED = "9" * 64
@@ -50,7 +50,7 @@ def ladder(line: str, strikes: int = 6) -> list[str]:
 # The word list ---------------------------------------------------------------------------
 
 def test_kicks_with_cascading_times_then_a_ban() -> None:
-    r = rule("badword, otherword | 1h, 1d, 7d | | 3 | slurs")
+    r = rule("badword, otherword | | 1h, 1d, 7d | 3 | slurs")
     assert r.words == ["badword", "otherword"] and r.name == "slurs" and not r.old_layout
     steps = [r.step_for(n) for n in range(6)]
     assert steps == [Step("kick", "1h"), Step("kick", "1d"), Step("kick", "7d"), Step("ban"), Step("ban"), Step("ban")]
@@ -62,126 +62,142 @@ def test_kicks_with_cascading_times_then_a_ban() -> None:
 def test_the_hosts_examples() -> None:
     # Banned the first time.
     assert ladder("bad_word | | | 0 | slurs", 3) == ["ban", "ban", "ban"]
-    # Muted the first time, for a day, then 3 days, then a week each time after; never banned.
-    r = rule("bad_word | | 0, 1d, 3d, 7d | | transphobia")
+    # Muted the first time, for a day, then 3 days, then a week each time after; never kicked, never banned.
+    r = rule("bad_word | 1d, 3d, 7d | | | transphobia")
     assert [str(r.step_for(n)) for n in range(6)] == ["mute 1d", "mute 3d", "mute 7d", "mute 7d", "mute 7d",
                                                        "mute 7d"]
     assert r.step_for(0).describe() == "muted for 1 day" and r.ban_after is None and r.strike_text(5) == "strike 5"
+    # The host's own (27 October), mutes before kicks: muted 4, 5 and 6 days; out 1, 2 and 3 days; then out 3 days
+    # and muted for good each time; banned on the 11th.
+    assert described(rule("word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate")) == [
+        "1st: muted for 4 days", "2nd: muted for 5 days", "3rd: muted for 6 days", "4th: removed for 1 day",
+        "5th: removed for 2 days", "6th: removed for 3 days", "7th to 10th: removed for 3 days, then muted for good",
+        "11th: banned for good"]
 
 
-def test_kicks_then_mutes_then_the_ban() -> None:
-    assert ladder("w | 1h | 1, 1d, 7d | 3 | x") == ["kick 1h", "mute 1d", "mute 7d", "ban", "ban", "ban"]
-    assert ladder("w | | 2, 1d", 4) == ["kick", "kick", "mute 1d", "mute 1d"]  # no kick times: the server's kick
-    assert ladder("w | | 0, 1d, perm", 3) == ["mute 1d", "mute perm", "mute perm"]
-    assert rule("w | | 0, perm").step_for(0).describe() == "muted for good"
-    assert ladder("w | | 0, 1d, perm | 4", 5) == ["mute 1d", "mute perm", "mute perm", "mute perm", "ban"]
+def test_mutes_then_kicks_then_the_ban() -> None:
+    assert ladder("w | 1d, 7d | 2, 1h | 3 | x") == ["mute 1d", "mute 7d", "kick 1h", "ban", "ban", "ban"]
+    assert ladder("w | 1d | 2", 4) == ["mute 1d", "mute 1d", "kick", "kick"]  # no kick times: the server's kick
+    assert ladder("w | 1d | 1h", 3) == ["mute 1d", "kick 1h", "kick 1h"]  # no number: once every mute time is used
+    assert ladder("w | 1d, perm", 3) == ["mute 1d", "mute perm", "mute perm"]  # never kicked: the last mute repeats
+    assert rule("w | perm").step_for(0).describe() == "muted for good"
+    assert ladder("w | 1d, perm | | 4", 5) == ["mute 1d", "mute perm", "mute perm", "mute perm", "ban"]
+    assert ladder("w | 1d, perm | 2, 1h", 4) == ["mute 1d", "mute perm", "kick 1h", "kick 1h"]  # muted for good stays
+    r = rule("w | 1d | 2")
+    assert r.mutes == ["1d"] and r.kick_after == 2 and r.kicks == [] and rule("w | 1d").kick_after is None
 
 
 def test_a_number_last_in_the_mutes_is_the_strikes_before_muted_for_good() -> None:
-    # The host's example: kicked 5 times, muted 1 day, 3 days, 7 days, then for good, never banned.
-    r = rule("w | | 5, 1d, 3d, 7d, 8 | | mean")
-    assert r.mute_after == 5 and r.mutes == ["1d", "3d", "7d"] and r.mute_forever_after == 8 and r.ban_after is None
-    assert [str(r.step_for(n)) for n in range(10)] == ["kick"] * 5 + ["mute 1d", "mute 3d", "mute 7d", "mute perm",
-                                                                      "mute perm"]
-    assert r.step_for(500) == Step("mute") and r.step_for(8).describe() == "muted for good"
-    assert described(r) == ["1st to 5th: kicked", "6th: muted for 1 day", "7th: muted for 3 days",
-                            "8th: muted for 7 days", "9th and after: muted for good"]
+    # The host's example in the new order: muted 1 day, 3 days, 7 days; kicked from the 6th; kicked and muted for
+    # good from the 9th; never banned.
+    r = rule("w | 1d, 3d, 7d, 8 | 5 | | mean")
+    assert r.mutes == ["1d", "3d", "7d"] and r.mute_forever_after == 8 and r.kick_after == 5 and r.ban_after is None
+    assert [str(r.step_for(n)) for n in range(10)] == ["mute 1d", "mute 3d", "mute 7d", "mute 7d", "mute 7d", "kick",
+                                                       "kick", "kick", "kick + mute perm", "kick + mute perm"]
+    assert r.step_for(500) == Step("mute", plain_kick=True) and r.step_for(8).describe() == "kicked, then muted for good"
+    assert described(r) == ["1st: muted for 1 day", "2nd: muted for 3 days", "3rd to 5th: muted for 7 days",
+                            "6th to 8th: kicked", "9th and after: kicked, then muted for good"]
     assert r.strike_text(8) == "strike 8 of 8" and r.strike_text(9) == "strike 9"  # counted toward it, as the ban
+    # Never kicked: muted for good is the last step.
+    assert described(rule("w | 1d, 7d, 5 | | | x")) == ["1st: muted for 1 day", "2nd to 5th: muted for 7 days",
+                                                        "6th and after: muted for good"]
     # Without it the last time repeats, as it always has.
-    assert ladder("w | | 5, 1d, 3d, 7d", 10)[-2:] == ["mute 7d", "mute 7d"] and rule("w | | 0, 1d").strike_text(1) == \
-        "strike 1"
-    # A later number: the last time repeats until then.
-    assert described(rule("w | | 0, 1d, 7d, 5 | | x")) == ["1st: muted for 1 day", "2nd to 5th: muted for 7 days",
-                                                           "6th and after: muted for good"]
+    assert ladder("w | 1d, 3d, 7d", 10)[-2:] == ["mute 7d", "mute 7d"] and rule("w | 1d").strike_text(1) == "strike 1"
     # Kick times, and a ban after it.
-    assert ladder("w | 1h, 1d | 1, 1d, 2 | 4 | x", 6) == ["kick 1h", "kick 1d + mute 1d", "mute perm", "mute perm",
-                                                          "ban", "ban"]
-    assert rule("w | 1h | 0, 1d, 2 | 4 | x").strike_text(4) == "strike 4 of 4"  # the ban's count wins
+    assert ladder("w | 1d, 2 | 1, 1h, 1d | 4 | x", 6) == ["mute 1d", "kick 1h", "kick 1d + mute perm",
+                                                          "kick 1d + mute perm", "ban", "ban"]
+    assert rule("w | 1d, 2 | 1, 1h | 4 | x").strike_text(4) == "strike 4 of 4"  # the ban's count wins
     # In game, separated by spaces: !changebanword reads it as the file does.
-    assert rule("w | | 5, 1d, 3d, 7d, 8").mute_forever_after == 8
+    assert rule("w | 1d, 3d, 7d, 8").mute_forever_after == 8
 
 
 def test_a_word_alone_is_a_plain_kick_forever() -> None:
     r = rule("kickword")
     assert {r.step_for(n) for n in range(50)} == {Step("kick")} and r.step_for(0).describe() == "kicked"
-    assert r.ban_after is None and r.mute_after is None and r.name == ""
+    assert r.ban_after is None and r.mutes == [] and r.kick_after == 0 and r.name == ""
 
 
 def test_the_0_2_layout_reads_as_it_always_did() -> None:
     # words | timers | chances | name: four parts, the last a name.
     r = rule("badword | 1h, 1d, 7d | 3 | slurs")
-    assert r.old_layout and r.name == "slurs" and r.mute_after is None
+    assert r.old_layout and r.name == "slurs" and r.mutes == [] and r.kicks == ["1h", "1d", "7d"]
     assert [str(r.step_for(n)) for n in range(5)] == ["kick 1h", "kick 1d", "kick 7d", "ban", "ban"]
     assert ladder("troon | | | transphobia", 3) == ["kick", "kick", "kick"]
     assert ladder("worstword | | 0 | threats", 1) == ["ban"]
     assert ladder("w | 1h, 1d | 4 | x") == ["kick 1h", "kick 1d", "kick 1d", "kick 1d", "ban", "ban"]
-    # Three parts were words | timers | chances: now the third is the mutes, so it's a mistake, not a mute.
-    with pytest.raises(RuleError, match="list how long each mute lasts.*now the 4th"):
-        parse_line("w | 1h | 3", 1)
+    # Three parts were words | timers | chances: in a list whose notes say so, still a mistake, never a mute.
+    with pytest.raises(RuleError, match="before the 3 in mutes, list how long each mute lasts"):
+        parse_text("#   words | timers | chances | name\nw | 1h | 3\n")
 
 
 def test_other_shapes() -> None:
-    assert ladder("w | 10m, 1h", 3) == ["kick 10m", "kick 1h", "kick 1h"]  # the last time repeats
+    assert ladder("w | | 10m, 1h", 3) == ["kick 10m", "kick 1h", "kick 1h"]  # the last time repeats
+    assert ladder("w | 10m, 1h", 3) == ["mute 10m", "mute 1h", "mute 1h"]
     assert ladder("w | | | 2", 3) == ["kick", "kick", "ban"]
 
 
-def test_kick_times_past_the_start_of_the_mutes_kick_then_mute() -> None:
-    # The host's rule: out 1 day, 2 days… 15 days; from the 6th strike muted a day as well; banned on the 21st.
+def test_mute_times_past_the_start_of_the_kicks_kick_then_mute() -> None:
+    # Muted 1 day, 2 days… 15 days; from the 6th strike out a day first; kicked alone from the 16th; banned on the 21st.
     times = ", ".join(f"{n}d" for n in range(1, 16))
     r = rule(f"w | {times} | 5, 1d | 20 | r")
     steps = [r.step_for(n) for n in range(22)]
-    assert steps[4] == Step("kick", "5d") and steps[5] == Step("mute", "1d", "6d")
-    assert steps[14] == Step("mute", "1d", "15d")
-    assert steps[15] == steps[19] == Step("mute", "1d") and steps[20] == steps[21] == Step("ban")
-    assert steps[5].describe() == "removed for 6 days, then muted for 1 day" and str(steps[5]) == "kick 6d + mute 1d"
-    assert described(r)[4:6] == ["5th: removed for 5 days", "6th: removed for 6 days, then muted for 1 day"]
-    assert described(r)[-2:] == ["16th to 20th: muted for 1 day", "21st: banned for good"]
-    # Lines that worked before mean what they did: the last kick time repeats up to the mutes, never with them.
-    assert ladder("w | 1h | 2, 1d", 4) == ["kick 1h", "kick 1h", "mute 1d", "mute 1d"]
-    assert ladder("w | 1h, 1d | 1, 1d", 3) == ["kick 1h", "kick 1d + mute 1d", "mute 1d"]
-    assert ladder("w | 1h | 0, 1d, perm", 3) == ["kick 1h + mute 1d", "mute perm", "mute perm"]
-    assert rule("w | 1h | 0, perm").step_for(0).describe() == "removed for 1 hour, then muted for good"
+    assert steps[4] == Step("mute", "5d") and steps[5] == Step("mute", "6d", "1d")
+    assert steps[14] == Step("mute", "15d", "1d")
+    assert steps[15] == steps[19] == Step("kick", "1d") and steps[20] == steps[21] == Step("ban")
+    assert steps[5].describe() == "removed for 1 day, then muted for 6 days" and str(steps[5]) == "kick 1d + mute 6d"
+    assert described(r)[4:6] == ["5th: muted for 5 days", "6th: removed for 1 day, then muted for 6 days"]
+    assert described(r)[-2:] == ["16th to 20th: removed for 1 day", "21st: banned for good"]
+    # The last mute time repeats up to the kicks, never with them.
+    assert ladder("w | 1d | 2, 1h", 4) == ["mute 1d", "mute 1d", "kick 1h", "kick 1h"]
+    assert ladder("w | 1d, 3d | 1, 1h", 3) == ["mute 1d", "kick 1h + mute 3d", "kick 1h"]
+    assert ladder("w | 1d, perm | 0, 1h", 3) == ["kick 1h + mute 1d", "kick 1h + mute perm", "kick 1h"]
+    assert rule("w | perm | 0, 1h").step_for(0).describe() == "removed for 1 hour, then muted for good"
+    # With the server's plain kick: kicked, the mute kept for when they're back.
+    step = rule("w | 1d, 3d | 1").step_for(1)
+    assert step == Step("mute", "3d", plain_kick=True) and step.removes and not Step("mute", "3d").removes
+    assert str(step) == "kick + mute 3d" and step.describe() == "kicked, then muted for 3 days"
 
 
 def test_no_limit_on_the_counts() -> None:
-    r = rule("w | | 100, 1d | 1000 | x")
-    assert r.mute_after == 100 and r.ban_after == 1000 and r.strike_text(500) == "strike 500 of 1000"
-    assert r.step_for(99) == Step("kick") and r.step_for(999) == Step("mute", "1d") and r.step_for(1000) == Step("ban")
-    assert described(r) == ["1st to 100th: kicked", "101st to 1000th: muted for 1 day", "1001st: banned for good"]
+    r = rule("w | 1d | 100 | 1000 | x")
+    assert r.kick_after == 100 and r.ban_after == 1000 and r.strike_text(500) == "strike 500 of 1000"
+    assert r.step_for(99) == Step("mute", "1d") and r.step_for(999) == Step("kick") and r.step_for(1000) == Step("ban")
+    assert described(r) == ["1st to 100th: muted for 1 day", "101st to 1000th: kicked", "1001st: banned for good"]
     assert described(rule("w | | | 1000000000"))[-1] == "1000000001st: banned for good"  # worked out, not counted
 
 
 def test_severity_order() -> None:
-    order = [Step("kick"), Step("kick", "1h"), Step("kick", "7d"), Step("mute", "1h"), Step("mute", "1h", "1d"),
-             Step("mute", "7d"), Step("mute"), Step("ban")]
+    # A mute, then a kick (a mute after it or not), then the ban: of two lines a message trips, the heavier step.
+    order = [Step("mute", "1h"), Step("mute", "7d"), Step("mute"), Step("kick"), Step("mute", "1d", plain_kick=True),
+             Step("kick", "1h"), Step("mute", "1h", "1h"), Step("mute", "7d", "1h"), Step("kick", "7d"), Step("ban")]
     assert sorted(reversed(order), key=lambda s: s.severity) == order
 
 
 @pytest.mark.parametrize("line, message", [
-    ("w | 1h, 1d, 7d | | 2", "3 kick times but only 2 kicks before the ban"),
-    ("w | 1h, 1d, 7d | 0, 1d | 2", "3 kick times but only 2 kicks before the ban"),  # with the mutes or not
+    ("w | | 1h, 1d, 7d | 2", "3 kick times but only 2 kicks before the ban"),
+    ("w | 1d | 1, 1h, 1d, 7d | 3", "3 kick times but only 2 kicks before the ban"),  # after the mutes or not
     ("w | 1h, 1d, 7d | 2 | slurs", "3 timers but 2 chances"),  # the 0.2 layout says it the 0.2 way
     ("w | | 0 | x | y | z", "at most 5 parts"),
-    ("w | 1 hour", "isn't a time"),
-    ("w | | 0, soon", "isn't a time"),
-    ("w | perm", "a kick can't be for good"),
-    ("w | | 1d, 3d", "mutes start with how many strikes"),
-    ("w | | 0", "list how long each mute lasts"),
-    ("w | | 0, perm, 1d", "perm can only be the last"),
-    ("w | | \u00b2, 1d", "mutes start with how many strikes"),  # ² is a digit to isdigit(), not to int()
+    ("w | | 1 hour", "isn't a time"),
+    ("w | soon", "isn't a time"),
+    ("w | | perm", "a kick can't be for good"),
+    ("w | 0, 1d, 3d", "'0' in mutes has no s, m, h, d or w: the mutes come first now.*goes first in the kicks"),
+    ("w | 8", "before the 8 in mutes, list how long each mute lasts"),
+    ("w | perm, 1d", "perm can only be the last"),
+    ("w | \u00b2, 1d", "isn't a time"),  # ² is a digit to isdigit(), not to int()
     ("w | | | lots |", "the strikes before the ban must be a number"),
     ("w | | | \u00b2 |", "the strikes before the ban must be a number, 0 or more"),
-    ("w | | 3, 1d | 2 |", "the mutes start after 3 strikes but the ban comes after 2"),
-    ("w | | 1, 1d, 3d, 7d | 3 |", "3 mute times but only 2 mutes before the ban"),
-    ("w | | 5, 1d, 3d, 7d, 7", "3 mute times but only 2 mutes before muted for good.*8 or more"),
-    ("w | | 5, 1d, 3d, 7d, 5", "the mutes start after 5 strikes but are for good after 5.*8 or more"),
-    ("w | | 5, 1d, 3d, 7d, 2", "the mutes start after 5 strikes but are for good after 2"),
-    ("w | | 5, 8", "between the 5 and the 8 in mutes, list how long each mute lasts"),
-    ("w | | 5, 1d, 3, 7d", "'3' in mutes has no s, m, h, d or w.*can only be last"),
-    ("w | | 5, 1d, 3, 7d, 8", "'3' in mutes has no s, m, h, d or w"),
-    ("w | | 0, 1d, perm, 3", "perm and the 3 after it both say when the mutes are for good"),
-    ("w | | 0, 1d, 3 | 3", "the mutes are for good after 3 strikes but the ban comes after 3"),
-    ("w | | 0, 1d, \u00b2", "isn't a time"),  # ² isn't a count either
+    ("w | 1d | 3 | 2 |", "the kicks start after 3 strikes but the ban comes after 2"),
+    ("w | 1d | 2 | 2 |", "the kicks start after 2 strikes but the ban comes after 2, so they never would"),
+    ("w | 1d, 3d, 7d | | 2 |", "3 mute times but only 2 mutes before the ban"),
+    ("w | 1d, 3d, 7d, 2", "3 mute times but only 2 mutes before muted for good.*3 or more"),
+    ("w | 1d, 3, 7d", "'3' in mutes has no s, m, h, d or w.*can only be last"),
+    ("w | 1d, 3, 7d, 8", "'3' in mutes has no s, m, h, d or w"),
+    ("w | 1d, perm, 3", "perm and the 3 after it both say when the mutes are for good"),
+    ("w | 1d, 3 | | 3", "the mutes are for good after 3 strikes but the ban comes after 3"),
+    ("w | 1d, \u00b2", "isn't a time"),  # ² isn't a count either
+    ("w | 1d | 1, 1h, 3", "'3' in kicks has no s, m, h, d or w.*can only be first"),
+    ("w | | 3, 1h", "the kicks start after 3 strikes, but no mutes come before them"),
     ("| 1h", "no words"),
     ("-onlyallowed", "no words"),
     ("w | | | | two words", "one short word"),
@@ -190,6 +206,90 @@ def test_severity_order() -> None:
 def test_mistakes_name_the_line(line: str, message: str) -> None:
     with pytest.raises(RuleError, match=f"line 1: .*{message}"):
         parse_line(line, 1)
+
+
+# The layout up to 0.5.0, the kicks first (the host's call, 27 October: the mutes come first now) -----------------
+
+KICKS_FIRST = """\
+# Vergil's word list
+#   words | kicks | mutes | ban | name
+word | 1d, 2d, 3d | 3, 4d, 5d, 6d, 6 | 10 | hate
+slur | 1h, 1d, 7d | | 3 | slurs
+rude | | 0, 1d, 3d | | rude
+spam | 1h, 1d, 2d | 2, 1d | 3 | spam
+mean | | 5, 1d, 3d, 7d, 8 | | mean
+first | 10m | 0, 1d | | first
+threat | | | 0 | threats
+old | 1h, 1d | 3 | oldstyle
+kickword
+broken | 1x
+lost | | 2, 1d, 3d | 3 | lost
+"""
+
+
+def test_a_list_says_its_layout_by_the_note_naming_its_parts() -> None:
+    from huragok.players.automod.rules import kicks_first, says_layout
+
+    assert kicks_first(KICKS_FIRST) and kicks_first("#words|KICKS|mutes|ban|name\nw | 1h\n")
+    assert kicks_first("#   words | timers | chances | name\n")  # the 0.2 layout's: the kicks came first too
+    assert not kicks_first(WORDS) and not kicks_first("") and not kicks_first("w | 1h\n")  # none: this version's
+    assert not kicks_first(KICKS_FIRST + "#   words | mutes | kicks | ban | name\n")  # this version's wins
+    assert not kicks_first("# words | kicks or mutes, then the ban\n")  # a note of the host's own
+    assert says_layout(WORDS) and not says_layout("w | 1h\n# words, more words\n")
+
+
+def test_each_line_of_the_layout_up_to_0_5_0_in_the_new_one() -> None:
+    from huragok.players.automod.rules import from_kicks_first
+
+    turned = [from_kicks_first(line) for line in KICKS_FIRST.splitlines()]
+    assert turned == [
+        "# Vergil's word list", "#   words | kicks | mutes | ban | name",
+        "word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate",  # the host's example, word for word
+        "slur | | 1h, 1d, 7d | 3 | slurs",  # only kicked: still only kicked
+        "rude | 1d, 3d | | | rude",  # only muted: still only muted, never kicked
+        "spam | 1d | 2, 1h | 3 | spam",  # 1d and 2d would come after the ban
+        "mean | 1d, 3d, 7d, 8 | 5 | | mean", "first | 1d | 0, 10m | | first",
+        "threat | | | 0 | threats", "old | 1h, 1d | 3 | oldstyle", "kickword",  # read the same in both
+        "broken | | 1x", "lost | 1d, 3d | 2 | 3 | lost"]  # didn't read: turned all the same
+    assert from_kicks_first("w | 1h") == "w | | 1h" and from_kicks_first("  ") == "  "
+
+
+def test_a_list_in_the_layout_up_to_0_5_0_is_read_in_the_new_one() -> None:
+    from huragok.players.automod.rules import in_this_layout, kicks_first, parse_lenient
+
+    rules, left = parse_lenient(KICKS_FIRST)
+    assert [r.name for r in rules] == ["hate", "slurs", "rude", "spam", "mean", "first", "threats", "oldstyle",
+                                       "rule9", "lost"]
+    assert described(rules[0]) == described(rule("word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate"))
+    assert described(rules[2]) == ["1st: muted for 1 day", "2nd and after: muted for 3 days"]
+    # A line that didn't read is turned all the same: it keeps its place in the count (so would an unnamed line
+    # below it), and reads if the new order makes it read (lost: 2 strikes, then 2 mutes, was too many before a ban
+    # after 3; 2 mutes, then a kick, isn't).
+    assert [(item.line, item.text) for item in left] == [(12, "broken | 1x")]
+    assert "line 12: '1x' isn't a time" in left[0].why
+    with pytest.raises(RuleError, match="line 12: '1x' isn't a time"):
+        parse_text(KICKS_FIRST)
+    # Rewritten as the update writes it, it reads the same, and says it's in the new layout.
+    turned = in_this_layout(KICKS_FIRST)
+    assert not kicks_first(turned.text) and in_this_layout(turned.text).text == turned.text
+    assert turned.turned == [3, 4, 5, 6, 7, 8, 12, 13] and turned.cut == {6: ["1d", "2d"]}
+    lines = turned.text.splitlines()
+    assert lines[:3] == ["# Vergil's word list", "#   words | mutes | kicks | ban | name",
+                         "word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate"]
+    assert lines[-2:] == ["broken | | 1x", "lost | 1d, 3d | 2 | 3 | lost"]
+    again, left_now = parse_lenient(turned.text)
+    assert [(r.name, described(r)) for r in again] == [(r.name, described(r)) for r in rules]
+    assert [(item.line, item.why) for item in left_now] == [(item.line, item.why) for item in left]
+
+
+def test_a_list_in_the_layout_up_to_0_5_0_isnt_changed_until_its_rewritten(tmp_path: Path) -> None:
+    from huragok.players.automod.rules import change_rule
+
+    path = tmp_path / "automod.txt"
+    path.write_text(KICKS_FIRST, encoding="utf-8")
+    with pytest.raises(RuleError, match="still in the layout before this version.*a couple of minutes after"):
+        change_rule(path, None, "new | 1d")
+    assert path.read_text(encoding="utf-8") == KICKS_FIRST
 
 
 def test_the_whole_file() -> None:
@@ -276,9 +376,9 @@ def test_vergil_forgets_what_only_mattered_for_moments(tmp_path: Path, run) -> N
 
 
 def test_check_points_out_the_old_layout(tmp_path: Path) -> None:
-    (tmp_path / "automod.txt").write_text("badword | 1h | 3 | slurs\nrudeword | | 0, 1d | | rude\n", encoding="utf-8")
+    (tmp_path / "automod.txt").write_text("badword | 1h | 3 | slurs\nrudeword | 1d | | | rude\n", encoding="utf-8")
     warnings = PARTS["automod"].preflight({}, tmp_path)
-    assert len(warnings) == 1 and "line 1: the 0.2 layout" in warnings[0] and "words | kicks | mutes" in warnings[0]
+    assert len(warnings) == 1 and "line 1: the 0.2 layout" in warnings[0] and "words | mutes | kicks" in warnings[0]
 
 
 def test_how_long_is_left() -> None:
@@ -393,8 +493,12 @@ def test_the_ladder_in_a_game(tmp_path: Path, run) -> None:
             assert [b["args"][1] for b in bans[:3]] == ["1h", "1d", "7d"]
             assert len(bans[3]["args"]) == 2  # no time: for good
             assert all(b["args"][0] == BRAVO and b["by"] == "Vergil" for b in bans)
-            assert bans[0]["args"][2] == ("KEEP IT CLEAN! That isn't allowed here (slurs, strike 1 of 3): removed for 1 hour. "
-                                          "Next time: removed for 1 day.")
+            assert bans[0]["args"][2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 1 of 3): removed for "
+                                          "1 hour. Next time: removed for 1 day.")
+            # Everyone reads why (the server's own line says only what was done), the word never repeated either.
+            assert [c["args"][0] for c in fake.named("say")][:2] == [
+                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 1 of 3).",
+                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3)."]
             assert "banned for good" in bans[3]["args"][1] and "Next time" not in bans[3]["args"][1]
             assert "badword" not in " ".join(str(c) for c in fake.commands)  # the word is never repeated
             ledger = sup.storage.actions_for(BRAVO)
@@ -404,7 +508,7 @@ def test_the_ladder_in_a_game(tmp_path: Path, run) -> None:
                 await fake.chat(ALICE, "Alice", "KICKWORD")
             await wait_for(lambda: len(fake.named("kick")) == 3)
             assert all(len(k["args"]) == 2 for k in fake.named("kick"))
-            assert fake.named("kick")[0]["args"][1].startswith("KEEP IT CLEAN! That isn't allowed here (strike 1): kicked.")
+            assert fake.named("kick")[0]["args"][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here (strike 1): kicked.")
 
     run(scenario())
 
@@ -419,7 +523,7 @@ def test_mutes_follow_the_ladder_and_last_through_a_rejoin(tmp_path: Path, run) 
                 await wait_for(lambda: len(mutes_of(fake, BRAVO)) == n + 1)
             mutes = mutes_of(fake, BRAVO)
             assert [m[1] for m in mutes] == ["1d", "3d", "3d"]  # the last time repeats; never a kick or a ban
-            assert mutes[0][2] == ("KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. "
+            assert mutes[0][2] == ("[o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. "
                                    "Next time: muted for 3 days.")
             assert not removals(fake) and fake.named("mute")[0]["by"] == "Vergil"
             assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "mute 3d", "mute 3d"]
@@ -429,7 +533,7 @@ def test_mutes_follow_the_ladder_and_last_through_a_rejoin(tmp_path: Path, run) 
             await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 4)
             again = mutes_of(fake, BRAVO)[3]
             assert re.fullmatch(r"\d+s", again[1]) and 3 * 86400 - 60 < int(again[1][:-1]) <= 3 * 86400
-            assert again[2] == "KEEP IT CLEAN! You're still muted (rude): 2 days 23 hours left."
+            assert again[2] == "[-_-] KEEP IT CLEAN! You're still muted (rude): 2 days 23 hours left."
             assert len(sup.storage.actions_for(BRAVO)) == 4  # in the ledger too
 
             await fake.chat(BRAVO, "Bravo", "!strikes")
@@ -465,7 +569,7 @@ def test_a_strike_while_away_mutes_them_when_they_join(tmp_path: Path, run) -> N
             assert not fake.named("mute")
             await fake.join(6, "Zed", ZED)
             mute = await wait_for(lambda: mutes_of(fake, ZED))
-            assert mute[0][2].startswith("KEEP IT CLEAN! You're still muted (rude): 23 hours 59 minutes left")
+            assert mute[0][2].startswith("[-_-] KEEP IT CLEAN! You're still muted (rude): 23 hours 59 minutes left")
 
             # !pardonplayer lifts it, and Vergil doesn't put it back.
             await fake.chat(OWNER, "Owner", f"!pardonplayer {ZED}")
@@ -525,7 +629,7 @@ def test_a_bad_name_is_kicked_every_join_until_it_changes(tmp_path: Path, run) -
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.join(6, "xX BadWord Xx", ZED)
             kick = await wait_for(lambda: fake.named("kick"))
-            assert kick[0]["args"] == [ZED, "KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
+            assert kick[0]["args"] == [ZED, "[o_O] KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
                                             "Join again with another one."]
             # Let straight back in (the server's kick would keep them out), with no strike and no ban.
             await wait_for(lambda: fake.named("pardon"))
@@ -550,7 +654,7 @@ def test_strike_name_bans_the_name_and_unbanname_lifts_it(tmp_path: Path, run) -
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.chat(MOD, "Mod", "!strike bravo name offensive")
             kick = await wait_for(lambda: fake.named("kick"))
-            assert kick[0]["args"] == [BRAVO, "KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
+            assert kick[0]["args"] == [BRAVO, "[o_O] KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
                                               "Join again with another one."]
             assert kick[0]["by"] == "Mod"
             await wait_for(lambda: any("The name Bravo is banned now: they're kicked" in t for t in tells_to(fake, MOD)))
@@ -710,7 +814,7 @@ def test_a_name_with_a_listed_word_run_into_it_is_kicked(tmp_path: Path, run) ->
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.join(6, "DasBadword", ZED)  # name_match = "anywhere", the default
             kick = await wait_for(lambda: fake.named("kick"))
-            assert kick[0]["args"] == [ZED, "KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
+            assert kick[0]["args"] == [ZED, "[o_O] KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
                                             "Join again with another one."]
             assert [e["caught_by"] for e in seen if e.name == "automod.name"] == ["automod.txt slurs"]
             assert sup.runners["automod"].part.active_strikes(ZED, sup.runners["automod"].part.by_name["slurs"]) == 0
@@ -754,10 +858,10 @@ def test_banword_adds_a_line_from_the_game(tmp_path: Path, run) -> None:
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 6)
             words = tmp_path / "automod.txt"
 
-            # The host's example: times split by spaces in game, written as automod.txt has them.
+            # The host's example: times split by spaces in game, written as automod.txt has them; the mutes first.
             await fake.chat(ADMIN, "Admin", "!banword newword | 10m 30m 1h 1d 7d | 5, 1h, 1d, 3d, 7d | 10 | hate")
-            await answered(fake, ADMIN, "Added to automod.txt line 5 (hate): newword. 1st: removed for 10 minutes; "
-                                        "2nd: removed for 30 minutes; 3rd: removed for 1 hour… Names with it in "
+            await answered(fake, ADMIN, "Added to automod.txt line 5 (hate): newword. 1st: muted for 10 minutes; "
+                                        "2nd: muted for 30 minutes; 3rd: muted for 1 hour… Names with it in "
                                         "them are kicked as they join, until changed.")
             assert words.read_text(encoding="utf-8") == WORDS + ("newword | 10m, 30m, 1h, 1d, 7d | 5, 1h, 1d, 3d, 7d "
                                                                  "| 10 | hate\n")
@@ -766,21 +870,21 @@ def test_banword_adds_a_line_from_the_game(tmp_path: Path, run) -> None:
             kick = await wait_for(lambda: fake.named("kick"))  # the name with it, on now: at once
             assert kick[0]["args"][0] == ZED and "(banned name)" in kick[0]["args"][1]
             await fake.chat(ALICE, "Alice", "a newword")  # and in chat, at once: its 1st strike
-            ban = await wait_for(lambda: fake.named("ban"))
-            assert ban[0]["args"][:2] == [ALICE, "10m"] and "(hate, strike 1 of 10)" in ban[0]["args"][2]
+            mute = await wait_for(lambda: mutes_of(fake, ALICE))
+            assert mute[0][1] == "10m" and "(hate, strike 1 of 10)" in mute[0][2] and not fake.named("ban")
 
             # The host's way: a word, then the line it joins, with that line's steps ("slur" finds "slurs").
             await fake.chat(ADMIN, "Admin", "!banword otherword, thirdword slur")
             await answered(fake, ADMIN, "Added to automod.txt line 2 (slurs): otherword, thirdword.")
-            assert "\nbadword, otherword, thirdword | 1h, 1d, 7d | | 3 | slurs\n" in words.read_text(encoding="utf-8")
+            assert "\nbadword, otherword, thirdword | | 1h, 1d, 7d | 3 | slurs\n" in words.read_text(encoding="utf-8")
             await fake.chat(ADMIN, "Admin", "!banword eighthword | rude")  # with a bar, as before
             await answered(fake, ADMIN, "Added to automod.txt line 3 (rude): eighthword.")
             # A line that isn't there yet: which there are, and the whole command to make it, the word in it.
             await fake.chat(ADMIN, "Admin", "!banword spamword annoying")
             await answered(fake, ADMIN, "There's no line called 'annoying' yet. Lines: slurs, rude, rule3, hate: "
                                         "!banword spamword slurs adds it to one. Or make the line with its steps: "
-                                        "!banword spamword | 1h 1d | 2, 1d 7d | 5 | annoying (kick times | strikes "
-                                        "before the mutes, then each mute's time | strikes before the ban | its name; "
+                                        "!banword spamword | 1d 7d | 2, 1h 1d | 5 | annoying (mute times | strikes "
+                                        "before the kicks, then each kick's time | strikes before the ban | its name; "
                                         "a part left blank is none).")
             await fake.chat(ADMIN, "Admin", "!banword spamword | 10m | 1, 1h | | annoying")  # made, as it said
             await answered(fake, ADMIN, "Added to automod.txt line 6 (annoying): spamword.")
@@ -808,7 +912,9 @@ def test_banword_adds_a_line_from_the_game(tmp_path: Path, run) -> None:
                                 ("!banword x | nosuchline", "There's no line called 'nosuchline' yet. Lines: "
                                                             "slurs, rude, rule3, hate, annoying"),
                                 ("!banword x | | | 1 | | more", "At most 5 parts"),
-                                ("!banword x | 1h, 1d, 2d | | 1 | new", "Not added: 3 kick times but only 1 kick")]:
+                                ("!banword x | | 1h, 1d, 2d | 1 | new", "Not added: 3 kick times but only 1 kick"),
+                                ("!banword x | 0, 1d | | | new", "Not added: '0' in mutes has no s, m, h, d or w: "
+                                                                 "the mutes come first now")]:
                 await fake.chat(ADMIN, "Admin", typed)
                 await answered(fake, ADMIN, said)
             await fake.chat(ADMIN, "Admin", "!banword")
@@ -843,17 +949,17 @@ def test_rules_bannames_and_changebanword_from_the_game(tmp_path: Path, run) -> 
             await answered(fake, ADMIN, "Edgelord can be used again.")
             assert "Edgelord" not in (tmp_path / "names.txt").read_text(encoding="utf-8")
 
-            # New steps for a line, its words and name kept: kicks, then mutes from the 2nd, banned on the 6th.
+            # New steps for a line, its words and name kept: mutes, then kicks from the 2nd, banned on the 6th.
             await fake.chat(ADMIN, "Admin", "!changebanword slurs | 30m 2h | 1, 1d 3d | 5")
-            await answered(fake, ADMIN, "The slurs line now: 1st: removed for 30 minutes; 2nd: removed for 2 hours, "
-                                        "then muted for 1 day; 3rd to 5th: muted for 3 days; 6th: banned for good")
+            await answered(fake, ADMIN, "The slurs line now: 1st: muted for 30 minutes; 2nd: removed for 1 day, then "
+                                        "muted for 2 hours; 3rd to 5th: removed for 3 days; 6th: banned for good")
             text = (tmp_path / "automod.txt").read_text(encoding="utf-8")
             assert "\nbadword | 30m, 2h | 1, 1d, 3d | 5 | slurs\n" in text
-            await fake.chat(ADMIN, "Admin", "!changebanword rude | | 1 1d 3d 4")  # a number last: then for good
-            await answered(fake, ADMIN, "The rude line now: 1st: kicked; 2nd: muted for 1 day; 3rd and 4th: muted for "
-                                        "3 days; 5th and after: muted for good")
-            assert "\nrudeword | | 1, 1d, 3d, 4 | | rude\n" in (tmp_path / "automod.txt").read_text(encoding="utf-8")
-            await fake.chat(ADMIN, "Admin", "!changebanword rude | | 0, perm")  # by its name; blank parts: none
+            await fake.chat(ADMIN, "Admin", "!changebanword rude | 1d 3d 4 | 2")  # a number last: then for good
+            await answered(fake, ADMIN, "The rude line now: 1st: muted for 1 day; 2nd: muted for 3 days; 3rd and 4th: "
+                                        "kicked; 5th and after: kicked, then muted for good")
+            assert "\nrudeword | 1d, 3d, 4 | 2 | | rude\n" in (tmp_path / "automod.txt").read_text(encoding="utf-8")
+            await fake.chat(ADMIN, "Admin", "!changebanword rude | perm")  # by its name; blank parts: none
             await answered(fake, ADMIN, "The rude line now: every time: muted for good")
             await fake.chat(ADMIN, "Admin", "!changebanword nosuch | 1h")
             await answered(fake, ADMIN, "No line is called nosuch or lists it. Lines: slurs, rude, rule3.")
@@ -875,7 +981,7 @@ def test_unbanword_takes_a_word_off(tmp_path: Path, run) -> None:
             await sup.runners["automod"].part.reload_if_changed()
             await fake.chat(OWNER, "Owner", "!unbanword OtherWord")
             await answered(fake, OWNER, "Taken off automod.txt: otherword (slurs). Strikes already given for it stay.")
-            assert "\nbadword | 1h, 1d, 7d | | 3 | slurs\n" in words.read_text(encoding="utf-8")
+            assert "\nbadword | | 1h, 1d, 7d | 3 | slurs\n" in words.read_text(encoding="utf-8")
             assert any(e.name == "automod.word_allowed" and e["rules"] == ["slurs"] for e in seen)
             await fake.chat(ALICE, "Alice", "otherword")  # said at once: nothing happens
             await vergil_has_caught_up(fake)
@@ -908,13 +1014,13 @@ def test_strike_strikes_and_pardonplayer(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!strike bravo slurs said it in voice")
             ban = await wait_for(lambda: fake.named("ban"))
             assert ban[0]["args"][1] == "1h" and ban[0]["by"] == "Mod"
-            assert ban[0]["args"][2].startswith("Mod gave you a strike (slurs, strike 1 of 3)")
+            assert ban[0]["args"][2].startswith("[>_<] CRIME DOESN'T PAY! Mod gave you a strike (slurs, strike 1 of 3)")
             await fake.chat(MOD, "Mod", "!strike bravo slurs again")
             await wait_for(lambda: len(fake.named("ban")) == 2)
             assert fake.named("ban")[1]["args"][1] == "1d"
             await fake.chat(MOD, "Mod", "!strike alice rude")
             mute = await wait_for(lambda: mutes_of(fake, ALICE))
-            assert mute[0][:2] == [ALICE, "1d"] and mute[0][2].startswith("Mod gave you a strike (rude, strike 1)")
+            assert mute[0][:2] == [ALICE, "1d"] and mute[0][2].startswith("[o_O] KEEP IT CLEAN! Mod gave you a strike (rude, strike 1)")
             await wait_for(lambda: any("Alice: rude strike 1, muted for 1 day (done)" in t for t in tells_to(fake, MOD)))
 
             await fake.chat(BRAVO, "Bravo", "!strikes")
@@ -1215,7 +1321,9 @@ def test_a_strike_lands_on_the_server_they_are_on(tmp_path: Path, run) -> None:
                 await fake.chat(MOD, "Mod", f"!strike {ZED} rule3")
                 await wait_for(lambda: any("not on now, so nobody was kicked; the strike counts" in t
                                            for t in tells_to(fake, MOD)))
-                assert part.active_strikes(ZED, part.by_name["rule3"]) == 2 and len(other.sent) == 1
+                assert part.active_strikes(ZED, part.by_name["rule3"]) == 2
+                assert [c[0] for c in other.sent] == ["kick", "say"]  # Zed's server reads why, by the name Zed has
+                assert other.sent[1][1] == ("[^_^] YOUR TAX DOLLARS AT WORK! Mod caught Zed (strike 1).",)
                 assert not fake.named("kick")
             finally:
                 sup.superintendent.states.pop("Other", None)
@@ -1287,7 +1395,7 @@ def test_mutes_come_back_after_a_restart_unseen_and_after_a_shorter_mute(tmp_pat
             await fake.event("unmute", name="Bravo", id=BRAVO, by="time")
             await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 5)
             again = mutes_of(fake, BRAVO)[4]
-            assert again[1].endswith("s") and int(again[1][:-1]) > 86000 and again[2].startswith("KEEP IT CLEAN!")
+            assert again[1].endswith("s") and int(again[1][:-1]) > 86000 and again[2].startswith("[-_-] KEEP IT CLEAN!")
 
             # Vergil's own mute ending as the server's does isn't put back.
             part.ctx.db.execute("UPDATE automod_strikes SET expires = ? WHERE player_id = ?", (time.time() + 20, BRAVO))
@@ -1319,7 +1427,7 @@ def test_a_moderators_mute_lasts_its_time_through_a_restart(tmp_path: Path, run,
             await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 2)
             again = mutes_of(fake, BRAVO)[1]
             assert again[1].endswith("s") and 86000 < int(again[1][:-1]) <= 86400
-            assert again[2] == ("KEEP IT CLEAN! You're still muted (muted by Mod: spamming the mic): 23 hours 59 "
+            assert again[2] == ("[-_-] KEEP IT CLEAN! You're still muted (muted by Mod: spamming the mic): 23 hours 59 "
                                 "minutes left.")
             await fake.chat(MOD, "Mod", "!strikes bravo")
             await wait_for(lambda: any("Muted (!mute by Mod: spamming the mic): 23 hours" in t
@@ -1483,20 +1591,21 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
 
 def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Path, run) -> None:
     async def scenario() -> None:
-        (tmp_path / "automod.txt").write_text("badword | 1h, 2h | 1, 1d | | slurs\nrudeword | 30m | 0, 1d | | rude\n",
+        (tmp_path / "automod.txt").write_text("badword | 1d, 1d | 1, 2h | | slurs\nrudeword | 1d | 0, 30m | | rude\n",
                                               encoding="utf-8")
         async with running(tmp_path, '[automod]\nenabled = true\ncooldown_seconds = 0\n') as (sup, fake, seen):
             await everyone_joins(fake)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             part = sup.runners["automod"].part
-            for n in range(2):
-                await fake.chat(BRAVO, "Bravo", "badword")
-                await wait_for(lambda: len(fake.named("ban")) == n + 1)
-            first, second = (b["args"] for b in fake.named("ban"))
-            assert first[:2] == [BRAVO, "1h"] and second[:2] == [BRAVO, "2h"]
-            assert second[2] == ("KEEP IT CLEAN! That isn't allowed here (slurs, strike 2): removed for 2 hours, then "
-                                 "muted for 1 day. Next time: muted for 1 day.")
-            assert [e["action"] for e in seen if e.name == "automod.strike"] == ["kick 1h", "kick 2h + mute 1d"]
+            await fake.chat(BRAVO, "Bravo", "badword")  # slurs' 1st: muted a day
+            await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 1)
+            await fake.chat(BRAVO, "Bravo", "badword")  # its 2nd: out 2 hours, then muted a day
+            await wait_for(lambda: len(fake.named("ban")) == 1)
+            second = fake.named("ban")[0]["args"]
+            assert second[:2] == [BRAVO, "2h"]
+            assert second[2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2): removed for 2 hours, "
+                                 "then muted for 1 day. Next time: removed for 2 hours.")
+            assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "kick 2h + mute 1d"]
             await fake.leave(4)  # the server takes them out
             await wait_for(lambda: all(p.id != BRAVO for p in sup.superintendent.states[SERVER].players.values()))
             row = part.active_mute(BRAVO)
@@ -1511,18 +1620,55 @@ def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Pat
             await wait_for(lambda: len(mutes_of(fake, BRAVO)) > before)
             again = mutes_of(fake, BRAVO)[-1]
             assert 86400 - 60 < int(again[1][:-1]) <= 86400
-            assert again[2].startswith("KEEP IT CLEAN! You're still muted (slurs): 23 hours 59 minutes")
+            assert again[2].startswith("[-_-] KEEP IT CLEAN! You're still muted (slurs): 23 hours 59 minutes")
 
             # !pardonplayer lifts both: the removal, and the mute waiting for them.
             await fake.chat(ALICE, "Alice", "rudeword")  # rude's 1st: out 30 minutes, then muted a day
-            await wait_for(lambda: len(fake.named("ban")) == 3)
-            assert fake.named("ban")[2]["args"][:2] == [ALICE, "30m"]
+            await wait_for(lambda: len(fake.named("ban")) == 2)
+            assert fake.named("ban")[1]["args"][:2] == [ALICE, "30m"]
             await fake.leave(3)
             await wait_for(lambda: all(p.id != ALICE for p in sup.superintendent.states[SERVER].players.values()))
             await fake.chat(ADMIN, "Admin", "!pardonplayer alice")
             await wait_for(lambda: "1 strike cleared (rude); ban lifted, unmuted." in told(fake, ADMIN))
             assert fake.named("unban")[0]["args"] == [ALICE] and fake.named("unmute")[-1]["args"] == [ALICE]
             assert not part.active_mute(ALICE) and all(e["id"] != ALICE for e in fake.ban_list)
+
+    run(scenario())
+
+
+def test_a_plain_kick_with_a_mute_kicks_them_then_mutes_them_once_back(tmp_path: Path, run) -> None:
+    """The mutes first (the host's call, 27 October): a mute time past the start of the server's plain kicks comes
+    with one, the mute put on as they join again; a player who isn't on is muted when they next join."""
+    async def scenario() -> None:
+        (tmp_path / "automod.txt").write_text("badword | 1d, 3d, 2 | 1 | | slurs\n", encoding="utf-8")
+        async with running(tmp_path, '[automod]\nenabled = true\ncooldown_seconds = 0\n') as (sup, fake, seen):
+            await everyone_joins(fake)
+            await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
+            part = sup.runners["automod"].part
+            await fake.chat(BRAVO, "Bravo", "badword")  # 1st: muted a day
+            await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 1)
+            await fake.chat(BRAVO, "Bravo", "badword")  # 2nd: kicked, then muted 3 days
+            kick = await wait_for(lambda: [k["args"] for k in fake.named("kick") if k["args"][0] == BRAVO])
+            assert kick[0][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 of 2): "
+                                         "kicked, then muted for 3 days. Next time: kicked, then muted for good.")
+            assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "kick + mute 3d"]
+            assert not fake.named("ban") and len(mutes_of(fake, BRAVO)) == 1  # the mute waits for them
+            row = part.active_mute(BRAVO)
+            assert row["duration"] == "3d" and row["kick"] is None
+            assert abs(row["expires"] - (row["time"] + 3 * 86400)) < 1
+            await fake.leave(4)  # the server takes them out
+            await wait_for(lambda: all(p.id != BRAVO for p in sup.superintendent.states[SERVER].players.values()))
+            await fake.join(4, "Bravo", BRAVO)
+            await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 2)
+            assert 3 * 86400 - 60 < int(mutes_of(fake, BRAVO)[-1][1][:-1]) <= 3 * 86400
+
+            # Not on: nobody to kick, and the mute (for good, from the 3rd) waits for them.
+            await fake.leave(4)
+            await wait_for(lambda: all(p.id != BRAVO for p in sup.superintendent.states[SERVER].players.values()))
+            await fake.chat(MOD, "Mod", "!strike Bravo slurs")
+            await wait_for(lambda: "Bravo: slurs strike 3, kicked, then muted for good (not on now: muted when they "
+                                   "next join)." in told(fake, MOD))
+            assert part.active_mute(BRAVO)["expires"] is None
 
     run(scenario())
 
@@ -1550,15 +1696,15 @@ def test_a_message_that_fails_at_run_time_falls_back_to_the_default(tmp_path: Pa
             sup.runners["automod"].part.messages["chat"] = "oops {"
             await fake.chat(ALICE, "Alice", "kickword")
             kick = await wait_for(lambda: fake.named("kick"))
-            assert kick[0]["args"][1].startswith("KEEP IT CLEAN! That isn't allowed here")
+            assert kick[0]["args"][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here")
             assert "messages: chat can't be filled in" in caplog.text and sup.runners["automod"].enabled
 
     run(scenario())
 
 
-UNNAMED = "kickword\nbadword | 1h, 1d | | 3\nrudeword | | 0, 1d | | rude\nother | 10m\n"
+UNNAMED = "kickword\nbadword | | 1h, 1d | 3\nrudeword | 1d | | | rude\nother | | 10m\nquiet | 1d\n"
 UNNAMED_WARNING = ("automod.txt line 2 has no name, so its strikes are kept under rule2, and they move to another line "
-                   "if a line is added above it: name it (the 5th part, words | kicks | mutes | ban | name)")
+                   "if a line is added above it: name it (the 5th part, words | mutes | kicks | ban | name)")
 
 
 def test_check_and_the_start_warn_about_unnamed_lines_whose_strikes_add_up(tmp_path: Path, run, caplog) -> None:
@@ -1665,12 +1811,12 @@ def test_a_time_of_0m_is_never_sent_and_check_names_it(tmp_path: Path) -> None:
     `check` names the line, and a new 0m isn't written (!banword, the window)."""
     from huragok.players.automod.rules import change_rule
 
-    rule = parse_line("rude | 0m, 1h | 1, 0m", 1)
+    rule = parse_line("rude | 0m, 1h | 2, 0m", 1)
     assert rule is not None and rule.zero_times() == ["0m", "0m"]
-    assert rule.step_for(0) == Step("kick", None)  # the server's plain kick, never "ban … 0m"
-    assert rule.step_for(1) == Step("kick", "1h")  # never "mute … 0m"
+    assert rule.step_for(0) == Step("kick", None)  # never "mute … 0m"
+    assert rule.step_for(1) == Step("mute", "1h") and rule.step_for(2) == Step("kick", None)  # never "ban … 0m"
     words = tmp_path / "automod.txt"
-    words.write_text("rude | 0m, 1h | 1, 0m\n", encoding="utf-8")
+    words.write_text("rude | 0m, 1h | 2, 0m\n", encoding="utf-8")
     warnings = AutoMod.preflight({"words": "automod.txt"}, tmp_path)
     assert any("automod.txt line 1: 0m, 0m is no time at all" in w for w in warnings)
     with pytest.raises(RuleError, match="0m is no time at all"):

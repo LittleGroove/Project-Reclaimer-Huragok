@@ -114,7 +114,7 @@ out of `commands.toml` and they come off the list again.
 
 - **A vote to kick one of them never opens.** The server refuses it as it's
   called; the caller reads `Charlie can't be vote-kicked on this server.` and,
-  from Vergil, `BE A HERO! REPORT VIOLATORS! Charlie is a member here, so no vote
+  from Vergil, `[^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here, so no vote
   can kick them. If they're breaking the rules, tell the host.` The dashboard
   shows who tried.
 - **The list is in each server's ban list,** and Vergil keeps every server's in
@@ -240,9 +240,9 @@ out of `commands.toml` and they come off the list again.
 | `!unban <@number \| name \| ID \| IP>` | admin | Lift a ban with everything linked to it, on every server; another server's own `/ban` of them stays, and the reply says where; `@number` from `!bans` |
 | `!bans [name]` | admin | The bans in force, newest first, with who banned, why, how long is left, and whether it's on every server or this one; numbered for `!unban` and `!banall` |
 | `!banall <@number \| player \| ID>` | admin | Put a ban from this server's list (a `/ban`) on every server's: on Huragok's list, with its time left, reason and who gave it; `@number` from `!bans` |
-| `!changebanword <line \| word> \| kicks \| mutes \| ban` | admin | New steps for a line of the word list, its words and name kept: `!changebanword slurs \| 1h 1d \| 2, 1d 7d \| 5` |
+| `!changebanword <line \| word> \| mutes \| kicks \| ban` | admin | New steps for a line of the word list, its words and name kept: `!changebanword slurs \| 1d 7d \| 2, 1h 1d \| 5` |
 | `!banword <words> <line>` | admin | Add words to a line of the word list (`automod.txt`), with its steps: `!banword word slurs` (`slur` finds `slurs`). A line that isn't there: the answer says how to make it |
-| `!banword <words> \| [kicks] \| [mutes] \| [ban] \| <name>` | admin | Make a new line: `!banword word \| 1h 1d \| 2, 1d 7d \| 5 \| slurs`. Applies at once, in chat and to names with the word in them. See [automod.md](automod.md#changing-the-word-list-from-the-game) |
+| `!banword <words> \| [mutes] \| [kicks] \| [ban] \| <name>` | admin | Make a new line: `!banword word \| 1d 7d \| 2, 1h 1d \| 5 \| slurs`. Applies at once, in chat and to names with the word in them. See [automod.md](automod.md#changing-the-word-list-from-the-game) |
 | `!unbanword <word>` | admin | Take a word off `automod.txt` (a line left with no words goes too) |
 | `!banname <#number \| name>` | admin | Ban a name (`names.txt`): a player on by `#number` or name has theirs banned and is kicked; any other text is banned as the name itself. Whoever uses it is kicked as they join, until they change it. No strike, no ban. A moderator's up to 0.4.4 |
 | `!pardonplayer <player \| ID> [rule \| all] [reason]` | admin | Clear automod strikes and lift what automod did: unban (only Vergil's own bans), unmute |
@@ -261,7 +261,7 @@ out of `commands.toml` and they come off the list again.
 | `!admin [list \| add \| remove]` | owner | The server's own admin list, shared by every server using the ban list: `add` makes a player an admin, `remove` a moderator |
 | `!reload` | owner | Apply edits to `dedicated.toml` now |
 
-Everyone on the server reads each toggle as a `[Server]` line ("Alice turned global voice (V) off for 10 minutes."), and again when a timed one switches back ("Global voice (V) is back on after 10 minutes."). A timed toggle is kept by Huragok through its own restarts; one whose time ran out while Huragok was down switches back as it starts. Someone changing the setting in the meantime (another toggle, or the window's D) wins: it isn't switched back. There's no `!togglechat`: the server's own lines are text chat, so with it off nobody could read why, or type the command to bring it back.
+Everyone on the server reads each toggle as a `[Server]` line ("[-.-] PLEASE REMAIN CALM! Alice turned global voice (V) off for 10 minutes."), and again when a timed one switches back ("[^_^] YOUR TAX DOLLARS AT WORK! Global voice (V) is back on after 10 minutes."). A timed toggle is kept by Huragok through its own restarts; one whose time ran out while Huragok was down switches back as it starts. Someone changing the setting in the meantime (another toggle, or the window's D) wins: it isn't switched back. There's no `!togglechat`: the server's own lines are text chat, so with it off nobody could read why, or type the command to bring it back.
 
 `!yes` and `!no` are the server's own votes, and lines starting with `/` are the
 game's own commands, so neither can be used here.

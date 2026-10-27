@@ -261,7 +261,8 @@ def test_once_a_version_with_a_copy_of_each_file_and_the_log_says_so(tmp_path: P
     (root / "SERVERS" / "Slayer").mkdir()
     (root / "SERVERS" / "Slayer" / "dedicated.toml").write_text("", encoding="utf-8")
     up_to_date(settings_path, notes=False)
-    words = root / "automod.txt"
+    words = root / "automod.txt"  # in the new layout by now (its own step), a note of Huragok's taken out since
+    words.write_text(template_text("automod.txt").replace("# Edits apply within a few seconds.\n", ""), encoding="utf-8")
     before = words.read_text(encoding="utf-8")
     own = root / "SERVERS" / "Slayer" / "intervalmessages.txt"
     own.write_text("# Slayer's messages\n30m | Slayer only\n", encoding="utf-8")
@@ -278,7 +279,9 @@ def test_once_a_version_with_a_copy_of_each_file_and_the_log_says_so(tmp_path: P
     assert own.read_text(encoding="utf-8") == template_text("intervalmessages-server.txt") + (
         "# Slayer's messages\n30m | Slayer only\n")
     kept = records / "previous-files" / __version__
-    assert (kept / "automod.txt").read_text(encoding="utf-8") == before
+    # Kept as it was before this version first changed it: as 0.4.0 wrote it, before the mutes came first.
+    assert (kept / "automod.txt").read_text(encoding="utf-8") == (HOST_0_4_0 / "automod.txt").read_text(
+        encoding="utf-8")
     assert (kept / "Slayer" / "intervalmessages.txt").read_text(encoding="utf-8") == (
         "# Slayer's messages\n30m | Slayer only\n")
     assert f"{__version__}/notes" in json.loads((records / "files.json").read_text(encoding="utf-8"))["steps"]
@@ -298,7 +301,7 @@ def test_a_file_that_cant_be_read_is_left_and_tried_again(tmp_path: Path, caplog
         changed = migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES")
     assert changed == []  # the step didn't finish…
     assert "names.txt isn't saved as UTF-8" in caplog.text and "tried again at the next start" in caplog.text
-    assert "Brought up to date for Huragok 0.5.0: automod.txt: Huragok's notes" in caplog.text  # …but did the others
+    assert "Brought up to date for Huragok 0.5.0: settings.toml: Huragok's notes" in caplog.text  # …but did the others
     assert names.read_bytes() == "caf\u00e9\n".encode("cp1252")
     names.write_text("cafe\n", encoding="utf-8")
     assert migrate.bring_up_to_date(settings_path, root / "records", root / "PACKAGES") == [

@@ -57,7 +57,7 @@ from ..core.text import format_duration
 from ..core.tomledit import remove_server_setting, set_server_setting
 from ..games.halo3 import playlist_files, rename_old_labels
 from ..games.plays import console_refusal
-from ..lore import NOTICES, SIGN_OFF
+from ..lore import SIGN_OFF, callout
 from ..rcon import RconClient, RconError, masked
 from .state import ServerState
 
@@ -218,8 +218,8 @@ def warning_text(seconds: float, label: str, coming_back: bool) -> str:
         when = f"{seconds} second" + ("" if seconds == 1 else "s")
     what = "Server restarting" if coming_back else "Server shutting down"
     if coming_back and label and seconds > 60:
-        return f"{NOTICES['calm']} {what} in {when}: {label}."
-    return f"{NOTICES['calm']} {what} in {when}."
+        return callout("countdown", f"{what} in {when}: {label}.")
+    return callout("countdown", f"{what} in {when}.")
 
 
 def daily_slot(spec: str, now: datetime) -> datetime | None:
@@ -1065,8 +1065,8 @@ class ServerManager:
                 self._set_phase("running")
                 return
         if self.state.connected and self.players:
-            self._say(f"{NOTICES['dust']} " + ("Server is restarting now." if coming_back
-                                                else "Server is shutting down now."))
+            self._say(callout("now", "Server is restarting now: join again in a minute or two." if coming_back
+                              else "Server is shutting down now."))
         if coming_back:
             self.fleet.bus.emit("server.restarting", self.name, reason=label, by=self.stop_by)
         if coming_back and self.backend.restart_only:
@@ -1131,7 +1131,8 @@ class ServerManager:
         elif when == "after_game" and self.state.phase == "finished":
             self._trigger_plan()
         elif when == "after_game":
-            self._say(f"{NOTICES['dust']} This server restarts after this game{': ' + reason if reason else '.'}")
+            self._say(callout("after game", "This server restarts after this game"
+                              + (f": {reason.rstrip('.')}." if reason else ".")))
         return plan
 
     def on_phase(self, event: Event) -> None:
@@ -1296,8 +1297,8 @@ class ServerManager:
         if self.phase == "countdown" and self.countdown and self.countdown.step == "ladder":
             countdown, self.countdown = self.countdown, None
             if countdown.warned:
-                self._say(("The server restart has been cancelled." if countdown.coming_back
-                           else "The server shutdown has been cancelled.") + f" {SIGN_OFF}")
+                self._say(callout("cancelled", ("The server restart has been cancelled." if countdown.coming_back
+                                                else "The server shutdown has been cancelled.") + f" {SIGN_OFF}"))
             self.record.wanted = "running"
             self._save()
             log.info("[%s] countdown cancelled (%s)", self.name, countdown.label)

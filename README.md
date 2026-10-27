@@ -88,10 +88,16 @@ are its parts:
 The four-letter tags follow the Rookie's HUD, which labelled the Engineer "VRGL":
 the window puts the tag of the part that spoke on every event line, and its keys
 and screens are grouped and titled by part. The Superintendent spoke to New Mombasa through its
-signs; here it speaks to players with the same public notices, from Bungie's
+signs and speakers, and Vergil answered the Rookie through them; here every line
+Huragok sends players is one of those phrases, word for word, behind its face as its
+cameras showed it (`[>_<]` angry, `[^_^]` happy…), then what happened and why in plain
+words: `PLEASE REMAIN CALM!` before a restart, `KEEP IT CLEAN!` for a
+mute, `CRIME DOESN'T PAY!` (Vergil's, as the corrupt officer dies in the Data Hive) for
+a removal or a ban, and `YOUR TAX DOLLARS AT WORK!` to everyone once Vergil has
+acted. They come from the game and Bungie's
 ["KEEP IT CLEAN"](https://www.halopedia.org/Superintendent_(Viral_Campaign))
-campaign (`PLEASE REMAIN CALM!`, `PARDON OUR DUST!`, `KEEP IT CLEAN!`), and its
-face on the dashboard shows how the servers are doing.
+campaign; `intervalmessages.txt` lists some for messages of your own. Its face on the
+dashboard shows how the servers are doing.
 
 The names change nothing you set: `settings.toml` keeps every section and key it
 had (`[watchdog]`, `[automod]`, `[relay]`…).
@@ -336,10 +342,10 @@ What players read in chat when the Superintendent acts:
 
 | When | They read |
 | --- | --- |
-| a countdown | `PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart.` (`Server shutting down in …` for a stop) |
-| the moment it happens | `PARDON OUR DUST! Server is restarting now.` (`… shutting down now.`) |
-| a restart planned for after the game | `PARDON OUR DUST! This server restarts after this game: <reason>` |
-| a countdown cancelled (K) | `The server restart has been cancelled. Keep it clean!` |
+| a countdown | `[o_O] PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart.` (`Server shutting down in …` for a stop) |
+| the moment it happens | `[-.-] PARDON OUR DUST! Server is restarting now: join again in a minute or two.` (`… shutting down now.`) |
+| a restart planned for after the game | `[o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after this game: <reason>.` |
+| a countdown cancelled (K) | `[^_^] The server restart has been cancelled. Keep it clean!` |
 
 The name it acts under is `name` at the top of `settings.toml` (`"Superintendent"`
 when the first start writes it).
@@ -397,18 +403,18 @@ vote to kick them as it's called, and Vergil tells the caller why. See
 
 ## automod
 Vergil's word list is `automod.txt`: one line per rule, with the words and what
-each strike leads to: kicks, then mutes, then a ban.
+each strike leads to: mutes, then kicks, then a ban.
 
 ```text
-# words              | kicks        | mutes          | ban | name
-badword, otherword   | 1h           | 1, 1d, 7d      | 3   | slurs
-rudeword             |              | 0, 1d, 3d, 7d  |     | rude
-worstword            |              |                | 0   | threats
+# words              | mutes          | kicks        | ban | name
+badword, otherword   | 1d, 7d         | 2, 1h        | 3   | slurs
+rudeword             | 1d, 3d, 7d     |              |     | rude
+worstword            |                |              | 0   | threats
 kickword
 ```
-The first `slurs` strike keeps a player out for an hour, the second mutes them for
-a day, the third for a week, and the fourth is a ban. `rude` mutes from the first
-strike (a day, then 3 days, then a week each time) and never bans; `threats` bans
+The first `slurs` strike mutes a player for a day, the second for a week, the third
+keeps them out for an hour, and the fourth is a ban. `rude` mutes from the first
+strike (a day, then 3 days, then a week each time) and never kicks or bans; `threats` bans
 at once; `kickword` is a plain kick every time. A muted player stays in the game,
 but nobody hears their voice or reads their chat; Vergil mutes them again as they
 join, so a mute lasts through restarts and on every server. Digits for letters,
@@ -416,11 +422,14 @@ spacing, repeated and lookalike letters are caught for you, while a number stays
 number ("455 kills" is not a three-letter word). The player reads why, and the
 server names Vergil as the one who acted:
 
-> KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. Next time: muted for 3 days.
+> [o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. Next time: muted for 3 days.
+
+A removal or a ban reads `CRIME DOESN'T PAY!` instead, and everyone on the server reads
+`[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (rude, strike 1).`
 
 Moderators use `!strike <player> <rule>` for what's said in **voice**, which the
 server can't show anyone. Admins change the list from the game: `!banword word |
-1h 1d | 2, 1d 7d | 5 | slurs` adds a line (or `!banword word | slurs` adds to one),
+1d 7d | 2, 1h 1d | 5 | slurs` adds a line (or `!banword word | slurs` adds to one),
 `!unbanword word` takes one off. **Names** are kicked, never struck: a name with a
 listed word in it (anywhere in it, so DasHitler with `hitler` listed, or as a word of
 its own: `name_match`), or one in `names.txt`, is kicked each time it joins until the

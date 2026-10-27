@@ -16,9 +16,20 @@ this program the three are its parts:
                   and the console relay for moderators)
 
 Each has a four-letter tag on every log line, the way the Rookie's HUD labelled the
-Engineer "VRGL", and a colour. The Superintendent speaks to players in the public
-notices it put on New Mombasa's signs (NOTICES), and its face on the dashboard shows
-how the servers are doing, with the eight expressions it had in the game (FACES).
+Engineer "VRGL", and a colour. Its face on the dashboard shows how the servers are
+doing, with the eight expressions it had in the game (FACES).
+
+The Rookie never met the Superintendent face to face. It reached him through what the
+city ran: a payphone terminal that rang until he answered ("SUPERINTENDENT ONLINE"),
+then put the city's map on his VISR; street signs that lit up SLOW DOWN, KEEP RIGHT
+and DETOUR to steer him; phones, sirens, car alarms and ATMs going off near each of
+Sadie's audio logs; doors that stayed shut for the police and opened for the ODSTs
+("WELCOME! ACCESS GRANTED!"); and its public-address speakers, where Vergil answered
+in the city's stock phrases. When the corrupt NMPD officer who wanted Vergil's data
+dies in the Data Hive, the speakers say "CRIME DOESN'T PAY!". Players here meet it the
+same way: every line Huragok sends them is one of those phrases (NOTICES), then, in
+plain words, what happened, why, and what comes next (CALLOUTS says which phrase heads
+which line).
 """
 
 from __future__ import annotations
@@ -99,9 +110,14 @@ KEYS = {
 }
 
 
-# The Superintendent's public notices, word for word as it posted them in Bungie's "KEEP IT CLEAN" viral
-# campaign of 2008. Players read them in front of what the Superintendent tells them; the dashboard shows one.
+# The Superintendent's own words, as it posted or said them. Never paraphrase one, and never make one up:
+# tests/test_lore.py pins them, and a new one comes from the game or Bungie's campaign, with where it's from.
+# Players read them in front of what Huragok tells them (CALLOUTS); the dashboard shows one (mood); a host may put
+# any of them in intervalmessages.txt (its notes list a few). The level lines survive in the game's files only in
+# lowercase, so their capitals and stops are Halopedia's.
 NOTICES = {
+    # New Mombasa's signs and posters: Bungie's "KEEP IT CLEAN" campaign of 2008 (the Superintendent's own forum
+    # posts), the game's manual, the "Keep It Clean" trailer
     "clean": "KEEP IT CLEAN!",
     "calm": "PLEASE REMAIN CALM!",
     "emergency": "METROPOLITAN EMERGENCY!",
@@ -112,14 +128,71 @@ NOTICES = {
     "limits": "OBEY POSTED LIMITS!",
     "uphill": "YIELD TO UPHILL TRAFFIC!",
     "fire": "IN CASE OF FIRE, USE STAIRS",
+    # Its speakers in the levels, Vergil answering through them
+    "school": "SCHOOL ZONE. PLEASE SLOW DOWN.",                   # Tayari Plaza, at the dead Brutes and Elites
+    "bill": "FINAL NOTICE. BILL PAST DUE.",                       # Tayari Plaza
+    "property": "KEEP IT CLEAN! RESPECT PUBLIC PROPERTY!",        # ONI Alpha Site: the officer wants a door opened
+    "toll": "BRIDGE TOLL ACCEPTED. HAVE A PLEASANT TRIP.",        # ONI Alpha Site, once the bridge charges blow
+    "construction": "CONSTRUCTION AHEAD! EXPECT DELAYS!",         # Data Hive, from here on
+    "welcome": "WELCOME! ACCESS GRANTED!",                        # the data stacks, opening for the Rookie alone
+    "hitchhikers": "WARNING! HITCHHIKERS MAY BE ESCAPED CONVICTS!",  # to the officer
+    "crime scene": "CRIME SCENE! RESTRICTED ENTRY!",
+    "caution": "CAUTION! TRAVELLER! CAUTION!",
+    "crime": "CRIME DOESN'T PAY!",                                # as the corrupt officer dies
+    "citizens": "GOOD CITIZENS DO THEIR PART!",                   # right after it
+    # Its subtitled lines in Sadie's Story, the audio logs
+    "hello": "HELLO, TRAVELLER. MOMBASA WELCOMES YOU!",           # log 1
+    "stressed": "ANXIOUS? STRESSED? PLEASE REMAIN CALM.",         # log 1
+    "emergency stop": "EMERGENCY STOP. PLEASE REMAIN CALM.",      # log 1, from the train
+    "speed": "WATCH YOUR SPEED! CHILDREN AT PLAY!",               # log 2
+    "parking": "NO PARKING! VIOLATORS WILL BE TICKETED AND TOWED!",  # log 3
+    "come again": "TRANSACTION COMPLETE! PLEASE COME AGAIN!",     # log 11, from a cash machine
+    "recycling": "RECYCLING! DO YOUR PART!",                      # log 16
+    "last train": "ALL ABOARD! LAST TRAIN NOW DEPARTING!",        # log 30
 }
 SIGN_OFF = "Keep it clean!"  # how it signed its messages
 
-# Its eight expressions, as it showed them on New Mombasa's screens.
+# Its eight expressions, as it showed them on New Mombasa's screens: on the dashboard (mood), and in front of
+# every line players read (CALLOUTS), the way its cameras showed a face to the squad as it watched them.
 FACES = {
     "happy": "[^_^]", "neutral": "[o_o]", "bored": "[-_-]", "confused": "[o_O]",
     "sad": "[;_;]", "angry": "[>_<]", "sleeping": "[-.-]", "off": "[   ]",
 }
+
+# How it heads each line Huragok sends players: (its face, which of its words). The rest of the line says plainly
+# what happened, why, and what comes next; changing a face or a notice here changes it everywhere. Automod's
+# (players/automod: the [automod] messages' {notice}) harden with what Vergil did: a mute, then a removal or a ban.
+CALLOUTS = {
+    # The Superintendent: the servers (servers/server.py)
+    "countdown": ("confused", "calm"),      # [o_O] PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart.
+    "now": ("sleeping", "dust"),            # [-.-] PARDON OUR DUST! Server is restarting now: join again in a minute…
+    "after game": ("neutral", "construction"),  # [o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after…
+    "cancelled": ("happy", ""),             # [^_^] The server restart has been cancelled. Keep it clean!
+    # Vergil: the players (players/)
+    "mute": ("confused", "clean"),          # [o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted …
+    "kick": ("angry", "crime"),             # [>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 …
+    "ban": ("angry", "crime"),              # [>_<] CRIME DOESN'T PAY! … (threats, strike 1): banned for good.
+    "name": ("confused", "clean"),          # [o_O] KEEP IT CLEAN! Change your name, it isn't allowed here …
+    "still muted": ("bored", "clean"),      # [-_-] KEEP IT CLEAN! You're still muted (rude): 2 days 23 hours left.
+    "caught": ("happy", "taxes"),           # to everyone: [^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (…).
+    "warn": ("neutral", "limits"),          # [o_o] OBEY POSTED LIMITS! Warning from Alice: spawn killing.
+    "immune": ("happy", "hero"),            # [^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here: …
+    "voice off": ("sleeping", "calm"),      # [-.-] PLEASE REMAIN CALM! Alice turned global voice (V) off for 10 …
+    "voice on": ("happy", "taxes"),         # [^_^] YOUR TAX DOLLARS AT WORK! Global voice (V) is back on after …
+    "promoted": ("happy", "welcome"),       # [^_^] WELCOME! ACCESS GRANTED! Alice made you a moderator here.
+}
+
+
+def notice(situation: str) -> str:
+    """How it heads what players read in `situation` (one of CALLOUTS): its face and its words, "[o_O] KEEP IT
+    CLEAN!"."""
+    face, words = CALLOUTS[situation]
+    return " ".join(bit for bit in (FACES[face], NOTICES.get(words, "")) if bit)
+
+
+def callout(situation: str, text: str) -> str:
+    """What players read: its face and its words, then what happened and why in plain words."""
+    return f"{notice(situation)} {text}"
 
 BANNER = (
     r" _  _  _   _  ___     _      ___   ___   _  __",

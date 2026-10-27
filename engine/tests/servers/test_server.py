@@ -72,14 +72,14 @@ def test_the_countdown_ladder_warns_then_restarts(world, run) -> None:
         result = manager.restart(reason="testing")
         assert result.ok and "warning players" in result.message and manager.phase == "countdown"
         await cycle(manager, clock)
-        assert client.says() == ["PLEASE REMAIN CALM! Server restarting in 10 seconds."]
+        assert client.says() == ["[o_O] PLEASE REMAIN CALM! Server restarting in 10 seconds."]
         await cycle(manager, clock, 5)
-        assert client.says()[-1] == "PLEASE REMAIN CALM! Server restarting in 5 seconds."
+        assert client.says()[-1] == "[o_O] PLEASE REMAIN CALM! Server restarting in 5 seconds."
         await cycle(manager, clock, 3.5)  # several rungs fall due at once: only the smallest is said
-        assert client.says()[-1] == "PLEASE REMAIN CALM! Server restarting in 2 seconds." and len(client.says()) == 3
+        assert client.says()[-1] == "[o_O] PLEASE REMAIN CALM! Server restarting in 2 seconds." and len(client.says()) == 3
         assert "RESTART IN" in manager.row(1, clock.now)["status"]
         await cycle(manager, clock, 2)
-        assert client.says()[-1] == "PARDON OUR DUST! Server is restarting now." and backend.stops == [SERVER]
+        assert client.says()[-1] == "[-.-] PARDON OUR DUST! Server is restarting now: join again in a minute or two." and backend.stops == [SERVER]
         assert "server.restarting" in seen
         await cycle(manager, clock, 1)  # the stop is done, the process gone: started again
         assert manager.phase in ("booting", "running") and backend.starts == [SERVER, SERVER]
@@ -101,10 +101,10 @@ def test_cancel_and_the_empty_shortcut(world, run) -> None:
         state.players[1] = Player(1, "Alice", ALICE)
         manager.stop()
         await cycle(manager, clock)
-        assert client.says() == ["PLEASE REMAIN CALM! Server shutting down in 10 seconds."] and "STOP IN" in manager.row(1)["status"]
+        assert client.says() == ["[o_O] PLEASE REMAIN CALM! Server shutting down in 10 seconds."] and "STOP IN" in manager.row(1)["status"]
         assert manager.cancel().ok and manager.phase == "running"
         await asyncio.sleep(0.01)  # the chat line is sent without waiting for it
-        assert client.says()[-1] == "The server shutdown has been cancelled. Keep it clean!" and manager.record.wanted == "running"
+        assert client.says()[-1] == "[^_^] The server shutdown has been cancelled. Keep it clean!" and manager.record.wanted == "running"
         assert "server.countdown_cancelled" in seen
         # Everyone leaves during a countdown: it ends after empty_seconds.
         manager.restart()
@@ -591,14 +591,14 @@ def test_a_planned_restart_waits_for_the_game_then_gives_short_notice(world, run
         plan = await lifecycle.restart(SERVER, when="after_game", reason="performance")
         assert plan.when == "after_game" and lifecycle.planned[SERVER] is plan
         await asyncio.sleep(0.01)
-        assert client.says() == ["PARDON OUR DUST! This server restarts after this game: performance"]
+        assert client.says() == ["[o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after this game: performance."]
         from huragok.core.events import Event
 
         manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Valhalla", "mode": "Slayer"}))
         manager.on_phase(Event("rcon.phase", SERVER, {"phase": "finished", "map": "Valhalla", "mode": "Slayer"}))
         assert manager.phase == "countdown" and manager.planned is None
         await cycle(manager, clock)
-        assert client.says()[-1] == "PLEASE REMAIN CALM! Server restarting in 3 seconds."
+        assert client.says()[-1] == "[o_O] PLEASE REMAIN CALM! Server restarting in 3 seconds."
         assert lifecycle.cancel(SERVER) and manager.phase == "running"
 
     run(scenario())
@@ -617,10 +617,10 @@ def test_an_admins_restart_warns_everyone_and_isnt_counted_as_automatic(world, r
         assert manager.phase == "countdown" and len(manager.record.restart_times) == 3
         assert manager.record.history[-1][1:] == ["restart", "lag (requested by Admin) (by Admin)"]
         await cycle(manager, clock)
-        assert client.says() == ["PLEASE REMAIN CALM! Server restarting in 10 seconds."]
+        assert client.says() == ["[o_O] PLEASE REMAIN CALM! Server restarting in 10 seconds."]
         for _ in range(4):
             await cycle(manager, clock, 3)
-        assert client.says()[-1] == "PARDON OUR DUST! Server is restarting now." and backend.stops == [SERVER]
+        assert client.says()[-1] == "[-.-] PARDON OUR DUST! Server is restarting now: join again in a minute or two." and backend.stops == [SERVER]
         await cycle(manager, clock, 1)
         assert manager.phase in ("booting", "running") and backend.starts == [SERVER, SERVER]  # not faulted
 
@@ -692,9 +692,9 @@ def test_records_and_helpers(tmp_path: Path) -> None:
     loaded = ServerRecord.load(tmp_path / "r.json")
     assert loaded == record
     assert ServerRecord.load(tmp_path / "missing.json") == ServerRecord()
-    assert warning_text(300, "daily restart", True) == "PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart."
-    assert warning_text(30, "daily restart", True) == "PLEASE REMAIN CALM! Server restarting in 30 seconds."
-    assert warning_text(60, "", False) == "PLEASE REMAIN CALM! Server shutting down in 1 minute."
+    assert warning_text(300, "daily restart", True) == "[o_O] PLEASE REMAIN CALM! Server restarting in 5 minutes: daily restart."
+    assert warning_text(30, "daily restart", True) == "[o_O] PLEASE REMAIN CALM! Server restarting in 30 seconds."
+    assert warning_text(60, "", False) == "[o_O] PLEASE REMAIN CALM! Server shutting down in 1 minute."
     now = datetime(2026, 10, 16, 12, 0)
     assert daily_slot("", now) is None
     assert daily_slot("04:00", now) == datetime(2026, 10, 16, 4, 0)

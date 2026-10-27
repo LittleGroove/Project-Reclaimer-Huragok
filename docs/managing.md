@@ -136,12 +136,13 @@ reads the file again within seconds.
 
 ### Vergil's word list: A
 `automod.txt`, one rule per line, shown as players meet it: its name, its words, and
-what each strike does (`1st: removed for 1 hour; 2nd: muted for 1 day; 3rd: muted for
-7 days; 4th: banned for good`). **Add a rule**: the words, then what each strike does,
+what each strike does (`1st: muted for 1 day; 2nd: muted for 7 days; 3rd: removed for
+1 day; 4th: banned for good`). **Add a rule**: the words, then what each strike does,
 from four ready-made ladders (kicked every time; muted 1 day, 3 days, then 7 days;
-out 1 hour, then muted 1 day, 7 days, then banned; banned the first time) or your
-own, asked a part at a time (the kicks' times, whether and when the mutes start and
-how long each lasts, whether and when the ban comes), then its name. The line and
+muted 1 day, 7 days, then out 1 day, then banned; banned the first time) or your
+own, asked a part at a time (whether it mutes and how long each mute lasts, whether
+muted for good comes and when, whether and when the kicks start and how long each
+keeps them out, whether and when the ban comes), then its name. The line and
 its ladder are shown before it's added, and a rule the word list can't take is
 refused with why. A rule's words, ladder or name can be changed, or the rule taken
 out. **Try a line of chat** says which rule catches what, disguised words included.
@@ -412,8 +413,8 @@ it shows the ban list from its folder (`dedicated bans`).
      servers' copies and the root's (the old ones go to `records/previous-program/`),
      never over a copy that is that version or newer already (a pre-release
      someone put in is left alone: its settings may need it), and restarts each
-     server whose copy it replaced **after its game** (players read `PARDON OUR DUST!
-     This server restarts after this game: updating to <version>`), or now.
+     server whose copy it replaced **after its game** (players read `[o_o] CONSTRUCTION AHEAD! EXPECT
+     DELAYS! This server restarts after this game: updating to <version>.`), or now.
      `[server_updates] install = "after_game"` does it by itself; `"now"` restarts
      at once. U also reaches any self-updating server still behind, and asks the
      program copy of every server with auto_update off for its `--version`, so a
@@ -462,8 +463,8 @@ have the new version can't join it. With `[workshop_updates] install =
    and compares them with the version each server installed. The server saying it
    downloaded a new version counts too. The server's dashboard line shows `mod
    update waiting: <mod> (<date>); installs after this game`.
-2. It plans a restart after the game. Players read `PARDON OUR DUST! This server
-   restarts after this game: installing a new version of <mod>`, and get the short
+2. It plans a restart after the game. Players read `[o_o] CONSTRUCTION AHEAD! EXPECT
+   DELAYS! This server restarts after this game: installing a new version of <mod>.`, and get the short
    after-game warning once it ends.
 3. With the server stopped (the dashboard says PREPARING), the old copy is moved
    aside and `dedicated mods` fetches the new version: about a minute, much less

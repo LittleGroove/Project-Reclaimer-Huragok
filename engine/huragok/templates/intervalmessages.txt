@@ -8,8 +8,23 @@
 #
 # Examples:
 #
-#   30m | Join us on Discord: discord.gg/yourserver
-#   1h  | Be nice: no slurs, no cheating. Vergil is listening.
+#   30m | HELLO, TRAVELLER. MOMBASA WELCOMES YOU! Discord: discord.gg/yourserver
+#   1h  | KEEP IT CLEAN! No slurs, no cheating: Vergil is listening.
+#   45m | BE A HERO! REPORT VIOLATORS! Tell a moderator what you saw.
+#
+# Huragok speaks to players as New Mombasa's city AI, the Superintendent, in the
+# words it put on the city's signs and speakers in Halo 3: ODST: PLEASE REMAIN
+# CALM! before a restart, CRIME DOESN'T PAY! when Vergil removes someone. Yours
+# can too. Some of its words, as it said them:
+#   KEEP IT CLEAN!                    OBEY POSTED LIMITS!
+#   BE A HERO! REPORT VIOLATORS!      YOUR TAX DOLLARS AT WORK!
+#   CRIME DOESN'T PAY!                GOOD CITIZENS DO THEIR PART!
+#   PLEASE REMAIN CALM!               PARDON OUR DUST!
+#   YIELD TO UPHILL TRAFFIC!          RECYCLING! DO YOUR PART!
+#   WATCH YOUR SPEED! CHILDREN AT PLAY!
+#   HELLO, TRAVELLER. MOMBASA WELCOMES YOU!
+#   NO PARKING! VIOLATORS WILL BE TICKETED AND TOWED!
+#   ANXIOUS? STRESSED? PLEASE REMAIN CALM.
 #
 # Messages with the same time take turns: two every 30m go out 15 minutes apart, each
 # one every 30 minutes. They're only said while someone is on, counting from when

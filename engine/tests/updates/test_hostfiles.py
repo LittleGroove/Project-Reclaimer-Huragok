@@ -45,6 +45,10 @@ NEW_COMMANDS = {"banall", "bannames", "bans", "banword", "changebanword", "kicks
                 "unbanword"}
 
 
+# The word list in the new layout (the mutes first), once this version has stayed: 0.4.0's has notes and no lines.
+AUTOMOD_ORDER = "automod.txt: Huragok's notes as this version writes them, the mutes first (words | mutes | kicks | ban | name)"
+
+
 def new_command_lines() -> list[str]:
     from huragok.core.commandsfile import TITLES
 
@@ -112,8 +116,8 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "settings.toml: [updates] beta = false added: true offers beta releases of Huragok too, before they're "
         "full releases (new in 0.5.0)",
         *(f"{name}: Huragok's notes as this version writes them"
-          for name in ("settings.toml", "commands.toml", "automod.txt", "names.txt")),
-        *new_command_lines()]
+          for name in ("settings.toml", "commands.toml", "names.txt")),
+        AUTOMOD_ORDER, *new_command_lines()]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -377,10 +381,11 @@ def test_a_new_command_waits_until_the_new_version_has_stayed(tmp_path: Path, mo
     records, packages = settings_path.parent / "records", settings_path.parent / "PACKAGES"
     pending = migrate.pending(settings_path, records, packages)
     assert pending == [line + " (2.5 minutes after it starts: the version before can't read it)"
-                       for line in new_command_lines()]
+                       for line in [AUTOMOD_ORDER, *new_command_lines()]]
     assert load_permissions(commands).role_for(all_commands()["banword"]) == "admin"  # meanwhile: its default
     # Once this version has stayed up: the running Huragok lists them.
-    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == new_command_lines()
+    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == [AUTOMOD_ORDER,
+                                                                                        *new_command_lines()]
     data = tomllib.loads(commands.read_text(encoding="utf-8"))
     assert {"banword", "unbanword", "banname"} <= set(data["admin"]["commands"])
     assert migrate.pending(settings_path, records, packages) == []
@@ -433,3 +438,90 @@ def test_banname_moves_to_the_admins_once(tmp_path: Path) -> None:
     add_to_list(commands, "off", "commands", "banname")  # as D -> C switches one off: its role's line stays
     up_to_date(settings_path)
     assert "banname" in load_permissions(commands).off
+
+
+# The word list with the mutes first (the host's call, 27 October) ------------------------------------------------
+
+OLD_LINES = """\
+word | 1d, 2d, 3d | 3, 4d, 5d, 6d, 6 | 10 | hate
+slur | 1h, 1d, 7d | | 3 | slurs
+# my own note, kept where it is
+rude | | 0, 1d, 3d | | rude
+spam | 1h, 1d, 2d | 2, 1d | 3 | spam
+broken | 1x
+kickword
+"""
+
+
+def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_stayed(tmp_path: Path) -> None:
+    """A host's word list as 0.4.0 to 0.5.0 wrote it (the kicks first): left as it is at the start, so the version
+    before reads it as it did should the start loop put it back; read the new way meanwhile; rewritten with the
+    mutes first, and this version's notes, once this version has stayed up."""
+    from huragok.players.automod.rules import PARTS, kicks_first, ladder, read_rules_lenient
+
+    settings_path = host(tmp_path)
+    root = settings_path.parent
+    words = root / "automod.txt"
+    old = (HOST_0_4_0 / "automod.txt").read_text(encoding="utf-8") + OLD_LINES
+    words.write_text(old, encoding="utf-8")
+    before = [(r.name, ladder(r)) for r in read_rules_lenient(words)[0]]
+    assert before[0] == ("hate", ["1st: muted for 4 days", "2nd: muted for 5 days", "3rd: muted for 6 days",
+                                  "4th: removed for 1 day", "5th: removed for 2 days", "6th: removed for 3 days",
+                                  "7th to 10th: removed for 3 days, then muted for good", "11th: banned for good"])
+    changed = up_to_date(settings_path, settled=False)  # as the new version starts
+    assert not any(line.startswith("automod.txt") for line in changed)
+    assert words.read_text(encoding="utf-8") == old  # the version before still reads it as it did
+    records, packages = root / "records", root / "PACKAGES"
+    pending = migrate.pending(settings_path, records, packages)
+    turned = (f"automod.txt: the mutes come first now ({PARTS}): the hate, slurs, rude and spam lines and line 49 "
+              "rewritten so, the strikes that came before the mutes now before the kicks; Huragok's notes as this "
+              "version writes them")
+    later = " (2.5 minutes after it starts: the version before can't read it)"
+    assert pending[:2] == [turned + later,
+                           "automod.txt: the spam line: kick times 1d, 2d left out, the ban coming before them now"
+                           + later]
+
+    # Once it has stayed: the lines in the new layout, reading as they did meanwhile, and this version's notes.
+    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True)[:2] == [
+        line.removesuffix(later) for line in pending[:2]]
+    text = words.read_text(encoding="utf-8")
+    assert not kicks_first(text) and text.startswith(template_text("automod.txt"))
+    assert text[len(template_text("automod.txt")):].splitlines() == [
+        "word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate", "slur | | 1h, 1d, 7d | 3 | slurs",
+        "# my own note, kept where it is", "rude | 1d, 3d | | | rude", "spam | 1d | 2, 1h | 3 | spam",
+        "broken | | 1x", "kickword"]
+    assert [(r.name, ladder(r)) for r in read_rules_lenient(words)[0]] == before
+    kept = records / "previous-files" / __version__ / "automod.txt"
+    assert kept.read_text(encoding="utf-8") == old
+    assert "0.5.1/automod-order" in json.loads((records / "files.json").read_text(encoding="utf-8"))["steps"]
+    # Done once: the host's edits after it stay as they make them.
+    assert not migrate.bring_up_to_date(settings_path, records, packages, settled=True)
+    assert words.read_text(encoding="utf-8") == text
+
+
+def test_a_word_list_with_no_note_naming_its_parts_says_its_old_layout_first(tmp_path: Path) -> None:
+    """A host who took Huragok's notes out of 0.4.x's word list: a note naming its parts the old way goes at the top
+    as the new version starts, so it's read as written until it's rewritten."""
+    from huragok.players.automod.rules import kicks_first, read_rules_lenient
+
+    settings_path = host(tmp_path)
+    words = settings_path.parent / "automod.txt"
+    words.write_text(OLD_LINES, encoding="utf-8")
+    changed = up_to_date(settings_path, settled=False)
+    assert "automod.txt: a note naming its parts as they were up to 0.5.0 (words | kicks | mutes | ban | name) put " \
+           "at the top, so its lines are read as they were written until they're rewritten with the mutes first" in changed
+    assert words.read_text(encoding="utf-8") == "#   words | kicks | mutes | ban | name\n" + OLD_LINES
+    assert kicks_first(words.read_text(encoding="utf-8"))
+    assert read_rules_lenient(words)[0][3].mutes == ["1d"]  # spam: 1d, after the 2 strikes before the kicks
+    up_to_date(settings_path)
+    assert not kicks_first(words.read_text(encoding="utf-8"))
+    assert "rude | 1d, 3d | | | rude" in words.read_text(encoding="utf-8").splitlines()
+
+
+def test_a_word_list_in_the_new_layout_is_left_as_it_is(tmp_path: Path) -> None:
+    settings_path = host(tmp_path)
+    words = settings_path.parent / "automod.txt"
+    words.write_text(template_text("automod.txt") + "rude | 1d, 3d | 2 | | rude\n", encoding="utf-8")
+    before = words.read_text(encoding="utf-8")
+    assert not any(line.startswith("automod.txt") for line in up_to_date(settings_path))
+    assert words.read_text(encoding="utf-8") == before

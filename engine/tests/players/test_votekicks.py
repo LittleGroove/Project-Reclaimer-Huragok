@@ -143,7 +143,7 @@ def test_a_refused_vote_is_explained_to_whoever_called_it(tmp_path: Path, run, c
 
             refused("Bravo", "Charlie can't be vote-kicked on this server.")
             assert await wait_for(lambda: tells_to(fake, BRAVO)) == [
-                "BE A HERO! REPORT VIOLATORS! Charlie is a member here, so no vote can kick them. If they're "
+                "[^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here, so no vote can kick them. If they're "
                 "breaking the rules, tell the host."]
             assert "Bravo tried to vote-kick Charlie, a member here; the server refused" in caplog.text
             refused("Bravo", "Mod can't be vote-kicked on this server.")  # told a moment ago: not again
@@ -174,7 +174,7 @@ def test_on_a_program_without_the_list_a_vote_on_them_is_cancelled(tmp_path: Pat
 
             await fake.event("vote", state="called", subject="kick Charlie", caller="Bravo")
             assert (await wait_for(lambda: fake.named("cancelvote")))[0]["by"] == "Vergil"
-            await wait_for(lambda: "BE A HERO! REPORT VIOLATORS! Charlie is a member here: no vote can kick them."
+            await wait_for(lambda: "[^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here: no vote can kick them."
                            in says(fake))
             await wait_for(lambda: "cancelled Bravo's vote to kick Charlie, a member here" in caplog.text)
             await fake.event("vote", state="called", subject="kick Mod (A7B)", caller="Alice")  # same-name suffix

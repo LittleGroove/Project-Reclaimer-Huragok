@@ -296,11 +296,19 @@ version. Every step is printed and logged (`launcher:` lines in `huragok.log`, o
   `dashboard.key_rows` groups the keys the same way, and `Menu.title` starts every
   screen's title with its part, in its colour (`SUPERINTENDENT › RESTART`). A new
   key goes in `KEYS` too: `tests/test_lore.py` fails otherwise.
-- **What players read.** `NOTICES` and `SIGN_OFF` are the Superintendent's public
-  notices from Bungie's 2008 "KEEP IT CLEAN" campaign. `warning_text`
-  (servers/server.py) starts countdowns with `PLEASE REMAIN CALM!`; the restart
-  itself and a restart after the game start with `PARDON OUR DUST!`; a cancelled
-  countdown ends with `Keep it clean!`; automod's `MESSAGES` start with `KEEP IT CLEAN!`.
+- **What players read.** `NOTICES` holds the Superintendent's own phrases, word for
+  word, with where each is from (Bungie's 2008 "KEEP IT CLEAN" campaign, the manual and
+  trailer, the levels' speakers, Sadie's Story's subtitles); `tests/test_lore.py` pins
+  them, so a new one needs a source, never invented words. `CALLOUTS` says which face
+  (`FACES`) and phrase head each line players read, and `callout(situation, text)`
+  makes the line: the face, the phrase, then what happened, why and what comes next in
+  plain words. A new line for
+  players goes through `callout`, with a `CALLOUTS` entry of its own. Automod's
+  `MESSAGES` take theirs as `{notice}` (`notice(situation)`: face and phrase), hardening
+  with the step: `[o_O] KEEP IT CLEAN!` for a mute, `[>_<] CRIME DOESN'T PAY!` for a
+  removal or a ban, and `[^_^] YOUR TAX DOLLARS AT WORK!` for the `public` line everyone
+  reads. A cancelled countdown is a face and no phrase, ending with `SIGN_OFF`,
+  `Keep it clean!`.
 - **The face.** `lore.mood(rows)` picks the Superintendent's expression, a notice
   and a summary from the dashboard's rows, the worst thing first (FAULTED or a
   config error, then a crash backing off, a countdown, a start, players on, nobody

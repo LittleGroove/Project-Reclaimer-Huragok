@@ -160,7 +160,7 @@ folder = "logs/events"
 [automod]
 # Vergil acts on the words in automod.txt said in chat, and tells the player why:
 # "KEEP IT CLEAN! That isn't allowed here…". Each line there has the words, then
-# the kicks, the mutes and the ban its strikes lead to: see docs/automod.md. Mutes
+# the mutes, the kicks and the ban its strikes lead to: see docs/automod.md. Mutes
 # last through restarts (Vergil mutes them again as they join). A name with a
 # listed word in it, or one in names.txt, is kicked as it joins until it changes.
 # It starts in dry run: watch the window's VRGL lines (part.automod in

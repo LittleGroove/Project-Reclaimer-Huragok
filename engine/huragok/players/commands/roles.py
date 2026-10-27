@@ -26,6 +26,7 @@ from ...core.commandsfile import ROLES
 from ...core.events import Event
 from ...core.part import command, on
 from ...core.tomledit import add_to_list, remove_from_list
+from ...lore import callout
 from ...rcon import RconError
 from ...servers.state import Player
 from ..roles import a_role
@@ -252,6 +253,6 @@ class RoleCommands(CommandsBase):
         if not target.number:  # not on this server now
             return
         try:
-            await self.ctx.tell(call.server, target, text)
+            await self.ctx.tell(call.server, target, callout("promoted", text))
         except RconError:  # a greeting that doesn't arrive changes nothing
             self.ctx.log.debug("[%s] couldn't tell %s", call.server, target.name)

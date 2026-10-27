@@ -28,6 +28,7 @@ from ...core.events import Event
 from ...core.part import command, every, on
 from ...core.text import describe_seconds, describe_time, seconds_of
 from ...core.tomledit import read_toml
+from ...lore import callout
 from ...program.settings import current, effective, find, reset, write
 from ...rcon import RconError
 from ..router import CommandCall
@@ -157,7 +158,8 @@ class SettingToggles(CommandsBase):
         spoken = f" for {describe_time(length)}" if length else ""
         self.log.info("[%s] %s turned %s %s%s (%s%s)", call.server, call.player.name, toggle.label, _state(now), spoken,
                       call.prefix, call.name)
-        line = f"{call.player.name} turned {toggle.label} {_state(now)}{spoken}."
+        line = callout("voice on" if now else "voice off",
+                       f"{call.player.name} turned {toggle.label} {_state(now)}{spoken}.")
         if not await self._say(call.server, line):
             await call.reply(line)  # the console wouldn't take a [Server] line: the admin reads it at least
         if notes := self._notes(call, data, toggle, now):
@@ -267,8 +269,8 @@ class SettingToggles(CommandsBase):
         # (Put back to a value [defaults] doesn't give, the key stays, and stays the toggles': the record stays.)
         self.log.info("[%s] %s back %s after %s (%s's toggle)", server, toggle.label, _state(before), row["length"],
                       row["by"])
-        await self._say(server, f"{_capital(toggle.label)} is {'back on' if before else 'off again'} after "
-                                f"{row['length']}.")
+        await self._say(server, callout("voice on" if before else "voice off", f"{_capital(toggle.label)} is "
+                                        f"{'back on' if before else 'off again'} after {row['length']}."))
 
     # The server's answer -----------------------------------------------------------------------
 

@@ -18,8 +18,9 @@ from ...core.files import mtime
 from ...core.part import Part, command, every, on
 from ...core.serversettings import automod_mode
 from ...core.text import TIME, describe_seconds, seconds_of
+from ... import lore
 from ...lore import VERGIL
-from ...rcon import ban_list
+from ...rcon import RconError, ban_list
 from ...servers.state import Player
 from ..outbox import ASK_SECONDS, results
 from ..roles import Roles, a_role
@@ -60,19 +61,24 @@ MIGRATIONS = [
 ]
 
 MESSAGES = {
-    # What the player reads. {detail} is the line's name and the strike ("slurs, strike 2 of 3");
-    # {label}, {strike}, {action}, {next} and {by} work too. The word itself is never repeated.
-    "chat": "KEEP IT CLEAN! That isn't allowed here ({detail}): {action}.{next}",
-    "name": "KEEP IT CLEAN! Change your name, it isn't allowed here ({detail}). Join again with another one.",
-    "manual": "{by} gave you a strike ({detail}): {action}.{next}",
+    # What the player reads, as one of the Superintendent's call-outs (lore.CALLOUTS): {notice} is the sign that
+    # heads it, and it hardens with what Vergil did (a mute, a removal, a ban). {detail} is the line's name and the
+    # strike ("slurs, strike 2 of 3"); {label}, {strike}, {action}, {next}, {by} and {player} work too. The word
+    # itself is never repeated.
+    "chat": "{notice} That isn't allowed here ({detail}): {action}.{next}",
+    "name": "{notice} Change your name, it isn't allowed here ({detail}). Join again with another one.",
+    "manual": "{notice} {by} gave you a strike ({detail}): {action}.{next}",
     "next": " Next time: {next}.",
-    "muted": "KEEP IT CLEAN! You're still muted ({detail}): {left}.",  # on joining while a mute lasts
+    "muted": "{notice} You're still muted ({detail}): {left}.",  # on joining while a mute lasts
+    # What everyone on the server reads once a strike has been acted on (the server's own line says what was done:
+    # "Bravo was muted by Vergil"); "" says nothing.
+    "public": "{notice} {by} caught {player} ({detail}).",
 }
 NAME_LABEL = "banned name"  # what players read for a name kicked, whichever list caught it
 BANWORD_USE = ("Use: !banword <words> <line> adds them to a line of the word list, with its steps (!banword "
-               "badword slurs); !banword <words> | <kicks> | <mutes> | <ban> | <name> makes a new line, e.g. "
-               "!banword badword | 1h 1d | 2, 1d 7d | 5 | slurs.")
-NEW_LINE_HELP = ("kick times | strikes before the mutes, then each mute's time | strikes before the ban | its name; "
+               "badword slurs); !banword <words> | <mutes> | <kicks> | <ban> | <name> makes a new line, e.g. "
+               "!banword badword | 1d 7d | 2, 1h 1d | 5 | slurs.")
+NEW_LINE_HELP = ("mute times | strikes before the kicks, then each kick's time | strikes before the ban | its name; "
                  "a part left blank is none")
 NAME_RETRY = 60.0  # a name kick the server refused, or a mute that didn't show, is tried again after this long
 KEPT_TWICE_SECONDS = 15.0  # a mute recorded from Huragok's !mute, then announced by the server: kept once
@@ -81,7 +87,7 @@ FORGET_AFTER = 3600.0  # what Vergil keeps about a player for moments (forget_th
 BAN_MATCH_SECONDS = 120.0  # a ban in the server's list this close to a strike of the same `by` is that strike's
 PLACEHOLDERS = {"detail": "slurs, strike 1 of 3", "label": "slurs", "strike": "strike 1 of 3",
                 "action": "removed for 1 hour", "next": " Next time: removed for 1 day.", "by": "Alice",
-                "left": "2 days left"}
+                "left": "2 days left", "notice": "KEEP IT CLEAN!", "player": "Bravo"}
 
 
 class _Blank(dict):  # type: ignore[type-arg]
@@ -149,7 +155,7 @@ def _all_times(text: str) -> bool:
 
 
 def _ladder_of(rule: Rule) -> tuple[Any, ...]:
-    return (rule.kicks, rule.mute_after, rule.mutes, rule.mute_forever_after, rule.ban_after)
+    return (rule.mutes, rule.mute_forever_after, rule.kick_after, rule.kicks, rule.ban_after)
 
 
 def line_called(rules: list[Rule], text: str) -> Rule | None:
@@ -171,7 +177,7 @@ def _short_ladder(rule: Rule) -> str:
 class AutoMod(Part):
     persona = VERGIL
     name = "automod"
-    description = "One word list: per line, its words, then kicks, mutes and a ban as strikes add up; banned names"
+    description = "One word list: per line, its words, then mutes, kicks and a ban as strikes add up; banned names"
     acts_as = "Vergil"
     enabled_by_default = True
     defaults = {
@@ -581,8 +587,8 @@ class AutoMod(Part):
         it ({label} is the word list line's name, for a host's own message)."""
         self.name_kicks[player.id] = (player.name, time.time(), player.joined)
         actor = by or self.ctx.acts_as
-        message = self._format("name", detail=NAME_LABEL, label=hit.rule.label or NAME_LABEL, action="kicked",
-                               by=by or "")
+        message = self._format("name", notice=lore.notice("name"), detail=NAME_LABEL,
+                               label=hit.rule.label or NAME_LABEL, action="kicked", by=by or "", player=player.name)
         moderation = self.ctx.moderation
         action = await moderation.kick(server, player, message, by=actor, evidence=evidence, **self._send(server))
         if action.ok and not action.dry_run:
@@ -648,7 +654,8 @@ class AutoMod(Part):
         else:
             label = (rule.label if rule else "") or row["rule"]
         duration = None if row["expires"] is None else f"{max(1, round(row['expires'] - time.time()))}s"
-        message = self._format("muted", detail=label, label=label, left=self._mute_left(row))
+        message = self._format("muted", notice=lore.notice("still muted"), detail=label, label=label,
+                               left=self._mute_left(row), player=player.name)
         self.mutes_restored[player.id] = (time.time(), player.joined)
         # A mute already decided (a moderator's, a real strike's) isn't Vergil's call to make again: it's put back
         # whatever Vergil is on this server.
@@ -681,8 +688,10 @@ class AutoMod(Part):
         template = "manual" if by else ("name" if source == "name" else "chat")
         strike_text = rule.strike_text(number)
         detail = ", ".join(t for t in (rule.label, strike_text) if t)
-        message = self._format(template, detail=detail, label=rule.label, strike=strike_text,
-                               action=step.describe(), next=next_text, by=by or "")
+        # The sign hardens with what's done: a mute, a removal (a mute after it or not), a ban.
+        notice = lore.notice("ban" if step.action == "ban" else "kick" if step.removes else "mute")
+        message = self._format(template, notice=notice, detail=detail, label=rule.label, strike=strike_text,
+                               action=step.describe(), next=next_text, by=by or "", player=player.name)
         self.last_strike[player.id] = time.time()
         moderation = self.ctx.moderation
         actor = by or self.ctx.acts_as
@@ -693,7 +702,8 @@ class AutoMod(Part):
         places = self._online(player.id) if self.across else [(s, p) for s, p in self._online(player.id) if s == server]
         places = places or ([(server, player)] if player.number else [])
         places.sort(key=lambda place: place[0] != server)  # the server it was struck on first: acted on at once
-        if step.action == "kick" and not step.duration:
+        if (step.action == "kick" and not step.duration) or step.plain_kick:
+            # The server's plain kick; a mute after it is kept by this strike's row, and put on as they join again.
             if places:
                 where, who = places[0]
                 action = await moderation.kick(where, who, message, by=actor, evidence=evidence, **send)
@@ -702,7 +712,9 @@ class AutoMod(Part):
                     self.ctx.outbox.send(where, f"Vergil's kick of {who.name} (struck on {server})",
                                          lambda where=where, who=who: moderation.kick(where, who, message, by=actor,
                                                                                       evidence=evidence, **send))
-            away = not places  # the server's kick needs them on: the strike still counts
+            # The server's kick needs them on: the strike still counts, and a mute with it starts when they next join.
+            away = not places and not step.plain_kick
+            pending = not places and step.plain_kick
             ok = ok and not away
         elif step.action == "mute" and not step.kick:
             # If they're on no server, it starts when they next join.
@@ -741,7 +753,21 @@ class AutoMod(Part):
         self.ctx.emit("strike", server, player_id=player.id, player_name=player.name, rule=rule.name,
                       strike=number, action=str(step), source=source, evidence=evidence, by=actor,
                       dry_run=dry, ok=ok)
+        if places and ok and not dry:  # where they are, by the name they have there
+            await self._caught(places[0][0], detail=detail, label=rule.label, strike=strike_text,
+                               action=step.describe(), by=actor, player=places[0][1].name or player.name)
         return rule, step, number, ok
+
+    async def _caught(self, server: str, **values: Any) -> None:
+        """Everyone on the server reads why: the server's own line says only what was done ("Bravo was muted by
+        Vergil"). The [automod] messages' `public`; "" says nothing."""
+        line = self._format("public", notice=lore.notice("caught"), **values).strip()
+        if not line:
+            return
+        try:
+            await self.ctx.say(server, line)
+        except (RconError, KeyError) as error:  # a line that doesn't arrive changes nothing
+            self.log.info("[%s] couldn't say why %s was struck: %s", server, values.get("player"), error)
 
     # Commands -------------------------------------------------------------------------
 
@@ -944,9 +970,9 @@ class AutoMod(Part):
     def _lines(self) -> str:
         return ", ".join(r.name for r in self.rules) or "none yet"
 
-    @command("banword", usage="<words> <line> | <words> | [kicks] | [mutes] | [ban] | <name>",
-             help="Add words to a line of the word list (!banword badword slurs), or make a new line: words | kicks | "
-                  "mutes | ban | name. Names with them are kicked too", role="admin")
+    @command("banword", usage="<words> <line> | <words> | [mutes] | [kicks] | [ban] | <name>",
+             help="Add words to a line of the word list (!banword badword slurs), or make a new line: words | mutes | "
+                  "kicks | ban | name. Names with them are kicked too", role="admin")
     async def banword(self, call: CommandCall) -> None:
         fields = [f.strip() for f in call.text.strip().split("|")]
         if not fields[0]:
@@ -979,7 +1005,7 @@ class AutoMod(Part):
             fields = [words_text.strip()]
         else:
             entries = [w.strip() for w in fields[0].split(",") if w.strip()]
-        # <words> | <a line's name>. A second part that starts with a digit and isn't a line is a kick time mistyped.
+        # <words> | <a line's name>. A second part that starts with a digit and isn't a line is a mute time mistyped.
         second = fields[1] if len(fields) == 2 else ""
         shorthand = target is not None or line_called(rules, second) is not None or (
             bool(second) and not _all_times(second) and not second[0].isdigit())
@@ -1051,7 +1077,7 @@ class AutoMod(Part):
         """No line by that name (or none named): which there are, and how to make one, the words written in."""
         p = call.prefix
         name = "-".join(line.lower().split()) or "slurs"
-        make = f"{p}banword {words} | 1h 1d | 2, 1d 7d | 5 | {name} ({NEW_LINE_HELP})"
+        make = f"{p}banword {words} | 1d 7d | 2, 1h 1d | 5 | {name} ({NEW_LINE_HELP})"
         if not self.rules:
             return f"The word list has no lines yet. Make the first one with its steps: {make}."
         start = f"There's no line called '{line}' yet." if line else f"Which line should {words} go on?"
@@ -1147,20 +1173,20 @@ class AutoMod(Part):
         more = [f"…and {len(names) - 15} more: {call.prefix}bannames <text> narrows it."] if len(names) > 15 else []
         await call.reply("\n".join([*lines, *more, f"{call.prefix}unbanname @number takes one off."]))
 
-    @command("changebanword", usage="<line | word> | [kicks] | [mutes] | [ban]",
-             help="New steps for a line of the word list: its kicks, mutes and ban, as !banword takes them",
+    @command("changebanword", usage="<line | word> | [mutes] | [kicks] | [ban]",
+             help="New steps for a line of the word list: its mutes, kicks and ban, as !banword takes them",
              role="admin")
     async def changebanword(self, call: CommandCall) -> None:
         """A line's ladder replaced, its words and name kept (its strikes are kept under its name). A part left blank
-        is none: no kicks, never muted, never banned."""
+        is none: never muted, never kicked (with no mutes either, the server's plain kick), never banned."""
         fields = [f.strip() for f in call.text.strip().split("|")]
         if not fields[0] or len(fields) < 2:
-            await call.reply(f"Use: {call.prefix}changebanword <line | word> | <kicks> | <mutes> | <ban>, e.g. "
-                             f"{call.prefix}changebanword slurs | 1h 1d | 2, 1d 7d | 5 (a part left blank: none). "
+            await call.reply(f"Use: {call.prefix}changebanword <line | word> | <mutes> | <kicks> | <ban>, e.g. "
+                             f"{call.prefix}changebanword slurs | 1d 7d | 2, 1h 1d | 5 (a part left blank: none). "
                              f"Lines: {self._lines()}.")
             return
         if len(fields) > 4:
-            await call.reply("The name stays (strikes are kept under it): give the line, then kicks | mutes | ban.")
+            await call.reply("The name stays (strikes are kept under it): give the line, then mutes | kicks | ban.")
             return
         words_file = str(self.config["words"])
         try:

@@ -83,13 +83,32 @@ def test_the_superintendents_face_follows_the_worst_thing_going_on() -> None:
 
 
 def test_the_notices_are_the_superintendents_own() -> None:
-    # Word for word from Bungie's 2008 "KEEP IT CLEAN" campaign: never paraphrase them.
+    # Word for word as it posted them (Bungie's 2008 "KEEP IT CLEAN" campaign, the manual, the trailer) or said them
+    # in the game (the levels' speakers, Sadie's Story's subtitles): never paraphrase one, never make one up.
     assert set(lore.NOTICES.values()) == {
         "KEEP IT CLEAN!", "PLEASE REMAIN CALM!", "METROPOLITAN EMERGENCY!", "DETOUR! PROCEED WITH CAUTION!",
         "BE A HERO! REPORT VIOLATORS!", "PARDON OUR DUST!", "YOUR TAX DOLLARS AT WORK!", "OBEY POSTED LIMITS!",
-        "YIELD TO UPHILL TRAFFIC!", "IN CASE OF FIRE, USE STAIRS"}
+        "YIELD TO UPHILL TRAFFIC!", "IN CASE OF FIRE, USE STAIRS",
+        "SCHOOL ZONE. PLEASE SLOW DOWN.", "FINAL NOTICE. BILL PAST DUE.", "KEEP IT CLEAN! RESPECT PUBLIC PROPERTY!",
+        "BRIDGE TOLL ACCEPTED. HAVE A PLEASANT TRIP.", "CONSTRUCTION AHEAD! EXPECT DELAYS!", "WELCOME! ACCESS GRANTED!",
+        "WARNING! HITCHHIKERS MAY BE ESCAPED CONVICTS!", "CRIME SCENE! RESTRICTED ENTRY!",
+        "CAUTION! TRAVELLER! CAUTION!", "CRIME DOESN'T PAY!", "GOOD CITIZENS DO THEIR PART!",
+        "HELLO, TRAVELLER. MOMBASA WELCOMES YOU!", "ANXIOUS? STRESSED? PLEASE REMAIN CALM.",
+        "EMERGENCY STOP. PLEASE REMAIN CALM.", "WATCH YOUR SPEED! CHILDREN AT PLAY!",
+        "NO PARKING! VIOLATORS WILL BE TICKETED AND TOWED!", "TRANSACTION COMPLETE! PLEASE COME AGAIN!",
+        "RECYCLING! DO YOUR PART!", "ALL ABOARD! LAST TRAIN NOW DEPARTING!"}
     assert set(lore.FACES) == {"happy", "neutral", "bored", "confused", "sad", "angry", "sleeping", "off"}
     assert len({len(face) for face in lore.FACES.values()}) == 1  # the faces line up
+
+
+def test_every_line_players_read_starts_with_its_face_and_its_words() -> None:
+    assert {face for face, _ in lore.CALLOUTS.values()} <= set(lore.FACES) - {"off"}
+    assert {words for _, words in lore.CALLOUTS.values()} - {""} <= set(lore.NOTICES)
+    assert lore.callout("ban", "That isn't allowed here (threats, strike 1): banned for good.") == (
+        "[>_<] CRIME DOESN'T PAY! That isn't allowed here (threats, strike 1): banned for good.")
+    assert lore.notice("mute") == "[o_O] KEEP IT CLEAN!" and lore.notice("caught") == "[^_^] YOUR TAX DOLLARS AT WORK!"
+    assert lore.callout("cancelled", "The server restart has been cancelled. Keep it clean!") == (
+        "[^_^] The server restart has been cancelled. Keep it clean!")  # a face, and no notice
 
 
 def test_the_dashboard_wears_the_theme() -> None:

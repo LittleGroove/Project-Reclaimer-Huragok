@@ -1,17 +1,17 @@
 # automod
 
 Vergil's automod acts on the words on your list: said in chat, they earn a strike,
-and each strike is the next step on that word's line: kicks, then mutes, then a
+and each strike is the next step on that word's line: mutes, then kicks, then a
 ban, as you set it. In a name, they get the player kicked as they join, every time,
 until the name changes. The list is one text file, `automod.txt` in the root (the
 folder with `start.cmd`), with one rule per line in five parts:
 
 ```text
-# words                 | kicks        | mutes            | ban | name
-badword, otherword      | 1h           | 1, 1d, 7d        | 3   | slurs
-rudeword                |              | 0, 1d, 3d, 7d    |     | rude
-meanword                |              | 5, 1d, 3d, 7d, 8 |     | mean
-worstword               |              |                  | 0   | threats
+# words                 | mutes            | kicks        | ban | name
+badword, otherword      | 1d, 7d           | 2, 1h        | 3   | slurs
+rudeword                | 1d, 3d, 7d       |              |     | rude
+meanword                | 1d, 3d, 7d, 8    | 5            |     | mean
+worstword               |                  |              | 0   | threats
 kickword
 ```
 
@@ -19,9 +19,9 @@ What a player gets each time:
 
 | Line | 1st | 2nd | 3rd | 4th | after that |
 | --- | --- | --- | --- | --- | --- |
-| `slurs` | out 1 hour | muted 1 day | muted 7 days | banned for good | |
-| `rude` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | muted 7 days: never banned |
-| `mean` | kicked | kicked | kicked | kicked | 5th: kicked; 6th: muted 1 day; 7th: 3 days; 8th: 7 days; 9th on: muted for good, never banned |
+| `slurs` | muted 1 day | muted 7 days | out 1 hour | banned for good | |
+| `rude` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | muted 7 days: never kicked or banned |
+| `mean` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | 5th: muted 7 days; 6th to 8th: kicked; 9th on: kicked, then muted for good; never banned |
 | `threats` | banned for good | | | | |
 | `kickword` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
 
@@ -31,44 +31,72 @@ question at a time), changes or takes one out, and tries a line of chat against 
 **D → N** does the same for banned names. Either way Vergil reads the file again
 within seconds.
 
-A strike is the next step down its line: the kicks come first, then the mutes, then
-the ban. The numbers in **mutes** and **ban** count the strikes that come before
-them, so `0` is the first offence: `| | | 0 |` bans the first time, `| | 0, 1d |` mutes
-the first time. They can be as large as you like; the only check is that every kick
-and mute time you list comes before the ban.
+A strike is the next step down its line: the mutes come first, then the kicks, then
+the ban. The mutes start with the first strike. The kicks start with how many strikes
+come before them (the mutes'), so `| 1d, 3d | 2, 1h |` mutes twice, then removes for
+an hour each time; with that number left out they start once every mute time is used
+(`| 1d, 3d | 1h |` is the same line), and with no times after it, it's the server's
+own kick from then on (`| 1d | 2 |`). A line with no mutes kicks from the first strike
+(`| | 1h, 1d |`); a line with mutes and the kicks left blank never kicks. The ban's
+number counts the strikes before it too, so `0` is the first offence: `| | | 0 |` bans
+the first time. The counts can be as large as you like; the only check is that every
+mute and kick time you list comes before the ban.
 
 **Muted for good instead of banned.** End the mutes with a number alone, with no
 `s`, `m`, `h`, `d` or `w`: it's how many strikes come before the mute for good,
-counted the way the ban counts them. `5, 1d, 3d, 7d, 8` is kicked five times, then
-muted 1 day, 3 days and 7 days, and from the 9th strike muted for good. A larger
-number repeats the last time until then: `5, 1d, 3d, 7d, 10` is muted 7 days on the
-8th, 9th and 10th. The number must leave room for every time listed (`8` or more
-here). Without it, the mutes are as they always were: the last time repeats for
-ever, and `perm` as the last time is muted for good from that mute on (use one or
-the other). A line can still ban after it (`| 12 |`), as long as the ban comes later.
+counted the way the ban counts them. `1d, 3d, 7d, 8` is muted 1 day, 3 days and 7
+days, and from the 9th strike muted for good. A larger number repeats the last time
+until then: `1d, 3d, 7d, 10` is muted 7 days on the 3rd to 10th. The number must leave
+room for every time listed (`3` or more here). It counts every strike, kicks or not:
+on a line that kicks by then, each strike after it removes them, then mutes them for
+good once they're back (`mean` above). Without it, the mutes are as they always were:
+the last time repeats until the kicks, and `perm` as the last time is muted for good
+from that mute on (use one or the other). A line can still ban after it (`| 12 |`), as
+long as the ban comes later.
 
-**A kick and a mute on the same strike.** List more kick times than there are
-strikes before the mutes, and the ones past the start of the mutes go with them:
-that strike removes the player for its kick time, then mutes them once they're back
-(the mute's time starts when the kick's ends, so a short mute isn't used up while
-they're out). Once the kick times run out, the mutes go on alone:
+**A mute and a kick on the same strike.** List more mute times than there are
+strikes before the kicks, and the ones past the start of the kicks go with them:
+that strike removes the player, then mutes them once they're back (after a timed
+kick the mute's time starts when the kick's ends, so a short mute isn't used up while
+they're out; after the server's own kick, from the strike). Once the mute times run
+out, the kicks go on alone:
 
 ```text
 badword | 1d, 2d, 3d, 4d, 5d, 6d, 7d | 5, 1d | 10 | slurs
 ```
 
-is 1st to 5th: out 1 to 5 days; 6th: out 6 days, then muted 1 day; 7th: out 7 days,
-then muted 1 day; 8th to 10th: muted 1 day; 11th: banned for good. Before the mutes,
-the last kick time repeats as it always has (`1h | 3, 1d` is out an hour three times,
-then muted); past their start, a kick time is used once.
+is 1st to 5th: muted 1 to 5 days; 6th: out 1 day, then muted 6 days; 7th: out 1 day,
+then muted 7 days; 8th to 10th: out 1 day; 11th: banned for good. Before the kicks,
+the last mute time repeats (`1d | 3, 1h` is muted a day three times, then out an hour
+each time); past their start, a mute time is used once.
+
+**Word lists from before 0.5.1.** Up to 0.5.0 the kicks came first: `words | kicks |
+mutes | ban | name`, the mutes starting with how many strikes came before them.
+Huragok reads a list like that the new way as soon as the new version starts, and
+rewrites it so a couple of minutes later (once the version before can't be put back),
+with this version's notes; until then, changes from the game or from D say to try
+again in a couple of minutes. Each line's mute times move first, the strikes that came
+before the mutes now come before the kicks, then its kick times:
+
+```text
+word | 1d, 2d, 3d | 3, 4d, 5d, 6d, 6 | 10 | hate     (before)
+word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate     (after)
+```
+
+That's muted 4, 5 and 6 days; out 1, 2 and 3 days; then out 3 days and muted for good;
+banned on the 11th. A line that only muted (`| | 0, 1d, 3d |`) still only mutes
+(`| 1d, 3d | |`), and one that only kicked still only kicks. Kick times that would now
+come after the ban are left out, as no strike reaches them; the log says which line.
+Your own notes and lines stay where they are, and the file as it was is kept in
+`records/previous-files/`.
 
 | Part | |
 | --- | --- |
 | **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated letters, lookalike letters (Greek and Cyrillic ones, capitals too, small capitals like `ʙᴀᴅᴡᴏʀᴅ`, fullwidth, styled, circled and boxed letters from "fancy text" makers), invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
-| **kicks** | How long each kick keeps them out, in order: `30m`, `1h`, `1d`, `2w`. The last one repeats until the mutes start. Blank: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Times past the start of the mutes kick, then mute (above). At most one time per strike before the ban. |
-| **mutes** | How many strikes come before the mutes (`0`: muted the first time), then how long each mute lasts, in order: `0, 1d, 3d, 7d`. The last one repeats; `perm` (last only) is muted for good. A number alone at the end is how many strikes come before muted for good: `5, 1d, 3d, 7d, 8` (above). Blank: never muted. At most one time per mute before the ban, or before muted for good. |
+| **mutes** | How long each mute lasts, in order from the first strike: `1d, 3d, 7d`. The last one repeats until the kicks; `perm` (last only) is muted for good. A number alone at the end is how many strikes come before muted for good: `1d, 3d, 7d, 8` (above). Blank: never muted. At most one time per mute before the ban, or before muted for good. |
+| **kicks** | How many strikes come before the kicks (`0`: kicked the first time; left out: once every mute time is used), then how long each kick keeps them out, in order: `3, 30m, 1h, 1d`. The last one repeats until the ban. No times: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Blank: never kicked, or with no mutes either, the server's own kick every time. Mute times past the start of the kicks kick, then mute (above). At most one time per strike before the ban. |
 | **ban** | How many strikes come before the ban for good (`0`: banned the first time). Blank: never banned. |
-| **name** | One word that players read and moderators type in `!strike`, so nobody has to type the word itself. Optional, but name every line whose strikes add up (it mutes, bans, or has more than one kick time): a line without one is `rule1`, `rule2`… by its place in the list, its strikes are kept under that, and they move to another line if you add a line above it. `check`, the start and each reload point such lines out. It can't be `name`, which `!strike` keeps for names. |
+| **name** | One word that players read and moderators type in `!strike`, so nobody has to type the word itself. Optional, but name every line whose strikes add up (what its strikes do changes: more than one time, mutes then kicks, a ban): a line without one is `rule1`, `rule2`… by its place in the list, its strikes are kept under that, and they move to another line if you add a line above it. `check`, the start and each reload point such lines out. It can't be `name`, which `!strike` keeps for names. |
 
 **A number is never taken for a word.** With a three-letter word listed, "respawn
 in 45s", "455 kills", "4:55 left" and "Team 455" aren't caught: a match with more
@@ -105,7 +133,7 @@ part is the mutes; the log says to move the number to the fourth part.
 A muted player stays in the game, but nobody hears their voice or reads their chat
 (the server stops relaying both). The server forgets its mutes when it restarts, so
 Vergil keeps its own list: when a muted player joins any server, Vergil mutes them
-again for what's left, and they read `KEEP IT CLEAN! You're still muted (rude): 2
+again for what's left, and they read `[-_-] KEEP IT CLEAN! You're still muted (rude): 2
 days 23 hours left.` A player already on whom the server shows as unmuted is muted
 again within five seconds: after the server restarted while Huragok was closed,
 after Huragok's console reconnects (everyone on is looked at again), and when a
@@ -120,7 +148,7 @@ clears the strikes and unmutes them.
 
 **A moderator's `!mute` goes on the same list.** `!mute Bravo 1d spam` meant a day,
 but the server forgot it at its next restart; now Vergil mutes Bravo again as they
-join until the day is up, and they read `KEEP IT CLEAN! You're still muted (muted by
+join until the day is up, and they read `[-_-] KEEP IT CLEAN! You're still muted (muted by
 Alice: spam): 23 hours left.` A `!mute` with no time lasts until `!unmute`. A newer
 `!mute` replaces the older one (a moderator shortening a mute gets the shorter one),
 `!unmute` ends it, and `!strikes <player>` shows it (`Muted (!mute by Alice: spam)`).
@@ -148,7 +176,7 @@ A name is never struck, muted or banned: the name is the problem, so the player 
 kicked as they join, every time, until they change it. Vergil lets them straight
 back in after each kick (the server's kick would otherwise keep them out 10 minutes
 or more), so they can come back as soon as they've picked another name. They read
-`KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). Join again
+`[o_O] KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). Join again
 with another one.`, whichever list caught it.
 
 A name is kicked when it has:
@@ -219,8 +247,8 @@ A new line is written out in full, as `automod.txt` has it:
 !banword newword | 10m 30m 1h 1d 7d | 5, 1h, 1d, 3d, 7d | 10 | hate
 ```
 
-That's out 10 minutes, 30 minutes, an hour, a day, a week; from the 6th strike
-muted an hour, a day, 3 days, then a week each time; banned on the 11th. In game the
+That's muted 10 minutes, 30 minutes, an hour, a day, a week; from the 6th strike
+out an hour, a day, 3 days, then a week each time; banned on the 11th. In game the
 times can be split by spaces or commas; Vergil writes them into `automod.txt` the
 way the file has them, as a new line at the end, and the change applies at once:
 in chat, and to anyone on now whose name has the word in it. The last part is the
@@ -234,7 +262,8 @@ line's name (one word: `racist slurs` is written `racist-slurs`).
 - A word the list catches already, disguised or not (`b4dw0rd` when `badword` is
   listed), isn't written twice: the answer says which line has it.
 - A mistake (a time like `1x`, more kick times than strikes before the ban, a line
-  called `name`) is answered with what's wrong, and nothing is written.
+  called `name`, a count first in the mutes as the layout up to 0.5.0 had it) is
+  answered with what's wrong, and nothing is written.
 
 `!unbanword <word>` takes a word off, as the file lists it; a line left with no
 words goes too. If the word isn't listed itself but is caught by another entry
@@ -247,7 +276,18 @@ command. The window's D → A changes the list without that.
 ## What players read
 The reason they see, without ever repeating the word:
 
-> KEEP IT CLEAN! That isn't allowed here (slurs, strike 2 of 3): muted for 1 day. Next time: muted for 7 days.
+> [o_O] KEEP IT CLEAN! That isn't allowed here (slurs, strike 2 of 3): muted for 1 day. Next time: muted for 7 days.
+
+It opens with the Superintendent's face and one of its own phrases, and both harden with
+what Vergil does: `[o_O] KEEP IT CLEAN!` for a mute, `[>_<] CRIME DOESN'T PAY!` for a
+removal or a ban.
+Once it has acted, everyone on that server reads why too (the server's own line only
+says what was done, "Bravo was muted by Vergil"):
+
+> [^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3).
+
+Not for a name kick, a dry run, or someone who isn't on; `messages = { public = "" }`
+turns it off.
 
 `strike 2 of 3` counts toward the ban; a line with no ban says `strike 2`. A timed
 kick is a timed ban underneath, because the server's own kick times are fixed, so
@@ -257,8 +297,8 @@ reason says how long.
 One line counts once: a line repeating a word twenty times is one strike, and so
 are lines sent within `cooldown_seconds` of each other. A word split over two lines
 sent within `split_seconds` is caught. When a line matches more than one rule, the
-one with the heaviest next step counts (a ban, then a mute, then a kick; longer
-beats shorter). A muted player's chat never reaches Vergil, so it doesn't add
+one with the heaviest next step counts (a ban, then a kick with or without a mute
+after it, then a mute; longer beats shorter). A muted player's chat never reaches Vergil, so it doesn't add
 strikes. A moderator's command line isn't chat: `!strike Bravo slurs he said <the
 word>` from someone who may use `!strike` (or `!mute`, `!warn`…) doesn't strike the
 moderator. A player's own commands still count, so `!help <the word>` is struck.
@@ -290,14 +330,14 @@ and so does the status card (V → Safety → Vergil).
 | `!strikes <player>` | moderator | Someone else's |
 | `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next kick, mute or ban |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
-| `!banword <words> \| [kicks] \| [mutes] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
+| `!banword <words> \| [mutes] \| [kicks] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
 | `!unbanword <word>` | admin | Takes a word off `automod.txt` (a line left with no words goes too) |
 | `!banname <#number \| name>` | admin | Bans a player's name (kicking them), or a name itself, in `names.txt`. No strike, no ban. A moderator's command up to 0.4.4 |
 | `!pardonplayer <player \| player ID> [rule \| all] [reason]` | admin | Clears their strikes (all, or one named line's) and lifts what automod did: unbans, unmutes, and lets a kicked player back in |
 | `!unbanname <name \| @number>` | admin | Takes a name off `names.txt`; `@number` from `!bannames` |
 | `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do (the answer is yours alone); `!rules slurs` shows one line in full |
 | `!bannames [text]` | moderator | The banned names in `names.txt`, newest first, numbered for `!unbanname` |
-| `!changebanword <line \| word> \| kicks \| mutes \| ban` | admin | New steps for a line, its words and name kept (its strikes count toward the new steps): `!changebanword slurs \| 30m 2h \| 1, 1d 3d \| 5`. A part left blank is none: `!changebanword rude \| \| 0, perm` mutes for good from the first strike |
+| `!changebanword <line \| word> \| mutes \| kicks \| ban` | admin | New steps for a line, its words and name kept (its strikes count toward the new steps): `!changebanword slurs \| 30m 2h \| 1, 1d 3d \| 5`. A part left blank is none: `!changebanword rude \| perm` mutes for good from the first strike |
 | `!mutes` | moderator | Everyone muted now: Vergil's list and the server's own, numbered for `!unmute` |
 
 `!strike`, `!strikes` and `!pardonplayer` work on players who aren't on the server:
@@ -350,7 +390,7 @@ its name):
 | `across_servers` | `true` | Huragok's moderation (`!` commands, Vergil, the relay, the window's console) reaches every server: a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), and so does an admin Huragok makes. The game's own `/kick` and `/ban`, and votes, stay on their server (only written on the player's record; `!banall` puts a `/ban` on every server). `false`: Huragok's stay on theirs too |
 | `cooldown_seconds` | `10` | Lines this close together count as one strike |
 | `split_seconds` | `10` | Catch a word split over lines this close together |
-| `messages` | | Change what players read: `chat`, `name`, `manual`, `next`, `muted`, using `{detail}`, `{label}`, `{strike}`, `{action}`, `{next}`, `{by}`, and `{left}` in `muted`. For a brace players should read, write `{{` or `}}`: `check` names a message with a stray one, and while running such a message falls back to the default rather than stopping automod |
+| `messages` | | Change what players read: `chat`, `name`, `manual`, `next`, `muted`, and `public` (what everyone reads; `""` says nothing), using `{notice}` (the Superintendent's face and phrase for it), `{detail}`, `{label}`, `{strike}`, `{action}`, `{next}`, `{by}`, `{player}`, and `{left}` in `muted`. For a brace players should read, write `{{` or `}}`: `check` names a message with a stray one, and while running such a message falls back to the default rather than stopping automod |
 
 `enabled` is on unless you set it off; `dry_run` is off unless you set it on (the
 first start writes it on, as above).

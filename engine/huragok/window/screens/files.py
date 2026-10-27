@@ -53,12 +53,12 @@ FILES = ("S", "C", "A", "N", "I")  # D's letters for Huragok's own files
 EVERY_TIMES = ("5m", "10m", "15m", "30m", "45m", "1h", "2h")  # D -> I's times to pick from (T types another)
 ROLE_TEXT = {"owner": "you: everything", "moderator": "what they can do is exactly what the commands give them",
              "member": "regulars, friends, clan: no vote can kick them"}
-# (what it is, kicks, strikes before the mutes, mute times, strikes before muted for good, ban)
-LADDERS: list[tuple[str, list[str], int | None, list[str], int | None, int | None]] = [
-    ("kicked every time (the server's plain kick)", [], None, [], None, None),
-    ("muted: 1 day, then 3 days, then 7 days each time", [], 0, ["1d", "3d", "7d"], None, None),
-    ("out 1 hour, then muted 1 day, then 7 days, then banned for good", ["1h"], 1, ["1d", "7d"], None, 3),
-    ("banned for good the first time", [], None, [], None, 0),
+# (what it does; then as rule_line() takes them: mute times, muted for good, the kicks' start, kick times, the ban)
+LADDERS: list[tuple[str, list[str], int | None, int | None, list[str], int | None]] = [
+    ("kicked every time (the server's plain kick)", [], None, 0, [], None),
+    ("muted: 1 day, then 3 days, then 7 days each time", ["1d", "3d", "7d"], None, None, [], None),
+    ("muted 1 day, then 7 days, then out 1 day, then banned for good", ["1d", "7d"], None, 2, ["1d"], 3),
+    ("banned for good the first time", [], None, 0, [], 0),
 ]
 
 
@@ -533,51 +533,55 @@ class FileScreens(Screens):
             return None
         return [w.strip() for w in text.split(",") if w.strip()]
 
-    async def _rule_steps(self) -> tuple[list[str], int | None, list[str], int | None, int | None] | None:
-        """What each strike does, as rule_line() takes it (kicks, mutes' start, mute times, muted for good, ban): a
-        ready-made ladder, or the host's own, a part at a time."""
+    async def _rule_steps(self) -> tuple[list[str], int | None, int | None, list[str], int | None] | None:
+        """What each strike does, as rule_line() takes it (mute times, muted for good, the kicks' start, kick times,
+        ban): a ready-made ladder, or the host's own, a part at a time."""
         options = [(str(n), what) for n, (what, *_) in enumerate(LADDERS, 1)]
-        options.append((str(len(LADDERS) + 1), "your own: the kicks, the mutes and the ban, a question each"))
+        options.append((str(len(LADDERS) + 1), "your own: the mutes, the kicks and the ban, a question each"))
         picked = await self.choose("What does each strike do?", options)
         if picked is None:
             return None
         if int(picked) <= len(LADDERS):
-            _, kicks, mute_after, mutes, forever_after, ban_after = LADDERS[int(picked) - 1]
-            return list(kicks), mute_after, list(mutes), forever_after, ban_after
-        kicks = await self._times("  How long each kick keeps them out, in order (like 30m, 1h, 1d; the last repeats). "
-                                  "Enter: the server's plain kick")
-        if kicks is None:
-            return None
-        mute_after: int | None = None
+            _, mutes, forever_after, kick_after, kicks, ban_after = LADDERS[int(picked) - 1]
+            return list(mutes), forever_after, kick_after, list(kicks), ban_after
         mutes: list[str] = []
         forever_after: int | None = None
+        kick_after: int | None = 0  # no mutes: every strike kicks
+        kicks: list[str] = []
         if await self.prompt_yes_no("  Muted at some point?", False):
-            overlap = "; a kick time past it still removes them, and the mute starts once they're back" if kicks else ""
-            mute_after = await self._strike_count(f"How many strikes before the first mute? (0: muted the first "
-                                                  f"time{overlap})")
-            if mute_after is None:
-                return None
-            mutes = await self._times("  How long each mute lasts, in order (like 1d, 3d, 7d; the last repeats; perm "
-                                      "last is for good)", required=True) or []
+            mutes = await self._times("  How long each mute lasts, in order from the first strike (like 1d, 3d, 7d; "
+                                      "the last repeats until the kicks; perm last is for good)", required=True) or []
             if not mutes:
                 return None
             if mutes[-1] != FOREVER and await self.prompt_yes_no(
                     f"  Muted for good after a number of strikes? (no: {mutes[-1]} each time from then on)", False):
-                least = least_forever(mute_after, mutes)
+                least = least_forever(mutes)
                 forever_after = await self._strike_count(
-                    f"How many strikes before muted for good? (at least {least}, so every mute time comes first)",
-                    least)
+                    f"How many strikes before muted for good? (at least {least}, so every mute time comes first; "
+                    f"kicks or not, every strike after it mutes for good)", least)
                 if forever_after is None:
                     return None
+            kick_after = None
+            if await self.prompt_yes_no("  Kicked after the mutes?", False):
+                kick_after = await self._strike_count(
+                    f"How many strikes before the first kick? (Enter: {len(mutes)}, once every mute time is used; a "
+                    f"mute time past it still mutes them, once the kick is over)", 0, default=len(mutes))
+                if kick_after is None:
+                    return None
+        if kick_after is not None:
+            kicks = await self._times("  How long each kick keeps them out, in order (like 30m, 1h, 1d; the last "
+                                      "repeats). Enter: the server's plain kick")
+            if kicks is None:
+                return None
         ban_after: int | None = None
         if await self.prompt_yes_no("  Banned for good at some point?", False):
-            least = least_ban(kicks, mute_after, mutes, forever_after)
+            least = least_ban(mutes, forever_after, kick_after, kicks)
             ban_after = await self._strike_count(
-                f"How many strikes before the ban? (at least {least}, so every kick and mute time comes first)"
+                f"How many strikes before the ban? (at least {least}, so every mute and kick comes first)"
                 if least else "How many strikes before the ban? (0: banned the first time)", least)
             if ban_after is None:
                 return None
-        return kicks, mute_after, mutes, forever_after, ban_after
+        return mutes, forever_after, kick_after, kicks, ban_after
 
     async def _times(self, prompt: str, *, required: bool = False) -> list[str] | None:
         """Times like 30m, 1d (perm too, where it's allowed): [] for none; None when the host backs out."""
@@ -591,10 +595,12 @@ class FileScreens(Screens):
                 continue
             return times
 
-    async def _strike_count(self, prompt: str, least: int = 0) -> int | None:
-        """A number of strikes, `least` or more (Enter: `least`, when that's more than 0); None to back out."""
+    async def _strike_count(self, prompt: str, least: int = 0, *, default: int | None = None) -> int | None:
+        """A number of strikes, `least` or more (Enter: `default`, or `least` when that's more than 0); None to back
+        out."""
+        shown = least if default is None else default
         while True:
-            text = await self.prompt_line(f"  {prompt}", str(least) if least else "")
+            text = await self.prompt_line(f"  {prompt}", str(shown) if shown else "")
             if not text:
                 return None
             if is_count(text.strip()) and int(text) >= least:
@@ -661,7 +667,7 @@ class FileScreens(Screens):
         if choice is None:
             return
         words = [*rule.words, *(f"-{w}" for w in rule.allow)]
-        steps = (rule.kicks, rule.mute_after, rule.mutes, rule.mute_forever_after, rule.ban_after)
+        steps = (rule.mutes, rule.mute_forever_after, rule.kick_after, rule.kicks, rule.ban_after)
         name = rule.label
         if choice == "X":
             if await self.prompt_yes_no(f"  Take the {rule.label or rule.name} rule out?", False):
