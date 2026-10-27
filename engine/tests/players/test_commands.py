@@ -1278,6 +1278,8 @@ def test_a_channel_toggle_with_a_time_switches_back_once_its_up(tmp_path: Path, 
             # Someone changing it meanwhile (the window's D) wins: it isn't put back.
             await fake.chat(ADMIN, "Admin", "!toggleproxy on 5m")
             await wait_for(lambda: _block(tmp_path).get("voice_proximity") is True)
+            # Said once it's written: counted before it arrives (CI's Windows), it would look like one said later.
+            await wait_for(lambda: "Admin turned proximity voice (N) on for 5 minutes." in says(fake))
             from huragok.core.tomledit import set_server_setting
             set_server_setting(tmp_path / "server" / "dedicated.toml", SERVER, "voice_proximity", False)
             said = len(says(fake))

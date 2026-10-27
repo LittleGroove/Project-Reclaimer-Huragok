@@ -139,7 +139,8 @@ def test_a_part_switched_off_for_failing_is_on_again_after_a_while(run, caplog) 
 
     async def scenario() -> None:
         task = asyncio.ensure_future(runner.run())
-        await asyncio.sleep(0.01)
+        # Listening only once its setup is done: lines sent before that reach nobody (CI's Windows is slow to it).
+        await wait_for(lambda: runner.enabled and runner._unsubscribe)
         for n in range(5):
             bus.emit("rcon.chat", "Alpha", text=str(n))
         # The event, not the state: a runner slow to look (CI's Windows) could miss a short spell off.
@@ -169,7 +170,7 @@ def test_a_part_whose_setup_fails_stays_off_and_a_silent_server_isnt_the_part_fa
     async def scenario() -> None:
         await broken.run()  # returns: it never got going
         task = asyncio.ensure_future(slow.run())
-        await asyncio.sleep(0.01)
+        await wait_for(lambda: slow.enabled and slow._unsubscribe)  # listening (its setup done)
         for n in range(6):
             bus.emit("rcon.chat", "Alpha", text=str(n))
         await wait_for(lambda: slow.queue.empty())
