@@ -159,30 +159,44 @@ def take(settings: Settings, *, launcher: bool = False) -> Path:
                     _replace(path, _text(launched_by=lock))
                     return path
                 raise AlreadyRunning(pid)
-        # Left by a Huragok that's gone. Take it away under a name of our own, then make sure what was taken is
-        # what was judged: another starter may have put a fresh one there in between, and it goes back.
-        aside = path.with_name(f"{path.name}.{os.getpid()}.stale")
-        try:
-            os.replace(path, aside)
-        except FileNotFoundError:
-            continue
-        except OSError:
+        # Left by a Huragok that's gone: cleared, then the next round makes ours (or finds who beat us to it).
+        if not _clear_stale(path, raw):
             time.sleep(0.05)
-            continue
-        try:
-            taken = aside.read_bytes()
-        except OSError:
-            taken = raw
-        if taken != raw:
-            try:
-                os.link(aside, path)
-            except FileExistsError:
-                pass  # a third starter got there first; its claim stands
-            except OSError:
-                if not path.exists():
-                    os.replace(aside, path)
-        aside.unlink(missing_ok=True)
     raise AlreadyRunning(running_supervisor(settings) or 0)
+
+
+TAKEOVER_SECONDS = 10.0  # a takeover mark this old was left by a starter that died in the middle of one
+
+
+def _clear_stale(path: Path, raw: bytes) -> bool:
+    """Take away the lock judged left behind (`raw`), if it's still that one. One starter at a time does it, under a
+    mark made the way the lock is: it looks again and removes only what it judged, so a fresh lock someone made
+    meanwhile is never touched. (Moving it aside and putting back a fresh one instead lost a claim with three
+    starters at once, and two of them both held the folder.) False when another starter is clearing it."""
+    mark = path.with_name(f"{path.name}.takeover")
+    if not _create(mark, _text()):
+        try:
+            if time.time() - mark.stat().st_mtime > TAKEOVER_SECONDS:
+                mark.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    try:
+        try:
+            if path.read_bytes() == raw:  # nobody can make a fresh one while this one is there
+                path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:  # Windows: someone is reading it this moment
+            return False
+        return True
+    finally:
+        for _ in range(40):
+            try:
+                mark.unlink(missing_ok=True)
+                break
+            except PermissionError:  # Windows: someone is looking at it this moment
+                time.sleep(0.05)
 
 
 def started_by(pid: int) -> bool:

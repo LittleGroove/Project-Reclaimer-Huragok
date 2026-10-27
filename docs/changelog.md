@@ -58,6 +58,10 @@ ban: `words | mutes | kicks | ban | name`. Your word list is brought over by its
 - **Of two lines one message trips,** the heavier next step counts: a mute, then a kick
   (a mute after it or not), then the ban.
 
+**Fixed:** three or more copies of Huragok started at the same moment over a lock left
+by one that's gone could leave two of them both holding the folder. One at a time
+clears it now.
+
 ## 0.5.0
 **Moderation you can rely on: every command picks the right player (names with spaces,
 players who share a name told apart and picked by number), mutes that last through
