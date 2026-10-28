@@ -25,11 +25,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from testkit.fake_rcon import PASSWORD  # noqa: E402
-
-# Real servers' ports (49175-49185 on this PC) and the ones next to them, which Windows also hands out as
-# ephemeral ports (from 49152 up): free_port() never returns one, and the network guard refuses them.
-REAL_SERVER_PORTS = range(49170, 49200)
+from testkit.fake_rcon import PASSWORD, REAL_SERVER_PORTS  # noqa: E402  (the real servers' ports: never a fake's)
 # The fakes a test starts watch this process and end themselves when it's gone (fake_dedicated.parent_gone).
 TEST_PARENT = "HURAGOK_TEST_PARENT"
 os.environ[TEST_PARENT] = str(os.getpid())

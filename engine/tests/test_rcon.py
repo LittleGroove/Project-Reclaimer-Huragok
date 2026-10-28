@@ -269,15 +269,36 @@ def test_an_unexpected_error_doesnt_end_the_console(tmp_path: Path, run, monkeyp
     assert "RCON sent JSON that isn't a message: '[1, 2]'" in text
 
 
+def test_a_fake_never_listens_on_a_real_servers_port(run, monkeypatch) -> None:
+    """The system may hand a fake one of the real servers' ports (CI's Windows, 28 October): it asks again."""
+    from testkit import fake_rcon
+
+    given: list[int] = []
+
+    class FirstThree:  # the first three ports the system gives count as a real server's
+        def __contains__(self, port: object) -> bool:
+            given.append(int(port))  # type: ignore[call-overload]
+            return len(given) <= 3
+
+        def __len__(self) -> int:
+            return 30
+
+    monkeypatch.setattr(fake_rcon, "REAL_SERVER_PORTS", FirstThree())
+
+    async def scenario() -> None:
+        async with FakeRcon() as fake:
+            assert len(given) == 4 and fake.port == given[3] and len(set(given)) == 4  # held while asking: all differ
+
+    run(scenario())
+
+
 def test_an_ipv6_console_address_connects(tmp_path: Path, run) -> None:
     assert url_for("::1", 49176) == "ws://[::1]:49176/" and url_for("[::1]", 5) == "ws://[::1]:5/"
     assert url_for("127.0.0.1", 49176) == "ws://127.0.0.1:49176/"
 
     class OnIpv6(FakeRcon):
         async def __aenter__(self) -> FakeRcon:
-            self._server = await serve(self._handle, "::1", 0, subprotocols=["reclaimer-rcon"])
-            self.port = next(iter(self._server.sockets)).getsockname()[1]
-            return self
+            return await self._listen("::1")
 
     async def scenario() -> None:
         try:

@@ -10,6 +10,10 @@ from typing import Any, Callable
 from websockets.asyncio.server import ServerConnection, serve
 
 PASSWORD = "correct horse battery staple"
+# Real servers' ports (49175-49185 on this PC) and the ones next to them, which Windows also hands out as
+# ephemeral ports (from 49152 up): free_port() never returns one, no fake listens on one (CI's Windows gave the fakes
+# 49171, 49176, 49185 and 49188 in a row, 28 October), and the network guard refuses them.
+REAL_SERVER_PORTS = range(49170, 49200)
 
 
 class FakeRcon:
@@ -35,8 +39,24 @@ class FakeRcon:
         self._server: Any = None
 
     async def __aenter__(self) -> FakeRcon:
-        self._server = await serve(self._handle, "127.0.0.1", self.port, subprotocols=["reclaimer-rcon"])
-        self.port = next(iter(self._server.sockets)).getsockname()[1]
+        return await self._listen("127.0.0.1")
+
+    async def _listen(self, host: str) -> FakeRcon:
+        """Listening on `port`, or any port the system gives that isn't a real server's: one that is stays held while
+        asking again, so the next is another."""
+        held: list[Any] = []
+        try:
+            while True:
+                server = await serve(self._handle, host, self.port, subprotocols=["reclaimer-rcon"])
+                port = next(iter(server.sockets)).getsockname()[1]
+                if self.port or port not in REAL_SERVER_PORTS or len(held) > len(REAL_SERVER_PORTS):
+                    break
+                held.append(server)
+        finally:
+            for other in held:
+                other.close()
+                await other.wait_closed()
+        self._server, self.port = server, port
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
