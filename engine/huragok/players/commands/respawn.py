@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ...core.context import PartContext
 
 OWN_GAP = 60.0  # seconds between a player's own respawns (admins' aren't held): a respawn can also dodge a death
+TEAMS_TIMEOUT = 3.0  # seconds for the server's player list, read for everyone's team as it is now
 ANSWER_SECONDS = 6.0  # how long a move waits for the server's answer before it's taken as done
 OTHERS = "admin"  # the role that respawns someone else
 OPPOSITE = {"red": "blue", "blue": "red"}
@@ -53,12 +54,11 @@ class Respawn:
     sent: float = field(default_factory=time.monotonic)
 
 
-def _away(state: ServerState, player: Player, home: str) -> str:
+def _away(teams: dict[str, str], home: str) -> str:
     """Another team to move them to for a moment: the smallest one being played, else red's or blue's opposite."""
     sizes: dict[str, int] = {}
-    for other in state.players.values():
-        team = (other.team or "").lower()
-        if team and team != home:
+    for team in teams.values():
+        if team != home:
             sizes[team] = sizes.get(team, 0) + 1
     if sizes:
         return min(sizes, key=lambda team: (sizes[team], team))
@@ -102,7 +102,8 @@ class RespawnCommands(CommandsBase):
         if state.phase != "playing":
             await call.reply(f"There's no round being played to respawn {who} in.")
             return
-        if not player.team:
+        teams = await self._respawn_teams(call.server, state)
+        if not teams.get(player.id):
             await call.reply("This game has no teams, so there's no way to respawn anyone: the server has no kill "
                              "command, and a respawn is a move to another team and back.")
             return
@@ -110,8 +111,8 @@ class RespawnCommands(CommandsBase):
         if under_way is not None and now - under_way.sent < 2 * ANSWER_SECONDS:
             await call.reply("Another respawn is under way here: try again in a moment.")
             return
-        home = player.team.lower()
-        respawn = Respawn(player, home, _away(state, player, home), call.player.name, own, reason, call)
+        home = teams[player.id]
+        respawn = Respawn(player, home, _away(teams, home), call.player.name, own, reason, call)
         if not await self._respawn_move(call.server, respawn, respawn.away):
             return
         self._respawns[call.server] = respawn
@@ -120,6 +121,21 @@ class RespawnCommands(CommandsBase):
             self._respawned[player.id] = now
         self.log.info("[%s] %s asked to respawn %s: moving them to %s and back to %s", call.server, call.player.name,
                       "themselves" if own else player.name, respawn.away, home)
+
+    async def _respawn_teams(self, server: str, state: ServerState) -> dict[str, str]:
+        """{player ID: team ("red")} as the server has them now. The list Huragok keeps is up to 30 s old, and a move
+        since (an admin's !team) would send them back to the team they left; it's the fallback when the server doesn't
+        answer."""
+        kept = {p.id: p.team.lower() for p in state.players.values() if p.team}
+        try:
+            reply = await self.ctx.rcon(server).command("players", timeout=TEAMS_TIMEOUT)
+        except RconError:
+            return kept
+        rows = reply.data.get("players") if reply.ok and isinstance(reply.data, dict) else None
+        if not isinstance(rows, list):
+            return kept
+        return {str(row["id"]).lower(): str(row["team"]).lower() for row in rows
+                if isinstance(row, dict) and row.get("id") and row.get("team")}
 
     async def _respawn_move(self, server: str, respawn: Respawn, team: str) -> bool:
         """`team <ID> <team>` sent; False after telling the caller why not."""

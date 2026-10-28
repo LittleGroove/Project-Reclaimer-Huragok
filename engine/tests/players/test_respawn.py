@@ -131,3 +131,19 @@ def test_what_the_server_refuses_and_when_theres_no_round_or_no_teams(tmp_path: 
             assert moves(fake)[3:] == [[BRAVO, "red"], [BRAVO, "blue"]]
 
     run(scenario())
+
+
+def test_the_team_they_go_back_to_is_the_one_the_server_has_now(tmp_path: Path, run) -> None:
+    """Huragok's own list is up to 30 s old: someone moved since goes back to the team they're on now."""
+    async def scenario() -> None:
+        async with running(tmp_path) as (sup, fake, _):
+            await in_a_team_round(sup, fake)
+            next(e for e in fake.players if e["name"] == "Alice")["team"] = "Blue"  # moved a moment ago
+            assert sup.superintendent.states[SERVER].player_by_id(ALICE).team == "Red"
+            await fake.chat(ALICE, "Alice", "!respawn")
+            await answered(fake, 1)
+            await answered(fake, 2)
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice respawned on Blue team." in says(fake))
+            assert moves(fake) == [[ALICE, "red"], [ALICE, "blue"]]
+
+    run(scenario())

@@ -213,8 +213,10 @@ def known_cause(lines: list[str]) -> str:
 def warning_text(seconds: float, label: str, coming_back: bool) -> str:
     seconds = int(seconds)
     if seconds >= 60:
-        minutes = seconds // 60
+        minutes, rest = divmod(seconds, 60)
         when = f"{minutes} minute" + ("" if minutes == 1 else "s")
+        if rest and minutes < 10:  # a length of a person's own (!restartserver 90s): not "1 minute"
+            when += f" {rest} second" + ("" if rest == 1 else "s")
     else:
         when = f"{seconds} second" + ("" if seconds == 1 else "s")
     what = "Server restarting" if coming_back else "Server shutting down"

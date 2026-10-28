@@ -627,6 +627,13 @@ def test_an_admins_restart_warns_everyone_and_isnt_counted_as_automatic(world, r
     run(scenario())
 
 
+def test_a_countdown_of_a_persons_own_length_says_its_seconds_too() -> None:
+    assert warning_text(90, "lag", True) == "[o_O] PLEASE REMAIN CALM! Server restarting in 1 minute 30 seconds: lag."
+    assert warning_text(300, "lag", True) == "[o_O] PLEASE REMAIN CALM! Server restarting in 5 minutes: lag."
+    assert warning_text(61, "", False) == "[o_O] PLEASE REMAIN CALM! Server shutting down in 1 minute 1 second."
+    assert warning_text(605, "lag", True).endswith("in 10 minutes: lag.")  # a long one, to the minute
+
+
 def test_an_admins_own_countdown_warns_at_the_usual_steps_below_it(world, run) -> None:
     """!restartserver 7m: a countdown of that length, then the usual warn_seconds (here 10, 5, 2) below it; a length
     the watchdog gives warns only at its start."""
