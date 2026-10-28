@@ -96,6 +96,12 @@ before.
 by one that's gone could leave two of them both holding the folder. One at a time
 clears it now.
 
+- A ban (or an unban, an admin, a VPN allowance) the server couldn't save, because
+  something had its ban list open at that instant, was lost. Huragok sends it again a
+  moment later.
+- A player Vergil removed read why twice, Vergil's line and then the server's ban
+  reason. They read it once now.
+
 ## 0.5.0
 **Moderation you can rely on: every command picks the right player (names with spaces,
 players who share a name told apart and picked by number), mutes that last through

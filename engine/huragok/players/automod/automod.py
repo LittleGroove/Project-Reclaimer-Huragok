@@ -730,11 +730,8 @@ class AutoMod(Part):
             pending = not places
         else:  # a timed removal (a mute to follow it, perhaps), or a ban: the server's ban, for that long or for good
             where, who = places[0] if places else (server, player)
-            if who.number and not dry:
-                try:
-                    await self.ctx.tell(where, who, message)  # they may read it before the ban lands
-                except Exception:  # noqa: BLE001
-                    pass
+            # The message goes as the ban's reason, which the server tells them as they're removed (as a kick's and a
+            # mute's do): no tell of its own first, or they'd read it twice.
             # A mute that comes with a kick starts as they join again (Vergil's own mute list, kept by this row).
             action = await moderation.ban(where, who, step.kick or step.duration, message, by=actor, evidence=evidence,
                                           **send)

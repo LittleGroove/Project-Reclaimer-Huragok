@@ -22,6 +22,7 @@ import inspect
 import itertools
 import json
 import logging
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -45,6 +46,13 @@ REFUSED_RETRY = 600.0  # seconds before a refused password is tried again: a loc
 REFUSED_POLL = 5.0  # how often a refused client looks for a new password in the files
 REFUSED_PER_WINDOW = 2  # refusals in REFUSED_RETRY after which only the clock or a new password tries again
 LOCKOUT_WORDS = ("too many", "locked", "refusing", "try again", "minutes")  # a lockout, as the refusal says it
+# A change to the ban list the server couldn't save, in the program's words: "Ban by Alice failed: Could not save the
+# ban: Cannot replace bans.json: Access is denied." (a ban), "Could not save the ban list: …" (an unban, an admin, the
+# vote-kick immune list), "Could not save the allowance: …" (vpnallow). On Windows a file anything has open at that
+# instant can't be replaced (another program reading it, a backup, an antivirus), and the change is lost: tried again
+# after these waits, in seconds.
+SAVE_FAILED = re.compile(r"Could not save the (?:ban list|ban|allowance)", re.IGNORECASE)
+SAVE_RETRIES = (0.5, 1.5)
 # websockets 15+ reads the system's proxy settings for every connection; the console is never behind one.
 NO_PROXY: dict[str, Any] = {"proxy": None} if "proxy" in inspect.signature(connect).parameters else {}
 
@@ -333,7 +341,22 @@ class RconClient:
 
     async def command(self, command: str, *args: str, by: str | None = None,
                       timeout: float | None = None) -> Reply:
-        """Run one command. With args, `command` is the name alone and args its words."""
+        """Run one command. With args, `command` is the name alone and args its words. A change to the ban list the
+        server couldn't save (SAVE_FAILED) is sent again a moment later, twice at most: what's answered last counts."""
+        reply = await self._command(command, *args, by=by, timeout=timeout)
+        for wait in SAVE_RETRIES:
+            if reply.ok or not SAVE_FAILED.search(reply.text):
+                return reply
+            log.info("[%s] the server couldn't save its ban list for '%s' (%s); trying again in %.1f s", self.server.name,
+                     command, reply.text, wait)
+            await asyncio.sleep(wait)
+            reply = await self._command(command, *args, by=by, timeout=timeout)
+        if not reply.ok and SAVE_FAILED.search(reply.text):
+            log.warning("[%s] the server still couldn't save its ban list for '%s' after %d tries: %s", self.server.name,
+                        command, len(SAVE_RETRIES) + 1, reply.text)
+        return reply
+
+    async def _command(self, command: str, *args: str, by: str | None = None, timeout: float | None = None) -> Reply:
         ws = self._ws
         if ws is None:
             raise RconUnavailable(f"{self.server.name} isn't connected")

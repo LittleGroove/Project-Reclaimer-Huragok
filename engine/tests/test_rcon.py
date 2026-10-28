@@ -54,6 +54,41 @@ def test_signs_in_on_the_host_spot_runs_commands_and_relays_events(tmp_path: Pat
     run(scenario())
 
 
+def test_a_ban_list_change_the_server_couldnt_save_is_sent_again(tmp_path: Path, run, monkeypatch, caplog) -> None:
+    """On Windows a ban list anything has open can't be replaced: the server answers "Could not save the ban: Cannot
+    replace …", the change is lost, and a moment later it saves (the simulation, 27 October)."""
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(rcon, "SAVE_RETRIES", (0.01, 0.01))
+    failures = {"ban": 1, "unban": 3}
+    words = {"ban": "Ban by Alice failed: Could not save the ban: ", "unban": "Could not save the ban list: "}
+
+    def answer(message: dict[str, Any]) -> dict[str, Any]:
+        name = message["command"]
+        if failures[name]:
+            failures[name] -= 1
+            return {"ok": False, "text": words[name] + "Cannot replace D:/x/bans.json: Access is denied. (os error 5)"}
+        return {"ok": True, "text": f"Done: {name}"}
+
+    async def scenario() -> None:
+        async with FakeRcon() as fake:
+            fake.replies.update(ban=answer, unban=answer)
+            client, _ = _client(tmp_path, fake.port)
+            task = asyncio.ensure_future(client.run())
+            await wait_for(lambda: client.connected)
+            reply = await client.command("ban", BRAVO, "7d", by="Alice")
+            assert reply.ok and len(fake.named("ban")) == 2  # the second try saved it
+            assert "couldn't save its ban list for 'ban'" in caplog.text
+            reply = await client.command("unban", BRAVO)  # three failures: two tries again, and the last answer counts
+            assert not reply.ok and reply.text.startswith("Could not save the ban list") and len(fake.named("unban")) == 3
+            assert "still couldn't save its ban list for 'unban' after 3 tries" in caplog.text
+            fake.replies["mute"] = lambda m: {"ok": False, "text": "Bravo isn't on this server."}
+            assert not (await client.command("mute", BRAVO)).ok and len(fake.named("mute")) == 1  # any other refusal: once
+            client.stop()
+            await asyncio.wait_for(task, 3)
+
+    run(scenario())
+
+
 def _clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """rcon's monotonic clock, moved by hand; its Unix time stays real."""
     clock = [1000.0]

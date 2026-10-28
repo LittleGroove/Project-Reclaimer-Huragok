@@ -495,6 +495,8 @@ def test_the_ladder_in_a_game(tmp_path: Path, run) -> None:
             assert all(b["args"][0] == BRAVO and b["by"] == "Vergil" for b in bans)
             assert bans[0]["args"][2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 1 of 3): removed for "
                                           "1 hour. Next time: removed for 1 day.")
+            # Read once: the server tells them the ban's reason as they're removed, so Vergil sends no tell of it too.
+            assert not [t for t in tells_to(fake, BRAVO) if "That isn't allowed here" in t]
             # Everyone reads why (the server's own line says only what was done), the word never repeated either.
             assert [c["args"][0] for c in fake.named("say")][:2] == [
                 "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 1 of 3).",

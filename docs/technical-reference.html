@@ -1784,7 +1784,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li>The bus hands it to the command router (not a <code>!</code> line, so ignored) and to automod's queue.</li>
 <li>Automod skips admins and owners, normalises the text (case, accents, lookalikes, invisible characters, repeats) and matches it against every rule, joining it with the player's lines from the last 10 s to catch split words.</li>
 <li>On a match, and outside the 10 s strike cooldown, it counts the player's active strikes on that rule in SQLite and picks the step for this strike, for example the second offence: removed for 1 day.</li>
-<li>It tells the player why ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 of 3): removed for 1 day. Next time: removed for 7 days."), then calls <code>Moderation.ban</code> with duration <code>1d</code> and <code>by</code> Vergil, and once that went through, says to everyone on that server "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3)." A mute step calls <code>Moderation.mute</code> instead, on every server the player is on, with no separate notice: the server shows the player the reason.</li>
+<li>It calls <code>Moderation.ban</code> with duration <code>1d</code>, <code>by</code> Vergil and why as the reason ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 of 3): removed for 1 day. Next time: removed for 7 days."), which the server tells the player as they're removed (up to 0.5.0 Vergil told them first as well, so they read it twice), and once that went through, says to everyone on that server "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3)." A mute step calls <code>Moderation.mute</code> instead, on every server the player is on, with no separate notice: the server shows the player the reason.</li>
 <li>The ledger sends <code>ban &lt;player ID&gt; 1d &lt;message&gt;</code> over RCON, records the action, and emits <code>moderation.action</code>. The server writes <code>bans.json</code>, removes the player, and sends <code>rcon.ban</code>.</li>
 <li>Automod records the strike in <code>automod_strikes</code> and emits <code>automod.strike</code>.</li>
 <li>In dry run, steps 5 and 6 send nothing and every row is marked as a dry run.</li>
@@ -2913,6 +2913,12 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td><code>[rcon] command_timeout</code> (10 s)</td>
 <td><code>RconTimeout</code>; never resent, because it may have run</td>
 <td>Check the result by hand</td>
+</tr>
+<tr>
+<td>The server couldn't save its ban list (Windows: the file was open as it replaced it)</td>
+<td>The reply's words (<code>rcon.SAVE_FAILED</code>: "Could not save the ban: …", "Could not save the ban list: …", "Could not save the allowance: …")</td>
+<td>The change was lost, so <code>RconClient.command</code> sends it again after 0.5 s and 1.5 s (<code>SAVE_RETRIES</code>), logging each; the last answer counts, and a warning says when it still failed. Since 0.5.1 (the simulation's finding, 27 October)</td>
+<td>Whatever holds the file open, when it keeps failing</td>
 </tr>
 <tr>
 <td>The reader fell 256 events behind</td>
