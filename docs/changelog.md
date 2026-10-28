@@ -1,12 +1,12 @@
 # Changelog
 
 ## 0.5.1
-**Every line players read is the Superintendent's now, and Vergil mutes before it
-kicks.** Each opens with its face and one of its own phrases from Halo 3: ODST
-(`[>_<] CRIME DOESN'T PAY!`), then says what happened and why; everyone on the server
-reads why when Vergil acts. The word list's parts are now `words | mutes | kicks | ban |
-name`: your `automod.txt` is read the new way at once and rewritten in that order a
-couple of minutes after the start. Install it with U: your files read as they did.
+**Every line players read is the Superintendent's now, Vergil mutes before it kicks,
+and there are new commands.** Each line opens with its face and one of its own phrases
+from Halo 3: ODST (`[>_<] CRIME DOESN'T PAY!`). The word list's parts are now `words |
+mutes | kicks | ban | name`: your `automod.txt` is brought over by itself. New:
+`!novote` for vote spammers, `!respawn` for stuck players, and `!restartserver 7m` or
+`gameover`. Install it with U: your files read as they did.
 
 **The Superintendent is watching.** Every line Huragok sends players now opens with
 the Superintendent's face, as its cameras showed the squad (`[>_<]`, `[^_^]`…), and one
@@ -57,6 +57,40 @@ ban: `words | mutes | kicks | ban | name`. Your word list is brought over by its
   order had it, is refused with where it goes now. D → A asks about the mutes first.
 - **Of two lines one message trips,** the heavier next step counts: a mute, then a kick
   (a mute after it or not), then the ban.
+
+**`!novote` stops a player calling votes.** For vote spammers: `!novote Bravo 10m
+spamming votes` cancels every vote Bravo calls the moment it opens, and tells them
+why. They can still vote yes or no on everyone else's votes. Any time works (`30s`,
+`10m`, `2h`, `1d`, `2w`); with no time (or `perm`) it lasts until `!allowvote Bravo`.
+
+- For moderators and up. Everyone reads `[-_-] OBEY POSTED LIMITS! Mod took Bravo's
+  votes away for 10 minutes: spamming votes. Any vote they call is cancelled.`
+- It follows the player ID, so rejoining or a new name keeps it, and so do Huragok's
+  restarts. It's on every server, or only the one it was given on with
+  `[automod] across_servers = false`.
+- `!novotes` lists whose votes are away, numbered for `!allowvote @number`, and
+  `!whois` shows it under "Now".
+- Your `commands.toml` lists `!novote`, `!allowvote` and `!novotes` under
+  `[moderator]` a couple of minutes after the update starts.
+
+**`!respawn` for stuck players.** A player stuck in a wall or under the map types
+`!respawn` (with a reason if they like) and comes back to life on their own team;
+admins type `!respawn Bravo` for someone else. Everyone reads `[o_o] DETOUR! PROCEED
+WITH CAUTION! Bravo respawned on Red team: stuck in a wall.` The server has no kill
+command, so Huragok moves them to another team and straight back, as the game's admin
+menu does: team games during a round only, not a team's last player. Once a minute for
+your own.
+
+**`!restartserver` takes a time, or `gameover`.** `!restartserver 7m lag` counts
+down 7 minutes (up to an hour), with the usual warnings below it (5, 3 and 1
+minutes, 30 seconds). `!restartserver gameover lag` restarts once this game ends;
+everyone reads `[o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after
+this game: lag (requested by Alice).` Without either, it's the usual countdown, as
+before.
+
+- A restart a person plans for after the game (`gameover`, or the window's R) no
+  longer counts against `[restarts] restarts_per_hour`, the limit that catches
+  restart loops: like a restart now, it's a person's choice, not a loop.
 
 **Fixed:** three or more copies of Huragok started at the same moment over a lock left
 by one that's gone could leave two of them both holding the folder. One at a time

@@ -627,6 +627,57 @@ def test_an_admins_restart_warns_everyone_and_isnt_counted_as_automatic(world, r
     run(scenario())
 
 
+def test_an_admins_own_countdown_warns_at_the_usual_steps_below_it(world, run) -> None:
+    """!restartserver 7m: a countdown of that length, then the usual warn_seconds (here 10, 5, 2) below it; a length
+    the watchdog gives warns only at its start."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lifecycle = Lifecycle(fleet)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)
+        await lifecycle.restart(SERVER, reason="lag (requested by Admin)", by="Admin", manual=True, countdown=7)
+        assert manager.countdown.pending == [7.0, 5.0, 2.0]
+        await cycle(manager, clock)
+        assert client.says() == ["[o_O] PLEASE REMAIN CALM! Server restarting in 7 seconds."]
+        await cycle(manager, clock, 2.5)
+        assert client.says()[-1] == "[o_O] PLEASE REMAIN CALM! Server restarting in 5 seconds."
+        assert lifecycle.cancel(SERVER)
+        await lifecycle.restart(SERVER, reason="not responding", countdown=7)  # not a person's: no steps
+        assert manager.countdown.pending == [7.0]
+
+    run(scenario())
+
+
+def test_an_admins_restart_after_the_game_isnt_counted_as_automatic(world, run) -> None:
+    """!restartserver gameover: planned for the game's end, and once due a person's restart, like the window's R."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lifecycle = Lifecycle(fleet)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)
+        state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
+        manager.record.restart_times = [clock.now - 100 * i for i in range(1, 4)]  # the automatic budget used up
+        plan = await lifecycle.restart(SERVER, when="after_game", reason="broken map (requested by Admin)",
+                                       by="Admin", manual=True)
+        assert plan.manual and manager.phase == "running"
+        await asyncio.sleep(0.01)
+        assert client.says() == ["[o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after this game: "
+                                 "broken map (requested by Admin)."]
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Valhalla", "mode": "Slayer"}))
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "finished", "map": "Valhalla", "mode": "Slayer"}))
+        assert manager.phase == "countdown" and manager.countdown.manual
+        assert len(manager.record.restart_times) == 3
+        for _ in range(3):
+            await cycle(manager, clock, 2)
+        assert backend.stops == [SERVER]
+        await cycle(manager, clock, 1)
+        assert manager.phase in ("booting", "running") and backend.starts == [SERVER, SERVER]  # not faulted
+
+    run(scenario())
+
+
 def test_a_restart_now_replaces_one_planned_after_the_game(world, run) -> None:
     clock, settings, backend, fleet, manager, client, state, seen = world
     lifecycle = Lifecycle(fleet)

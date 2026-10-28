@@ -1386,9 +1386,39 @@ def test_an_admin_restarts_the_server_with_the_usual_countdown(tmp_path: Path, r
             await wait_for(lambda: len(lifecycle.asked) == 2)
             assert lifecycle.asked[1]["reason"] == "the server is lagging (requested by Admin)"
 
+            # A time first: a countdown that long (the host's call, 27 October).
+            await fake.chat(ADMIN, "Admin", "!restartserver 7m lag spikes")
+            await wait_for(lambda: _told(fake, ADMIN, "Restarting in 7 minutes: everyone on is warned along the way."))
+            assert lifecycle.asked[2] == {"server": SERVER, "when": "now", "reason": "lag spikes (requested by Admin)",
+                                          "by": "Admin", "manual": True, "countdown": 420.0}
+            await fake.chat(ADMIN, "Admin", "!restartserver 90S")
+            await wait_for(lambda: len(lifecycle.asked) == 4)
+            assert lifecycle.asked[3]["countdown"] == 90.0 and lifecycle.asked[3]["reason"] == "requested by Admin"
+            for line in ("!restartserver 2h lag", "!restartserver 0m"):  # longer than an hour; nothing
+                await fake.chat(ADMIN, "Admin", line)
+                await wait_for(lambda: len([t for t in tells_to(fake, ADMIN) if t.startswith("Use: !restartserver "
+                                                                                             "[time | gameover]")])
+                               == ("0m" in line) + 1)
+            assert len(lifecycle.asked) == 4
+
+            # gameover: once this game ends.
+            await fake.chat(ADMIN, "Admin", "!restartserver gameover the map is broken")
+            await wait_for(lambda: _told(fake, ADMIN, "Restarting once this game ends, with a few seconds' notice"))
+            assert lifecycle.asked[4] == {"server": SERVER, "when": "after_game", "by": "Admin", "manual": True,
+                                          "reason": "the map is broken (requested by Admin)"}
+            await fake.chat(ADMIN, "Admin", "!restartserver GameOver")
+            await wait_for(lambda: len(lifecycle.asked) == 6)
+            assert lifecycle.asked[5]["when"] == "after_game" and lifecycle.asked[5]["reason"] == "requested by Admin"
+
             lifecycle.busy.add(SERVER)  # a daily restart's countdown, say
             await fake.chat(OWNER, "Owner", "!restartserver")
             await wait_for(lambda: _told(fake, OWNER, "A countdown or a stop was already under way: it now ends in "
                                                       "a restart."))
+            await fake.chat(OWNER, "Owner", "!restartserver 7m")
+            await wait_for(lambda: _told(fake, OWNER, "it now ends in a restart, at its own time."))
+            await fake.chat(OWNER, "Owner", "!restartserver gameover")
+            await wait_for(lambda: _told(fake, OWNER, "A countdown, stop or start is already under way here: "
+                                                      "!restartserver alone makes a countdown end in a restart."))
+            assert len(lifecycle.asked) == 8
 
     run(scenario())

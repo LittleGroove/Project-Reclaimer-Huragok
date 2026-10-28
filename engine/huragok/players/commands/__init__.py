@@ -15,8 +15,9 @@ a ban takes it away). lists.py lists the bans and kicks, numbered for !unban and
 history.py puts every kick, mute and ban in the ledger, however it was given (! or / or the console), and !whois
 reads a player's back as a rap sheet. said.py keeps every player's chat lines 30 days, for !said. across.py takes kicks and bans to every server
 ([automod] across_servers). votekicks.py has no commands: it keeps everyone
-commands.toml lists safe from votes to kick. toggles.py switches a server's voice and chat (dedicated.toml),
-for a while or for good.
+commands.toml lists safe from votes to kick. novotes.py stops a player calling votes (!novote: their votes are
+cancelled as they're called). respawn.py respawns a stuck player (!respawn: a move to another team and back).
+toggles.py switches a server's voice and chat (dedicated.toml), for a while or for good.
 Finding the player a command names, with its guards, is targets.py's.
 """
 
@@ -27,6 +28,8 @@ from .across import AcrossServers
 from .history import HistoryCommands
 from .lists import ListCommands
 from .moderation import ModerationCommands
+from .novotes import NoVotes
+from .respawn import RespawnCommands
 from .players import PlayerCommands
 from .roles import RoleCommands
 from .said import SaidCommands
@@ -37,7 +40,7 @@ from .votekicks import VoteKicks
 
 
 class Commands(PlayerCommands, ModerationCommands, ListCommands, HistoryCommands, AcrossServers, SaidCommands,
-               RoleCommands, ServerCommands, SettingToggles, VoteKicks):
+               RoleCommands, ServerCommands, SettingToggles, VoteKicks, NoVotes, RespawnCommands):
     persona = VERGIL
     name = "commands"
     description = "In-game commands, each for the roles commands.toml gives it"

@@ -128,6 +128,31 @@ out of `commands.toml` and they come off the list again.
 - Moderators and up can still kick, mute and ban members with their commands, as
   their role allows: the protection is from votes only.
 
+## Players who spam votes
+`!novote Bravo 10m spamming votes` takes Bravo's votes away: any vote they call (to
+kick, end the round or the game, shuffle) is cancelled the moment it opens, and they
+read `[-_-] OBEY POSTED LIMITS! Your vote was cancelled: Mod took your votes away for
+another 9 minutes (spamming votes). You can still vote on other players' votes.`
+Everyone reads `[-_-] OBEY POSTED LIMITS! Mod took Bravo's votes away for 10 minutes:
+spamming votes. Any vote they call is cancelled.` when it's given.
+
+- **Only calling votes is taken away.** They still answer everyone else's votes
+  (F5, F6, `!yes`, `!no`).
+- **Any time works** (`30s`, `10m`, `2h`, `1d`, `2w`). With no time (or `perm`) it
+  lasts until a moderator gives their votes back with `!allowvote Bravo`. `!novote`
+  again with a new time replaces the old one.
+- **It follows the player ID,** so leaving, rejoining or changing name keeps it, and
+  it's kept through Huragok's restarts. Someone who just left can be picked the way
+  `!mute` picks them (`@number`); it applies from when they're back.
+- **Every server,** like Huragok's other moderation, or only the server it was given
+  on with `[automod] across_servers = false`.
+- `!novotes` lists whose votes are away, numbered for `!allowvote @number`; `!whois`
+  shows it under "Now".
+- The server has no setting of its own to stop one player calling votes, so Vergil
+  cancels each one as it opens: players see the server's own cancel line for a moment.
+  When two players have the caller's name, the vote is left alone: it could be the
+  other one's.
+
 ## Using commands
 - Commands are ordinary chat: **everyone in that chat sees the line you typed.**
   Answers come back privately. That's also why there's no `!password`.
@@ -218,6 +243,7 @@ out of `commands.toml` and they come off the list again.
 | --- | --- | --- |
 | `!help [command]` | everyone | The commands you can use, or how to use one |
 | `!strikes [player]` | everyone | Your automod strikes; moderators can name anyone |
+| `!respawn [reason]`, `!respawn <player> [reason]` | everyone; admins for someone else | Stuck? Respawns you on your own team: Huragok moves you to another team and straight back, as the game's admin menu does (the server has no kill command). Everyone reads `[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Red team: stuck in a wall.` Team games during a round only: not free-for-all, and not a team's last player (the server refuses, and you read why). Once a minute for your own; admins aren't held to it, and name a player to respawn them (not someone of their own role or above). Not yet tried with players: whether the move back is a second respawn, and whether it counts as a death |
 | `!players [name]` | moderator | Who's on, with `#numbers`, player IDs, team, time on and roles; `!players nate` lists only those with "nate" in their name (a busy server has more than one answer shows) |
 | `!whois <player \| ID> [lines]` | moderator | Their whole record, from every server: where they are, other names, what's on them now (a mute, a kick keeping them out, their bans as each server's list has them), every kick, mute, ban and warning (by `!`, `/`, Vergil, a vote or the console, who, why, on which server), strikes on each line |
 | `!warn <player> [reason]` | moderator | A private warning, recorded |
@@ -227,6 +253,9 @@ out of `commands.toml` and they come off the list again.
 | `!pardon <@number \| name \| ID \| IP>` | moderator | Let a kicked player back in now; a `!kick`'s keeps them off every server, so it's pardoned where it was given and they can join every server again; `@number` from `!kicks` |
 | `!kicks` | moderator | Who's been kicked here lately (two hours, since Huragok started), and who a `!kick` on another server keeps off this one, with who, why and how long they're out; numbered for `!pardon` |
 | `!mutes` | moderator | Who's muted: Vergil's list (strikes', moderators', admins') and the server's own; numbered for `!unmute` |
+| `!novote <player> [time \| perm] [reason]` | moderator | They can't call votes: any vote they call is cancelled as it opens, and they're told why. They can still vote on other players' votes. No time means until `!allowvote`; see [Players who spam votes](#players-who-spam-votes) |
+| `!allowvote <player \| @number>` | moderator | Give their votes back; `@number` from `!novotes` |
+| `!novotes` | moderator | Whose votes are away, with who, why and how long; numbered for `!allowvote` |
 | `!said <player> [lines]` | moderator | The last lines (5, up to 15) they typed in chat, on any server; kept 30 days |
 | `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do; one line in full |
 | `!bannames [text]` | moderator | The banned names (`names.txt`), numbered for `!unbanname` |
@@ -253,7 +282,7 @@ out of `commands.toml` and they come off the list again.
 | `!shuffle`, `!team <player> <color>`, `!teamcount [n]` | admin | Teams |
 | `!startvote`, `!cancelvote`, `!passvote` | admin | Votes |
 | `!maxping [ms \| off]`, `!servername [name]` | admin | Until the server restarts |
-| `!restartserver [reason]` | admin | Restart this server, as the window's R does when players are on: everyone reads the usual countdown (`[restarts] warn_seconds`, 5 minutes by default) with the reason and who asked ("Server restarting in 5 minutes: lag (requested by Alice)."), and it goes at once if everyone leaves. A countdown already under way (the daily restart's, a stop) keeps its time and ends in a restart. Only the server it's typed on. For a server running poorly that needs a fresh start |
+| `!restartserver [time \| gameover] [reason]` | admin | Restart this server, as the window's R does when players are on: everyone reads the usual countdown (`[restarts] warn_seconds`, 5 minutes by default) with the reason and who asked ("Server restarting in 5 minutes: lag (requested by Alice)."), and it goes at once if everyone leaves. **A time first** (`!restartserver 7m lag`, up to `60m`) counts down that long instead, with the usual warnings below it (5, 3 and 1 minutes, 30 seconds). **`gameover`** (`!restartserver gameover lag`) restarts once this game ends, a few seconds after (`[restarts] after_game_seconds`); everyone reads "This server restarts after this game: lag (requested by Alice)." Typed in the lobby, it's the game about to start; a game still going after 30 minutes gets the usual countdown. A countdown already under way (the daily restart's, a stop) keeps its time and ends in a restart. Only the server it's typed on. For a server running poorly that needs a fresh start |
 | `!toggleglobal [on \| off] [time]` | admin | Global voice (the V key: everyone hears) on or off, on this server only. Alone it switches it over and it stays; `on` or `off` sets it. With a time (`30s`, `10m`, `2h`, `1d`) it switches back once that's up, either way: `!toggleglobal 10m` turns it off for 10 minutes, or on for 10 minutes if it was off. Written to the server's own block in `dedicated.toml`, which the server applies within seconds: no restart, nobody dropped. Switched back by hand to what `[defaults]` gives, a key only the toggles wrote comes out again, so a later change to `[defaults]` reaches the server (one you wrote there stays) |
 | `!toggleteam [on \| off] [time]` | admin | Team voice (the B key: teammates hear), the same way |
 | `!toggleproxy [on \| off] [time]` | admin | Proximity voice (the N key: players nearby hear), the same way |

@@ -40,4 +40,12 @@ MIGRATIONS = [
         server TEXT NOT NULL, key TEXT NOT NULL, had_own INTEGER NOT NULL, time REAL NOT NULL,
         PRIMARY KEY (server, key));
     """,
+    # 6 (0.5.1): a player kept from calling votes (novotes.py: !novote Bravo 10m), by player ID; `until` None is until
+    # someone gives them back (!allowvote: `lifted`); `server` it was given on (all of them, with across_servers).
+    """
+    CREATE TABLE commands_no_votes (
+        number INTEGER PRIMARY KEY, time REAL NOT NULL, target TEXT NOT NULL, name TEXT, reason TEXT, by TEXT,
+        server TEXT, until REAL, length TEXT, lifted REAL, lifted_by TEXT);
+    CREATE INDEX commands_no_votes_target ON commands_no_votes (target);
+    """,
 ]

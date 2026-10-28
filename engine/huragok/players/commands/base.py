@@ -135,6 +135,12 @@ class CommandsBase(Part):
         !bans says "every server". One taken off Huragok's list later stays off (never imported again)."""
         raise NotImplementedError("AcrossServers's")
 
+    # NoVotes (novotes.py)
+
+    def _no_vote_now(self, player_id: str, now: float) -> str:
+        """For !whois's Now: "can't call votes, 8m more (by Mod: spam)", or ""."""
+        raise NotImplementedError("NoVotes's")
+
     # ListCommands (lists.py)
 
     async def _read_bans(self, server: str) -> tuple[list[dict[str, Any]] | None, str]:

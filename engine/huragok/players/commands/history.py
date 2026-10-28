@@ -233,6 +233,7 @@ class HistoryCommands(CommandsBase):
                 how = "" if kick.by in ("a vote", "the server") else "/kick "
                 bits.append(f"kicked from {kick.server}, out {left} more ({how}by {kick.by})")
         bits += await self._whois_bans(player_id, now)
+        bits += [no_votes] if (no_votes := self._no_vote_now(player_id, now)) else []
         return " · ".join(bits)
 
     async def _whois_bans(self, player_id: str, now: float) -> list[str]:

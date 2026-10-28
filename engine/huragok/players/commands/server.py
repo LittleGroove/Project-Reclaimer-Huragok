@@ -8,9 +8,15 @@ console command, are toggles.py's.
 from __future__ import annotations
 
 from ...core.part import command
+from ...core.text import describe_time, seconds_of
 from ...servers.backends import LifecycleError, LifecycleUnavailable
+from ...servers.server import AFTER_GAME_LIMIT
 from ..router import CommandCall
+from ..targets import TIME
 from .base import CommandsBase
+
+LONGEST_COUNTDOWN = 3600  # seconds: a countdown holds everything else up (updates, the daily restart) while it runs
+GAME_OVER = "gameover"
 
 
 class ServerCommands(CommandsBase):
@@ -101,23 +107,51 @@ class ServerCommands(CommandsBase):
     async def servername(self, call: CommandCall) -> None:
         await self._line(call, "servername")
 
-    @command("restartserver", usage="[reason]", help="Restart this server, after the usual countdown for anyone on",
-             role="admin")
+    @command("restartserver", usage="[time | gameover] [reason]",
+             help="Restart this server, after the usual countdown for anyone on; a time first (7m) counts down that "
+                  "long, gameover waits for this game to end", role="admin")
     async def restartserver(self, call: CommandCall) -> None:
         # The window's R with "warn them first" (the host's call, 25 October): there's someone on, so the server's
         # [restarts] warn_seconds countdown, said in game; straight away only once everyone has left. Players read
-        # why and who asked. Only the server it's typed on.
+        # why and who asked. Only the server it's typed on. The host's calls of 27 October: a time first counts down
+        # that long instead (warned at the usual steps below it too), and gameover restarts once this game ends.
+        text = call.text.strip()
+        first = text.split(maxsplit=1)[0].lower() if text else ""
+        length = first if TIME.fullmatch(first) else None
+        gameover = first == GAME_OVER
+        if length or gameover:
+            text = text[len(first):].strip()
+        if length and not 0 < seconds_of(length) <= LONGEST_COUNTDOWN:
+            await call.reply(f"Use: {call.prefix}restartserver [time | {GAME_OVER}] [reason]: a time from 1s to "
+                             f"{LONGEST_COUNTDOWN // 60}m, such as 7m (a countdown holds updates and the daily restart "
+                             f"up), or {GAME_OVER} for when this game ends.")
+            return
         lifecycle = self.ctx.lifecycle
         under_way = call.server in lifecycle.busy
+        if gameover and under_way:
+            await call.reply(f"A countdown, stop or start is already under way here: {call.prefix}restartserver alone "
+                             "makes a countdown end in a restart.")
+            return
         asked = f"requested by {call.player.name}"
-        reason = f"{call.text.strip()} ({asked})" if call.text.strip() else asked
+        reason = f"{text} ({asked})" if text else asked
+        options: dict[str, object] = {"countdown": float(seconds_of(length))} if length else {}
         try:
-            await lifecycle.restart(call.server, when="now", reason=reason, by=call.player.name, manual=True)
+            await lifecycle.restart(call.server, when="after_game" if gameover else "now", reason=reason,
+                                    by=call.player.name, manual=True, **options)
         except (LifecycleError, LifecycleUnavailable) as error:
             await call.reply(f"Couldn't: {error}")
             return
-        await call.reply("A countdown or a stop was already under way: it now ends in a restart." if under_way
-                         else "Restarting: everyone on gets the usual countdown first.")
+        if under_way:
+            await call.reply("A countdown or a stop was already under way: it now ends in a restart"
+                             + (", at its own time." if length else "."))
+        elif gameover:
+            await call.reply(f"Restarting once this game ends, with a few seconds' notice; everyone on has been told. "
+                             f"A game still going in {int(AFTER_GAME_LIMIT // 60)} minutes gets the usual countdown "
+                             "instead.")
+        elif length:
+            await call.reply(f"Restarting in {describe_time(length)}: everyone on is warned along the way.")
+        else:
+            await call.reply("Restarting: everyone on gets the usual countdown first.")
 
     @command("reload", help="Apply edits to dedicated.toml now", role="owner")
     async def reload(self, call: CommandCall) -> None:

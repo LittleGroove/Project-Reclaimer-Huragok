@@ -382,9 +382,9 @@ commands; every role can also use the commands of the roles before it:
 
 | Role | Who | Starts with |
 | --- | --- | --- |
-| `everyone` | every player | `!help` `!strikes` |
+| `everyone` | every player | `!help` `!strikes` `!respawn` |
 | `member` | the player IDs you list | no commands of their own yet: no vote can kick them |
-| `moderator` | the player IDs you list | `!players` `!whois` `!said` `!warn` `!mute` `!unmute` `!mutes` `!kick` `!kicks` `!pardon` `!strike` `!rules` `!bannames` `!promote` `!demote` `!roles` `!health` |
+| `moderator` | the player IDs you list | `!players` `!whois` `!said` `!warn` `!mute` `!unmute` `!mutes` `!kick` `!kicks` `!pardon` `!novote` `!allowvote` `!novotes` `!strike` `!rules` `!bannames` `!promote` `!demote` `!roles` `!health` |
 | `admin` | the server's own admins (`admins` in `dedicated.toml`, or `!admin add` in game) | `!ban` `!unban` `!bans` `!say` `!map` `!mode` `!load` `!nextmap` `!endgame` `!endround` `!shuffle` `!team` `!teamcount` `!maxping` `!startvote` `!cancelvote` `!passvote` `!servername` `!restartserver` `!toggleglobal` `!toggleteam` `!toggleproxy` `!togglevoice` `!banword` `!unbanword` `!changebanword` `!banname` `!unbanname` `!pardonplayer` |
 | `owner` | the player IDs you list (you) | `!admin` `!reload` |
 

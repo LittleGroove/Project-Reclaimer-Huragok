@@ -762,7 +762,8 @@
      "New steps for a line of the word list: its mutes, kicks and ban, as !banword takes them"
     ],
     "restartserver": [
-     "Restart this server, after the usual countdown for anyone on"
+     "Restart this server, after the usual countdown for anyone on",
+     "Restart this server, after the usual countdown for anyone on; a time first (7m) counts down that long, gameover waits for this game to end"
     ],
     "toggleglobal": [
      "Global voice (V, everyone hears) on or off on this server; with a time (10m, 2h) it switches back once that's up"
@@ -778,6 +779,18 @@
     ],
     "unbanword": [
      "Take a word off automod.txt (a line left with no words goes too)"
+    ],
+    "allowvote": [
+     "Give a player their votes back after !novote"
+    ],
+    "novote": [
+     "They can't call votes: any vote they call is cancelled at once (they can still vote on others'), e.g. !novote Bravo 10m spamming votes; no time means until !allowvote"
+    ],
+    "novotes": [
+     "Who can't call votes now (!novote), with who, why and how long; @numbers for !allowvote"
+    ],
+    "respawn": [
+     "Stuck? Respawn yourself (a team game, during a round); admins name a player to respawn them"
     ]
    }
   },

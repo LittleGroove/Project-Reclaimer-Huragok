@@ -180,6 +180,7 @@ class PlannedRestart:
     requested: float = field(default_factory=time.time)  # when it was asked for (Unix seconds)
     countdown: float | None = None  # seconds of notice once it's due; None: the after_game setting
     since: float = field(default_factory=time.monotonic)  # the same, monotonic: how long it has waited
+    manual: bool = False  # a person asked (!restartserver gameover): not counted against restarts_per_hour
 
 
 def since_start(lines: list[str]) -> list[str]:
@@ -1006,9 +1007,14 @@ class ServerManager:
         self._set_phase("launch")
 
     def _begin_countdown(self, reason: str, *, coming_back: bool, manual: bool, by: str, immediate: bool = False,
-                         seconds: float | None = None) -> None:
+                         seconds: float | None = None, steps: bool = False) -> None:
+        """`seconds`: a countdown of that length, warned at its start and 10 s before; with `steps` (a person's own
+        length: !restartserver 7m), at its start and then at the usual warn_seconds below it."""
+        usual = sorted({float(s) for s in self.setting("warn_seconds") if float(s) > 0}, reverse=True)
         if seconds is None:
-            rungs = sorted({float(s) for s in self.setting("warn_seconds") if float(s) > 0}, reverse=True)
+            rungs = usual
+        elif steps:
+            rungs = sorted({float(seconds), *(s for s in usual if s < float(seconds))}, reverse=True)
         else:
             rungs = sorted({s for s in (float(seconds), 10.0) if 0 < s <= float(seconds)}, reverse=True)
         countdown = Countdown(reason, coming_back, manual, by, rungs, None)
@@ -1116,9 +1122,9 @@ class ServerManager:
 
     # Planned restarts (after this game, when empty) ----------------------------------------------
 
-    def plan(self, when: str, reason: str, by: str, countdown: float | None) -> PlannedRestart:
+    def plan(self, when: str, reason: str, by: str, countdown: float | None, *, manual: bool = False) -> PlannedRestart:
         plan = PlannedRestart(self.name, when, reason, by, requested=time.time(), countdown=countdown,
-                              since=time.monotonic())
+                              since=time.monotonic(), manual=manual)
         self.planned = plan
         self.record.wanted = "running"
         self._save()
@@ -1163,7 +1169,7 @@ class ServerManager:
             return
         seconds = None if use_ladder else (plan.countdown if plan.countdown is not None
                                            else float(self.setting("after_game_seconds")))
-        self._begin_countdown(plan.reason, coming_back=True, manual=False, by=plan.by,
+        self._begin_countdown(plan.reason, coming_back=True, manual=plan.manual, by=plan.by,
                               immediate=seconds is not None and seconds <= 0, seconds=seconds)
 
     # What a person asks for ----------------------------------------------------------------------
@@ -1265,7 +1271,7 @@ class ServerManager:
         if when != "now":
             if self.phase not in ("running", "external"):
                 return Result(False, f"it isn't running ({self.phase})")
-            self.plan(when, reason, by, countdown)
+            self.plan(when, reason, by, countdown, manual=manual)
             return Result(True, f"restart planned {when.replace('_', ' ')}")
         if self.planned is not None and self.phase in ("running", "external", "countdown"):
             log.info("[%s] the restart planned %s is now a restart now", self.name, self.planned.when.replace("_", " "))
@@ -1276,7 +1282,7 @@ class ServerManager:
         if phase in ("running", "external"):
             self._begin_countdown(reason or ("manual restart" if manual else ""), coming_back=True, manual=manual,
                                   by=by, immediate=immediate or (countdown is not None and countdown <= 0),
-                                  seconds=countdown if countdown else None)
+                                  seconds=countdown if countdown else None, steps=manual)
             return Result(True, "restarting now" if self.countdown is None or self.countdown.step == "go"
                           else "restarting (warning players first)")
         if phase == "countdown" and self.countdown:

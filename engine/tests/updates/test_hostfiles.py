@@ -40,8 +40,8 @@ COMMANDS_0_4_0 = {c for section in tomllib.loads((HOST_0_4_0 / "commands.toml").
 
 # In-game commands since 0.4.0, each listed in a host's commands.toml under its default role once the new version
 # has stayed up.
-NEW_COMMANDS = {"banall", "bannames", "bans", "banword", "changebanword", "kicks", "mutes", "restartserver", "rules",
-                "said", "toggleglobal", "toggleproxy", "toggleteam", "togglevoice",
+NEW_COMMANDS = {"allowvote", "banall", "bannames", "bans", "banword", "changebanword", "kicks", "mutes", "novote",
+                "novotes", "respawn", "restartserver", "rules", "said", "toggleglobal", "toggleproxy", "toggleteam", "togglevoice",
                 "unbanword"}
 
 
