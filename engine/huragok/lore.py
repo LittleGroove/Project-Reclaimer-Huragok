@@ -75,7 +75,7 @@ VISR = (
 # as "part.<name>". The first match wins, by whole dotted names.
 SPEAKERS: tuple[tuple[str, Persona], ...] = (
     ("part.automod", VERGIL), ("part.commands", VERGIL), ("part.messages", VERGIL),
-    ("part.watchdog", SUPERINTENDENT), ("part.eventlog", SUPERINTENDENT),
+    ("part.watchdog", SUPERINTENDENT), ("part.eventlog", SUPERINTENDENT), ("part.tempdiscord", SUPERINTENDENT),
     ("players", VERGIL), ("vergil", VERGIL),
     ("servers", SUPERINTENDENT), ("superintendent", SUPERINTENDENT), ("rcon", SUPERINTENDENT),
     ("core.runner", SUPERINTENDENT), ("core.mailbox", SUPERINTENDENT), ("core.events", SUPERINTENDENT),

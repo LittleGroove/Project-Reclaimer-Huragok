@@ -24,6 +24,7 @@ On top of them run the **parts**, each belonging to one named part (its `persona
 | `messages` | [players/messages](../engine/huragok/players/messages) | `intervalmessages.txt` (Huragok's folder and each server's) | `[Server]` | Interval messages. Always on; no messages until the host adds some |
 | `watchdog` | [servers/watchdog.py](../engine/huragok/servers/watchdog.py) | `[watchdog]` | the Superintendent (`SUPT`) | Restarts a server that died, lets nobody in or got stuck; notices a slow one. Each case is watch, act or actnow |
 | `eventlog` | [servers/eventlog.py](../engine/huragok/servers/eventlog.py) | `[eventlog]` | the Superintendent (`SUPT`) | Every event as JSON |
+| `tempdiscord` | [servers/tempdiscord.py](../engine/huragok/servers/tempdiscord.py), [servers/statsrelay.py](../engine/huragok/servers/statsrelay.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | 0.5.2 until 0.6.0: the record the Discord bot and players' stats are built from, and a copy of every stats report each server sends. 0.6.0 takes it out |
 
 Parts are a way to keep the code apart, not something hosts install: everything
 ships together, and new work comes as a pull request. [parts.py](../engine/huragok/parts.py)

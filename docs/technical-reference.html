@@ -1221,6 +1221,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
     console-&lt;slug&gt;.log           each server process's own output
     faulted-&lt;slug&gt;.txt           why a server was given up on, with its last 200 console lines
     events/                      eventlog output, one JSON-lines file per UTC day (off by default)
+    temp-discord/                0.5.2 until 0.6.0: the record for the Discord bot and stats (always on; nothing private);
+                                 stats-reports/ every stats report a server sent and the answer
 </code></pre>
 <h3 id="how-servers-are-found">How servers are found</h3>
 <ul>
@@ -1830,6 +1832,13 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>No</td>
 <td>—</td>
 <td>—</td>
+</tr>
+<tr>
+<td><code>tempdiscord</code> (0.5.2 until 0.6.0)</td>
+<td>None: no section, nothing to set</td>
+<td>Always (0.6.0 takes it out)</td>
+<td>—</td>
+<td>— (writes <code>logs/temp-discord/</code>: every event, <code>players</code> at each phase and every 15 s while a game is on, <code>status</code> at each phase, kept 30 days; no IPs or devices, player IDs as stand-ins made with <code>records/temp-discord.key</code>, chat as its length) and <code>logs/temp-discord/stats-reports/</code> (every stats report and the service's answer, kept). <code>servers/statsrelay.py</code> points every server's <code>stats_server</code> at 127.0.0.1 (a port of its own in 45600-45999, where to start chosen by Huragok's folder, kept in <code>records/temp-stats-capture.json</code>) from its next start, once it knows the real service (the server's own value, or <code>Stats reporting to</code> in its server.log, also as it starts); passes each POST to the real service byte for byte; puts <code>stats_server</code> back as Huragok stops; steps aside for good for a server whose reports the service turned down twice in a row (a 4xx); leaves <code>"off"</code> alone</td>
 </tr>
 <tr>
 <td><code>messages</code></td>

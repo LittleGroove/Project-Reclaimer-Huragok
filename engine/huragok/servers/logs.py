@@ -75,6 +75,23 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # A player's vote the server turned down as they called it: "Bravo could not call a vote: Alice can't be
     # vote-kicked on this server." (or another vote is under way, their last one failed…).
     ("log.vote_refused", re.compile(r"^(?P<caller>.+?) could not call a vote: (?P<reason>.+?)$")),
+    # Finished games and the stats service (players' ranks and service records): where the server reports, each
+    # report, each player's rank as the service gives it back, and what went wrong. A game's own flow: the countdown,
+    # the engine's match report, a game or round ended early, a team change, a slot's time.
+    ("log.stats_reporting", re.compile(r"^Stats reporting to (?P<url>\S+?); server key (?P<key>\S+)")),
+    ("log.stats_problem", re.compile(
+        r"^(?P<text>Stats (?:report(?:ing)? (?:skipped|abandoned|attempt|not sent)|service refused"
+        r"|recorded; receipt unreadable).*?)\.?$")),
+    ("log.stats_report", re.compile(r"^Stats report: (?P<text>.+?)\.?$")),
+    ("log.stats_recorded", re.compile(
+        r"^Stats recorded: (?P<name>.+) is (?P<rank>.+?) grade (?P<grade>\d+) \((?P<exp>\d+) EXP, skill "
+        r"(?P<skill>\d+)\)")),
+    ("log.match_report", re.compile(r"^Host shell received a native match report(?P<text>.*?)\.?$")),
+    ("log.countdown", re.compile(
+        r"^Game countdown (?P<what>started|finished|cancelled)(?:: (?P<seconds>\d+) seconds? \((?P<kind>[^)]*)\))?")),
+    ("log.early_end", re.compile(r"^Early end: (?P<text>.+?)\.?$")),
+    ("log.team_change", re.compile(r"^Team change made: (?P<text>.+?)$")),
+    ("log.player_time", re.compile(r"^Shell player-time notification: slot=(?P<slot>\d+), seconds=(?P<seconds>[\d.]+)")),
 ]
 
 # server.log: what the program says about mods and content it couldn't use, as log.mod_problem events (kind, text).

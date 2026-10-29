@@ -4,6 +4,7 @@
   automod    the word list, automod.txt: removes players for the words on it
   watchdog   notices a struggling server and restarts it at a good moment
   eventlog   every event as JSON, to see what the server sends
+  tempdiscord  temporary (0.5.2 until 0.6.0): what the Discord bot and players' stats will need (always on)
   messages   interval messages, from intervalmessages.txt: for every server, and each server's own (always on)
 
 The parts with settings each have a section in settings.toml ([automod]…). To
@@ -24,12 +25,13 @@ from .players.automod import AutoMod
 from .players.commands import Commands
 from .players.messages import Messages
 from .servers.eventlog import EventLog
+from .servers.tempdiscord import TempDiscord
 from .servers.watchdog import Watchdog
 
 if TYPE_CHECKING:
     from .core.settings import Settings
 
-PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages)}
+PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages, TempDiscord)}
 
 
 def config_problem(settings: Settings, name: str, cls: Any) -> str | None:

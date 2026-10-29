@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.2
+**Huragok keeps a record for 0.6.0's Discord bot and players' stats.** While people
+play, it writes down what your servers send (every kill, each game's start and end, the
+players' totals, the report each game sends the stats service) in `logs/temp-discord`,
+for whoever builds 0.6.0. Nothing in it is private: no IP addresses, player IDs replaced
+by stand-ins, chat as its length only. Always on until 0.6.0; send that folder when asked.
+Install it with U: your files read as they did.
+
+- **What's in it:** `logs/temp-discord/temp-discord-<day>.jsonl` (a file per UTC day,
+  kept 30 days): every event Huragok sees, the console's `players` reply (each player's
+  team, score, kills, deaths, assists, betrayals, suicides, engine number and service
+  tag) at each phase of a game and every 15 seconds while one is on, and `status` at each
+  phase. Player IDs become `P-` and ten letters, worked out with a key in
+  `records/temp-discord.key` that stays on your machine.
+- **The stats reports, in their own folder:** after each finished game a server reports
+  it to Project Reclaimer's stats service, which gives back each player's rank. Huragok
+  now stands in the middle: the report is passed on exactly as the server sent it and the
+  service's answer passed back (players' ranks are recorded as before), and a copy of
+  both goes in `logs/temp-discord/stats-reports/` (a file per day, kept until 0.6.0). It
+  starts with each server's next start, once Huragok knows where that server reports (its
+  `dedicated.toml`, or the server saying so in `server.log` as it starts). Huragok points
+  each server's `stats_server` at itself while it runs and puts it back as it stops, so a
+  server restarted while Huragok is away reports straight to the service. A server set to
+  `"off"` is left alone. If the service ever turns down two reports in a row that came
+  through Huragok, Huragok steps aside for that server for good: ranks come first.
+- **New lines Huragok reads in server.log:** where a server reports finished games
+  (`Stats reporting to …`), each report, each player's rank as the stats service gives it
+  back (`Stats recorded: … is Sergeant grade 2 (37 EXP, skill 21)`), what went wrong with
+  a report, game countdowns, an early end, team changes and the engine's match report.
+- **Nothing to set:** no switches. 0.6.0 takes all of this out again once it's built on
+  what this finds.
+
 ## 0.5.1
 **Every line players read is the Superintendent's now, Vergil mutes before it kicks,
 and there are new commands.** Each line opens with its face and one of its own phrases
