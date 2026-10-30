@@ -12,6 +12,7 @@ dist/
 # your servers, its records and logs. They're yours, not the project's.
 /settings.toml
 /commands.toml
+/discord.toml
 /automod.txt
 /SERVERS/
 /records/

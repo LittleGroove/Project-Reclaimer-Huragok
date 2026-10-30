@@ -13,6 +13,8 @@ from .. import __version__
 from ..core import lock
 from ..core.serverfolders import ServerConfig
 from ..core.settings import COMMANDS_FILE, SETTINGS_FILE, Settings
+from ..discordbot.config import FILE as DISCORD_FILE
+from ..discordbot.config import load as load_discord
 from ..games.halo3 import old_labels, playlist_files
 from . import common, firstrun
 from .common import LAUNCHER, SETTINGS_PROBLEM
@@ -248,6 +250,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         out.note(f"{COMMANDS_FILE} is from before members: add [member] with players = [\"<player ID>\", …] to "
                  "keep regulars safe from votes to kick")
     out.write()
+    discord = load_discord(settings.home / DISCORD_FILE)
+    out.note(f"{DISCORD_FILE}: mode {discord.mode}. J in the window checks everything with Discord itself.")
+    for line in ([discord.error] if discord.error else discord.warnings):
+        out.warn(f"warning: {line}")
     if ok and warned:
         out.ok(f"Ready, but read the settings warnings above: {SETTINGS_FILE} may not say what you meant.")
     elif ok:

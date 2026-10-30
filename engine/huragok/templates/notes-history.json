@@ -9,7 +9,8 @@
   "0.5.0",
   "0.5.1",
   "0.5.2",
-  "0.5.3"
+  "0.5.3",
+  "0.6.0-beta.1"
  ],
  "files": {
   "settings.toml": {
@@ -880,6 +881,722 @@
     ]
    },
    "inline": {}
+  },
+  "discord.toml": {
+   "notes": {
+    "|mode": [
+     "# ---------------------------------------------------------------------------------",
+     "# discord.toml: Huragok's Discord bot.",
+     "#",
+     "# Every feature is off until you set it up. Set it up in Huragok's window, in Discord",
+     "# with /huragok setup, or here; all three change this file. Huragok reloads it a few",
+     "# seconds after it changes. A setting it doesn't know is only a warning, and a mistake",
+     "# turns the bot off with the reason while your servers carry on.",
+     "# Channels and roles: an ID (the setup writes IDs, with the name as a note) or a name",
+     "# (\"#admin-log\", \"@Server Admin\"), which Huragok looks up and replaces with the ID.",
+     "# Servers: their names as in Huragok's window, or \"*\" for every server.",
+     "# A feature that's on but missing something says what: /huragok check, or the window."
+    ],
+    "[ranks]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Who's who: Discord roles onto Huragok's ranks. Nothing counts until it's here.",
+     "# What each rank may do is commands.toml's job, in game and in Discord alike."
+    ],
+    "[link]": [
+     "# A rank on some servers only (one block each):",
+     "# [[ranks.scoped]]",
+     "# role = \"@Server1 Admin\"",
+     "# rank = \"admin\"",
+     "# servers = [\"Server 1\"]",
+     "# ---------------------------------------------------------------------------------",
+     "# Linking a Discord account to a player: !link in game sends a private code;",
+     "# /link <code> in Discord finishes it."
+    ],
+    "[roles]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Roles kept in step. Huragok owns every rank: a mapped role given or taken in Discord changes",
+     "# the player's rank on every server; a rank changed in game (by anyone) changes the role; linking",
+     "# gives the current rank as a role. Every change is written down with who and where. Owner is never synced."
+    ],
+    "[channels]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Channel names features can share: a feature's channel = \"staff\" means this one."
+    ],
+    "[feeds]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Feeds: cards about what happened. [feeds] is every feed's default; each",
+     "# [feed.<name>] block changes only what it names."
+    ],
+    "[status.board]": [
+     "# ---------------------------------------------------------------------------------",
+     "# The servers at a glance. Every template takes placeholders: {server} {map} {mode}",
+     "# {players} {max} {next} {state} {fps} {uptime} {playlist} {players_total}",
+     "# {servers_up} {servers} {unique_players} {games_today} {top_player} {top_streak}."
+    ],
+    "[console]": [
+     "# ---------------------------------------------------------------------------------",
+     "# The console from Discord. typed: lines typed in a channel (needs the Message",
+     "# Content switch). slash: /rcon and every command as a slash command."
+    ],
+    "[commands]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Slash commands and right-click commands."
+    ],
+    "[reports]": [
+     "# ---------------------------------------------------------------------------------"
+    ],
+    "[chat]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Game chat. to_discord: each server's chat in a channel. to_game: Discord lines into the game."
+    ],
+    "[stats]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Stats: Huragok counts; Discord shows. !stats works in game too."
+    ],
+    "[achievements]": [
+     "# Medals, worked out from each game's kills the way Halo 3 awards them."
+    ],
+    "leaderboards|rows": [
+     "# any stat or medal x period x server/map/mode; \"*\" = a rotating board of the day"
+    ],
+    "[matches]": [
+     "# A board of your own:",
+     "# [leaderboards.board.valhalla-kd]",
+     "# stat = \"kd\"                  # any stat or medal",
+     "# period = \"month\"             # all | season | month | week | today",
+     "# servers = [\"Server 1\"]",
+     "# maps = [\"Valhalla\"]",
+     "# modes = [\"Slayer\"]",
+     "# min_games = 10"
+    ],
+    "[community]": [
+     "# ---------------------------------------------------------------------------------"
+    ],
+    "[notes]": [
+     "# Staff tools on players (bot mode): notes, flags, reason templates, evidence, appeal codes."
+    ],
+    "[games]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Minigames: each its own block, off until set up. Rewards are earned only: they can't",
+     "# be bought, given to someone else or cashed out. Forecasts are free; nothing is staked."
+    ],
+    "[games.fireteams]": [
+     "# [games.public_works] and the recycling drive spend Tax Dollars: later, once the community has decided",
+     "# what Tax Dollars can be spent on (0.6.0 only earns and counts them)."
+    ],
+    "[moderation]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Moderating the Discord itself. All off by default."
+    ],
+    "[personas]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Who the bot posts as (bot mode posts through its own webhooks for this)."
+    ],
+    "[text]": [
+     "# Every text the bot posts can be reworded here: [text] key = \"words with {placeholders}\".",
+     "# The window lists every key and its default."
+    ],
+    "[privacy]": [
+     "# ---------------------------------------------------------------------------------"
+    ],
+    "[limits]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Floors on every timer. Raise them freely; Huragok won't go below the numbers in the notes."
+    ]
+   },
+   "inline": {
+    "|mode": [
+     "# off | webhook (posts only, no bot) | bot (everything)"
+    ],
+    "|token": [
+     "# bot mode: the bot's token. It's a password: keep this file to yourself."
+    ],
+    "|token_variable": [
+     "# or the name of an environment variable that holds the token"
+    ],
+    "|guild": [
+     "# the Discord the bot works in (the setup lists the ones it's in)"
+    ],
+    "|voice": [
+     "# lore: the Superintendent, Vergil and Huragok speak | plain: plain words"
+    ],
+    "|time_zone": [
+     "# for schedules and \"today\": local, or a name like \"Europe/London\""
+    ],
+    "|date_format": [
+     "# discord: Discord shows each reader their own time | iso"
+    ],
+    "ranks|admin": [
+     "# roles whose members are Huragok admins on every server, e.g. [\"@Server Admin\"]"
+    ],
+    "ranks|moderator": [
+     "# e.g. [\"@Server Mod\"]"
+    ],
+    "ranks|probationary_moderator": [
+     "# e.g. [\"@Probation\"]: their actions are requests a moderator confirms"
+    ],
+    "ranks|member": [
+     "# e.g. [\"@Member\"]"
+    ],
+    "ranks|owners": [
+     "# Discord USER IDs with owner rights from Discord. People, never a role."
+    ],
+    "ranks|discord_administrators": [
+     "# what Discord's own Administrator permission counts as: nothing | moderator | admin"
+    ],
+    "ranks|needs_link": [
+     "# true: a Discord rank only acts once its member has linked their player"
+    ],
+    "ranks|moderators_see_ids": [
+     "# moderators see players' 64-character IDs in Discord"
+    ],
+    "ranks|moderators_raw_console": [
+     "# moderators may type raw console lines (otherwise only commands)"
+    ],
+    "ranks|timeout_suspends": [
+     "# a member timed out in Discord can't use their rank meanwhile"
+    ],
+    "link|methods": [
+     "# game-code | staff (admins link someone by picking them and a player)"
+    ],
+    "link|code_minutes": [
+     "# how long a code works (once)"
+    ],
+    "link|linked_role": [
+     "# a role for linked members, e.g. \"@Verified Spartan\" (gate channels with it)"
+    ],
+    "link|nickname": [
+     "# off | on: at every join to a server, set their Discord nickname from nickname_format"
+    ],
+    "link|nickname_format": [
+     "# their in-game name and service tag: \"Rookie R117\" (32 characters at most)"
+    ],
+    "link|unlink": [
+     "# self | staff: who may unlink"
+    ],
+    "link|staff_keep_link": [
+     "# members with a rank can't unlink themselves"
+    ],
+    "link|one_per_player": [
+     "# a player links to one Discord account"
+    ],
+    "link|one_per_discord": [
+     "# a Discord account links to one player"
+    ],
+    "link|announce": [
+     "# post \"<member> linked as <player>\" in a channel"
+    ],
+    "roles|sync": [
+     "# keep the ranks and the mapped roles in step (needs linking)"
+    ],
+    "roles|from_discord": [
+     "# a role given or taken in Discord changes the rank"
+    ],
+    "roles|to_discord": [
+     "# a rank changed in game changes the role"
+    ],
+    "roles|check_minutes": [
+     "# a full comparison now and then (anything missed while the bot was offline)"
+    ],
+    "roles|online": [
+     "# a role while a linked member is on any server, e.g. \"@In Game\""
+    ],
+    "roles|per_server": [
+     "# a role while on that server: { \"Server 1\" = \"@On Server 1\" }"
+    ],
+    "roles|veteran": [
+     "# a role after veteran_hours played"
+    ],
+    "roles|banned": [
+     "# a role while banned from the servers (hide channels with it)"
+    ],
+    "roles|rank_roles": [
+     "# Halo 3 rank roles, Recruit to General (roles named after the ranks)"
+    ],
+    "roles|rank_source": [
+     "# official (Project Reclaimer's rank from the log) | huragok (playtime + EXP)"
+    ],
+    "roles|top": [
+     "# leaderboard -> role for its top players: { \"season-kills\" = \"@Top Slayer\" }"
+    ],
+    "channels|staff": [
+     "# e.g. \"#admin-log\""
+    ],
+    "channels|public": [
+     "# e.g. \"#servers\""
+    ],
+    "channels|games": [
+     "# match summaries"
+    ],
+    "channels|stats": [
+     "# leaderboards, achievements"
+    ],
+    "channels|chat": [
+     "# game chat"
+    ],
+    "channels|logs": [
+     "# Discord moderation logs"
+    ],
+    "feeds|ping": [
+     "# a role to ping, or \"\" for none"
+    ],
+    "feeds|silent": [
+     "# post without notifying anyone"
+    ],
+    "feeds|style": [
+     "# card | compact (one line) | both (a line, details in its thread)"
+    ],
+    "feeds|public": [
+     "# true lets a feed post where @everyone can read"
+    ],
+    "feeds|also": [
+     "# extra webhook URLs to post copies to (a partner's Discord)"
+    ],
+    "feeds|merge_seconds": [
+     "# a burst of the same kind becomes one card that grows"
+    ],
+    "feed.moderation|webhook": [
+     "# webhook mode: this channel's webhook URL"
+    ],
+    "feed.moderation|sources": [
+     "# \"!\" | \"/\" (in game) | vergil | console | relay | window | discord | vote"
+    ],
+    "feed.moderation|evidence_lines": [
+     "# their chat before the action, from every server"
+    ],
+    "feed.moderation|record": [
+     "# their record so far (\"3rd mute, 1 kick\")"
+    ],
+    "feed.moderation|threads": [
+     "# a thread under each case"
+    ],
+    "feed.moderation|requests": [
+     "# probationary moderators' requests here, with Confirm and Deny"
+    ],
+    "feed.vergil|dry_run": [
+     "# also post what Vergil would have done while in dry run"
+    ],
+    "feed.alerts|ping": [
+     "# e.g. \"@Server Admin\""
+    ],
+    "feed.alerts|launcher_webhook": [
+     "# the launcher posts \"Huragok stopped; restarting\" here (the bot is down then)"
+    ],
+    "feed.alerts|repeat_minutes": [
+     "# an ongoing problem is re-posted at most this often"
+    ],
+    "feed.alerts|recovery_summary": [
+     "# when it's over: what failed, what was done, how long it was down"
+    ],
+    "feed.alerts|grace_seconds": [
+     "# no performance alerts this soon after a start"
+    ],
+    "feed.games|kinds": [
+     "# ended posts the match summary when [matches] is on"
+    ],
+    "feed.joins|who": [
+     "# everyone | first-time | linked | staff | returning"
+    ],
+    "feed.joins|refused": [
+     "# joins the server refused (banned, VPN)"
+    ],
+    "feed.joins|new_names": [
+     "# a player ID turning up under a new name"
+    ],
+    "feed.joins|returning_days": [
+     "# \"returning\": back after this many days"
+    ],
+    "feed.kills|which": [
+     "# all | medals | off-colour (betrayals, suicides, deaths to the world too)"
+    ],
+    "feed.kills|delay_seconds": [
+     "# so nobody watching Discord can call out positions to a friend in game"
+    ],
+    "feed.watch|ping": [
+     "# e.g. \"@Watch\""
+    ],
+    "feed.calls|ping": [
+     "# the on-duty role"
+    ],
+    "feed.calls|command": [
+     "# !calladmin [reason] in game"
+    ],
+    "feed.calls|words": [
+     "# chat words that also call, e.g. [\"admin pls\"]"
+    ],
+    "feed.calls|cooldown_seconds": [
+     "# per player"
+    ],
+    "feed.calls|mods_command": [
+     "# !mods in game: which staff are reachable on Discord now"
+    ],
+    "status.board|layout": [
+     "# per-server (a message each) | one (one message for all)"
+    ],
+    "status.board|show": [
+     "# also: fps, votes, version"
+    ],
+    "status.board|player_list": [
+     "# names | count | off"
+    ],
+    "status.board|join_button": [
+     "# public servers get a Join button (the game's own join page)"
+    ],
+    "status.board|join_address": [
+     "# \"Server 1\" = \"203.0.113.4:11774\"; empty: the server's public address"
+    ],
+    "status.board|staff_buttons": [
+     "# Players, Restart after game, Console (staff only; needs the bot)"
+    ],
+    "status.board|update_seconds": [
+     "# at least 60"
+    ],
+    "status.board|all_servers": [
+     "# also one message with a row per server"
+    ],
+    "status.seeding|role": [
+     "# an opt-in role, e.g. \"@Seeder\""
+    ],
+    "status.seeding|seed_at": [
+     "# ping when a server has between this many players"
+    ],
+    "status.seeding|cooldown_minutes": [
+     "# per server"
+    ],
+    "status.seeding|notify_me": [
+     "# members pick their own alerts: a server reaching N players, a game type starting"
+    ],
+    "status.presence|activity": [
+     "# playing | listening | watching | competing | custom"
+    ],
+    "status.presence|rotate_seconds": [
+     "# at least 30"
+    ],
+    "status.presence|dot": [
+     "# health (online / idle when one is down / do-not-disturb when all are) | online"
+    ],
+    "status.channel_names|channels": [
+     "# channel -> template: { \"#server1\" = \"{state_emoji} Server 1: {players}/{max}\" }"
+    ],
+    "status.channel_names|update_minutes": [
+     "# at least 5: Discord allows a channel 2 name/topic changes in 10 minutes"
+    ],
+    "status.topics|channels": [
+     "# channel -> template"
+    ],
+    "status.voice_status|channels": [
+     "# voice channel -> template: { \"Server 1 Comms\" = \"{map} · {mode} {players}/{max}\" }"
+    ],
+    "status.voice_status|update_minutes": [
+     "# at least 1"
+    ],
+    "console|layout": [
+     "# per-server (a channel each) | picker (one channel, pick the server)"
+    ],
+    "console|channel": [
+     "# the picker layout's channel"
+    ],
+    "console|channels": [
+     "# the per-server layout: { \"Server 1\" = \"#server1-console\" }"
+    ],
+    "console|server_prefix": [
+     "# \"server1: kick 3\" names the server on the line"
+    ],
+    "console|remember_server": [
+     "# the picker remembers each member's server | channel (one for everyone)"
+    ],
+    "console|raw": [
+     "# false: only Huragok's ! commands, no console lines"
+    ],
+    "console|answers": [
+     "# reply | thread"
+    ],
+    "console|long_answers": [
+     "# file | split"
+    ],
+    "console|ignore_others": [
+     "# ignore | delete: lines from people without a rank"
+    ],
+    "commands|game_commands": [
+     "# every in-game command as a slash command, same rank as commands.toml"
+    ],
+    "commands|names": [
+     "# rename any: { whois = \"lookup\", leaderboard = \"top\" }"
+    ],
+    "commands|hidden": [
+     "# never registered"
+    ],
+    "commands|private": [
+     "# answers only the asker sees"
+    ],
+    "commands|member_menu": [
+     "# right-click on a member"
+    ],
+    "commands|message_menu": [
+     "# right-click on a message"
+    ],
+    "reports|from": [
+     "# !report in game, /report and right-click in Discord"
+    ],
+    "reports|threshold": [
+     "# this many different reporters..."
+    ],
+    "reports|threshold_minutes": [
+     "# ...within this long pings staff"
+    ],
+    "appeals|for": [
+     "# ban | kick | mute"
+    ],
+    "appeals|tell_outcome": [
+     "# dm | thread"
+    ],
+    "tickets|channel": [
+     "# where the \"Contact staff\" button lives"
+    ],
+    "tickets|transcript": [
+     "# a file of the thread when it's closed"
+    ],
+    "chat|channels": [
+     "# per server: { \"Server 1\" = \"#server1-chat\" }; empty: channel = \"chat\" for all"
+    ],
+    "chat|as_player": [
+     "# each line under the player's name (the bot's own webhook)"
+    ],
+    "chat|team_chat": [
+     "# off | staff (team lines only ever go to the staff channel)"
+    ],
+    "chat|delay_seconds": [
+     "# hold the public bridge back, as on the killfeed"
+    ],
+    "chat|to_game_who": [
+     "# staff | linked | everyone"
+    ],
+    "chat|to_game_vergil": [
+     "# Vergil's word list first"
+    ],
+    "chat|across_servers": [
+     "# a line on one server shown on the others as [Server 1] Nate: ..."
+    ],
+    "chat|staff_chat": [
+     "# !staff <text> in game -> the staff channel, and back by tell"
+    ],
+    "stats|servers": [
+     "# whose games count"
+    ],
+    "stats|min_players": [
+     "# games with fewer players don't count"
+    ],
+    "stats|rating": [
+     "# off | elo | skill (team-aware, with certainty)"
+    ],
+    "stats|official_rank": [
+     "# show Project Reclaimer's own rank (from the server log) when it's sure"
+    ],
+    "stats|season": [
+     "# off | monthly | quarterly"
+    ],
+    "stats|private_allowed": [
+     "# players may hide themselves (!stats private)"
+    ],
+    "stats|cards": [
+     "# /stats and !stats player cards"
+    ],
+    "achievements|announce": [
+     "# every | rare | first-time | off: post medals in Discord"
+    ],
+    "achievements|in_game": [
+     "# also say it in game"
+    ],
+    "achievements|multikill_window": [
+     "# seconds between kills, as Halo 3 (timed by when Huragok hears each, to the millisecond)"
+    ],
+    "achievements|sprees": [
+     "# Killing Spree ... Invincible"
+    ],
+    "achievements|firefight_sprees": [
+     "# the same names on ODST Firefight"
+    ],
+    "leaderboards|for_fun": [
+     "# boards like Friendly Fire (team kills), suicides, deaths to the world"
+    ],
+    "leaderboards|keep_updated": [
+     "# one message per board, edited"
+    ],
+    "leaderboards|post": [
+     "# off | daily | weekly | season-end: also post a fresh copy"
+    ],
+    "leaderboards|records": [
+     "# post when an all-time record falls (longest spree, biggest multi-kill)"
+    ],
+    "matches|which": [
+     "# every | min-players | notable (sprees, records, first wins)"
+    ],
+    "community|first_game_post": [
+     "# a linked member's first game"
+    ],
+    "community|server_list": [
+     "# /servers and a pinned list with Join buttons"
+    ],
+    "community|game_nights": [
+     "# /gamenight makes a Discord event; the server's playlist can switch for it"
+    ],
+    "community|polls_to_game": [
+     "# a Discord poll's winner becomes that server's next game"
+    ],
+    "community|announce": [
+     "# /announce sends a line to every server (staff)"
+    ],
+    "community|milestones": [
+     "# the community's own: 1,000th unique player, 10,000 games"
+    ],
+    "community|balance": [
+     "# off | command (/balance) | auto: split teams by rating before each game"
+    ],
+    "community|team_voice": [
+     "# move linked members in voice to Red/Blue channels for team games"
+    ],
+    "community|self_roles": [
+     "# button roles members pick: { \"Seeder\" = \"@Seeder\", \"Game nights\" = \"@Game Nights\" }"
+    ],
+    "community|levels": [
+     "# levels from playtime on the servers, with level roles"
+    ],
+    "community|level_roles": [
+     "# { 5 = \"@Level 5\" }"
+    ],
+    "community|host_digest": [
+     "# the staff version: uptime, crashes, actions per moderator, appeals"
+    ],
+    "community|awards": [
+     "# off | daily | weekly: Most Kills, Best K/D, Iron Man, the shame awards..."
+    ],
+    "notes|expire_days": [
+     "# 0: notes never expire"
+    ],
+    "notes|evidence_files": [
+     "# ban and mute forms take a clip or screenshot"
+    ],
+    "notes|appeal_codes": [
+     "# a ban's reason in game ends with a code for /appeal"
+    ],
+    "games|currency": [
+     "# the joke currency's name"
+    ],
+    "games|season_reset": [
+     "# Tax Dollars reset each season"
+    ],
+    "games|daily_limit": [
+     "# plays per member per day across all games"
+    ],
+    "games|quiet_hours": [
+     "# no random posts (payphone, bounties) in these hours"
+    ],
+    "games|min_players": [
+     "# a game counts only with this many players..."
+    ],
+    "games|min_minutes": [
+     "# ...and this long played"
+    ],
+    "games|practice_servers": [
+     "# servers whose games never count"
+    ],
+    "games.audio_logs|caches": [
+     "# a finished Circle opens a cosmetic cache"
+    ],
+    "games.kiosk|questions": [
+     "# a Discord can add its own"
+    ],
+    "moderation|automod_words": [
+     "# write Vergil's banned words into a Discord AutoMod rule"
+    ],
+    "moderation|automod_action": [
+     "# block | alert | timeout"
+    ],
+    "moderation|automod_preset": [
+     "# Discord's own lists: profanity | sexual | slurs"
+    ],
+    "moderation|automod_mentions": [
+     "# 0 off; else the most mentions in one message"
+    ],
+    "moderation|vergil_on_chat": [
+     "# Vergil's ladder on Discord messages (needs Message Content)"
+    ],
+    "moderation|shared_strikes": [
+     "# Discord strikes and game strikes count together"
+    ],
+    "moderation|mute_as": [
+     "# how a Vergil mute looks in Discord: timeout | role"
+    ],
+    "moderation|cross_ban_game_to_discord": [
+     "# nothing | ask | timeout | kick | ban"
+    ],
+    "moderation|cross_ban_discord_to_game": [
+     "# nothing | ask | ban"
+    ],
+    "moderation|commands": [
+     "# /timeout /dkick /dban /purge /slowmode /lock for Discord staff"
+    ],
+    "moderation|raid_joins": [
+     "# this many joins..."
+    ],
+    "moderation|raid_seconds": [
+     "# ...within this long"
+    ],
+    "moderation|raid_action": [
+     "# alert | lock"
+    ],
+    "moderation|min_account_days": [
+     "# hold accounts younger than this"
+    ],
+    "moderation|logs": [
+     "# edited and deleted messages, joins, leaves, role and nickname changes"
+    ],
+    "privacy|player_ids": [
+     "# staff (staff channels only) | never. IP addresses are never posted."
+    ],
+    "privacy|opt_out": [
+     "# players may hide from public stats and boards"
+    ],
+    "privacy|keep_days": [
+     "# Discord-only records: reports, tickets, links of members who left"
+    ],
+    "privacy|forget_me": [
+     "# /forget me: a member deletes what the bot keeps about them"
+    ],
+    "limits|status_seconds": [
+     "# status boards (never under 60)"
+    ],
+    "limits|rename_minutes": [
+     "# channel names and topics, together (never under 5; Discord allows 2 in 10 minutes)"
+    ],
+    "limits|voice_status_minutes": [
+     "# (never under 1)"
+    ],
+    "limits|presence_seconds": [
+     "# (never under 30)"
+    ],
+    "limits|profile_minutes": [
+     "# bio and nickname (never under 15); pictures never under 60"
+    ],
+    "limits|roles_per_second": [
+     "# role changes (bursts of 5 at most)"
+    ],
+    "limits|roles_check_minutes": [
+     "# a full check of every synced role"
+    ],
+    "limits|boards_minutes": [
+     "# leaderboards edited (never under 5); posted never more than hourly"
+    ],
+    "limits|chat_batch_seconds": [
+     "# the chat bridge (never under 2), at most chat_per_minute messages"
+    ],
+    "limits|logins_per_day": [
+     "# past this, the bot stops and alerts the host (Discord resets the token at 1,000)"
+    ],
+    "limits|wait_seconds": [
+     "# give up on any Discord wait longer than this and report it"
+    ]
+   }
   }
  }
 }

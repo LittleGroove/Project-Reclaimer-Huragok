@@ -375,6 +375,18 @@ class _Edit:
         self.lines.insert(insert, f"{_key(key)} = {rendered}")
         self.changed()
 
+    def note(self, start: int, end: int, key: str, note: str | None) -> None:
+        """The comment beside `key`'s one-line value: `note` instead of whatever is there (None leaves it alone)."""
+        if note is None:
+            return
+        number = self.key_line(start, end, key, "there")
+        if number is None or self.layout[number].end != number:
+            return
+        value, _ = split_comment(self.lines[number], self.layout[number].at)
+        text = note.replace("\n", " ").strip()
+        self.lines[number] = value.rstrip() + (f"  # {text}" if text else "")
+        self.changed()
+
     def uncomment_header(self, table: str) -> bool:
         """`# [workshop]` (the example `dedicated init` writes) becomes the live table when only comments follow
         it up to the next table; the example's own commented settings then come to life in place."""
@@ -468,11 +480,13 @@ def change_server_settings(path: Path, server: str, values: dict[str, Any], remo
     edit.save()
 
 
-def set_top_key(path: Path, key: str, value: object) -> None:
-    """Set a key before the first table header (top-level), replacing its live or commented line."""
+def set_top_key(path: Path, key: str, value: object, *, note: str | None = None) -> None:
+    """Set a key before the first table header (top-level), replacing its live or commented line; `note`: the comment
+    beside it instead of the one there ("" none)."""
     edit = _Edit(path, key)
     edit.wanted[key] = _plain(value)
     edit.set_in(0, edit.first_header(), key, value, "the top of the file")
+    edit.note(0, edit.first_header(), key, note)
     edit.save()
 
 
@@ -489,9 +503,10 @@ def remove_top_key(path: Path, key: str) -> bool:
     return True
 
 
-def set_table_key(path: Path, table: str, key: str, value: object, *, before: str | None = None) -> None:
+def set_table_key(path: Path, table: str, key: str, value: object, *, before: str | None = None,
+                  note: str | None = None) -> None:
     """Set a key in [table], making the table when it's missing (before the [before] table, else at the end
-    of the top-level keys)."""
+    of the top-level keys); `note`: the comment beside it instead of the one there ("" none)."""
     edit = _Edit(path, f"[{table}] {key}")
     current = edit.wanted.setdefault(table, {})
     if not isinstance(current, dict):
@@ -510,6 +525,29 @@ def set_table_key(path: Path, table: str, key: str, value: object, *, before: st
         tables = edit.tables()
     start, end = tables[(table,)]
     edit.set_in(start + 1, end, key, value, f"[{table}]")
+    edit.note(start + 1, end, key, note)
+    edit.save()
+
+
+def set_nested_key(path: Path, parts: tuple[str, ...], key: str, value: object) -> None:
+    """Set a key in a [a.b] table, made at the end of the file when it's missing."""
+    name = ".".join(parts)
+    edit = _Edit(path, f"[{name}] {key}")
+    current = edit.wanted
+    for part in parts:
+        current = current.setdefault(part, {})
+        if not isinstance(current, dict):
+            raise edit.refuse(f"{part} isn't a table there")
+    current[key] = _plain(value)
+    tables = edit.tables()
+    if parts not in tables:
+        while edit.lines and not edit.lines[-1].strip():
+            edit.lines.pop()
+        edit.lines += ["", "[" + ".".join(_key(part) for part in parts) + "]"]
+        edit.changed()
+        tables = edit.tables()
+    start, end = tables[parts]
+    edit.set_in(start + 1, end, key, value, f"[{name}]")
     edit.save()
 
 

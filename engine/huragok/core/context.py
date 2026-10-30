@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from .storage import PartStore
 
@@ -46,6 +46,14 @@ class PartContext:
         """Whether a part is switched on and running now (automod keeps the mute list, say)."""
         runner = self._huragok.runners.get(part)
         return runner is not None and runner.enabled
+
+    def spawn(self, name: str, factory: Callable[[], Awaitable[Any]], *, restart: bool = True) -> Any:
+        """A long-running task of this part's: one that fails is logged and started again (Huragok.spawn)."""
+        return self._huragok.spawn(name, factory, restart=restart)
+
+    def refresh_problems(self) -> None:
+        """Something this part shows in red on the dashboard (its `problems()`) changed."""
+        self._huragok.refresh_problems()
 
     def emit(self, name: str, server: str | None = None, /, **data: Any) -> None:
         """An event for the other parts, always named '<part>.<name>'."""

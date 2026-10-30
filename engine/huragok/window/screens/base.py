@@ -5,6 +5,7 @@ share, and the screens one group opens in another.
     ManageScreens  (manage.py)   A console, D settings, B bans and admins, U updates
     GameScreens    (games.py)    custom games and a playlist's games
     FileScreens    (files.py)    D's Huragok files, O open
+    DiscordScreens (discordsetup.py)  J the Discord bot
 
 Each extends Screens; Menu (dashboard.py) is all of them, with the dashboard and its keys. A screen asks with
 `choose`, `prompt_line`, `prompt_key`, `prompt_yes_no`; it draws with `title`, `heading`, `note`, `listing`; slow work

@@ -6,6 +6,7 @@
   eventlog   every event as JSON, to see what the server sends
   tempdiscord  temporary (0.5.2 until 0.6.0): what the Discord bot and players' stats will need (always on)
   messages   interval messages, from intervalmessages.txt: for every server, and each server's own (always on)
+  discord    the Discord bot; its settings are discord.toml, its switch `mode` there (always on)
 
 The parts with settings each have a section in settings.toml ([automod]…). To
 add a part, write it in the folder of the named part it belongs to (servers/ for
@@ -21,6 +22,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from .core.part import Part
+from .discordbot.part import DiscordPart
 from .players.automod import AutoMod
 from .players.commands import Commands
 from .players.messages import Messages
@@ -31,7 +33,8 @@ from .servers.watchdog import Watchdog
 if TYPE_CHECKING:
     from .core.settings import Settings
 
-PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages, TempDiscord)}
+PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages, TempDiscord,
+                                                          DiscordPart)}
 
 
 def config_problem(settings: Settings, name: str, cls: Any) -> str | None:

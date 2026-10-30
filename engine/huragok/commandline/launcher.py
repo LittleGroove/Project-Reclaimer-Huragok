@@ -26,6 +26,9 @@ from ..core.files import mtime
 from ..core.lock import AlreadyRunning
 from ..core.settings import Settings, load
 from ..core.tables import ConfigError
+from ..discordbot import config as discord_config
+from ..discordbot import rest as discord_rest
+from ..discordbot import speakers as discord_speakers
 from . import common
 from .common import ALREADY_RUNNING, DELIBERATE, FAILED, LAUNCHER, RELAUNCH, SETTINGS_PROBLEM
 from .shell import console as out
@@ -41,6 +44,9 @@ FAILED_START_SECONDS = 120  # a new version that ends within this long of starti
 
 
 SETTINGS_RETRY_SECONDS = 300  # with --no-menu, a settings problem is looked at again this often
+
+
+LAUNCHER_POST_SECONDS = 5.0  # what telling Discord may hold up the start loop
 
 
 LAUNCHER_LOG = "logs/launcher.log"  # where the start loop writes when settings.toml can't be read
@@ -185,6 +191,7 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
                 crashes += 1
                 _say(settings, "ERROR", f"Huragok stopped unexpectedly ({_exit_text(code)}); starting it again in "
                                         f"{wait:.0f} s. {common.log_name(settings)} says why.")
+                _tell_discord(settings, _exit_text(code), wait)
                 ended = time.time()  # someone asking since (start.cmd stop, close): start it now to answer
                 wake = lambda: _requests_waiting(settings.records, since=ended)  # noqa: E731
             if not _pause(wait, stopped=lambda: stopping, wake=wake):
@@ -277,6 +284,22 @@ def _say(settings: Settings, level: str, message: str) -> None:
             pass
     (out.note if level == "INFO" else out.warn if level == "WARNING" else out.fail)(message)
     _launcher_log(settings, settings.home, level, message)
+
+
+def _tell_discord(settings: Settings, why: str, wait: float) -> None:
+    """[feed.alerts] launcher_webhook: the bot is down with Huragok, so the start loop says it. Never in the way: a few
+    seconds at most, and a failure is only a line in the log."""
+    address = discord_config.launcher_webhook(settings.home)
+    if not address:
+        return
+    config = discord_config.load(settings.home / discord_config.FILE)
+    payload = {**discord_speakers.message(discord_speakers.say(config, "launcher.stopped", why=why, wait=f"{wait:.0f}"),
+                                          silent=False),
+               **discord_speakers.speaker(config, "superintendent")}
+    try:
+        discord_rest.execute_webhook(address, payload, timeout=LAUNCHER_POST_SECONDS)
+    except (discord_rest.DiscordError, OSError) as error:
+        _launcher_log(settings, settings.home, "WARNING", f"Couldn't tell Discord: {error}")
 
 
 def _version_on_disk(home: Path) -> str | None:

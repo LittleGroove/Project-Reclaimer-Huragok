@@ -29,8 +29,9 @@ ALLOWED: dict[str, set[str]] = {
     "content": {"core", "games", "rcon", "program", "steam", "servers", "players", "updates", "lore"},
     "superintendent": {"core", "games", "rcon", "program", "steam", "servers", "lore"},
     "vergil": {"core", "games", "rcon", "program", "steam", "servers", "players", "superintendent", "lore"},
-    "parts": BELOW_PERSONAS | {"superintendent", "vergil"},
-    "huragok": BELOW_PERSONAS | {"superintendent", "vergil", "parts"},
+    "discordbot": BELOW_PERSONAS,  # what happens on the servers, in Discord: uses everything below the named parts
+    "parts": BELOW_PERSONAS | {"superintendent", "vergil", "discordbot"},
+    "huragok": BELOW_PERSONAS | {"superintendent", "vergil", "parts", "discordbot"},
     "winproc": {"core"},  # the 0.4.x shim
 }
 # Helpers that import nothing of Huragok's, so any layer may use them (the game modules, under core/, too).

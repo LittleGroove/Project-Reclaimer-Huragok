@@ -637,6 +637,7 @@ def notes(ctx: Context) -> list[str]:
     targets: list[tuple[Path, str, str, str | None]] = [
         (ctx.settings_path, "settings.toml", ctx.settings_path.name, None),
         (ctx.commands_path, "commands.toml", ctx.commands_path.name, None),
+        (ctx.home / "discord.toml", "discord.toml", "discord.toml", None),
         (ctx.home / words, "automod.txt", words, None), (ctx.home / names, "names.txt", names, None),
         (ctx.home / FILE, "intervalmessages.txt", FILE, None)]
     targets += [(folder / FILE, "intervalmessages-server.txt", f"{folder.name}/{FILE}", f"{folder.name}/{FILE}")
@@ -666,6 +667,18 @@ def notes(ctx: Context) -> list[str]:
                 log.info("Brought up to date for Huragok %s: %s", __version__, line)
         raise RuntimeError("; ".join(problems))
     return said
+
+
+def discord_file(ctx: Context) -> list[str]:
+    """discord.toml, for the bot: every feature off. Nothing before 0.6.0 reads it, so the version before doesn't mind."""
+    from .notes import template_text
+
+    path = ctx.home / "discord.toml"
+    if path.exists():
+        return []
+    if not ctx.dry:
+        write_atomic(path, template_text("discord.toml"))
+    return ["discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)"]
 
 
 def new_commands(ctx: Context) -> list[str]:
@@ -742,6 +755,7 @@ STEPS: list[Step] = [
     Step("0.5.0/beta", "[updates] beta", beta_releases),
     Step("0.5.1/automod-layout-note", "the word list's note naming its parts, where it had none",
          automod_layout_note),
+    Step("0.6.0/discord-file", "discord.toml, for the Discord bot", discord_file),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.
     Step(f"{__version__}/notes", "Huragok's notes in your files, as this version writes them", notes),
     Step("0.5.1/automod-order", "the word list with the mutes before the kicks", automod_order, settled=True),

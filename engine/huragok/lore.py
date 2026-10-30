@@ -106,7 +106,7 @@ def speaker(logger: str) -> Persona:
 KEYS = {
     **dict.fromkeys("SXRKTLV", SUPERINTENDENT),
     **dict.fromkeys("PMAB", VERGIL),
-    **dict.fromkeys("NGIDCOUWHQ?", HURAGOK),
+    **dict.fromkeys("NGIDJCOUWHQ?", HURAGOK),
 }
 
 

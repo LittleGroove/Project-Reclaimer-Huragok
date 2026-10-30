@@ -97,8 +97,10 @@ class Huragok:
         return tool_for(self.settings)
 
     def refresh_problems(self) -> None:
-        """What the dashboard shows in red: the servers' setup, the relay's, and settings that do nothing now."""
-        self.problems = [*self.superintendent.problems(), *self.vergil.problems(), *self.settings.retired]
+        """What the dashboard shows in red: the servers' setup, the relay's, settings that do nothing now, and what a
+        part says of itself (the Discord bot's)."""
+        parts = [line for runner in self.runners.values() for line in getattr(runner.part, "problems", list)()]
+        self.problems = [*self.superintendent.problems(), *self.vergil.problems(), *self.settings.retired, *parts]
 
     # Parts -------------------------------------------------------------------------------------------------
 

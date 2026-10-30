@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0-beta.1
+**The Discord bot's foundation: a beta, the first of several.** 0.6.0 brings a Discord bot
+in stages, each a beta; this one is what everything else stands on. It posts nothing by
+itself yet. Your own bot (each host makes their own), its setup, and the way it speaks.
+Nothing changes unless you set it up: a new `discord.toml` starts with the bot off.
+
+- **`discord.toml`:** a new file, every setting there is, each with its note, every feature
+  off. Huragok reads it again within seconds of it changing. A setting it doesn't know is
+  only a warning, and a mistake in it never stops Huragok: at the start the bot stays off
+  and says why; later, what was in force stays until the file is right again.
+- **Three modes:** off, webhook only (posts, no bot), or your own bot.
+- **J in the window** sets it up a step at a time: the mode and the bot's token (checked
+  before it's kept, and never shown), the invite link with what the bot needs, which
+  Discord, Discord roles onto Huragok's ranks, the channels features share, each feature's
+  state and its switch, a check of everything, a test post, a claim code.
+- **`/huragok` in Discord** does the same with Discord's own pickers, for owners: `setup`,
+  `features`, `check`, `test`, `reload`, and `claim <code>`, which makes whoever types the
+  window's code an owner. Every answer is private.
+- **Ranks:** no role means anything until it's mapped. A mapped admin role is admin on every
+  server. Owners are people, named by user ID, never a role.
+- **Who speaks:** the Superintendent, Vergil and Huragok post under their own names through
+  a webhook the bot keeps in each channel (without Manage Webhooks, as itself); `voice =
+  "plain"` drops the theme, and `[text]` rewords anything.
+- **Keeping to Discord's limits:** everything sent waits in one queue, most urgent first,
+  only the newest of an edit, at each channel's pace, and never into a "slow down". Slash
+  commands are registered only when they change, logins are counted, and past
+  `logins_per_day` the bot stays off until tomorrow rather than risk the token.
+- **The start loop** can say Huragok is down, through a webhook (J → L), when the bot can't.
+- **The temporary record:** player IDs are now hidden in field names too (the stats service
+  answers some requests with them there).
+- **New package:** discord.py, which the update installs.
+
 ## 0.5.3
 **Probationary moderators: bring new moderators in on probation.** A new role between
 member and moderator. They use moderators' commands, but each kick, mute or strike is a

@@ -24,6 +24,7 @@ from ..core.logs import RecentLog
 from ..lore import HURAGOK, SUPERINTENDENT, VERGIL
 from .controllers import Controller, Row
 from .screens.base import WIDE
+from .screens.discordsetup import DiscordScreens
 from .screens.files import FileScreens
 from .screens.games import GameScreens
 from .screens.manage import ManageScreens
@@ -87,7 +88,7 @@ def key_rows(startup: bool | None) -> list[tuple[str, str, str]]:
         ("SUPERINTENDENT", "[S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server",
          SUPERINTENDENT.colour),
         ("VERGIL", "[P] Players  [M] Message  [A] Console  [B] Bans & admins", VERGIL.colour),
-        ("HURAGOK", "[N] New server  [G] What it plays  [I] SteamCMD  [D] Settings  [C] Check", HURAGOK.colour),
+        ("HURAGOK", "[N] New server  [G] What it plays  [I] SteamCMD  [D] Settings  [J] Discord  [C] Check", HURAGOK.colour),
         ("", f"[O] Open  [U] Updates  [W] Start at boot: {startup_text}  [H] Help  [Q] Quit", "white"),
     ]
 
@@ -126,7 +127,7 @@ def render(view: dict[str, Any], width: int, height: int) -> list[tuple[str, str
 # The menu ----------------------------------------------------------------------------------------
 
 
-class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens):
+class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens):
     """Every screen is written the same way: a title, then sections headed by where you are (a path like
     `LG Test Server › What it plays › Playlists`), numbered or lettered lists in aligned columns, a menu
     block of [key] options, and one question. Log lines and server events that arrive while a question
@@ -148,7 +149,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens):
             "T": self.screen_autostart, "M": self.screen_message, "A": self.screen_admin, "P": self.screen_players,
             "L": self.screen_watch, "U": self.screen_update, "O": self.screen_open,
             "N": self.screen_new, "G": self.screen_content, "C": self.screen_check, "I": self.screen_steam,
-            "D": self.screen_settings, "B": self.screen_bans, "V": self.screen_view,
+            "D": self.screen_settings, "B": self.screen_bans, "V": self.screen_view, "J": self.screen_discord,
             "W": self.screen_startup, "H": self.screen_help, "?": self.screen_help, "Q": self.screen_quit,
         }
 
@@ -481,6 +482,8 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens):
                              "roles and commands, Vergil's word list and banned names), and everything about each "
                              "server in groups, changed while it runs (or after the game when it needs a restart), "
                              "with its playlists, custom games, bans and mods"),
+                       ("J", "the Discord bot, a step at a time: webhook only or your own bot, Discord roles onto "
+                             "Huragok's ranks, channels, each feature's state and its switch, a check, a test post"),
                        ("C", "a server's own `dedicated check`"),
                        ("O", "open: Huragok's folder, or any of its files or a server's in your editor")]),
             (None, [("U", "updates: Huragok, the server program (servers with auto_update update themselves), "

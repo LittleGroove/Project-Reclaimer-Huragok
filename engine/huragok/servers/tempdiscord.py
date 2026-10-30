@@ -80,7 +80,7 @@ class Scrubber:
                 name = str(key).lower()
                 if name in DROP_KEYS or (said and name in SAID_KEYS):
                     continue
-                kept[str(key)] = self.value(item, said=said)
+                kept[self.text(str(key))] = self.value(item, said=said)  # the service keys answers by player ID
             return kept
         if isinstance(value, (list, tuple)):
             return [self.value(item, said=said) for item in value]

@@ -28,8 +28,8 @@ def test_the_first_start_writes_the_files_and_stops(tmp_path: Path, capsys) -> N
     write_server_folder(root / "SERVERS" / "LG Test Server", first, exe=True)
     write_server_folder(root / "SERVERS" / "Second", second, name="Second", exe=True)
     assert cli.main(["-c", str(root / "settings.toml"), "start"]) == common.SET_UP
-    assert {p.name for p in root.iterdir()} == {"settings.toml", "commands.toml", "automod.txt", "names.txt",
-                                              "intervalmessages.txt", "SERVERS", "PACKAGES"}
+    assert {p.name for p in root.iterdir()} == {"settings.toml", "commands.toml", "discord.toml", "automod.txt",
+                                              "names.txt", "intervalmessages.txt", "SERVERS", "PACKAGES"}
     assert (root / "PACKAGES" / "team-slayer" / "playlists" / "team-slayer.playlist.json").is_file()
     out = capsys.readouterr().out
     assert "Put your player ID under [owner]" in out and "start again" in out and "2 server folder(s) found" in out

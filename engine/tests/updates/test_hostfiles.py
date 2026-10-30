@@ -115,6 +115,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "intervalmessages.txt: interval messages (for every server), written with how to set them up; none yet",
         "settings.toml: [updates] beta = false added: true offers beta releases of Huragok too, before they're "
         "full releases (new in 0.5.0)",
+        "discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
         AUTOMOD_ORDER, *new_command_lines()]

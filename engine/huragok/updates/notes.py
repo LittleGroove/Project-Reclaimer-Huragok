@@ -42,12 +42,14 @@ from pathlib import Path
 from typing import Any
 
 HISTORY = "templates/notes-history.json"
-TEMPLATES = {"settings.toml": "templates/settings.toml", "automod.txt": "templates/automod.txt",
+TEMPLATES = {"settings.toml": "templates/settings.toml", "discord.toml": "templates/discord.toml",
+             "automod.txt": "templates/automod.txt",
              "names.txt": "templates/names.txt", "intervalmessages.txt": "templates/intervalmessages.txt",
              "intervalmessages-server.txt": "templates/intervalmessages-server.txt"}
 COMMANDS = "commands.toml"  # written from the commands themselves (render_commands_toml), not from a template
-KINDS = ("settings.toml", COMMANDS, "automod.txt", "names.txt", "intervalmessages.txt", "intervalmessages-server.txt")
-TOML_KINDS = ("settings.toml", COMMANDS)
+KINDS = ("settings.toml", COMMANDS, "discord.toml", "automod.txt", "names.txt", "intervalmessages.txt",
+         "intervalmessages-server.txt")
+TOML_KINDS = ("settings.toml", COMMANDS, "discord.toml")
 START, END = "start", "end"  # a list's notes; a TOML file's after its last setting
 DISTINCT = 20  # a line of Huragok's this long is its own wherever it sits; a shorter one only above its own thing
 REWORDED = 0.8  # a host's line at least this like one of Huragok's is their rewording of it

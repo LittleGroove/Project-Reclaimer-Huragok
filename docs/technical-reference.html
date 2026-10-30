@@ -630,6 +630,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr><td><code>servers/</code></td><td>the Superintendent</td><td>One server's state machine, the fleet, backends, live state, logs, the keepalive, the watchdog and event log parts</td><td>the above, <code>rcon</code></td></tr>
 <tr><td><code>players/</code></td><td>Vergil</td><td>The ledger, roles, the router, who a command means, the relay, the automod, commands and messages parts</td><td>the above, <code>servers/</code></td></tr>
 <tr><td><code>updates/</code>, <code>content/</code></td><td>Huragok</td><td>Its own updates, the server program's, the Workshop's, the host's files after one; what it builds and mends</td><td>the above (and <code>content/</code> uses <code>updates/</code>)</td></tr>
+<tr><td><code>discordbot/</code></td><td>Huragok</td><td>The Discord bot: <code>discord.toml</code> (<code>config.py</code>), Discord's web API with the standard library alone (<code>rest.py</code>), what Discord says is true (<code>facts.py</code>), Discord roles onto ranks (<code>ranks.py</code>), every feature and its state (<code>features.py</code>), one way out (<code>outbox.py</code>), who speaks (<code>speakers.py</code>), the part (<code>part.py</code>); only <code>client.py</code> and <code>panels.py</code> import discord.py, and only in bot mode</td><td>everything below the named parts</td></tr>
 <tr><td><code>superintendent.py</code>, <code>vergil.py</code></td><td>the Superintendent, Vergil</td><td>The two named parts, each with the context its parts get</td><td>up to <code>servers/</code>; Vergil also <code>players/</code> and <code>superintendent</code></td></tr>
 <tr><td><code>huragok.py</code>, <code>parts.py</code></td><td>Huragok</td><td>The program; every part in one list</td><td>everything but the window and the command line</td></tr>
 <tr><td><code>window/</code>, <code>commandline/</code></td><td>Huragok</td><td>The dashboard and its screens; <code>start.cmd</code>'s commands and the start loop</td><td>anything</td></tr>
@@ -1837,6 +1838,13 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>No</td>
 <td>—</td>
 <td>—</td>
+</tr>
+<tr>
+<td><code>discord</code> (0.6.0)</td>
+<td><code>discord.toml</code> (no section in <code>settings.toml</code>)</td>
+<td>Always: its switch is <code>mode</code> in that file</td>
+<td>—</td>
+<td>— (the bot; see plans/discord-bot-design.md. Keeps <code>records/discord-state.json</code>, <code>discord-claim.json</code>, <code>discord-logins.json</code>, <code>discord-commands.json</code>)</td>
 </tr>
 <tr>
 <td><code>tempdiscord</code> (0.5.2 until 0.6.0)</td>

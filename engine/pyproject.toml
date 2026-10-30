@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "websockets>=13",
     "psutil>=5.9",
+    "discord.py>=2.7,<3",
 ]
 
 [project.optional-dependencies]

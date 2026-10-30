@@ -33,6 +33,7 @@ def test_scrubber_hides_addresses_and_devices_and_stands_in_for_ids() -> None:
     assert data["id"] == scrub.stand_in(ALICE) == scrub.stand_in(ALICE.upper()) and data["id"].startswith("P-")
     assert data["text"] == f"banned {scrub.stand_in(BRAVO)} at (hidden) and (hidden), at 03:07:07"
     assert Scrubber(b"x" * 32).stand_in(ALICE) != data["id"]  # another machine's key, other stand-ins
+    assert scrub.value({"players": {ALICE: [], "203.0.113.4": 1}}) == {"players": {scrub.stand_in(ALICE): [], "(hidden)": 1}}
     assert scrub.value({"evidence": "a slur", "reason": "spam"}, said=True) == {"reason": "spam"}
     assert said("gg ez") == "(5 characters)" and said("!Stats Nate") == "!stats (+5 characters)" and said("/k") == "/k"
 
