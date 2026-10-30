@@ -263,7 +263,7 @@ def test_d_changes_settings_toml_a_step_at_a_time(tmp_path: Path, run) -> None:
     keys = ["S", "ENTER",  # D's list: How Huragok runs
             "7", "ENTER",  # Automod
             "2", "ENTER", "N",  # dry_run off
-            "7", "ENTER", *"3,4,5", "ENTER",  # exempt_roles: moderator, admin, owner
+            "7", "ENTER", *"4,5,6", "ENTER",  # exempt_roles: moderator, admin, owner
             "ESC",
             "8", "ENTER", "M", "ENTER",  # the relay's moderators
             "A", "ENTER", *"Alice", "ENTER", *"alice-long-password", "ENTER", "1",  # Alice, moderator

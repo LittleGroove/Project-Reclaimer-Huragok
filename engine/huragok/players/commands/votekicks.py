@@ -37,7 +37,8 @@ BUDGET = 6.0  # seconds one pass may take, within the part's 10 s per job; what'
 TELL_GAP = 30.0  # seconds between explanations to the same caller
 IMMUNE = re.compile(r"(?P<name>.+) can't be vote-kicked on this server\.?")
 SUFFIX = re.compile(r"(?P<name>.+) \([0-9A-Za-z]{2,6}\)")  # "Player (A7B)": how votes tell same-named players apart
-ARTICLE = {"member": "a member", "moderator": "a moderator", "admin": "an admin", "owner": "an owner"}
+ARTICLE = {"member": "a member", "probationary-moderator": "a probationary moderator", "moderator": "a moderator",
+           "admin": "an admin", "owner": "an owner"}
 
 
 def _named(state: ServerState, name: str) -> list[Player]:

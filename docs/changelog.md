@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.3
+**Probationary moderators: bring new moderators in on probation.** A new role between
+member and moderator. They use moderators' commands, but each kick, mute or strike is a
+request a moderator or admin confirms (`!reports`, `!confirm 3`, `!deny 3`) before it
+happens; `!confirm 3 strike slurs` does something else instead. A moderator promotes a
+member to it with `!promote`, an admin promotes them on to moderator. Install it with U:
+your files read as they did.
+
+- **The ladder:** player, member, probationary moderator, moderator, admin, owner.
+  `!promote` and `!demote` move a step at a time, as before: moderators make members and
+  probationary moderators, admins make moderators, owners make admins.
+- **What they can do:** the looking commands work as for a moderator (`!players`,
+  `!whois`, `!said`, `!kicks`, `!mutes`, `!rules`, `!roles`, `!reports`…). The ones that
+  name a player become requests: they read "Sent for review as #3", every moderator and
+  admin on any server is told privately (`[o_o] BE A HERO! REPORT VIOLATORS! …`), and the
+  player named reads nothing.
+- **Deciding:** `!reports` lists what's waiting on every server; `!confirm <number>`
+  makes it happen as the confirmer's own, on the server the player is on now;
+  `!confirm <number> <command> [words]` does that to the same player instead (a strike,
+  a longer mute); `!deny <number> [why]` turns it down. A request's number is the lowest
+  free one; a decided one frees it.
+- **Nothing runs out:** a request waits until someone decides it, and what's confirmed
+  happens then, even to a player who has left: a mute as they next join, a kick keeps
+  them off every server for 10 minutes from the confirmation, a warning waits for their
+  next join.
+- **Their record:** they're told how each request went (now, or as they next join);
+  `!whois` shows their tally; the ledger keeps "requested by" beside each action.
+- **In `commands.toml`** a probationary moderator is listed under `[member]`, with a note
+  saying what they are, and Huragok's database marks them: an older Huragok, if an update
+  is ever put back, reads the file and sees a member. `!reports`, `!confirm` and `!deny`
+  are listed under `[moderator]` by the update, once it has settled.
+
 ## 0.5.2
 **Huragok keeps a record for 0.6.0's Discord bot and players' stats.** While people
 play, it writes down what your servers send (every kill, each game's start and end, the

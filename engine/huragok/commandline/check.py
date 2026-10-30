@@ -222,6 +222,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     admins = {a for s in settings.servers for a in s.admins}
     who = {"player": "",
            "member": f" ({len(permissions.members['member'])} listed)",
+           "probationary-moderator": " (members on probation: moderators' commands as requests)",
            "moderator": f" ({len(permissions.members['moderator'])} listed)",
            "admin": f" (the server's own; {len(admins)} in dedicated.toml)",
            "owner": f" ({len(permissions.members['owner'])} listed)"}

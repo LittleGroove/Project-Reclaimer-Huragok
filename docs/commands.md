@@ -64,16 +64,17 @@ commands = []
 | --- | --- | --- |
 | `everyone` | every player | |
 | `member` | the player IDs under `[member]` | Regulars, friends, your clan. No commands of their own yet (list some under `[member]` if you like); no vote can kick them. |
+| `probationary-moderator` | members on probation as moderators: made one in game with `!promote` | Moderators' commands, but each kick, mute, strike, warning… is a request a moderator or admin confirms before it happens: see [Probationary moderators](#probationary-moderators). Listed under `[member]`, with a note saying so. No vote can kick them. |
 | `moderator` | the player IDs under `[moderator]` | The game itself doesn't know about moderators: what they can do is what's listed for them. No vote can kick them. |
 | `admin` | the server's own admins: `admins` in `dedicated.toml`, or added in game with `!admin add` | Not listed in `commands.toml`, so there's never a second list to keep in step. Vergil reads the server's list live. |
 | `owner` | the player IDs under `[owner]` | You. Can act on anyone. |
 
-**One role each, on a ladder: player, member, moderator, admin, owner.** In game,
-`!promote <player>` moves someone one step up and `!demote <player>` one step
-down: demoting an admin makes them a moderator, a moderator a member, a member a
-player again. You can promote someone up to the role below your own (moderators
-make members, admins make moderators, owners make admins) and demote only someone
-below you. `!roles` lists who has which. Moving someone takes them out of the role
+**One role each, on a ladder: player, member, probationary moderator, moderator, admin,
+owner.** In game, `!promote <player>` moves someone one step up and `!demote <player>`
+one step down: demoting an admin makes them a moderator, a moderator a probationary
+moderator, then a member, a member a player again. You can promote someone up to the
+role below your own (moderators make members and probationary moderators, admins make
+moderators, owners make admins) and demote only someone below you. `!roles` lists who has which. Moving someone takes them out of the role
 they had, so nobody is ever two things. Moderators and members live in
 `commands.toml`, each on a line of their own saying who they are and who moved
 them (`"…",  # Bravo: promoted by Alice on 2026-10-19`); the rest of the file, your
@@ -238,6 +239,37 @@ spamming votes. Any vote they call is cancelled.` when it's given.
 - A reply a slow or restarting server can't take in time is dropped (the log says
   so); the commands keep working.
 
+## Probationary moderators
+A way to bring new moderators in (SPR's staff meeting, October 2026). A moderator
+promotes a member once more and they're a **probationary moderator**; an admin
+promotes them to moderator once they've shown they're ready.
+
+- **They use moderators' commands, as moderators type them.** The looking ones work
+  as they do for a moderator (`!players`, `!whois`, `!said`, `!kicks`, `!mutes`,
+  `!rules`, `!roles`, `!health`, `!bannames`, `!novotes`, `!reports`). The others,
+  which name a player (`!kick`, `!mute`, `!strike`, `!warn`, `!unmute`, `!pardon`,
+  `!novote`, `!allowvote`, `!promote`, `!demote`), become **requests**: the player is
+  found with the usual checks, and then nothing happens yet. They read
+  `Sent for review as #3: !kick Bravo spam.`; every moderator and admin on any
+  server reads, privately, `[o_o] BE A HERO! REPORT VIOLATORS! Nate (probationary
+  moderator) asks, #3 on SPR 1: !kick Bravo spam. !confirm 3 or !deny 3`; the player
+  named reads nothing.
+- **`!reports`** lists the requests waiting, on every server. **`!confirm 3`** makes
+  it happen, as the confirmer's own (they're who acts: the player reads their name),
+  on the server the player is on now. **`!confirm 3 strike slurs`**, or `!confirm 3
+  mute 1h language`, does that to the same player instead. **`!deny 3 [why]`** turns
+  it down. A request's number is the lowest one free; a decided one frees it.
+- **Nothing runs out.** A request waits until someone decides it, and what's
+  confirmed happens then, its time counting from that moment, even for a player who
+  has left: a mute as they next join, a kick keeps them off every server for 10
+  minutes from the confirmation, a warning waits for their next join, a strike counts
+  at once.
+- **The probationary moderator is told how each went**, now or as they next join.
+  `!whois <them>` shows their record ("Requests as a probationary moderator: 12 (9
+  confirmed, 2 turned down, 1 waiting)"), and the ledger keeps "requested by" beside
+  the confirmer's action.
+- They can't confirm requests, and nobody confirms their own.
+
 ## Every command
 | Command | Default role | |
 | --- | --- | --- |
@@ -263,8 +295,11 @@ spamming votes. Any vote they call is cancelled.` when it's given.
 | `!strike <player> name [note]` | moderator | Bans their name (adds it to `names.txt`): they're kicked every time they join with it, until they change it. No strike, no ban |
 | `!health` | moderator | How the server is running |
 | `!promote <player>` | moderator | One step up the roles, up to the role below yours |
-| `!demote <player>` | moderator | One step down, for someone below you: admin to moderator, moderator to member, member to player |
+| `!demote <player>` | moderator | One step down, for someone below you: admin to moderator, moderator to probationary moderator, then member, member to player |
 | `!roles` | moderator | Who has which role |
+| `!reports` | moderator | The probationary moderators' requests waiting, on every server |
+| `!confirm <number> [command and its words]` | moderator | Confirm a request: it happens now, as yours; or name another command to do to that player instead (`!confirm 3 strike slurs`) |
+| `!deny <number> [why]` | moderator | Turn a request down; the probationary moderator is told why |
 | `!ban <player \| ID> [time \| perm] [reason]` | admin | Their ID, address and device; works on players who left, by ID or a name Vergil has seen |
 | `!unban <@number \| name \| ID \| IP>` | admin | Lift a ban with everything linked to it, on every server; another server's own `/ban` of them stays, and the reply says where; `@number` from `!bans` |
 | `!bans [name]` | admin | The bans in force, newest first, with who banned, why, how long is left, and whether it's on every server or this one; numbered for `!unban` and `!banall` |

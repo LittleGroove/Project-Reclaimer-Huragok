@@ -1058,16 +1058,24 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             def said(who: str, text: str) -> Any:
                 return wait_for(lambda: any(text in t for t in tells_to(fake, who)))
 
-            # Up: a moderator makes members, an admin moderators, an owner admins; never past the caller's own.
+            # Up: a moderator makes members and probationary moderators, an admin moderators, an owner admins; never
+            # past the caller's own.
             await fake.chat(MOD, "Mod", "!promote bravo")
             await wait_for(lambda: role() == "member")
             assert f'"{BRAVO}",  # Bravo: promoted by Mod on' in path.read_text(encoding="utf-8")
             await said(BRAVO, "[^_^] WELCOME! ACCESS GRANTED! Mod made you a member here.")
             await fake.chat(MOD, "Mod", "!promote bravo")
+            await wait_for(lambda: role() == "probationary-moderator")
+            text = path.read_text(encoding="utf-8")
+            assert f'"{BRAVO}",  # Bravo: a probationary moderator (promoted by Mod on' in text and text.count(BRAVO) == 1
+            assert "[probationary" not in text  # listed as a member: an older Huragok reads the file
+            await said(BRAVO, "Mod made you a probationary moderator here.")
+            await fake.chat(MOD, "Mod", "!promote bravo")
             await said(MOD, "Bravo would be a moderator, and you can promote players only to the role below yours "
-                            "(a member at most).")
+                            "(a probationary moderator at most).")
             await fake.chat(ADMIN, "Admin", "!promote bravo")
             await wait_for(lambda: role() == "moderator")
+            assert BRAVO not in sup.vergil.roles.probation
             members = sup.settings.permissions.members
             assert BRAVO not in members["member"] and BRAVO in members["moderator"]  # one role, never two
             assert path.read_text(encoding="utf-8").count(BRAVO) == 1
@@ -1087,6 +1095,8 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!demote bravo")
             await said(MOD, "Bravo is a moderator; you can't demote them.")
             await fake.chat(ADMIN, "Admin", "!demote bravo")
+            await wait_for(lambda: role() == "probationary-moderator")
+            await fake.chat(MOD, "Mod", "!demote bravo")
             await wait_for(lambda: role() == "member")
             await fake.chat(MOD, "Mod", "!demote bravo")
             await wait_for(lambda: role() == "player")
@@ -1115,8 +1125,9 @@ def test_a_ban_takes_every_role_away(tmp_path: Path, run) -> None:
         async with running(tmp_path, prepare=lambda f: f.admins_configured.append(ADMIN)) as (sup, fake, _):
             await everyone_joins(fake)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
-            await fake.chat(ADMIN, "Admin", "!promote alice")
-            await fake.chat(ADMIN, "Admin", "!promote alice")
+            for _ in range(3):  # member, probationary moderator, moderator
+                await fake.chat(ADMIN, "Admin", "!promote alice")
+                await asyncio.sleep(0.2)
             await wait_for(lambda: ALICE in sup.settings.permissions.members["moderator"])
             await fake.chat(ADMIN, "Admin", "!ban alice 1d spam")
             await wait_for(lambda: ALICE not in sup.settings.permissions.members["moderator"])

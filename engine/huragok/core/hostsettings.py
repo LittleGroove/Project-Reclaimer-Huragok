@@ -29,7 +29,7 @@ APPLIES = "when Huragok starts again (the servers keep running meanwhile)"
 WATCHDOG_ACTIONS = ("watch", "act", "actnow")
 BACKENDS = ("process", "docker", "command", "attach")
 SHARE = ("game", "content")
-ROLES = ("player", "member", "moderator", "admin", "owner")
+ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "owner")
 RELAY_ROLES = ("moderator", "admin", "owner")
 
 GROUPS: list[tuple[str, str, str, str]] = [  # (key, whose: SUPT/VRGL/HRGK, title, what's in it)

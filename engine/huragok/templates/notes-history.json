@@ -8,7 +8,8 @@
   "0.4.4",
   "0.5.0",
   "0.5.1",
-  "0.5.2"
+  "0.5.2",
+  "0.5.3"
  ],
  "files": {
   "settings.toml": {
@@ -608,7 +609,16 @@
      "# No vote can kick a member, moderator, admin or owner: Vergil puts everyone",
      "# listed here on each server's vote-kick immune list (the console's `immune`),",
      "# and takes them off again when you take them out of this file.",
-     "# make moderators, owners make admins. A !ban takes every role away. Each change"
+     "# make moderators, owners make admins. A !ban takes every role away. Each change",
+     "#   probationary moderator  a member on probation as a moderator (made one in game",
+     "#              with !promote): moderators' commands, but each kick, mute, strike…",
+     "#              is a request a moderator or admin confirms (!reports, !confirm,",
+     "#              !deny) before it happens. Listed under [member], with a note.",
+     "# One role each, on a ladder: player, member, probationary moderator, moderator,",
+     "# admin, owner. In game, !promote <player> moves someone one step up (up to the",
+     "# role below your own) and !demote one step down (only someone below you):",
+     "# moderators make members and probationary moderators, admins make moderators,",
+     "# owners make admins. A !ban takes every role away. Each change"
     ]
    },
    "inline": {
@@ -630,7 +640,8 @@
      "Ban a name: whoever uses it is kicked as they join, until they change it (names.txt)"
     ],
     "demote": [
-     "One step down the roles: an admin becomes a moderator, a moderator a member, a member a player"
+     "One step down the roles: an admin becomes a moderator, a moderator a member, a member a player",
+     "One step down the roles: an admin becomes a moderator, a moderator a probationary moderator, then a member, a member a player"
     ],
     "health": [
      "How this server is running"
@@ -651,10 +662,12 @@
      "Who's on, with #numbers and player IDs; !players nate lists those with nate in their name"
     ],
     "promote": [
-     "One step up the roles: player, member, moderator, admin (up to the role below yours)"
+     "One step up the roles: player, member, moderator, admin (up to the role below yours)",
+     "One step up the roles: player, member, probationary moderator, moderator, admin (up to the role below yours)"
     ],
     "roles": [
-     "Who has which role: owners, admins, moderators, members"
+     "Who has which role: owners, admins, moderators, members",
+     "Who has which role: owners, admins, moderators, probationary moderators, members"
     ],
     "strike": [
      "Give a strike on an automod rule, e.g. for something said in voice; 'name' bans their name"
@@ -792,6 +805,15 @@
     ],
     "respawn": [
      "Stuck? Respawn yourself (a team game, during a round); admins name a player to respawn them"
+    ],
+    "confirm": [
+     "Confirm a probationary moderator's request: it happens now, as yours (e.g. !confirm 3), or do something else to that player instead (!confirm 3 strike slurs)"
+    ],
+    "deny": [
+     "Turn down a probationary moderator's request (they're told why)"
+    ],
+    "reports": [
+     "The probationary moderators' requests waiting, on every server: !confirm or !deny each"
     ]
    }
   },

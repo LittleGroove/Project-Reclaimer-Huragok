@@ -46,13 +46,23 @@ from .text import STORED_ID
 
 
 
-ROLES = ("player", "member", "moderator", "admin", "owner")  # lowest to highest
+ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "owner")  # lowest to highest
+
+
+# A moderator on probation (0.5.3, players/commands/requests.py): moderators' commands, but what they do is a request
+# a moderator or admin confirms. commands.toml lists them as members (Huragok's database marks them on probation), and
+# it has no section of their own: 0.5.2 and before refuse a section or key they don't know, and an update that won't
+# start is put back.
+PROBATION = "probationary-moderator"
 
 
 SECTIONS = {"everyone": "player", "member": "member", "moderator": "moderator", "admin": "admin", "owner": "owner"}
 
 
-TITLES = {v: k for k, v in SECTIONS.items()}  # role -> its section: player -> everyone
+COMMAND_ROLES = tuple(r for r in ROLES if r != PROBATION)  # the roles a command can be given (each has a section)
+
+
+TITLES = {**{v: k for k, v in SECTIONS.items()}, PROBATION: PROBATION}  # role -> its section: player -> everyone
 
 
 LISTED = ("owner", "moderator", "member")  # the roles whose players are listed here; admins are the server's own
@@ -247,6 +257,10 @@ HEADER = """\
 #   everyone   every player
 #   member     the players you list below: regulars, friends, clan. No commands
 #              of their own yet; what they get is that no vote can kick them.
+#   probationary moderator  a member on probation as a moderator (made one in game
+#              with !promote): moderators' commands, but each kick, mute, strike…
+#              is a request a moderator or admin confirms (!reports, !confirm,
+#              !deny) before it happens. Listed under [member], with a note.
 #   moderator  the players you list below. The game itself doesn't know about
 #              moderators, so what they can do is exactly what you list here.
 #   admin      the server's own admins: admins in dedicated.toml, or added in game.
@@ -254,10 +268,11 @@ HEADER = """\
 #              step.
 #   owner      the players you list below (you): everything.
 #
-# One role each, on a ladder: player, member, moderator, admin, owner. In game,
-# !promote <player> moves someone one step up (up to the role below your own) and
-# !demote one step down (only someone below you): moderators make members, admins
-# make moderators, owners make admins. A !ban takes every role away. Each change
+# One role each, on a ladder: player, member, probationary moderator, moderator,
+# admin, owner. In game, !promote <player> moves someone one step up (up to the
+# role below your own) and !demote one step down (only someone below you):
+# moderators make members and probationary moderators, admins make moderators,
+# owners make admins. A !ban takes every role away. Each change
 # gets a line of its own below, with who they are and who changed it; your own
 # comments in the lists stay as you wrote them. Owners change only here.
 #
@@ -291,7 +306,7 @@ def render_commands_toml(specs: Iterable[CommandSpec] | None = None) -> str:
     specs = sorted(all_commands().values() if specs is None else specs, key=lambda s: s.name)
     width = entry_width(specs)
     out = [HEADER]
-    for role in ROLES:
+    for role in COMMAND_ROLES:
         section = TITLES[role]
         out.append(f"\n[{section}]\n")
         if section in LISTED:
@@ -401,8 +416,8 @@ def set_command_role(path: Path, command: str, role: str) -> None:
     spec = all_commands().get(command)
     if spec is None:
         raise PermissionsError(f"there's no command {command}")
-    if role not in ROLES:
-        raise PermissionsError(f"the roles are {', '.join(ROLES)}")
+    if role not in COMMAND_ROLES:
+        raise PermissionsError(f"the roles are {', '.join(COMMAND_ROLES)}")
     prefix = load_permissions(path).prefix
 
     def change(copy: Path) -> None:

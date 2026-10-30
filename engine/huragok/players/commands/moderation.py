@@ -7,7 +7,9 @@ role or above.
 
 from __future__ import annotations
 
+from ...core.commandsfile import PROBATION
 from ...core.part import command
+from ..roles import role_name
 from ..router import CommandCall, unquote
 from .base import CommandsBase
 
@@ -86,5 +88,5 @@ class ModerationCommands(CommandsBase):
         duration, rest, _ = self._split_time(call.rest)
         action = await self.ctx.moderation.ban(call.server, target, duration, unquote(rest), by=call.player.name)
         await self._done(call, action)
-        if action.ok and not action.dry_run and role in ("member", "moderator", "admin"):  # roles.py takes it
-            await call.reply(f"{target.name}'s {role} role goes with the ban.")
+        if action.ok and not action.dry_run and role in ("member", PROBATION, "moderator", "admin"):  # roles.py takes it
+            await call.reply(f"{target.name}'s {role_name(role)} role goes with the ban.")

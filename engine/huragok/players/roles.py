@@ -1,23 +1,29 @@
 """Roles: who a player is to Huragok, from player (everyone) up to owner.
 
 owner, moderator and member come from commands.toml (commandfile.py), the same on every server; admin only from
-each server itself (its console's `admin` list, or its dedicated.toml until it answers). A player's rank against a
-`!` command is their highest role on any server.
+each server itself (its console's `admin` list, or its dedicated.toml until it answers). A probationary moderator
+(0.5.3) is a member commands.toml lists whom Huragok's database marks on probation (`probation`, which the commands
+part keeps: players/commands/requests.py). A player's rank against a `!` command is their highest role on any server.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable
 
-from ..core.commandsfile import ROLES
+from ..core.commandsfile import PROBATION, ROLES
 
 if TYPE_CHECKING:
     from ..servers.state import Player, ServerState
 
 
+def role_name(role: str) -> str:
+    """A role as players read it: 'probationary moderator'."""
+    return role.replace("-", " ")
+
+
 def a_role(role: str) -> str:
     """'an admin', 'a moderator': for players to read."""
-    return ("an " if role[:1] in ("a", "e", "i", "o", "u") else "a ") + role
+    return ("an " if role[:1] in ("a", "e", "i", "o", "u") else "a ") + role_name(role)
 
 
 class Roles:
@@ -25,6 +31,7 @@ class Roles:
 
     def __init__(self, settings: Any) -> None:
         self.settings = settings  # reads settings.permissions each time: commands.toml reloads while running
+        self.probation: set[str] = set()  # members on probation as moderators (requests.py keeps it)
 
     def role_of(self, state: ServerState | None, player: Player) -> str:
         members, pid = self.settings.permissions.members, player.id.lower()
@@ -35,7 +42,7 @@ class Roles:
         if pid in members.get("moderator", set()):
             return "moderator"
         if pid in members.get("member", set()):
-            return "member"
+            return PROBATION if pid in self.probation else "member"
         return "player"
 
     def highest_role(self, states: Iterable[ServerState], player: Player) -> str:

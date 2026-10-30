@@ -6,7 +6,7 @@ over the players, removing them for words on a list (automod) and giving in-game
 commands to the roles the host picks (commands.toml). Works the same on Windows and
 Linux."""
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"
 
 # Unzipped over an older engine by hand (an update swaps the whole folder; a hand install should delete it first):
 # 0.4.x's parts/ package would be imported in place of parts.py, a mix of two versions. Said plainly instead.

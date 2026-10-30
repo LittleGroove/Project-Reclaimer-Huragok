@@ -48,4 +48,28 @@ MIGRATIONS = [
         server TEXT, until REAL, length TEXT, lifted REAL, lifted_by TEXT);
     CREATE INDEX commands_no_votes_target ON commands_no_votes (target);
     """,
+    # 7 (0.5.3): members on probation as moderators (requests.py): commands.toml lists them as members, this marks
+    # them; who made them one and when.
+    """
+    CREATE TABLE commands_probation (target TEXT PRIMARY KEY, name TEXT, time REAL NOT NULL, by TEXT);
+    """,
+    # 8 (0.5.3): a probationary moderator's requests (requests.py). `slot` is the number staff use (the lowest free
+    # one: a request decided frees it); `words` what came after the player (JSON); `status` open, confirmed or denied;
+    # `done` what ran when it was confirmed, `outcome` what the confirmer was told, `told` whether the probationary
+    # moderator has been.
+    """
+    CREATE TABLE commands_requests (
+        number INTEGER PRIMARY KEY, slot INTEGER NOT NULL, time REAL NOT NULL, server TEXT, by_id TEXT NOT NULL,
+        by_name TEXT, command TEXT NOT NULL, target TEXT NOT NULL, target_name TEXT, words TEXT NOT NULL,
+        status TEXT NOT NULL, decided REAL, decided_by TEXT, done TEXT, why TEXT, outcome TEXT,
+        told INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX commands_requests_status ON commands_requests (status);
+    CREATE INDEX commands_requests_by ON commands_requests (by_id);
+    """,
+    # 9 (0.5.3): a line a player reads as they next join (requests.py: a warning confirmed while they were away).
+    """
+    CREATE TABLE commands_notices (
+        number INTEGER PRIMARY KEY, time REAL NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, delivered REAL);
+    CREATE INDEX commands_notices_target ON commands_notices (target);
+    """,
 ]

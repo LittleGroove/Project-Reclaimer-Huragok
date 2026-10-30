@@ -17,6 +17,8 @@ reads a player's back as a rap sheet. said.py keeps every player's chat lines 30
 ([automod] across_servers). votekicks.py has no commands: it keeps everyone
 commands.toml lists safe from votes to kick. novotes.py stops a player calling votes (!novote: their votes are
 cancelled as they're called). respawn.py respawns a stuck player (!respawn: a move to another team and back).
+requests.py is the probationary moderators': what they do is a request a moderator or admin confirms (!reports,
+!confirm, !deny).
 toggles.py switches a server's voice and chat (dedicated.toml), for a while or for good.
 Finding the player a command names, with its guards, is targets.py's.
 """
@@ -31,6 +33,7 @@ from .moderation import ModerationCommands
 from .novotes import NoVotes
 from .respawn import RespawnCommands
 from .players import PlayerCommands
+from .requests import ProbationRequests
 from .roles import RoleCommands
 from .said import SaidCommands
 from .schema import MIGRATIONS
@@ -40,7 +43,7 @@ from .votekicks import VoteKicks
 
 
 class Commands(PlayerCommands, ModerationCommands, ListCommands, HistoryCommands, AcrossServers, SaidCommands,
-               RoleCommands, ServerCommands, SettingToggles, VoteKicks, NoVotes, RespawnCommands):
+               RoleCommands, ServerCommands, SettingToggles, VoteKicks, NoVotes, RespawnCommands, ProbationRequests):
     persona = VERGIL
     name = "commands"
     description = "In-game commands, each for the roles commands.toml gives it"
@@ -50,6 +53,7 @@ class Commands(PlayerCommands, ModerationCommands, ListCommands, HistoryCommands
     async def setup(self) -> None:
         self.ctx.db.migrate(MIGRATIONS)  # the chat lines !said reads, Huragok's own list for every server
         await self._import_shared_lists()  # the bans servers shared up to 0.4.4, onto Huragok's list
+        self._requests_start()  # who's on probation, and their requests kept here (requests.py)
 
 
 __all__ = ["Commands"]

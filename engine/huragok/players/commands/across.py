@@ -113,7 +113,7 @@ class AcrossServers(CommandsBase):
     def _across_block(self, player_id: str, server: str) -> Any:
         """The kick on another server still keeping this player out, or None."""
         now = time.time()
-        return next((k for k in self.recent_kicks() if k.id == player_id and k.server != server
+        return next((k for k in self.recent_kicks() if k.id == player_id and (k.server != server or k.everywhere)
                      and k.through_console and k.time + k.seconds > now
                      and not self._across_echo(k.server, "kick", k.id)), None)
 

@@ -187,6 +187,8 @@ class HistoryCommands(CommandsBase):
             lines.append("Record: nothing: never kicked, muted, banned or warned here.")
         if strikes := self._whois_strikes(player_id):
             lines.append("Strikes: " + strikes)
+        if probation := self.probation_record(player_id):  # requests.py
+            lines.append(probation)
         for row in rows[:shown]:
             when = time.strftime("%m-%d %H:%M", time.localtime(row["time"]))
             reason = str(row["reason"] or "")

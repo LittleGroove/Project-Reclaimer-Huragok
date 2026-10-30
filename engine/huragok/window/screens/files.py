@@ -28,7 +28,7 @@ from ...content.mccimport import content_root_of
 from ...core import desktop
 from ...core import hostsettings as hs
 from ...core.commandsfile import (
-    LISTED, ROLES, TITLES, PermissionsError, add_player, all_commands, load_permissions, make_commands_toml,
+    COMMAND_ROLES, LISTED, ROLES, TITLES, PermissionsError, add_player, all_commands, load_permissions, make_commands_toml,
     player_notes, remove_player, set_command_off, set_command_role, set_top,
 )
 from ...core.settings import COMMANDS_FILE
@@ -469,7 +469,7 @@ class FileScreens(Screens):
             role = permissions.role_for(spec)
             off = spec.name in permissions.off
             options = [(str(n), TITLES[r], "now" if r == role else "default" if r == spec.role else "")
-                       for n, r in enumerate(ROLES, 1)]
+                       for n, r in enumerate(COMMAND_ROLES, 1)]  # a probationary moderator asks with moderators'
             if spec.name != "help":
                 options.append(("O", "Switch it on again" if off else "Switch it off", "nobody can use it" if not
                                 off else f"for {TITLES[role]} and up"))
@@ -480,9 +480,10 @@ class FileScreens(Screens):
                 if picked == "O":
                     set_command_off(path, spec.name, not off)
                     self.note(f"{permissions.prefix}{spec.name} is {'on again' if off else 'off'}.", "green")
-                elif ROLES[int(picked) - 1] != role:
-                    set_command_role(path, spec.name, ROLES[int(picked) - 1])
-                    self.note(f"{permissions.prefix}{spec.name}: {TITLES[ROLES[int(picked) - 1]]} and up.", "green")
+                elif COMMAND_ROLES[int(picked) - 1] != role:
+                    set_command_role(path, spec.name, COMMAND_ROLES[int(picked) - 1])
+                    self.note(f"{permissions.prefix}{spec.name}: {TITLES[COMMAND_ROLES[int(picked) - 1]]} and up.",
+                              "green")
             except (PermissionsError, OSError) as error:
                 self.note(f"Not changed: {error}", "yellow")
                 await self.wait_any_key(6)

@@ -19,6 +19,7 @@ from typing import Any
 from ...core.events import Event
 from ...core.part import command, on
 from ...rcon import ban_list
+from ...servers.state import Player
 from ..router import CommandCall
 from ..targets import FULL_ID, PICK, Candidate, ago, ask, offer, plain
 from ..who import from_console, who
@@ -38,6 +39,7 @@ class Kick:
     reason: str
     seconds: float  # how long the server keeps them out
     through_console: bool = False  # a ! command's, Vergil's, the relay's (the server names who "Alice (RCON)")
+    everywhere: bool = False  # given while they were away (a confirmed request): every server keeps them off, that one too
 
     def candidate(self, now: float, here: str = "") -> Candidate:
         left = self.time + self.seconds - now
@@ -208,6 +210,11 @@ class ListCommands(CommandsBase):
         kicks = self._kicks_list()
         for kick in [k for k in kicks if k.server == event.server and target and k.id == target]:
             kicks.remove(kick)
+
+    def _kick_while_away(self, server: str, target: Player, by: str, reason: str, seconds: float) -> None:
+        """A kick for someone who isn't on (a request confirmed after they left: requests.py): kept off every server,
+        `server` too, for `seconds` from now, as Huragok's kicks keep players off the others (across.py)."""
+        self._kicks_list().append(Kick(time.time(), server, target.id, target.name, by, reason, seconds, True, True))
 
     def recent_kicks(self, server: str | None = None) -> list[Kick]:
         """Kicks still keeping someone out (or within the last two hours), newest first."""

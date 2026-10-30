@@ -142,3 +142,16 @@ class VergilContext(SuperintendentContext):
     def reload_permissions(self) -> None:
         """commands.toml was just changed from here: in force now, not at the next look a couple of seconds on."""
         self._vergil.check_files(force=True)
+
+    @property
+    def probation(self) -> set[str]:
+        """Members on probation as moderators (the commands part keeps it: players/commands/requests.py)."""
+        return self._vergil.roles.probation
+
+    def on_request(self, handler: Any) -> None:
+        """Where a probationary moderator's commands go instead of running (the router's on_request)."""
+        self._vergil.commands.on_request = handler
+
+    async def run_as(self, name: str, target: Player, words: list[str], **kwargs: Any) -> str | None:
+        """A command run for someone, on a server, as if they'd typed it there (a confirmed request)."""
+        return await self._vergil.commands.run_as(name, target, words, **kwargs)
