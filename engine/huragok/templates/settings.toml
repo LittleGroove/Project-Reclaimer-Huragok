@@ -285,6 +285,17 @@ install = "after_game"
 # own setting alone and Huragok doesn't look). Also written into each server's
 # [workshop] update_check_minutes, so it downloads the new version during the game.
 check_minutes = 5
+# Mods copied into a server's content folder by hand that name a Workshop item (their
+# ModInfo.json does) are never updated by the server program. true: Huragok fetches
+# the Workshop's own copy while the server runs, then after a game (at once when nobody
+# is on) puts it in the hand copy's place, keeps the hand copy in "content set aside"
+# beside the content folder and lists the item in [workshop] items. A copy the program
+# installed that isn't listed any more is listed again: the server loads it all the same.
+adopt = true
+# The Forge layouts each mod ships ("Project Reclaimer Layouts") copied into
+# content/Maps/<mod> and kept in step with its new versions. A layout changed there by
+# hand is left as it is.
+layouts = true
 
 [setup]
 # New servers: the window's N key, or start.cmd new "<name>" (Linux: ./start.sh new).

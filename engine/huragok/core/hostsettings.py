@@ -259,6 +259,12 @@ SETTINGS: list[HostSetting] = [
       choices=("after_game", "when_empty", "off"), default="after_game"),
     H("workshop_updates", "check_minutes", "int", "minutes between looks at Steam (5 at least; 0 leaves each server's "
       "own setting alone and Huragok doesn't look)", "workshop_updates", default=5, low=0, high=10080),
+    H("workshop_updates", "adopt", "bool", "a mod copied into a server's content by hand that names a Workshop item "
+      "is kept up to date too: the Workshop's copy is fetched while the server runs and takes the hand copy's place "
+      "after a game (the hand copy kept in content set aside), and the item is listed", "workshop_updates",
+      default=True),
+    H("workshop_updates", "layouts", "bool", "the Forge layouts each mod ships are copied into content/Maps and kept in "
+      "step with its new versions (one changed there by hand is left as it is)", "workshop_updates", default=True),
     # New servers and SteamCMD
     H("setup", "share", "share", "what new servers take from this folder instead of a copy of their own: game "
       "(Halo 3's files), content (one content folder for every server). Never the ban list: every server keeps its "

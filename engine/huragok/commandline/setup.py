@@ -376,9 +376,14 @@ def cmd_workshop(args: argparse.Namespace, load: Callable[[str], Settings], laun
         new = [i for i in items if i not in ids] if action == "remove" else items + [i for i in ids if i not in items]
         set_workshop_items(server, new)
         out.ok(f"{server.name}'s Workshop items: {', '.join(str(i) for i in new) or 'none'}")
-        out.note("A change to [workshop] takes effect when the server's `dedicated` restarts "
-                 f"({launcher} restart \"{server.name}\"); install the items first: "
-                 f"{launcher} workshop --server \"{server.name}\" install")
+        from ..content.workshopmods import switch_workshop_copies
+
+        for line in switch_workshop_copies(server, ids, off=action == "remove", config_name=settings.config_name):
+            out.note(line)
+        if action == "add":
+            out.note("Huragok fetches them within a minute while it runs (a running server with auto_reload fetches "
+                     "them itself), or the server does as it starts; to fetch them now: "
+                     f"{launcher} workshop --server \"{server.name}\" install")
         return 0
     return _show(_tool(settings).mods(server.folder))  # install: the parser allows no other action
 

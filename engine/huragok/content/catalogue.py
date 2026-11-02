@@ -315,6 +315,80 @@ def install_layouts(mod: Mod, content_root: Path, *, overwrite: bool = False) ->
     return copied
 
 
+@dataclass
+class LayoutSync:
+    """What sync_layouts did, by file under the content folder."""
+
+    copied: list[str] = field(default_factory=list)  # new
+    updated: list[str] = field(default_factory=list)  # the mod's new version over Huragok's last copy
+    replaced: list[str] = field(default_factory=list)  # there before Huragok kept track, and different: set aside
+    kept: list[str] = field(default_factory=list)  # changed here by hand: left as it is
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.copied or self.updated or self.replaced)
+
+
+def file_hash(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def layout_target(mod: Mod, content_root: Path, name: str, path: Path) -> Path:
+    from .mccimport import safe_file_name
+
+    return (content_root / "Maps" / safe_file_name(mod.title, "layouts")
+            / f"{safe_file_name(name, safe_file_name(path.stem, 'layout'))}.json")
+
+
+def sync_layouts(mod: Mod, content_root: Path, written: dict[str, str], *, skip: set[str] | None = None) -> LayoutSync:
+    """A mod's shipped Forge layouts into content/Maps/<mod title>/ as its version has them, where install_layouts
+    copies them once. `written` (brought up to date here) holds what Huragok put there, by file under the content
+    folder, as each file's hash: one changed since was changed by hand and is left; one a person deleted stays
+    deleted; one that was there before Huragok kept track and differs (an older version, copied with L) is replaced,
+    the old copy moved to `content set aside`. `skip`: files another mod of the same name saw to already."""
+    from .mccimport import copy_replacing
+
+    result = LayoutSync()
+    for name, path in mod.layouts:
+        destination = layout_target(mod, content_root, name, path)
+        key = destination.relative_to(content_root).as_posix()
+        if skip is not None:
+            if key in skip:
+                continue
+            skip.add(key)
+        try:
+            new = file_hash(path)
+            current = file_hash(destination) if destination.is_file() else None
+        except OSError:
+            continue  # one in use or gone since: looked at again next time
+        known = written.get(key)
+        if current == new:
+            written[key] = new
+            continue
+        if current is None and known is not None:
+            continue  # deleted by hand: stays deleted
+        if current is not None and known is not None and current != known:
+            result.kept.append(key)
+            continue
+        if current is not None and known is None:
+            moved, _ = set_aside(content_root, [destination])
+            if not moved:
+                result.kept.append(key)
+                continue
+            done = result.replaced
+        else:
+            done = result.updated if current is not None else result.copied
+        try:
+            copy_replacing(path, destination)
+        except OSError:
+            continue  # tried again next time
+        written[key] = new
+        done.append(key)
+    return result
+
+
 # Picking from numbered lists -----------------------------------------------------------------------
 
 def parse_picks(text: str, count: int) -> list[int] | None:

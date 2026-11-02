@@ -268,7 +268,8 @@ def countdown(config: DiscordConfig, event: Event) -> Card:
 
 
 def workshop_updated(config: DiscordConfig, event: Event) -> Card:
-    items = ", ".join(clean(item) for item in event.get("items") or [])
+    """Each mod by name and its versions ("HugeGrass Rebalance 16 Oct 2026 → 18 Oct 2026"), or its item number."""
+    items = ", ".join(clean(str(item).replace(" -> ", " → ")) for item in event.get("names") or event.get("items") or [])
     return Card("servers", "workshop-updated", say(config, "server.workshop_updated", items=items), heading(config, "dust", "Workshop"), server=event.server)
 
 
@@ -388,7 +389,9 @@ def notify_game(config: DiscordConfig, server: str, mode: str, game_map: str) ->
 
 
 def workshop_waiting(config: DiscordConfig, event: Event) -> Card:
-    return Card("content", "workshop", say(config, "content.workshop", item=clean(event.get("item"))), heading(config, "construction", "Workshop"), server=event.server)
+    title, item = clean(event.get("title")), clean(event.get("item"))
+    named = f"{title} (Workshop item {item})" if title else f"Workshop item {item}"
+    return Card("content", "workshop", say(config, "content.workshop", item=named), heading(config, "construction", "Workshop"), server=event.server)
 
 
 def audit(kind: str, text: str, config: DiscordConfig, server: str | None = None) -> Card:

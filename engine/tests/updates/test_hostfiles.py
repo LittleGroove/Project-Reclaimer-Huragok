@@ -118,6 +118,10 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "full releases (new in 0.5.0)",
         "discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)",
         "settings.toml: [automod] moderators_kick_at_most = \"1d\" added: the longest kick with a time a moderator can give (new in 0.6.0)",
+        "settings.toml: [workshop_updates] adopt = true added: a mod copied into a server's content by hand that names a "
+        "Workshop item is kept up to date too (new in 0.6.0)",
+        "settings.toml: [workshop_updates] layouts = true added: the Forge layouts mods ship are copied into "
+        "content/Maps and kept in step with each new version (new in 0.6.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
         AUTOMOD_ORDER, *new_command_lines()]
@@ -127,6 +131,8 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     added = ([f"# {c}" for c in migrate.NAME_MATCH_COMMENT] + ['name_match = "anywhere"']
              + [f"# {c}" for c in migrate.ACROSS_COMMENT] + ["across_servers = true"]
              + [f"# {c}" for c in migrate.KICK_LIMIT_COMMENT] + ['moderators_kick_at_most = "1d"']
+             + [f"# {c}" for c in migrate.ADOPT_COMMENT] + ["adopt = true"]
+             + [f"# {c}" for c in migrate.LAYOUTS_COMMENT] + ["layouts = true"]
              + migrate.UPDATES_COMMENT_0_4_2 + [f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT] + ["auto_update = false"]
              + [f"# {c}" for c in migrate.BETA_COMMENT] + ["beta = false"]
              + [c for c in migrate.SHARE_COMMENT_0_5_0 if c not in migrate.SHARE_COMMENT_0_4_0] + ['share = ["game"]']

@@ -11,8 +11,9 @@ game instead:
    installed (content/Mods/Workshop/<item>/reclaimer-workshop-version.json). The
    server's console saying "Workshop <id>: update downloaded; it installs once …
    no players" counts too.
-2. Plan a restart after the game (players are told why), with a job that runs while
-   the server is stopped.
+2. Plan a restart after the game, with a job that runs while the server is stopped.
+   Players are told which mod has a new version and that the server restarts after
+   the game; with nobody on it restarts at once (the log says so).
 3. The job moves the installed copy aside and runs `dedicated mods`, which fetches the
    newest version. Tested on 2026-10-18: 38 s for a 2 GB map whose old version
    SteamCMD still had, while `dedicated mods` over the old copy changes nothing. Then
@@ -55,6 +56,7 @@ from ..core.background import background
 from ..core.events import Event
 from ..core.jobs import StoppedJob
 from ..core.web import UpdateError
+from ..lore import callout
 from ..steam import SteamItem, workshop_details
 
 if TYPE_CHECKING:
@@ -93,6 +95,11 @@ class Waiting:
     def label(self) -> str:
         name = self.title or f"Workshop {self.item}"
         return f"{name} ({date_text(self.newest)})" if self.newest else name
+
+
+def tell_players(names: str) -> str:
+    """What players read while the server waits for the game to end to put a mod's new version in."""
+    return callout("mod update", f"A new version of {names} is out: this server restarts after this game to put it in.")
 
 
 def date_text(stamp: int | None) -> str:
@@ -168,6 +175,9 @@ class WorkshopUpdateService:
         self._error_logged = 0.0
         self._sign_in_logged: dict[str, float] = {}
         self._blocked_logged: dict[str, float] = {}  # server -> when "can't be fetched here" was last logged
+        # Called in a thread once new versions are in, the server still stopped: the mods' Forge layouts go into its
+        # content/Maps before it starts (content/workshopmods.py sets it).
+        self.after_install: Callable[[ServerConfig], Any] | None = None
         bus.subscribe("server.workshop", self._on_console)
         self.recover()  # a job cut short last time: its old copies back before any server starts
 
@@ -273,8 +283,10 @@ class WorkshopUpdateService:
             self._found(server, item, installed["updated"] if installed else None, None, downloaded=True)
         elif lower.startswith("updated") or "installing the update" in lower:
             if self._settled(server, item):
-                log.info("[%s] the server installed the new version of %s itself (nobody was on)", server.name,
-                         self.titles.get(item) or f"Workshop {item}")
+                name = self.titles.get(item) or f"Workshop {item}"
+                log.info("[%s] the server installed the new version of %s itself (nobody was on)", server.name, name)
+                self.bus.emit("server.workshop_updated", server.name, items=[item],
+                              names=[f"{name}, installed by the server itself once nobody was on"])
         elif lower.startswith(("ready", "installed")):
             self.lifecycle.set_flag(server.name, SIGN_IN_FLAG, None)
 
@@ -305,7 +317,8 @@ class WorkshopUpdateService:
             known = waiting[item] = Waiting(item, self.titles.get(item, ""), installed, newest, downloaded, time.time())
             log.warning("[%s] a new version of %s is out (installed: %s)", server.name, known.label,
                         date_text(installed))
-            self.bus.emit("server.workshop_update", server.name, item=item, newest=newest, installed=installed)
+            self.bus.emit("server.workshop_update", server.name, item=item, newest=newest, installed=installed,
+                          title=known.title)
         else:
             known.newest = newest or known.newest
             known.downloaded = known.downloaded or downloaded
@@ -371,12 +384,12 @@ class WorkshopUpdateService:
         for w in fresh:
             self.asked[(server.name, w.item)] = w.newest or "console"
         names = ", ".join(w.title or f"Workshop {w.item}" for w in fresh)
-        background(self._plan(server.name, f"installing a new version of {names}"),
+        background(self._plan(server.name, f"installing a new version of {names}", tell_players(names)),
                    f"[{server.name}] planning its Workshop update", log)
 
-    async def _plan(self, name: str, reason: str) -> None:
+    async def _plan(self, name: str, reason: str, tell: str = "") -> None:
         try:
-            await self.lifecycle.restart(name, when="after_game", reason=reason, by=self.settings.name)
+            await self.lifecycle.restart(name, when="after_game", reason=reason, by=self.settings.name, tell=tell)
         except Exception as error:  # noqa: BLE001 - LifecycleUnavailable, LifecycleError: it installs at its next start
             log.info("[%s] couldn't plan a restart for the Workshop update (%s); it installs at its next start",
                      name, error)
@@ -543,8 +556,13 @@ class WorkshopUpdateService:
             self._show(server, "tried again after a later game" if kept else "")
         if done:
             self.lifecycle.set_flag(server.name, SIGN_IN_FLAG, None)
-            self.bus.emit("server.workshop_updated", server.name, items=sorted(i for i in moved if i not in
-                                                                               self.waiting.get(server.name, {})))
+            if self.after_install is not None:
+                try:
+                    await asyncio.to_thread(self.after_install, server)
+                except Exception:  # noqa: BLE001 - the mod is in: its layouts are tried again at the next look
+                    log.exception("[%s] couldn't bring its mods' Forge layouts up to date", server.name)
+            self.bus.emit("server.workshop_updated", server.name, names=done,
+                          items=sorted(i for i in moved if i not in self.waiting.get(server.name, {})))
             return "Workshop updated: " + "; ".join(done)
         return "Workshop not updated; the old version(s) kept"
 
@@ -626,9 +644,10 @@ class WorkshopUpdateService:
         for item in self.waiting[name]:
             self.failures.pop((name, item), None)  # a person asked: tried again, however often it failed
         self.lifecycle.add_job(name, StoppedJob(JOB, "installing new Workshop versions", lambda: self.install(server)))
+        names = ", ".join(w.title or f"Workshop {w.item}" for w in self.waiting[name].values())
         try:
             await self.lifecycle.restart(name, when=when, reason="installing new Workshop versions",
-                                         by=self.settings.name)
+                                         by=self.settings.name, tell=tell_players(names))
         except Exception as error:  # noqa: BLE001
             return True, f"it installs at its next start ({error})"
         return True, f"installing {'after this game' if when == 'after_game' else 'now'}"

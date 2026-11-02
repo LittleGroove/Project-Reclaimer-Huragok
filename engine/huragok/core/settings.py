@@ -69,7 +69,7 @@ KNOWN_KEYS: dict[str, set[str]] = {
     "rcon": {"use_host_key", "command_timeout"},
     "updates": {"check", "check_hours", "auto_update", "install_on_server_restart", "beta", "repository"},
     "server_updates": {"check", "check_hours", "install", "repository", "follow", "fallback"},
-    "workshop_updates": {"install", "check_minutes"},
+    "workshop_updates": {"install", "check_minutes", "adopt", "layouts"},
     "setup": {"mcc_folder", "share", "packages_folder", "program", "auto_update", "steamcmd", "steam_username",
               "download_game_files"},
     "relay": {"enabled", "address", "port_offset", "source_port_offset", "user"},
@@ -197,6 +197,8 @@ class WorkshopUpdateSettings:
 
     install: str = "after_game"  # after_game, when_empty (the server's own way), off
     check_minutes: int = 5  # Huragok's look at Steam, and each server's update_check_minutes; 0: leave both alone
+    adopt: bool = True  # a mod copied into a server's content by hand that names a Workshop item: kept up to date too
+    layouts: bool = True  # the Forge layouts mods ship, copied into content/Maps and kept in step with each version
 
 
 @dataclass
@@ -536,7 +538,9 @@ def load(path: str | os.PathLike[str]) -> Settings:
             follow=program_updates.get("follow", bool, True),
             fallback=program_updates.get("fallback", bool, True),
         ),
-        workshop_updates=WorkshopUpdateSettings(install=workshop_install, check_minutes=workshop_minutes),
+        workshop_updates=WorkshopUpdateSettings(install=workshop_install, check_minutes=workshop_minutes,
+                                                adopt=workshop_updates.get("adopt", bool, True),
+                                                layouts=workshop_updates.get("layouts", bool, True)),
         parts=parts,
         problems=problems,
         retired=retired_settings(top) + unknown_settings(top),

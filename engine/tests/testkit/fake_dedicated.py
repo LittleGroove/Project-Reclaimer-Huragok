@@ -24,7 +24,8 @@ Workshop items behave as the real program's do (tested 2026-10-18): an installed
 reclaimer-workshop-version.json receipt) is kept as it is ("installed"), even when Steam has a newer
 version; a missing one is fetched at Steam's newest version, which the server folder's
 fake-steam.json gives ({"<item>": <updated, Unix seconds>}; 1791857542 otherwise). A file called
-fake_steam_down in the server folder makes every fetch fail the way an expired SteamCMD sign-in does.
+fake_steam_down in the server folder makes every fetch fail the way an expired SteamCMD sign-in does. Both
+are looked for in the config's folder and a few above it (Huragok's staging folders are under the server's).
 
 A fake never outlives the test session that started it: `run` and `slow` end by themselves (as after
 Ctrl+Break) once the process HURAGOK_TEST_PARENT names is gone (conftest sets it), so a test that failed
@@ -605,9 +606,18 @@ def cmd_playlist(folder: Folder, words: list[str]) -> int:
 FAKE_STEAM_UPDATED = 1791857542  # 13 Oct 2026
 
 
+def fake_steam_file(folder: Folder, name: str) -> Path:
+    """The server folder's fake-steam.json or fake_steam_down: a staging folder Huragok fetches in (beside the
+    content folder, so under the server folder) finds its server's."""
+    for place in [folder.config.parent, *list(folder.config.parents)[1:4]]:
+        if (place / name).exists():
+            return place / name
+    return folder.config.parent / name
+
+
 def steam_version(folder: Folder, item: int) -> int:
     try:
-        versions = json.loads((folder.config.parent / "fake-steam.json").read_text(encoding="utf-8"))
+        versions = json.loads(fake_steam_file(folder, "fake-steam.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         versions = {}
     return int(versions.get(str(item), FAKE_STEAM_UPDATED))
@@ -623,7 +633,7 @@ def install_items(folder: Folder, items: list[int]) -> list[str]:
             refs.append(f"workshop:{item}/fake{item}")
             continue
         print(f"Workshop {item}: acquiring from Steam")
-        if (folder.config.parent / "fake_steam_down").exists():
+        if fake_steam_file(folder, "fake_steam_down").exists():
             print(f"Error: Workshop {item}: signing in as host failed: sign in to SteamCMD again")
             raise SystemExit(2)
         updated = steam_version(folder, item)

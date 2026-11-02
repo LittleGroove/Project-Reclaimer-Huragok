@@ -1126,7 +1126,10 @@ class ServerManager:
 
     # Planned restarts (after this game, when empty) ----------------------------------------------
 
-    def plan(self, when: str, reason: str, by: str, countdown: float | None, *, manual: bool = False) -> PlannedRestart:
+    def plan(self, when: str, reason: str, by: str, countdown: float | None, *, manual: bool = False,
+             tell: str = "") -> PlannedRestart:
+        """`tell`: what players read when it waits for the game to end (a Workshop update's own words); the usual
+        "This server restarts after this game" otherwise."""
         plan = PlannedRestart(self.name, when, reason, by, requested=time.time(), countdown=countdown,
                               since=time.monotonic(), manual=manual)
         self.planned = plan
@@ -1137,12 +1140,13 @@ class ServerManager:
         log.info("[%s] restart planned (%s): %s", self.name, when.replace("_", " "), reason or "no reason given")
         self.fleet.bus.emit("server.restart_planned", self.name, when=when, reason=reason, by=by)
         if not self.players and self.state.connected:
+            log.info("[%s] nobody is on, so it restarts now%s", self.name, f": {reason}" if reason else "")
             self._trigger_plan()
         elif when == "after_game" and self.state.phase == "finished":
             self._trigger_plan()
         elif when == "after_game":
-            self._say(callout("after game", "This server restarts after this game"
-                              + (f": {reason.rstrip('.')}." if reason else ".")))
+            self._say(tell or callout("after game", "This server restarts after this game"
+                                      + (f": {reason.rstrip('.')}." if reason else ".")))
         return plan
 
     def on_phase(self, event: Event) -> None:
@@ -1262,7 +1266,7 @@ class ServerManager:
         return Result(True, "it is not running")
 
     def restart(self, *, immediate: bool = False, reason: str = "", manual: bool = True, by: str = "",
-                when: str = "now", countdown: float | None = None) -> Result:
+                when: str = "now", countdown: float | None = None, tell: str = "") -> Result:
         self._notice()
         if self.phase == "external" and self.backend.sees_processes:
             return Result(False, "it wasn't started from here, so the Superintendent can't restart it; stop it the way "
@@ -1275,7 +1279,7 @@ class ServerManager:
         if when != "now":
             if self.phase not in ("running", "external"):
                 return Result(False, f"it isn't running ({self.phase})")
-            self.plan(when, reason, by, countdown, manual=manual)
+            self.plan(when, reason, by, countdown, manual=manual, tell=tell)
             return Result(True, f"restart planned {when.replace('_', ' ')}")
         if self.planned is not None and self.phase in ("running", "external", "countdown"):
             log.info("[%s] the restart planned %s is now a restart now", self.name, self.planned.when.replace("_", " "))

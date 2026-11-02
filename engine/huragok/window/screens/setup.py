@@ -22,7 +22,8 @@ from typing import Any
 from ... import lore, steam
 from ...commandline.setup import parse_item_ids, set_workshop_items, workshop_items
 from ...content import modcheck
-from ...content.catalogue import Catalogue, Entry, describe_games, install_layouts, parse_picks
+from ...content.catalogue import Catalogue, Entry, describe_games, parse_picks
+from ...content.workshopmods import layouts_by_hand, switch_workshop_copies
 from ...content.mccimport import content_root_of
 from ...content.newserver import (
     NewServer, SetupError, add_odst_files, create_server, game_folders, next_free_port, odst_mcc, valid_name,
@@ -788,8 +789,9 @@ class SetupScreens(Screens):
             for text, colour in await asyncio.to_thread(self._mod_health, server, settings):
                 self.note(text, colour)
             choice = await self.choose("Which?", [
-                ("A", "Add items (IDs or Workshop addresses)"), ("R", "Remove items"),
-                ("I", "Fetch them now"), ("L", "Install a mod's Forge layouts into Maps"),
+                ("A", "Add items (IDs or Workshop addresses)"), ("R", "Remove items (their files switched off)"),
+                ("I", "Fetch them now"), ("L", "Install a mod's Forge layouts into Maps"
+                                               + (" (done by itself)" if settings.workshop_updates.layouts else "")),
                 ("S", "SteamCMD setup (install, sign in)"), ("M", "Mod maps the server lists")])
             if choice is None:
                 return
@@ -802,6 +804,8 @@ class SetupScreens(Screens):
                 set_workshop_items(server, new)
                 catalogue.workshop_items = new
                 self.note(f"items = {new}", "green")
+                for line in switch_workshop_copies(server, ids, off=choice == "R", config_name=settings.config_name):
+                    self.note(line, "cyan")
                 if choice == "A" and not status.ready:
                     self.note("SteamCMD isn't set up with a signed-in account, so nothing can download yet: [S] first.",
                               "yellow")
@@ -810,7 +814,12 @@ class SetupScreens(Screens):
                               "takes a while.", "cyan")
                     await self._follow_console(server, settings)
                 elif choice == "A":
-                    self.note("The server is stopped: [I] fetches them now, or it fetches them when it starts.")
+                    results = await self.controller.verb("workshop_look", server.name)
+                    ok = all(result.ok for _, result in results)
+                    self.note("The server is stopped: Huragok fetches them now, so they're ready as it starts (the "
+                              "log below says when they're in)." if ok else
+                              "The server is stopped: it fetches them as it starts ([I] fetches them now).",
+                              "cyan" if ok else "white")
             elif choice == "I":
                 if not status.ready:
                     self.note("SteamCMD isn't set up with a signed-in account; [S] sets it up first (an anonymous "
@@ -836,9 +845,11 @@ class SetupScreens(Screens):
                 if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(with_layouts):
                     continue
                 root = content_root_of(server.folder, settings.config_name)
-                copied = install_layouts(with_layouts[int(answer) - 1], root)
+                copied = await asyncio.to_thread(layouts_by_hand, settings, root, with_layouts[int(answer) - 1])
                 self.note(f"Copied {len(copied)} layout(s) into {root / 'Maps'}: the server lists them as saved maps "
-                          "(set base_map to the mod map in a playlist if it asks).", "green")
+                          "(set base_map to the mod map in a playlist if it asks)"
+                          + (". The mod's new versions bring theirs by themselves ([workshop_updates] layouts)."
+                             if settings.workshop_updates.layouts else "."), "green")
                 fresh = await self._catalogue(tool, settings, server)
                 if fresh is not None:
                     catalogue.map_variants = fresh.map_variants

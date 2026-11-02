@@ -59,6 +59,7 @@ class SteamItem:
     title: str = ""
     updated: int | None = None  # Steam's time_updated, Unix seconds
     manifest: str = ""  # Steam's hcontent_file
+    app: int | None = None  # the game it's for (consumer_app_id): MCC_APP for an MCC mod
 
 
 def workshop_details(items: list[int], timeout: float = 20.0) -> dict[int, SteamItem]:
@@ -87,9 +88,9 @@ def workshop_details(items: list[int], timeout: float = 20.0) -> dict[int, Steam
             continue
         if entry.get("result") != 1:
             continue
-        updated = entry.get("time_updated")
+        updated, app = entry.get("time_updated"), entry.get("consumer_app_id")
         found[item] = SteamItem(item, str(entry.get("title") or ""), int(updated) if isinstance(updated, int) else None,
-                                str(entry.get("hcontent_file") or ""))
+                                str(entry.get("hcontent_file") or ""), app if isinstance(app, int) else None)
     return found
 
 

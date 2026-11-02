@@ -5,7 +5,8 @@ Vergil (lore.py). Here the Huragok is the program: it holds what everything shar
 
     Huragok (this file)     the settings, the event bus, the database, every background task; its own services:
                             its updates (core/updates.py), the server program's (content/programupdates.py), the
-                            Workshop's (content/workshop.py), the game files (content/gamefiles.py), the mod checks
+                            Workshop's (updates/workshop.py), the Workshop mods it keeps managed
+                            (content/workshopmods.py), the game files (content/gamefiles.py), the mod checks
                             (content/mods.py); the parts of both named parts below, each with its own context
       Superintendent        (superintendent.py) built on Huragok: keeps every server up
         Vergil              (vergil.py) built on Huragok and the Superintendent: watches over the players
@@ -26,6 +27,7 @@ from typing import Any, Awaitable, Callable
 from . import __version__
 from .content.gamefiles import GameFiles, shared_target, sources
 from .content.mods import ModWatch
+from .content.workshopmods import WorkshopKeeper
 from .core import background
 from .core.context import PartContext
 from .core.events import EventBus
@@ -83,6 +85,8 @@ class Huragok:
         self.program_updates = ProgramUpdateService(settings, self.bus, lifecycle, self.superintendent.states,
                                                     self.superintendent.clients)
         self.workshop_updates = WorkshopUpdateService(settings, self.bus, lifecycle, tool=self.tool)
+        # Every Workshop mod the servers load kept up to date: hand copies taken over, new items fetched, layouts.
+        self.workshop_mods = WorkshopKeeper(settings, self.bus, lifecycle, self.workshop_updates)
         # What a server arrives without (a ban list, Halo 3's files…), put right before it starts.
         self.game_files = GameFiles(settings, self.bus, self.tool, release=fleet.release)
         self.superintendent.listen(self.game_files)
@@ -242,6 +246,9 @@ class Huragok:
             if not results:
                 return Result(False, "no new Workshop version is waiting")
             return Result(all(ok for _, (ok, _) in results), "; ".join(f"{n}: {m}" for n, (_, m) in results))
+        if verb == "workshop_look":
+            ok, message = self.workshop_mods.look_now(str(options.get("server") or ""))
+            return Result(ok, message)
         if verb == "game_files":
             return await self._get_game_files(str(options.get("kind") or "halo3"), str(options.get("how") or ""))
         if verb == "game_files_retry":
@@ -354,6 +361,7 @@ class Huragok:
         self.spawn("update checks", self.updates.run, restart=False)
         self.spawn("server program updates", self.program_updates.run, restart=False)
         self.spawn("Workshop updates", self.workshop_updates.run)
+        self.spawn("Workshop mods kept managed", self.workshop_mods.run)
         self.spawn("mod checks", self.mods.run)
         if menu is not None:
             async def run_menu() -> None:

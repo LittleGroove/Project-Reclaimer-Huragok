@@ -32,6 +32,8 @@ class FakeLifecycle:
         self.jobs: dict[str, list[StoppedJob]] = {}
         self.flags: dict[str, dict[str, str]] = {}
         self.restarts: list[tuple[str, str, str]] = []
+        self.told: list[str] = []  # what players read while it waits for the game to end
+        self.counts: dict[str, int] = {}  # players on, by server
 
     def add_job(self, server: str, job: StoppedJob) -> None:
         self.jobs[server] = [j for j in self.jobs.get(server, []) if j.key != job.key] + [job]
@@ -50,8 +52,13 @@ class FakeLifecycle:
     def phase(self, server: str) -> str:
         return self.state
 
-    async def restart(self, server: str, *, when: str, reason: str, by: str | None = None, countdown=None) -> Any:
+    def players(self, server: str) -> int:
+        return self.counts.get(server, 0)
+
+    async def restart(self, server: str, *, when: str, reason: str, by: str | None = None, countdown=None,
+                      tell: str = "") -> Any:
         self.restarts.append((server, when, reason))
+        self.told.append(tell)
 
 
 def workshop_root(tmp_path: Path, steam: int = OLD) -> tuple[Path, Path]:

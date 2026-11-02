@@ -433,6 +433,51 @@ KICK_LIMIT_COMMENT = [  # the template's, above [automod] moderators_kick_at_mos
 ]
 
 
+ADOPT_COMMENT = [  # the template's, above [workshop_updates] adopt
+    "Mods copied into a server's content folder by hand that name a Workshop item (their",
+    "ModInfo.json does) are never updated by the server program. true: Huragok fetches",
+    "the Workshop's own copy while the server runs, then after a game (at once when nobody",
+    "is on) puts it in the hand copy's place, keeps the hand copy in \"content set aside\"",
+    "beside the content folder and lists the item in [workshop] items. A copy the program",
+    "installed that isn't listed any more is listed again: the server loads it all the same.",
+]
+LAYOUTS_COMMENT = [  # the template's, above [workshop_updates] layouts
+    "The Forge layouts each mod ships (\"Project Reclaimer Layouts\") copied into",
+    "content/Maps/<mod> and kept in step with its new versions. A layout changed there by",
+    "hand is left as it is.",
+]
+
+
+def workshop_adopt(ctx: Context) -> list[str]:
+    """[workshop_updates] adopt and layouts (0.6.0): on by default, so the lines show the host what Huragok now does
+    with the Workshop mods it finds. Only added where the file has [workshop_updates]."""
+    from ..core.tomledit import add_table_key
+
+    table = _read(ctx.settings_path).get("workshop_updates")
+    if not isinstance(table, dict):
+        return []
+    try:
+        text = ctx.settings_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    wanted = [(key, comment, after, words) for key, comment, after, words in (
+        ("adopt", ADOPT_COMMENT, "check_minutes", "a mod copied into a server's content by hand that names a Workshop "
+                                                  "item is kept up to date too"),
+        ("layouts", LAYOUTS_COMMENT, "adopt", "the Forge layouts mods ship are copied into content/Maps and kept in "
+                                              "step with each new version"))
+        if key not in table and not commented_in(text, "workshop_updates", key)]
+    said = [f"{ctx.settings_path.name}: [workshop_updates] {key} = true added: {words} (new in 0.6.0)"
+            for key, _, _, words in wanted]
+    if ctx.dry or not said:
+        return said
+    ctx.backup(ctx.settings_path)
+    done = []
+    for (key, comment, after, _), line in zip(wanted, said):
+        if add_table_key(ctx.settings_path, "workshop_updates", key, True, comment, after=after):
+            done.append(line)
+    return done
+
+
 def moderators_kick_at_most(ctx: Context) -> list[str]:
     """[automod] moderators_kick_at_most (0.6.0): !kick takes a time now, so the line shows the host its limit. Only added where the file has [automod]."""
     from ..core.tomledit import add_table_key
@@ -1333,6 +1378,7 @@ STEPS: list[Step] = [
     Step("0.6.0/discord-one-line", "lines of [messages] back on one line each", discord_one_line),
     Step("0.6.0/discord-unbuilt", "settings for what isn't built out of discord.toml", discord_unbuilt),
     Step("0.6.0/discord-appeals-channel", "appeals get a channel of their own to set", discord_appeals_channel),
+    Step("0.6.0/workshop-adopt", "[workshop_updates] adopt and layouts", workshop_adopt),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.

@@ -212,10 +212,10 @@ class Fleet:
         if verb == "stop_all":
             return self.stop_all(immediate=bool(options.get("immediate")))
         if verb in ("update", "check_update", "close", "check_program_update", "update_program", "check_workshop",
-                    "update_workshop", "game_files", "game_files_retry", "banall"):
+                    "update_workshop", "game_files", "game_files_retry", "banall", "workshop_look"):
             if self.on_request is None:
                 return [("Huragok", Result(False, "not available"))]
-            if verb == "banall":  # Huragok's own ban list, kept by the commands part: one server's ban onto it
+            if verb in ("banall", "workshop_look"):  # one server's: a ban onto Huragok's own list, its new items
                 return [(server, await self.on_request(verb, {**options, "server": server}))]
             return [("Huragok", await self.on_request(verb, options))]
         targets = self.targets(server)
@@ -316,9 +316,10 @@ class Lifecycle:
         return self.fleet.booted and manager is not None and manager.phase in DOWN - {"offline"}
 
     async def restart(self, server: str, *, when: str = "now", reason: str = "", by: str | None = None,
-                      countdown: float | None = None, manual: bool = False) -> PlannedRestart:
+                      countdown: float | None = None, manual: bool = False, tell: str = "") -> PlannedRestart:
         """`manual`: a person asked (an admin's !restartserver), as the window's R: it isn't counted against
-        [restarts] restarts_per_hour, the budget that stops automatic restarts looping."""
+        [restarts] restarts_per_hour, the budget that stops automatic restarts looping. `tell`: what players read
+        while it waits for the game to end, in place of the usual line."""
         if not self.can_control:
             raise LifecycleUnavailable(f"backend = {self.fleet.backend.name} can't restart servers")
         if when not in WHEN:
@@ -328,7 +329,7 @@ class Lifecycle:
             raise LifecycleError(f"no server called {server}")
         by = by or self.fleet.settings.name
         result = manager.restart(immediate=countdown is not None and countdown <= 0, reason=reason, manual=manual,
-                                 by=by, when=when, countdown=countdown)
+                                 by=by, when=when, countdown=countdown, tell=tell)
         if not result.ok:
             raise LifecycleUnavailable(result.message)
         return manager.planned or PlannedRestart(server, when, reason, by, countdown=countdown)

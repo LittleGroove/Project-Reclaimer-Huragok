@@ -470,9 +470,12 @@ have the new version can't join it. With `[workshop_updates] install =
    and compares them with the version each server installed. The server saying it
    downloaded a new version counts too. The server's dashboard line shows `mod
    update waiting: <mod> (<date>); installs after this game`.
-2. It plans a restart after the game. Players read `[o_o] CONSTRUCTION AHEAD! EXPECT
-   DELAYS! This server restarts after this game: installing a new version of <mod>.`, and get the short
-   after-game warning once it ends.
+2. It plans a restart after the game. Players read `[^_^] YOUR TAX DOLLARS AT WORK!
+   A new version of <mod> is out: this server restarts after this game to put it in.`,
+   and get the short after-game warning once it ends. With nobody on it restarts at
+   once, and the log says so: `nobody is on, so it restarts now: installing a new
+   version of <mod>`. On Discord, the info channel gets `Mod update installed: <mod>
+   <old date> → <new date>` once it's in.
 3. With the server stopped (the dashboard says PREPARING), the old copy is moved
    aside and `dedicated mods` fetches the new version: about a minute, much less
    when the server already downloaded it during the game. Then the server starts.
@@ -505,6 +508,53 @@ from another PC names a SteamCMD that isn't on this one, or an account with no s
 sign-in here) isn't restarted for a new version at all: the update waits, its line
 says `it can't be fetched: … press I`, and players aren't told anything. Once I has
 set SteamCMD up, the next look at Steam plans it as usual.
+
+## Workshop mods Huragok finds: taken over, fetched, layouts kept
+The server program only keeps up to date the items its `[workshop] items` list. A
+mod copied into `content/Mods` by hand (from MCC's Workshop folder, or downloaded on
+the side) works, but nothing ever updates it; neither does a Workshop item taken out
+of the list, whose folder stays in `content/Mods/Workshop` and which the server loads
+all the same. Huragok looks at every server's mods once a minute:
+
+- **A hand copy that names a Workshop item** (its `ModInfo.json` does, as every
+  Workshop upload's does) is taken over, with `[workshop_updates] adopt = true` (the
+  default). While the server runs, the Workshop's own copy is fetched beside it (a
+  `.huragok-workshop-staging` folder next to the content folder). Then, after the
+  game (at once with nobody on, and while it's stopped right away), the hand copy
+  moves to `content set aside` next to the content folder (nothing is deleted), the
+  fetched copy takes its place in `content/Mods/Workshop/<item>`, the item is added
+  to `[workshop] items`, and the server starts on it. Players read `[^_^] YOUR TAX
+  DOLLARS AT WORK! This server restarts after this game to bring <mod> up to date.`
+  Playlists keep working: the server already named the hand copy's maps
+  `workshop:<item>/<map>`. From then on it gets new versions like any listed item.
+- **Left as they are**, each said once in the log: a mod switched off in
+  `disabled-mods.json`, one for another game, one Steam doesn't list publicly (an
+  author's own hidden upload), one whose maps aren't the item's (your own version of
+  a map that kept its ID: `its maps (…) aren't the item's: a mod of its own`,
+  remembered so it isn't fetched again until its `ModInfo.json` changes), any in a
+  content folder several servers share, and every one on a server whose Workshop
+  updates are `off`.
+- **The program's own copy that isn't listed** is listed again, with no restart:
+  `… is in its content folder (Mods/Workshop/<item>) but wasn't in [workshop] items:
+  the server loads it all the same, so it's listed now and kept up to date.` To stop
+  using a mod, remove it in **G → the server → Workshop and mods → R**: that also
+  switches its files off in `disabled-mods.json`, so the server stops loading it and
+  Huragok doesn't list it again. Adding it back (**A**) switches it on again.
+- **An item added to `[workshop] items`** (in the window, with `workshop add`, or in
+  the file) is fetched at once: a stopped server's with `dedicated mods`, so it's
+  ready as the server starts. A running server fetches its own (auto_reload); with
+  auto_reload off it's fetched beside it and put in place for its next start. A fetch
+  that fails is tried again 10 minutes later, 3 times at most; adding it again tries
+  again at once.
+- **Forge layouts**: with `[workshop_updates] layouts = true` (the default), the saved
+  Forge maps each mod ships (its `Project Reclaimer Layouts` folder) are copied into
+  `content/Maps/<mod>/` and follow the mod's new versions, before the server starts on
+  one. A layout you changed there is left as you made it (delete it to get the mod's
+  again); one you deleted stays deleted; one that was there before and differs (copied
+  with L from an older version) is replaced, the old one kept in `content set aside`.
+
+`records/workshop-mods.json` remembers the layouts Huragok wrote, the mods it left
+as they are and why, and the last 50 it took over.
 
 ## Is each mod good to go?
 The server program says little about a mod, and only once a game or a start reaches

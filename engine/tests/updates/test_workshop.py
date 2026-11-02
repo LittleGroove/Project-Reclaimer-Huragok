@@ -352,3 +352,36 @@ def test_shared_content_is_never_installed_from_here(tmp_path: Path, run) -> Non
         assert run(supervisor.request("update_workshop", {})).message == "no new Workshop version is waiting"
     finally:
         supervisor.storage.close()
+
+
+def test_players_are_told_which_mod_and_discord_hears_it_by_name(tmp_path: Path, run) -> None:
+    settings_path, folder = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass Rebalance", NEW, "n")})
+    heard: list[Any] = []
+    service.bus.subscribe("server.workshop_update", heard.append)
+    service.bus.subscribe("server.workshop_updated", heard.append)
+    layouts: list[str] = []
+    service.after_install = lambda server: layouts.append(server.name)
+
+    async def scenario() -> str:
+        await service.check()
+        await asyncio.sleep(0)
+        (folder / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
+        return await lifecycle.jobs[ALPHA][0].run()
+
+    run(scenario())
+    assert lifecycle.told == ["[^_^] YOUR TAX DOLLARS AT WORK! A new version of HugeGrass Rebalance is out: this "
+                              "server restarts after this game to put it in."]
+    waiting, updated = [e for e in heard if e.name == "server.workshop_update"], \
+        [e for e in heard if e.name == "server.workshop_updated"]
+    assert waiting[0].get("title") == "HugeGrass Rebalance"
+    assert updated[0].get("names") == ["HugeGrass Rebalance 16 Oct 2026 -> 18 Oct 2026"]
+    assert updated[0].get("items") == [ITEM]
+    assert layouts == [ALPHA]  # the mod's Forge layouts, before the server starts
+    # The server installing it itself (nobody on) reaches Discord too.
+    lifecycle.state = "idle"
+    service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="update downloaded; it installs once nobody's on")
+    service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="updated")
+    assert heard[-1].name == "server.workshop_updated"
+    assert heard[-1].get("names") == ["HugeGrass Rebalance, installed by the server itself once nobody was on"]

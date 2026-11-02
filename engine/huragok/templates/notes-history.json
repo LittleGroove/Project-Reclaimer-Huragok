@@ -407,6 +407,19 @@
      "# give, as a long kick is a ban in all but name; admins and owners have no limit.",
      "# The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick",
      "# is a ban in all but name. Admins and owners have no limit."
+    ],
+    "workshop_updates|adopt": [
+     "# Mods copied into a server's content folder by hand that name a Workshop item (their",
+     "# ModInfo.json does) are never updated by the server program. true: Huragok fetches",
+     "# the Workshop's own copy while the server runs, then after a game (at once when nobody",
+     "# is on) puts it in the hand copy's place, keeps the hand copy in \"content set aside\"",
+     "# beside the content folder and lists the item in [workshop] items. A copy the program",
+     "# installed that isn't listed any more is listed again: the server loads it all the same."
+    ],
+    "workshop_updates|layouts": [
+     "# The Forge layouts each mod ships (\"Project Reclaimer Layouts\") copied into",
+     "# content/Maps/<mod> and kept in step with its new versions. A layout changed there by",
+     "# hand is left as it is."
     ]
    },
    "inline": {

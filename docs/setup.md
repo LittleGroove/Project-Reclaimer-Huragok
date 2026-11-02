@@ -265,15 +265,19 @@ game variants, 1 mods, 0 Workshop items` (Halo 3's own 49 game variants included
    and Forge layouts, and **install a mod's Forge layouts**: a Workshop item often
    ships saved Forge maps in a `Project Reclaimer Layouts` folder that the server
    never installs by itself; this copies them into `content/Maps/<mod>/`, where the
-   server lists them as saved maps.
+   server lists them as saved maps. With `[workshop_updates] layouts = true` (the
+   default) Huragok does it by itself and keeps them in step with each new version
+   of the mod (see "Workshop mods Huragok finds" in managing.md). **Remove** also
+   switches the item's files off, so the server stops loading them.
 
    **How items get fetched.** A *running* server fetches new items itself a couple of
    seconds after `[workshop] items` changes (auto_reload); the screen then follows its
    console and shows the fetch (`Workshop 3820687243: acquiring from Steam … ready`),
    Esc stops watching while the server keeps going. Nothing else should run SteamCMD
    beside it: a second one would wait on the first, which is why **fetch now** on a
-   running server only watches. On a *stopped* server, **fetch now** runs `dedicated
-   mods` with its output as it comes and **Esc cancels** it. The dashboard's events show
+   running server only watches. On a *stopped* server, adding items has Huragok fetch
+   them at once in the background (the log says when they're in), and **fetch now**
+   runs `dedicated mods` with its output as it comes and **Esc cancels** it. The dashboard's events show
    the same Workshop lines whatever screen is open. A change to `[workshop] steamcmd` /
    `username` takes effect when the server's `dedicated` restarts (**R**).
 4. **check it**: `dedicated check` (also **C** on the dashboard, for one or every

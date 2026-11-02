@@ -620,3 +620,19 @@ def test_setup_is_on_the_audit_feed(tmp_path: Path, run: Any, fake: FakeDiscord)
 
 def test_facts_are_read_for_the_channel(fake: FakeDiscord) -> None:
     assert rest.bot_user(TOKEN)["username"] and gather(TOKEN, GUILD).guild is not None
+
+
+def test_a_mod_update_names_the_mod_and_its_versions(tmp_path: Path) -> None:
+    feeds, part, _ = feeds_for(tmp_path, ON)
+    config = part.file
+    card = cards.workshop_updated(config, Event("server.workshop_updated", "Alpha", {
+        "items": [3820687243], "names": ["HugeGrass Rebalance 16 Oct 2026 -> 18 Oct 2026"]}))
+    assert card.line == "Mod update installed: HugeGrass Rebalance 16 Oct 2026 → 18 Oct 2026"
+    older = cards.workshop_updated(config, Event("server.workshop_updated", "Alpha", {"items": [3820687243]}))
+    assert older.line == "Mod update installed: 3820687243"  # an event without names (a version before)
+    waiting = cards.workshop_waiting(config, Event("server.workshop_update", "Alpha", {
+        "item": 3820687243, "title": "HugeGrass Rebalance"}))
+    assert waiting.line == ("A new version of HugeGrass Rebalance (Workshop item 3820687243) is out, and waits for "
+                            "the next update")
+    untitled = cards.workshop_waiting(config, Event("server.workshop_update", "Alpha", {"item": 3820687243}))
+    assert untitled.line.startswith("A new version of Workshop item 3820687243 is out")

@@ -604,6 +604,33 @@ def test_a_planned_restart_waits_for_the_game_then_gives_short_notice(world, run
     run(scenario())
 
 
+def test_a_mod_update_tells_players_its_own_words_and_an_empty_server_restarts_now(world, run, caplog) -> None:
+    from huragok.updates.workshop import tell_players
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lifecycle = Lifecycle(fleet)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)
+        state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
+        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass",
+                                tell=tell_players("HugeGrass"))
+        await asyncio.sleep(0.01)
+        assert client.says() == ["[^_^] YOUR TAX DOLLARS AT WORK! A new version of HugeGrass is out: this server "
+                                 "restarts after this game to put it in."]
+        assert manager.phase == "running"
+        assert lifecycle.cancel(SERVER)
+        state.players.clear()  # nobody on: at once, and the log says why
+        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass",
+                                tell=tell_players("HugeGrass"))
+        assert manager.phase in ("countdown", "stopping", "restarting")
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert f"[{SERVER}] nobody is on, so it restarts now: installing a new version of HugeGrass" in caplog.text
+
+
 def test_an_admins_restart_warns_everyone_and_isnt_counted_as_automatic(world, run) -> None:
     """!restartserver: the countdown the window's R gives, the reason in it, the admin in the history."""
     clock, settings, backend, fleet, manager, client, state, seen = world

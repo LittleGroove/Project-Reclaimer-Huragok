@@ -22,6 +22,18 @@ Your servers keep running while it updates.
 | `!reports` (moderators) | the probationary moderators' requests | that's `!requests` now, and your `commands.toml` follows. `!reports` is what's open for staff on Discord, and isn't there without the bot |
 | The relay, a word it doesn't know | `'foo' needs the admin role...` | `'foo' isn't a console command: help lists them.` |
 
+- **Workshop mods are kept up to date by themselves, however they got there.** A mod copied
+  into a server's `content/Mods` by hand that names a Workshop item is taken over: the
+  Workshop's copy is fetched while the server runs and takes the hand copy's place after a game
+  (the hand copy is kept in `content set aside`), and the item is listed in `[workshop] items`
+  (`[workshop_updates] adopt = true`). A Workshop folder left behind by an item taken out of the
+  list, which the server loads all the same, is listed again; **R** in the window switches its
+  files off now. An item added to the list is fetched at once. The Forge layouts mods ship are
+  copied into `content/Maps` and follow each new version (`[workshop_updates] layouts = true`);
+  one you changed there is left alone. Players read `[^_^] YOUR TAX DOLLARS AT WORK! A new version
+  of HugeGrass is out: this server restarts after this game to put it in.`; with nobody on it
+  restarts at once and the log says why. Discord's line names the mod and its dates. See
+  managing.md, "Workshop mods Huragok finds".
 - **A ban is for good, and anything with a time is a kick.** Underneath it's the server's timed
   ban, with the reason `Kicked for 7 days: cheating`, so the server tells them how long is left
   each time they try to join. Whoever kicked reads `Bravo is kicked for 7 days: the server tells
