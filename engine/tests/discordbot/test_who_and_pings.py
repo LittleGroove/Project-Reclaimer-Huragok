@@ -20,6 +20,7 @@ from huragok.discordbot.config import load, pings_of, set_channel, set_message, 
 from huragok.discordbot.facts import gather
 
 CHARLIE = "f" * 64
+WHOLE_IDS = (ALICE, BRAVO, CHARLIE)
 
 
 @pytest.fixture
@@ -57,9 +58,17 @@ async def ran(fake: FakeDiscord, command: str, **options: Any) -> str:
     await wait_for(lambda: any(c["token"] == token for c in fake.callbacks), timeout=10)
     asked = next(c for c in fake.callbacks if c["token"] == token).get("data") or {}
     yes = next((item["custom_id"] for row in asked.get("components") or [] for item in row["components"] if item.get("label") == "Yes"), "")
-    if yes:
-        _, token = fake.pick(opened, yes, 2, [])
-    return await answer_text(fake, token)
+    if not yes:
+        return await answer_text(fake, token)
+    shown = str(asked.get("content"))
+    for player_id in WHOLE_IDS:
+        assert player_id not in shown, shown  # what it asks about names them
+    _, token = fake.pick(opened, yes, 2, [])
+    await wait_for(lambda: any(f["token"] == token for f in fake.followups), timeout=15)  # past "Sending ...", which a slow machine shows first
+    sending = next((str(c.get("data", {}).get("content")) for c in fake.callbacks if c["token"] == token), "")
+    for player_id in WHOLE_IDS:
+        assert player_id not in sending, sending
+    return str(next(f for f in fake.followups if f["token"] == token).get("content"))
 
 
 # What a list offers ------------------------------------------------------------------------------------------------------

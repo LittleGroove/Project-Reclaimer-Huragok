@@ -218,7 +218,7 @@ class _Sure(SaysWhatWentWrong, ui.View):
     @ui.button(label="Yes", style=discord.ButtonStyle.danger)
     async def yes(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
         self.stop()
-        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=f"`{self.spec.name} {self.line}`"[:300], server=cards.clean(", ".join(self.servers))), view=None)
+        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=f"`{self.spec.name} {self.part.named_in(self.line)}`"[:300], server=cards.clean(", ".join(self.servers))), view=None)
         await _go(self.part, interaction, self.spec, self.line, self.servers, self.private, timed=self.timed)
 
     @ui.button(label="No", style=discord.ButtonStyle.secondary)
@@ -266,7 +266,7 @@ async def run(part: DiscordPart, interaction: discord.Interaction, spec: Command
     public = {str(name) for name in options.get("public") or []}
     private = spec.name not in public and shown_name not in public  # by the name in the game, or the one here
     if spec.name in {str(word).lower() for word in part.file.section("console").get("confirm") or []}:
-        shown = f"`/{shown_name} {line}`".replace(" `", "`")[:300]
+        shown = f"`/{shown_name} {part.named_in(line)}`".replace(" `", "`")[:300]  # what they picked from the list was an ID: they know them by name
         await interaction.response.send_message(say(part.file, "console.sure", line=shown, server=cards.clean(", ".join(servers))), view=_Sure(part, spec, line, servers, private, timed), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         return
     await interaction.response.defer(ephemeral=private, thinking=True)
