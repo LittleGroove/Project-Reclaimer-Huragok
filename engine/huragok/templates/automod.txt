@@ -21,6 +21,9 @@
 #          name every line whose strikes add up: an unnamed one's are kept under
 #          its place in the list (rule2), and move if a line is added above it.
 #
+# No words, with a name: a ladder for what the word list can't hear, that only staff climb, with !strike
+# or the Strike button on a report. Voice, say:  | 1d, 7d | 2, 1h | 3 | voice
+#
 # Each strike is the next step on its line: the mutes, then the kicks, then the ban.
 # Examples, and what a player gets each time:
 #

@@ -26,6 +26,7 @@ from .core.serverfolders import ServerConfig
 from .core.storage import PlayerHistory
 from .players.ledger import Moderation, ModerationView
 from .players.outbox import Outbox
+from .core.settings import RelayUser
 from .players.relay import Relay
 from .players.roles import Roles
 from .players.router import CommandRouter
@@ -54,6 +55,7 @@ class Vergil:
                                       PlayerHistory(huragok.storage))
         self.relay = Relay(settings, superintendent.clients, superintendent.states, bus)
         self.outbox = Outbox(superintendent.states)
+        self.last_visit: dict[str, float | None] = {}  # player ID -> when they were here before this visit; None: first time
         bus.subscribe("rcon.join", self._remember_player)
         superintendent.listen(self)
 
@@ -73,8 +75,9 @@ class Vergil:
 
     def _remember_player(self, event: Event) -> None:
         if event.get("id"):
-            self.huragok.storage.record_join(str(event["id"]).lower(), str(event.get("name", "")), event.get("ip"),
-                                             event.time)
+            player_id = str(event["id"]).lower()
+            self.last_visit[player_id] = self.huragok.storage.record_join(player_id, str(event.get("name", "")), event.get("ip"),
+                                                                          event.time)
 
     async def ban_everywhere(self, server: str, target: str, by: str) -> tuple[bool, str]:
         """One server's ban onto Huragok's own list, so every server has it (the window's B → E, `banall`)."""
@@ -127,6 +130,10 @@ class VergilContext(SuperintendentContext):
         self.moderation = ModerationView(vergil.moderation, source=self.name, by=self.acts_as, dry_run=self.dry_run)
         self.outbox = vergil.outbox  # each server's queue of what's passed on to it (players/outbox.py)
 
+    def last_visit(self, player_id: str) -> float | None:
+        """When this player was here before the visit they just began; None the first time, or when it isn't known."""
+        return self._vergil.last_visit.get(player_id.lower())
+
     def role_of(self, server: str, player: Player) -> str:
         return self._vergil.roles.role_of(self._superintendent.states[server], player)
 
@@ -152,6 +159,55 @@ class VergilContext(SuperintendentContext):
         """Where a probationary moderator's commands go instead of running (the router's on_request)."""
         self._vergil.commands.on_request = handler
 
-    async def run_as(self, name: str, target: Player, words: list[str], **kwargs: Any) -> str | None:
-        """A command run for someone, on a server, as if they'd typed it there (a confirmed request)."""
+    def game_commands(self) -> list[Any]:
+        """Every in-game command and the role it needs: what Discord offers as slash commands."""
+        return self._vergil.commands.every_command()
+
+    async def run_line(self, name: str, text: str, **kwargs: Any) -> str | None:
+        """A command typed somewhere other than in game, by someone with a rank."""
+        return await self._vergil.commands.run_line(name, text, **kwargs)
+
+    @property
+    def command_prefix(self) -> str:
+        return self._vergil.commands.prefix
+
+    async def console_line(self, server: str, who: str, role: str, line: str) -> tuple[bool, str]:
+        """A console line typed somewhere other than the server's console, by someone with a rank: everything the relay checks, and the reply as that rank may read it."""
+        config = next((one for one in self._vergil.settings.servers if one.name == server), None)
+        if config is None:
+            return False, f"There's no server {server}."
+        worked, text, _ = await self._vergil.relay.run_line(RelayUser(who, "", role), config, line)
+        return worked, text
+
+    def refuses(self, name: str, target: Player | None, **kwargs: Any) -> str:
+        """Why a command would say no, asked before anyone fills in a form."""
+        return self._vergil.commands.refuses(name, target, **kwargs)
+
+    def strike_rules(self) -> list[str]:
+        """The word list's rules, which a strike can be given on."""
+        registered = self._vergil.commands.commands.get("strike")
+        part = registered.runner.part if registered is not None and registered.runner is not None else None
+        return [str(name) for name in getattr(part, "by_name", {})]
+
+    def next_strike(self, player_id: str, rule: str) -> str:
+        """What a strike on this rule would do to them now, in words: "" if that can't be said."""
+        registered = self._vergil.commands.commands.get("strike")
+        part = registered.runner.part if registered is not None and registered.runner is not None else None
+        found = getattr(part, "by_name", {}).get(rule)
+        if found is None:
+            return ""
+        previous = part.active_strikes(player_id, found, dry=False)
+        return f"Strike {previous + 1}: {found.step_for(previous).describe()}"
+
+    def command_there(self, name: str) -> bool:
+        return self._vergil.commands.command_there(name)
+
+    def picks_through(self, caller: str) -> Any:
+        return self._vergil.commands.picks_through(caller)
+
+    def pick_of(self, caller: str, number: int) -> Any:
+        return self._vergil.commands.pick_of(caller, number)
+
+    async def run_as(self, name: str, target: Player | None, words: list[str], **kwargs: Any) -> str | None:
+        """A command run for someone, on a server, as if they'd typed it there (a confirmed request, a button in Discord)."""
         return await self._vergil.commands.run_as(name, target, words, **kwargs)

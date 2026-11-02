@@ -1,0 +1,370 @@
+{
+ "tables": {
+  "link": {
+   "enabled": false,
+   "methods": [
+    "game-code"
+   ],
+   "code_minutes": 10,
+   "linked_role": "",
+   "nickname": "off",
+   "nickname_format": "{name} {tag}",
+   "unlink": "self",
+   "staff_keep_link": true,
+   "one_per_player": true,
+   "one_per_discord": true,
+   "announce": false,
+   "announce_channel": ""
+  },
+  "roles": {
+   "sync": false,
+   "from_discord": true,
+   "to_discord": true,
+   "check_minutes": 15,
+   "online": "",
+   "per_server": {},
+   "veteran": "",
+   "veteran_hours": 50,
+   "banned": "",
+   "rank_roles": false,
+   "rank_source": "official",
+   "top": {},
+   "top_count": 3
+  },
+  "chat": {
+   "to_discord": false,
+   "channels": {},
+   "webhook": "",
+   "as_player": true,
+   "team_chat": "off",
+   "delay_seconds": 0,
+   "server_lines": false,
+   "hide_commands": true,
+   "blur_banned_words": true,
+   "batch_seconds": 3,
+   "to_game": false,
+   "to_game_who": "staff",
+   "to_game_format": "[Discord] {name}: {text}",
+   "to_game_vergil": true,
+   "to_game_slow_seconds": 10,
+   "across_servers": false,
+   "staff_chat": false,
+   "staff_chat_channel": "staff"
+  },
+  "stats": {
+   "enabled": false,
+   "count": [
+    "games",
+    "wins",
+    "kills",
+    "deaths",
+    "assists",
+    "betrayals",
+    "suicides",
+    "streaks",
+    "multikills",
+    "playtime",
+    "maps",
+    "modes",
+    "rivals"
+   ],
+   "servers": "*",
+   "min_players": 4,
+   "rating": "skill",
+   "rating_min_games": 10,
+   "official_rank": true,
+   "season": "monthly",
+   "private_allowed": true,
+   "cards": true
+  },
+  "achievements": {
+   "enabled": false,
+   "channel": "stats",
+   "announce": "rare",
+   "rare": [
+    "killtacular+",
+    "rampage+",
+    "extermination",
+    "perfection",
+    "steaktacular"
+   ],
+   "in_game": false,
+   "multikill_window": 4,
+   "sprees": [
+    5,
+    10,
+    15,
+    20,
+    25,
+    30
+   ],
+   "firefight_sprees": [
+    10,
+    20,
+    30,
+    40,
+    50,
+    100
+   ],
+   "halo3": [
+    "multikills",
+    "sprees",
+    "killjoy",
+    "extermination",
+    "perfection",
+    "steaktacular",
+    "death-from-the-grave",
+    "infection",
+    "last-man-standing",
+    "weapons"
+   ],
+   "own": [
+    "first-strike",
+    "revenge",
+    "nemesis",
+    "comeback",
+    "hours",
+    "games",
+    "every-map",
+    "days-in-a-row",
+    "linked",
+    "clean-appeal"
+   ]
+  },
+  "leaderboards": {
+   "enabled": false,
+   "channel": "stats",
+   "boards": [
+    "season-kills",
+    "season-wins",
+    "season-rating",
+    "best-spree",
+    "playtime-week",
+    "friendly-fire-week"
+   ],
+   "rows": 10,
+   "min_games": 5,
+   "for_fun": true,
+   "keep_updated": true,
+   "update_minutes": 15,
+   "post": "weekly",
+   "post_at": "Sunday 20:00",
+   "season_end_post": true,
+   "records": true
+  },
+  "matches": {
+   "enabled": false,
+   "channel": "games",
+   "which": "notable",
+   "min_players": 8,
+   "show": [
+    "winner",
+    "top-3",
+    "best-streak",
+    "multikills",
+    "first-blood",
+    "betrayals"
+   ]
+  },
+  "community": {
+   "welcome": false,
+   "welcome_channel": "",
+   "welcome_dm": false,
+   "welcome_text": "Welcome, Spartan. Servers: /servers. Rules: {rules}. Link your player: !link in game.",
+   "first_game_post": false,
+   "server_list": false,
+   "game_nights": false,
+   "game_night_playlist_switch": true,
+   "polls_to_game": false,
+   "announce": false,
+   "milestones": false,
+   "milestone_channel": "public",
+   "server_birthdays": false,
+   "balance": "off",
+   "balance_servers": [],
+   "team_voice": false,
+   "team_voice_channels": {
+    "lobby": "",
+    "red": "",
+    "blue": ""
+   },
+   "self_roles": {},
+   "levels": false,
+   "level_roles": {},
+   "weekly_recap": false,
+   "recap_at": "Monday 09:00",
+   "host_digest": false,
+   "digest_channel": "staff",
+   "awards": "off",
+   "award_ribbons": true
+  },
+  "games": {
+   "channel": "minigames",
+   "currency": "Tax Dollars",
+   "season_reset": true,
+   "daily_limit": 20,
+   "quiet_hours": "01:00-08:00",
+   "min_players": 4,
+   "min_minutes": 5,
+   "practice_servers": [],
+   "record": {
+    "enabled": false
+   },
+   "carnage_report": {
+    "enabled": false
+   },
+   "audio_logs": {
+    "enabled": false,
+    "caches": true
+   },
+   "skulls": {
+    "enabled": false
+   },
+   "drop_pod": {
+    "enabled": false,
+    "reward": 10,
+    "streak_bonus": 2
+   },
+   "payphone": {
+    "enabled": false,
+    "per_day": 3,
+    "answer_seconds": 60
+   },
+   "kiosk": {
+    "enabled": false,
+    "per_day": 5,
+    "questions": "kiosk-questions.toml"
+   },
+   "data_hive": {
+    "enabled": false
+   },
+   "repair": {
+    "enabled": false
+   },
+   "huragok_name": {
+    "enabled": false
+   },
+   "birthdays": {
+    "enabled": false
+   },
+   "rare_lines": {
+    "enabled": false,
+    "one_in": 40
+   },
+   "forecast": {
+    "enabled": false,
+    "min_players": 6,
+    "close_seconds": 120,
+    "reward": 5
+   },
+   "ballot_forecast": {
+    "enabled": false
+   },
+   "bounty": {
+    "enabled": false
+   },
+   "king": {
+    "enabled": false,
+    "role": "",
+    "min_players": 8
+   },
+   "seven_on_seven": {
+    "enabled": false
+   },
+   "wave_meter": {
+    "enabled": false,
+    "kills_per_wave": 250,
+    "bonus_minutes": 30,
+    "lives": 7
+   },
+   "be_like_marty": {
+    "enabled": false
+   },
+   "linktacular": {
+    "enabled": false
+   },
+   "last_train": {
+    "enabled": false
+   },
+   "fireteams": {
+    "enabled": false
+   },
+   "rookie": {
+    "enabled": false,
+    "mentors": true
+   },
+   "traffic_signs": {
+    "enabled": false
+   },
+   "drop_call": {
+    "enabled": false,
+    "cooldown_minutes": 30
+   },
+   "friends": {
+    "enabled": false
+   },
+   "passport": {
+    "enabled": false
+   },
+   "forge_contest": {
+    "enabled": false
+   },
+   "good_citizens": {
+    "enabled": false
+   }
+  },
+  "moderation": {
+   "enabled": false,
+   "automod_words": false,
+   "automod_action": "block",
+   "automod_preset": [],
+   "automod_spam": false,
+   "automod_mentions": 0,
+   "vergil_on_chat": false,
+   "shared_strikes": false,
+   "mute_as": "timeout",
+   "mute_role": "",
+   "cross_ban_game_to_discord": "ask",
+   "cross_ban_discord_to_game": "ask",
+   "commands": false,
+   "raid_guard": false,
+   "raid_joins": 10,
+   "raid_seconds": 60,
+   "raid_action": "alert",
+   "min_account_days": 0,
+   "logs": false,
+   "logs_channel": "logs"
+  },
+  "feed": {
+   "kills": {
+    "enabled": false,
+    "channel": "games",
+    "persona": "superintendent",
+    "public": true,
+    "which": "medals",
+    "medals": [
+     "overkill+",
+     "running-riot+",
+     "extermination",
+     "perfection",
+     "killjoy"
+    ],
+    "first_blood": true,
+    "delay_seconds": 60
+   }
+  }
+ },
+ "limits": {
+  "roles_per_second": 1,
+  "roles_check_minutes": 15,
+  "boards_minutes": 15,
+  "chat_batch_seconds": 3,
+  "chat_per_minute": 20
+ },
+ "channels": [
+  "stats",
+  "chat",
+  "minigames",
+  "minigames-logs"
+ ]
+}

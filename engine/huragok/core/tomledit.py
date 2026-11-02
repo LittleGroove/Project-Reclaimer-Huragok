@@ -571,6 +571,94 @@ def comment_out_table_key(path: Path, table: str, key: str, note: str) -> bool:
     return True
 
 
+def _nested_line(edit: _Edit, parts: tuple[str, ...], key: str) -> int | None:
+    """Where a table, at any depth or at the top of the file, sets `key`, taking it out of what the file should come to. None: it doesn't."""
+    current: Any = edit.wanted
+    for part in parts:
+        current = current.get(part) if isinstance(current, dict) else None
+    if not isinstance(current, dict) or key not in current:
+        return None
+    del current[key]
+    if parts:
+        span = edit.tables().get(parts)
+        start, end = span if span is not None else (0, 0)
+        number = edit.key_line(start + 1, end, key, f"[{'.'.join(parts)}]") if span is not None else None
+    else:
+        end = next((at for at, line in enumerate(edit.layout) if line.kind == "header"), len(edit.lines))
+        number = edit.key_line(0, end, key, "the top of the file")
+    if number is None:
+        raise edit.refuse(f"[{'.'.join(parts)}] {key} isn't on a line of its own")
+    return number
+
+
+def remove_nested_key(path: Path, parts: tuple[str, ...], key: str) -> bool:
+    """As remove_table_key, in a table at any depth. False: the table doesn't set it."""
+    edit = _Edit(path, f"[{'.'.join(parts)}] {key}")
+    number = _nested_line(edit, parts, key)
+    if number is None:
+        return False
+    del edit.lines[number:edit.layout[number].end + 1]
+    edit.changed()
+    edit.save()
+    return True
+
+
+def rename_nested_key(path: Path, parts: tuple[str, ...], key: str, new_key: str) -> bool:
+    """A key's name changed where it is, its value, place and note kept. False: the table doesn't set it. Refuses a new name that's already there."""
+    edit = _Edit(path, f"[{'.'.join(parts)}] {key}")
+    current: Any = edit.wanted
+    for part in parts:
+        current = current.get(part) if isinstance(current, dict) else None
+    if not isinstance(current, dict) or key not in current:
+        return False
+    if new_key in current:
+        raise edit.refuse(f"[{'.'.join(parts)}] {new_key} is already there")
+    value = current[key]
+    number = _nested_line(edit, parts, key)
+    assert number is not None
+    current[new_key] = value
+    line = edit.lines[number]
+    at = line.index(key) if not line.lstrip().startswith(('"', "'")) else line.index(key) - 1
+    written = line[at:at + len(key) + (2 if line.lstrip().startswith(('"', "'")) else 0)]
+    padding = len(line[at + len(written):]) - len(line[at + len(written):].lstrip(" "))
+    new_name = _key(new_key)
+    pad = max(1, padding + len(written) - len(new_name))
+    edit.lines[number] = line[:at] + new_name + " " * pad + line[at + len(written) + padding:]
+    edit.changed()
+    edit.save()
+    return True
+
+
+def comment_out_nested_key(path: Path, parts: tuple[str, ...], key: str, note: str) -> bool:
+    """As comment_out_table_key, in a table at any depth. False: the table doesn't set it."""
+    edit = _Edit(path, f"[{'.'.join(parts)}] {key}")
+    number = _nested_line(edit, parts, key)
+    if number is None:
+        return False
+    end = edit.layout[number].end
+    old = edit.lines[number:end + 1]
+    edit.lines[number:end + 1] = [*(f"# {line}".rstrip() for line in note.splitlines()), *(f"# {line}" for line in old)]
+    edit.changed()
+    edit.save()
+    return True
+
+
+def remove_empty_table(path: Path, parts: tuple[str, ...]) -> bool:
+    """A table with nothing left in it, gone with its header. False: there isn't one, or it has something in it."""
+    edit = _Edit(path, f"[{'.'.join(parts)}]")
+    parent: Any = edit.wanted
+    for part in parts[:-1]:
+        parent = parent.get(part) if isinstance(parent, dict) else None
+    span = edit.tables().get(parts)
+    if not isinstance(parent, dict) or parent.get(parts[-1]) != {} or span is None:
+        return False
+    del parent[parts[-1]]
+    del edit.lines[span[0]]
+    edit.changed()
+    edit.save()
+    return True
+
+
 def remove_table_key(path: Path, table: str, key: str) -> bool:
     """Take [table]'s `key` line(s) out (a value spread over lines goes whole). False: the table doesn't set it."""
     edit = _Edit(path, f"[{table}] {key}")

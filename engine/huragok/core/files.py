@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import os
 import stat
+import time
 from pathlib import Path
 
 _temp_names = itertools.count()
@@ -18,6 +19,10 @@ def mtime(path: Path) -> float:
         return 0.0
 
 
+REPLACE_TRIES = 5
+REPLACE_WAIT_SECONDS = 0.1
+
+
 def write_atomic(path: Path, text: str, *, encoding: str = "utf-8", newline: str | None = None) -> None:
     """Replace a file in one step: written whole to a hidden file beside it (`.<name>.<pid>-<n>.tmp`, which a
     program watching the folder never takes for one of its files), then swapped in with os.replace. A reader never
@@ -29,7 +34,14 @@ def write_atomic(path: Path, text: str, *, encoding: str = "utf-8", newline: str
             file.write(text)
         if os.name != "nt" and path.exists():
             os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
-        os.replace(temp, path)
+        for tries_left in reversed(range(REPLACE_TRIES)):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:  # on Windows, something reading the file just then (a virus scan, an indexer) stops it for a moment
+                if os.name != "nt" or not tries_left:
+                    raise
+                time.sleep(REPLACE_WAIT_SECONDS)
     except BaseException:
         temp.unlink(missing_ok=True)
         raise

@@ -398,7 +398,7 @@ def test_bans_and_kicks_are_lists_to_lift_from_by_number(tmp_path: Path, run) ->
             await fake.chat(ADMIN, "Admin", "!bans")
             await wait_for(lambda: any("unban @number lifts one" in t for t in tells_to(fake, ADMIN)))
             said = tells_to(fake, ADMIN)
-            assert said[0] == f"@1 bob (banned 1m ago by Vergil: slurs; 6d left; this server, {two[:8]})"
+            assert said[0] == f"@1 bob (kicked 1m ago by Vergil: slurs; 6d left; this server, {two[:8]})"
             assert said[1] == f"@2 Bob (banned 2h ago by Alice: cheating; this server, {one[:8]})"
             await fake.chat(ADMIN, "Admin", "!unban @2")  # Alice's ban on the first Bob, by his player ID
             assert (await wait_for(lambda: fake.named("unban")))[0]["args"] == [one]
@@ -468,7 +468,7 @@ def test_kicks_and_bans_reach_every_server(tmp_path: Path, run, across: bool) ->
             await wait_for(lambda: fake.named("kick"))
             if across:
                 kick = (await wait_for(lambda: other.named("kick")))[0]
-                assert kick[0] == BRAVO and kick[1].startswith("Kicked from LG Test Server by Mod (spamming): you can "
+                assert kick[0] == BRAVO and kick[1].startswith("Kicked from LG Test Server by Mod: spamming. You can "
                                                                "join again in ")
                 await wait_for(lambda: other.named("pardon"))  # let back in: the block is the first server's
                 sup.bus.emit("rcon.join", "Other", number=3, name="Bravo", id=BRAVO, ip="", admin=False)
@@ -933,11 +933,11 @@ def test_whois_says_where_someone_is_banned_now(tmp_path: Path, run) -> None:
 
                 await fake.chat(MOD, "Mod", "!whois bravo")
                 await wait_for(lambda: "Record: " in " ".join(tells_to(fake, MOD)))
-                assert now_line("Bravo") == "Now: banned on every server, 6d left (by Owner: cheating)"  # said once
+                assert now_line("Bravo") == "Now: kicked off every server, 6d left (by Owner: cheating)"  # said once
                 await fake.chat(MOD, "Mod", "!whois alice")
                 await wait_for(lambda: " ".join(tells_to(fake, MOD)).count("Record: ") == 2)
                 now = now_line("Alice")
-                assert "banned on Other, 3d left (/ban by LilGremlin: spam)" in now
+                assert "kicked off Other, 3d left (/ban by LilGremlin: spam)" in now
                 assert "banned on Stopped, for good (/ban by LilGremlin: griefing; from the record: Stopped's list " \
                        "can't be read now)" in now
                 assert "every server" not in now and "LG Test Server" not in now
@@ -1129,7 +1129,7 @@ def test_a_ban_takes_every_role_away(tmp_path: Path, run) -> None:
                 await fake.chat(ADMIN, "Admin", "!promote alice")
                 await asyncio.sleep(0.2)
             await wait_for(lambda: ALICE in sup.settings.permissions.members["moderator"])
-            await fake.chat(ADMIN, "Admin", "!ban alice 1d spam")
+            await fake.chat(ADMIN, "Admin", "!ban alice spam")
             await wait_for(lambda: ALICE not in sup.settings.permissions.members["moderator"])
             await wait_for(lambda: any("Alice's moderator role goes with the ban." in t for t in tells_to(fake, ADMIN)))
             # Only an owner can ban an admin; the console's admins lose them, dedicated.toml's are named.

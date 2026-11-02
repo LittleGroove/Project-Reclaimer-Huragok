@@ -1,7 +1,7 @@
 """What Discord says is true right now: the bot, its Discord, the roles and channels there, and what the bot and
 @everyone can do in each channel. Read with rest.py, so the window and /huragok check see the same thing.
 
-References in discord.toml are an ID ("1234567890") or a name ("#admin-log", "@SPR-Admin", "admin-log"); find_role() and
+References in discord.toml are an ID ("1234567890") or a name ("#admin-log", "@Server Admin", "admin-log"); find_role() and
 find_channel() take either.
 """
 
@@ -16,7 +16,6 @@ from .rest import PERMISSIONS
 ALL_PERMISSIONS = (1 << 64) - 1
 TEXT_KINDS = {0, 5, 15, 16}  # text, announcement, forum, media: where a message can go
 CATEGORY = 4
-VOICE_KINDS = {2, 13}
 
 
 def _int(value: Any) -> int:
@@ -128,6 +127,19 @@ class Facts:
         allowed = self.permissions_in(channel) if channel is not None else self.base_permissions()
         return bool(allowed & PERMISSIONS[permission])
 
+    def role_can_see(self, role: dict[str, Any], channel: dict[str, Any]) -> bool:
+        """Whether someone with only @everyone and this role can see this channel."""
+        guild_id = str((self.guild or {}).get("id"))
+        allowed = _int(self.everyone.get("permissions")) | _int(role.get("permissions"))
+        if allowed & PERMISSIONS["administrator"]:
+            return True
+        overwrites = {str(one.get("id")): one for one in channel.get("permission_overwrites") or []}
+        for applies in (guild_id, str(role.get("id"))):
+            one = overwrites.get(applies)
+            if one is not None:
+                allowed = (allowed & ~_int(one.get("deny"))) | _int(one.get("allow"))
+        return bool(allowed & PERMISSIONS["view"])
+
     def everyone_reads(self, channel: dict[str, Any]) -> bool:
         """Whether a plain member of the Discord can read this channel: what a staff feature must never post in."""
         allowed = _int(self.everyone.get("permissions"))
@@ -138,6 +150,21 @@ class Facts:
             if str(overwrite.get("id")) == guild_id:
                 allowed = (allowed & ~_int(overwrite.get("deny"))) | _int(overwrite.get("allow"))
         return bool(allowed & PERMISSIONS["view"])
+
+    def everyone_can(self, permission: str, channel: dict[str, Any]) -> bool:
+        """Whether a plain member of the Discord can see this channel and do this in it."""
+        allowed = _int(self.everyone.get("permissions"))
+        if allowed & PERMISSIONS["administrator"]:
+            return True
+        guild_id = str((self.guild or {}).get("id"))
+        for overwrite in channel.get("permission_overwrites") or []:
+            if str(overwrite.get("id")) == guild_id:
+                allowed = (allowed & ~_int(overwrite.get("deny"))) | _int(overwrite.get("allow"))
+        return bool(allowed & PERMISSIONS[permission]) and bool(allowed & PERMISSIONS["view"])
+
+    def everyone_sends(self, channel: dict[str, Any]) -> bool:
+        """Whether a plain member of the Discord can type in this channel: what a channel only for reading should never allow."""
+        return self.everyone_can("send", channel)
 
     def top_position(self) -> int:
         """The bot's highest role: it can only manage roles below this one."""

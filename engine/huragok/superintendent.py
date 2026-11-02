@@ -351,6 +351,10 @@ class SuperintendentContext(PartContext):
         ref = player.id if isinstance(player, Player) else player
         await self._superintendent.clients[server].command("tell", ref, text)
 
+    def server_rows(self) -> list[dict[str, Any]]:
+        """Every server as the window sees it: its phase, uptime, address…"""
+        return self._superintendent.fleet.rows()
+
     @property
     def lifecycle(self) -> Lifecycle:
         """Restart a server: now, after this game, or when it's empty."""

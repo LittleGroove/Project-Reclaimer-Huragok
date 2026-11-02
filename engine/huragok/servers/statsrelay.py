@@ -1,9 +1,9 @@
-"""statsrelay: a copy of what a server sends the stats service, for tempdiscord.py (0.5.2 until 0.6.0).
+"""statsrelay: a copy of what a server sends the stats service, for tempdiscord.py (0.5.2 until the version that brings stats).
 
 After each finished game a server reports it to the stats service ([stats_server] in its dedicated.toml; empty
 means the project's public one), which answers with each player's rank: "Stats recorded: Alpha is Sergeant
 grade 2 (37 EXP, skill 21)". The report goes over plain HTTP (POST <service>/v1/matches) and nobody outside the
-project knows what's in it. For every server, always (nothing to set; 0.6.0 takes it out), Huragok stands in the
+project knows what's in it. For every server, always (nothing to set; the version that brings stats takes it out), Huragok stands in the
 middle:
 
   * it listens on 127.0.0.1 (a port of its own for each server, kept in records/temp-stats-capture.json) and points
@@ -14,8 +14,7 @@ middle:
   * as Huragok stops, every server's stats_server goes back to what it was, so one restarted while Huragok is away
     reports straight to the service; Huragok points it here again as it starts;
   * if the service ever turns down two reports in a row that came through here (a 4xx answer, not "busy"), Huragok
-    stops doing this for that server for good (until 0.6.0) and puts its stats_server back: players' ranks come
-    first.
+    stops doing this for that server for good and puts its stats_server back: players' ranks come first.
 
 Where the real service is: the server's own stats_server when it names one, else the address the server said it
 reports to ("Stats reporting to http://…;" in its server.log, read as the server starts too). A server set to "off"

@@ -1,7 +1,6 @@
-"""tempdiscord: a temporary record (0.5.2 until 0.6.0) of what the Discord bot and players' stats will be built on.
+"""tempdiscord: a temporary record, from 0.5.2 until the version that brings players' stats, of what those will be built on.
 
-0.6.0 brings a Discord bot and players' stats (kill streaks, medals, wins, leaderboards), built on what the servers
-send; some of that nobody has seen yet: a real `kill` event, what its `report` byte means, how the end of a game looks
+Stats (kill streaks, medals, wins, leaderboards) will be built on what the servers send; some of that nobody has seen yet: a real `kill` event, what its `report` byte means, how the end of a game looks
 in the players' totals, what a server tells the stats service after each game. This writes it down while people play,
 into logs/temp-discord/temp-discord-YYYY-MM-DD.jsonl (UTC days, kept KEEP_DAYS), one JSON object a line, each with
 its `kind`:
@@ -17,13 +16,13 @@ its `kind`:
   note          what the stats capture did (statsrelay.py)
 
 and every report a server sends the stats service, with the service's answer, into its own
-logs/temp-discord/stats-reports/stats-reports-YYYY-MM-DD.jsonl (kept until 0.6.0 clears it out): statsrelay.py
+logs/temp-discord/stats-reports/stats-reports-YYYY-MM-DD.jsonl (kept KEEP_DAYS too): statsrelay.py
 passes each one on as it was sent and keeps a copy.
 
-It's made to be sent to whoever builds 0.6.0, so nobody's private: no IP addresses or device fingerprints, player IDs
+It's made to be sent to whoever builds that version, so nobody's private: no IP addresses or device fingerprints, player IDs
 as stand-ins ("P-" and 10 letters: one player, one stand-in, worked out with a key kept in records/ that never leaves
 this machine), chat lines as their length (a command keeps its name: "!stats …"). Names stay: the stats lines name
-players. Always on, with nothing to set: everyone running 0.5.2 helps build 0.6.0. Gone in 0.6.0.
+players. Always on, with nothing to set. Gone in the version that brings stats.
 """
 
 from __future__ import annotations
@@ -46,7 +45,7 @@ from .statsrelay import StatsCapture
 
 FOLDER = "logs/temp-discord"
 REPORTS = "stats-reports"  # in FOLDER: the stats reports, kept
-KEEP_DAYS = 30  # the daily record files; the reports are kept
+KEEP_DAYS = 30  # the daily record files, and the reports
 KEY_FILE = "temp-discord.key"  # in records/: makes the stand-ins; stays on this machine
 POLL_SECONDS = 15.0  # `players` while a game is on (Huragok's own look is every 30 s)
 UNKNOWN_POLL_SECONDS = 5.0  # at most this often for a kill naming an engine number not seen yet
@@ -129,7 +128,7 @@ def key_for(records: Path) -> bytes:
 class TempDiscord(Part):
     persona = SUPERINTENDENT
     name = "tempdiscord"
-    description = "Temporary (until 0.6.0): records what the Discord bot and players' stats will need, in logs/temp-discord"
+    description = "Temporary (until a later version brings stats): records what players' stats will need, in logs/temp-discord"
     always_on = True  # nothing to set: no section in settings.toml, nothing to switch
     _file: IO[str] | None = None
     capture: StatsCapture | None = None
@@ -185,10 +184,10 @@ class TempDiscord(Part):
         self._file.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
 
     def prune(self) -> None:
-        """Daily record files older than KEEP_DAYS go (the stats reports stay)."""
+        """Daily files older than KEEP_DAYS go, the stats reports' too: it's a record for building something, and shouldn't fill a disk."""
         cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - self.days * 86400))
-        for path in self.folder.glob("temp-discord-*.jsonl"):
-            day = path.stem.removeprefix("temp-discord-")
+        for path in [*self.folder.glob("temp-discord-*.jsonl"), *(self.folder / "stats-reports").glob("stats-reports-*.jsonl")]:
+            day = path.stem.removeprefix("temp-discord-").removeprefix("stats-reports-")
             if re.fullmatch(r"\d{4}-\d\d-\d\d", day) and day < cutoff:
                 try:
                     path.unlink()

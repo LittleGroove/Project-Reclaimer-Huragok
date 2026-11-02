@@ -134,12 +134,12 @@ def test_owners_by_user_id(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
 
 
 def test_channels_numbered_with_who_can_read_them(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    # 1 #admin-log (private), 2 #servers; "staff" first, then Esc to leave the rest.
+    # 1 #admin-log (private), 2 #servers; "status" first, then Esc to leave the rest.
     menu, terminal, path = opened(tmp_path, ["N"], keys("1"), ["ESC"], ["ESC"])
     bot_ready(path)
     run(menu.screen_discord())
-    assert read_toml(path)["channels"]["staff"] == STAFF_CHANNEL
-    assert f'staff = "{STAFF_CHANNEL}"  # #admin-log' in path.read_text(encoding="utf-8")
+    assert read_toml(path)["channels"]["status"] == STAFF_CHANNEL
+    assert f'status = "{STAFF_CHANNEL}"  # #admin-log' in path.read_text(encoding="utf-8")
     shown = text_of(terminal)
     assert "private" in shown and "@everyone reads" in shown
 
@@ -149,7 +149,32 @@ def test_features_show_what_is_built_and_switch(tmp_path: Path, run: Any) -> Non
     run(menu.screen_discord())
     assert read_toml(path)["personas"]["enabled"] is False
     shown = text_of(terminal)
-    assert "more arrive in later betas" in shown and "Moderation feed" not in shown
+    assert "Moderation feed" in shown and "Kill feed" not in shown
+
+
+def test_every_message_in_the_window(tmp_path: Path, run: Any) -> None:
+    # Which one: the first, moderation-ban. Then C and staff, by its number on the channels list (4th), then #hex by L, then P off.
+    menu, terminal, path = opened(tmp_path, ["E"], keys("1"), ["C"], keys("4"), keys("1"), ["L"], keys("#123456"), keys("1"), ["P"], ["ESC"], ["ESC"])
+    run(menu.screen_discord())
+    line = read_toml(path)["messages"]["moderation-ban"]
+    assert line == {"channel": "staff", "colour": "#123456", "post": False, "ping": ""}
+    assert "votes-called" in text_of(terminal)
+
+
+def test_the_update_adds_new_message_lines_and_leaves_the_rest(tmp_path: Path) -> None:
+    settings = host(tmp_path)
+    path = settings.parent / "discord.toml"
+    make_file(path)
+    text = path.read_text(encoding="utf-8")
+    start, end = text.index("\n[messages]\n") + 1, text.index("# The colours [messages] can name")
+    path.write_text(text[:start] + '[messages]\nvotes-called = { channel = "staff", colour = "red", post = false, ping = "" }\n\n' + text[end:], encoding="utf-8")
+    said = up_to_date(settings)
+    assert any("discord.toml" in line and "new setting" in line for line in said)
+    messages = read_toml(path)["messages"]
+    assert messages["votes-called"] == {"channel": "staff", "colour": "red", "post": False, "ping": ""}  # the host's stays
+    assert messages["votes-failed"]["channel"] == "logs" and len(messages) >= 50
+    assert not any("new setting" in line for line in up_to_date(settings))  # once
+    assert load(path).warnings == []
 
 
 def test_the_check_in_the_window(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
@@ -198,7 +223,7 @@ def test_the_start_loops_webhook_is_checked_before_it_is_kept(tmp_path: Path, ru
 
 
 def test_every_text_is_listed(tmp_path: Path, run: Any) -> None:
-    menu, terminal, _ = opened(tmp_path, ["X"], ["ESC"])
+    menu, terminal, _ = opened(tmp_path, ["X"], ["ENTER"] * 16, ["ESC"])  # a page at a time
     run(menu.screen_discord())
     for key in speakers.TEXTS:
         assert key in text_of(terminal)
@@ -324,6 +349,9 @@ def test_the_start_loop_says_huragok_is_down_when_a_webhook_is_set(tmp_path: Pat
     assert fake.requests == []
     address = rest.create_webhook(TOKEN, STAFF_CHANNEL, "Alerts")["url"]
     set_launcher_webhook(settings.home / "discord.toml", address)
+    launcher._tell_discord(settings, "exit code 1", 15)  # the bot's switched off, so nothing goes to Discord
+    assert not fake.posted
+    set_mode(settings.home / "discord.toml", "webhook")
     launcher._tell_discord(settings, "exit code 1", 15)
     post = fake.posted[-1]
     assert post["username"] == "Superintendent" and "flags" not in post  # it does notify
@@ -333,6 +361,7 @@ def test_the_start_loop_says_huragok_is_down_when_a_webhook_is_set(tmp_path: Pat
 def test_a_webhook_that_fails_never_stops_the_start_loop(tmp_path: Path, fake: FakeDiscord) -> None:
     settings = load_settings(tmp_path)
     set_launcher_webhook(settings.home / "discord.toml", f"{rest.API}/webhooks/1/none")
+    set_mode(settings.home / "discord.toml", "webhook")
     launcher._tell_discord(settings, "exit code 1", 5)
     assert "Couldn't tell Discord" in (settings.home / "logs" / "huragok.log").read_text(encoding="utf-8")
 
@@ -366,7 +395,7 @@ def test_notes_are_kept_up_to_date_and_the_hosts_values_and_notes_stay() -> None
     text = notes.template_text("discord.toml")
     changed = text.replace('mode = "off"', 'mode = "bot"').replace("# Slash commands and right-click commands.",
                                                                     "# Slash commands and right-click commands.\n# my own note")
-    changed = changed.replace('staff = ""                     # e.g. "#admin-log"', 'staff = "77"  # #mine')
+    changed = changed.replace('staff = ""                     # what Vergil did and who to keep an eye on, e.g. "#staff-tickets"', 'staff = "77"  # #mine')
     result = notes.refresh_text("discord.toml", changed)
     data = tomllib.loads(result.text)
     assert data["mode"] == "bot" and data["channels"]["staff"] == "77"

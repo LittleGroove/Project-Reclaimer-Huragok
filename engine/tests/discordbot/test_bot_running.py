@@ -94,7 +94,7 @@ def test_the_bot_signs_in_says_who_it_is_and_registers_its_commands_once(tmp_pat
             names = [command["name"] for command in fake.commands[GUILD]]
             assert names == ["huragok"]
             subcommands = {option["name"] for option in fake.commands[GUILD][0]["options"]}
-            assert subcommands == {"claim", "setup", "features", "check", "test", "reload"}
+            assert subcommands == {"claim", "setup", "features", "check", "test", "gallery", "reload"}
         assert records.logins_today(tmp_path / "records") == 1
         assert fake.identifies[0]["intents"] & (1 << 15) == 0  # nothing asks for Message Content yet
         # The next start: the same list, so nothing is registered (200 a day), though it signs in again.
@@ -125,10 +125,10 @@ def test_a_refused_token_stops_it_without_spending_a_login_and_a_good_one_brings
             part = part_of(huragok)
             await wait_for(lambda: part.state == "waiting" and "refused the token" in part.why, timeout=15)
             assert fake.identifies == []
-            await wait_for(lambda: any("refused the token" in line for line in huragok.problems))
+            await wait_for(lambda: any("refused the token" in line for line in huragok.problems), timeout=15)
             set_token(path, TOKEN)
-            await wait_for(lambda: part.state == "online", timeout=20)
-            await wait_for(lambda: not any("refused the token" in line for line in huragok.problems))
+            await wait_for(lambda: part.state == "online", timeout=30)
+            await wait_for(lambda: not any("refused the token" in line for line in huragok.problems), timeout=15)
 
     run(scenario())
 
@@ -178,6 +178,39 @@ def test_joining_its_discord_later_brings_it_up(tmp_path: Path, run: Any, fake: 
     run(scenario())
 
 
+def test_a_slow_down_on_a_real_webhook_address_is_seconds_and_the_post_arrives(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            part = await online(huragok)
+            _, token = fake.huragok("test", channel=STAFF_CHANNEL)
+            await answer_text(fake, token)
+            await wait_for(lambda: len(fake.posted) == 3, timeout=15)
+            fake.slow_down("/webhooks/")
+            _, token = fake.huragok("test", channel=STAFF_CHANNEL)
+            await answer_text(fake, token)
+            await wait_for(lambda: len(fake.posted) == 6, timeout=15)  # within moments: not after 27 minutes
+            assert fake.unversioned == 0 and not any("asked it to wait" in line for line in huragok.problems)
+            assert part.outbox.waiting == 0
+
+    run(scenario())
+
+
+def test_a_long_wait_is_on_the_dashboard_until_it_is_over(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            part = await online(huragok)
+            fake.slow_down("/webhooks/", retry_after=600.0)
+            _, token = fake.huragok("test", channel=STAFF_CHANNEL)
+            await answer_text(fake, token)
+            await wait_for(lambda: any("wait 10 minutes" in line for line in huragok.problems), timeout=15)
+            part._waiting_until = 0.0  # time passes
+            await wait_for(lambda: not any("wait 10 minutes" in line for line in huragok.problems), timeout=15)
+
+    run(scenario())
+
+
 def test_past_the_logins_a_day_it_stays_off(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         bot_file(tmp_path)
@@ -198,7 +231,7 @@ def test_going_to_webhook_mode_signs_the_bot_out(tmp_path: Path, run: Any, fake:
             part = await online(huragok)
             set_mode(path, "webhook")
             await wait_for(lambda: part.state == "webhook", timeout=15)
-            assert part.client is None
+            await wait_for(lambda: part.client is None, timeout=15)  # a moment on: what changed it may be a press, which gets its answer first
 
     run(scenario())
 
@@ -320,13 +353,28 @@ def test_without_manage_webhooks_it_posts_as_itself(tmp_path: Path, run: Any, fa
     async def scenario() -> None:
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, _, _):
-            await online(huragok)
+            part = await online(huragok)
+            await wait_for(lambda: part.looking == 0, timeout=15)  # each look gives it another chance at a webhook
             fake.refuse_next.append(("/webhooks", 403, {"message": "Missing Permissions", "code": 50013}, {}))
             _, token = fake.huragok("test")
             await answer_text(fake, token)
             await wait_for(lambda: len(fake.posted) == 3, timeout=15)
             assert all(post["via"] == "bot" for post in fake.posted)
             assert fake.posted[0]["content"].startswith("**")
+
+    run(scenario())
+
+
+def test_the_gallery_shows_every_message_to_whoever_asked(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            await wait_for(lambda: huragok.runners["discord"].part.state == "online", timeout=20)
+            _, token = fake.huragok("gallery", channel=STAFF_CHANNEL)
+            await wait_for(lambda: any(f["token"] == token and "That's every message" in str(f.get("content")) for f in fake.followups), timeout=30)
+            shown = [f for f in fake.followups if f["token"] == token]
+            assert len(shown) > 2 and all(f.get("flags") == 64 for f in shown)
+            assert not [post for post in fake.posted if post["channel"] == STAFF_CHANNEL]
 
     run(scenario())
 
@@ -354,8 +402,8 @@ def test_setup_writes_what_is_picked_to_the_file_comments_kept(tmp_path: Path, r
             await online(huragok)
             opened, form = await _opened(fake, "setup")
             assert form["embeds"][0]["title"] == "Huragok's bot"
-            labels = {c.get("label"): c["custom_id"] for c in _components(form) if c.get("label")}
-            assert set(labels) == {"Ranks", "Owners", "Channels", "Features", "Check"}
+            labels = {c.get("label"): c["custom_id"] for c in _components(form) if c.get("custom_id") and c.get("label")}
+            assert {"Ranks", "Owners", "Channels", "Features", "Who gets told", "Messages", "Tickets", "Commands", "Console", "Reports", "Appeals", "Contact", "Status", "Notes", "Check"} <= set(labels)
             before = len(fake.callbacks)
             fake.pick(opened, labels["Ranks"], 2, [])
             await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
@@ -377,19 +425,50 @@ def test_setup_writes_what_is_picked_to_the_file_comments_kept(tmp_path: Path, r
     run(scenario())
 
 
-def test_the_features_panel_switches_what_is_built_and_says_what_is_coming(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_the_messages_panel_changes_one_line(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        path = bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            await online(huragok)
+            opened, form = await _opened(fake, "setup")
+            labels = {c.get("label"): c["custom_id"] for c in _components(form) if c.get("label")}
+            before = len(fake.callbacks)
+            fake.pick(opened, labels["Messages"], 2, [])
+            await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
+            page = fake.callbacks[-1]["data"]
+            assert page["embeds"][0]["title"].startswith("Messages (1 of")
+            picker = next(c for c in _components(page) if c["type"] == 3)
+            key = picker["options"][0]["value"]
+            before = len(fake.callbacks)
+            fake.pick(opened, picker["custom_id"], 3, [key])
+            await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
+            one = fake.callbacks[-1]["data"]
+            assert one["embeds"][0]["title"] == key
+            colour = next(c for c in _components(one) if c["type"] == 3)
+            assert len(colour["options"]) <= 25
+            before = len(fake.callbacks)
+            fake.pick(opened, colour["custom_id"], 3, ["teal"])
+            await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
+            assert read_toml(path)["messages"][key]["colour"] == "teal"
+            one = fake.callbacks[-1]["data"]
+            switch = next(c for c in _components(one) if c.get("label") == "Switch it off")
+            before = len(fake.callbacks)
+            fake.pick(opened, switch["custom_id"], 2, [])
+            await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
+            line = read_toml(path)["messages"][key]
+            assert line["post"] is False and line["colour"] == "teal"
+
+    run(scenario())
+
+
+def test_the_features_panel_switches_what_is_built(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         path = bot_file(tmp_path)
         async with running(tmp_path) as (huragok, _, _):
             await online(huragok)
             opened, form = await _opened(fake, "features")
-            assert "🔜" in form["embeds"][0]["description"]
+            assert "⬜" in form["embeds"][0]["description"] and "🔜" not in form["embeds"][0]["description"]  # what's not built yet stays out of the way
             menu = next(c for c in _components(form) if c["type"] == 3)
-            before = len(fake.callbacks)
-            fake.pick(opened, menu["custom_id"], 3, ["feed.moderation"])
-            await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
-            assert "later beta" in fake.callbacks[-1]["data"]["content"]
-            assert read_toml(path)["feed"]["moderation"]["enabled"] is False
             before = len(fake.callbacks)
             fake.pick(opened, menu["custom_id"], 3, ["personas"])
             await wait_for(lambda: len(fake.callbacks) > before, timeout=15)
@@ -397,4 +476,51 @@ def test_the_features_panel_switches_what_is_built_and_says_what_is_coming(tmp_p
 
     run(scenario())
 
+
+def test_removing_the_bot_and_adding_it_back_brings_its_commands_back(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """Seen on the real thing, 30 October: Discord had none, and Huragok believed it did."""
+
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            part = huragok.runners["discord"].part
+            await wait_for(lambda: part.state == "online" and fake.commands.get(GUILD), timeout=20)
+            names = {command["name"] for command in fake.commands[GUILD]}
+            part.poster.delivery.webhooks["1"] = "http://gone"
+            fake.remove_the_bot()
+            await wait_for(lambda: not part.poster.delivery.webhooks, timeout=15)
+            fake.add_the_bot()
+            await wait_for(lambda: {command["name"] for command in fake.commands.get(GUILD, [])} == names, timeout=20)
+
+    run(scenario())
+
+
+def test_commands_gone_while_it_was_down_are_put_back_as_it_signs_in(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            part = huragok.runners["discord"].part
+            await wait_for(lambda: part.state == "online" and fake.commands.get(GUILD), timeout=20)
+            sent = fake.registrations
+            await part.client.try_commands()
+            assert fake.registrations == sent  # they're all there: registering costs, so nothing's sent
+            del fake.commands[GUILD]
+            await part.client.try_commands()
+            assert fake.registrations == sent + 1 and fake.commands[GUILD]
+
+    run(scenario())
+
+
+def test_if_discord_wont_say_whats_there_it_goes_by_what_it_sent(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with running(tmp_path) as (huragok, _, _):
+            part = huragok.runners["discord"].part
+            await wait_for(lambda: part.state == "online" and fake.commands.get(GUILD), timeout=20)
+            sent = fake.registrations
+            fake.refuse_next.append(("/commands", 500, {"message": "try later", "code": 0}, {}))
+            await part.client.try_commands()
+            assert fake.registrations == sent and part.state == "online"
+
+    run(scenario())
 

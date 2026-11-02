@@ -4,7 +4,8 @@ Setting a server up is in [setup.md](setup.md). This is what the window and the
 commands do with a server that's running: its status card, its console, the settings
 (Huragok's own and everything about each server) changed a step at a time, bans and
 admins, updates of the server program and of its Workshop mods, cleaning up, and a
-console for moderators who aren't at this PC.
+console for moderators who aren't at this PC. The Discord bot is **J**, with a guide of its
+own: [discord.md](discord.md).
 
 ## A server's status card: V
 **V** picks a server and shows, on one screen, everything the Superintendent keeps an
@@ -108,6 +109,12 @@ picked by number from the whole list; for a typed value, `-` puts the default ba
 (or takes out a line whose absence means something, such as `mcc_folder`), `none`
 empties a list, and Enter leaves it as it was.
 
+`settings.toml` is read as Huragok starts, so what you change here takes effect at its next
+start, and the servers keep running through that. The dashboard says so in red until then:
+`settings.toml has changed since Huragok started: it takes effect when Huragok starts again
+(the servers keep running)`. `commands.toml`, the word lists, the interval messages and
+`discord.toml` apply within seconds.
+
 **A change that would stop Huragok starting is never written.** It's made on a copy of
 the file first, and the copy is read the way Huragok reads `settings.toml` as it
 starts, every part's own check included (`check` does the same): `Not changed
@@ -136,7 +143,7 @@ reads the file again within seconds.
 
 ### Vergil's word list: A
 `automod.txt`, one rule per line, shown as players meet it: its name, its words, and
-what each strike does (`1st: muted for 1 day; 2nd: muted for 7 days; 3rd: removed for
+what each strike does (`1st: muted for 1 day; 2nd: muted for 7 days; 3rd: kicked for
 1 day; 4th: banned for good`). **Add a rule**: the words, then what each strike does,
 from four ready-made ladders (kicked every time; muted 1 day, 3 days, then 7 days;
 muted 1 day, 7 days, then out 1 day, then banned; banned the first time) or your
@@ -543,15 +550,18 @@ and any tool that speaks that protocol connect to Huragok instead, and:
   `commands.toml` (a moderator can `mute` and `kick`, not `ban`; read-only
   commands such as `status`, `players`, `maps`, `bans` pass for every moderator;
   `admin`, `reload` and setting the join `password` need owner, while `admin` or
-  `password` typed alone only ask), and the reply says so otherwise. A command in
-  `[off]` passes for nobody, owners included;
+  `password` typed alone only ask), and the reply says so otherwise. A word that isn't a
+  command at all says that instead (`'foo' isn't a console command: help lists them.`). A
+  command in `[off]` passes for nobody, owners included;
 - nobody acts on their own role or above, as in game (their highest role on any
   server): `kick`, `ban`, `banip`,
   `mute` and `startvote kick` on a player named by `#number`, player ID or exact
   name are refused for an owner, and for an admin or moderator when the user is
-  one too or below ("Big Boss is an owner; you can't kick them…"). The server's
-  console acts with the host's authority and would do it, so the relay holds the
-  line; owners can act on anyone;
+  one too or below ("Big Boss is an owner; you can't kick them…"). So is an address
+  or a range that someone of that role is on now. A name quoted any way but the plain one
+  (`"Master Chief"`) is refused, as what's checked has to be what the server acts on. The
+  server's console acts with the host's authority and would do it, so the relay holds
+  the line; owners can act on anyone;
 - one command per message, on one line: a line with a new line, a tab or another
   control character in it is refused, and so is a blank word in the protocol's
   `args` (a command sent with words is never taken for a question: before, an
@@ -565,7 +575,10 @@ and any tool that speaks that protocol connect to Huragok instead, and:
 - **one** upstream spot serves everyone, and a wrong password locks nobody out
   of the server (five in ten minutes lock that address out of the relay);
 - the dashboard header shows who's signed in, on Vergil's line (`VRGL … consoles:
-  Alice (LG Test Server)`).
+  Alice (Server 1)`).
+
+The Discord bot's typed console sends its lines through these same checks, at the rank the
+Discord role gives: [discord.md](discord.md).
 
 Adding or removing a moderator is adding or deleting their block in
 `settings.toml`, which is read as Huragok starts: close it (**Q**) and start it
@@ -581,6 +594,13 @@ libraries speak) use the same passwords at the game port plus
 moderator's password, send a command, read the text; a refused password answers
 with id -1 as Source servers do, and the end-of-reply marker clients send is
 echoed back. Source RCON has no events.
+
+## The Discord bot: J
+**J** sets up the Discord bot a step at a time: webhook only or your own bot, Discord roles onto
+Huragok's ranks, channels, features, messages, tickets, the typed console, reports, appeals and
+Contact staff, a check and a test post. `/huragok setup` in Discord does the same with Discord's
+own pickers, and both write `discord.toml`, which Huragok reads again within seconds of it changing.
+It's off until you set it up. [discord.md](discord.md) goes from nothing to a bot that answers.
 
 ## What a server plays next
 The dashboard's GAME column shows the game under way and, when one is set, the

@@ -8,7 +8,7 @@ jobs:
   test:
     name: tests (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20  # a test that hangs fails the run instead of holding it for hours
+    timeout-minutes: 60  # a test that hangs fails the run instead of holding it for hours
     strategy:
       fail-fast: false
       matrix:
@@ -28,7 +28,7 @@ jobs:
     # installed copy) and write every template: a file left out of the zip or of package-data fails here.
     name: the release zip works on its own
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -24,7 +24,8 @@ On top of them run the **parts**, each belonging to one named part (its `persona
 | `messages` | [players/messages](../engine/huragok/players/messages) | `intervalmessages.txt` (Huragok's folder and each server's) | `[Server]` | Interval messages. Always on; no messages until the host adds some |
 | `watchdog` | [servers/watchdog.py](../engine/huragok/servers/watchdog.py) | `[watchdog]` | the Superintendent (`SUPT`) | Restarts a server that died, lets nobody in or got stuck; notices a slow one. Each case is watch, act or actnow |
 | `eventlog` | [servers/eventlog.py](../engine/huragok/servers/eventlog.py) | `[eventlog]` | the Superintendent (`SUPT`) | Every event as JSON |
-| `tempdiscord` | [servers/tempdiscord.py](../engine/huragok/servers/tempdiscord.py), [servers/statsrelay.py](../engine/huragok/servers/statsrelay.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | 0.5.2 until 0.6.0: the record the Discord bot and players' stats are built from, and a copy of every stats report each server sends. 0.6.0 takes it out |
+| `tempdiscord` | [servers/tempdiscord.py](../engine/huragok/servers/tempdiscord.py), [servers/statsrelay.py](../engine/huragok/servers/statsrelay.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | From 0.5.2 until the version that brings players' stats: the record those are built from, and a copy of every stats report each server sends. Both are pruned after `KEEP_DAYS` (30) |
+| `discord` | [discordbot/part.py](../engine/huragok/discordbot/part.py) | `discord.toml`, no section in `settings.toml` | Huragok (`HRGK`) | The Discord bot. Always on: its switch is `mode` in that file |
 
 Parts are a way to keep the code apart, not something hosts install: everything
 ships together, and new work comes as a pull request. [parts.py](../engine/huragok/parts.py)
@@ -55,6 +56,8 @@ engine/huragok/
                        commands and messages parts
   content/             what Huragok builds and mends: new servers, packages, content, mods, game files, clean-up
   updates/             Huragok's own updates, the server program's, the Workshop's, and the host's files after one
+  discordbot/          the Discord bot: discord.toml, Discord's web API, what each feature needs, one way out to
+                       Discord, the part. discord.py is only imported in bot mode
   window/              the dashboard and its screens
   commandline/         start.cmd's commands, the start loop, the console without a window
 ```
@@ -82,9 +85,12 @@ fails on one that crosses the line, naming it:
 | `content/` | the above and `updates/` |
 | `superintendent.py` | everything up to `servers/` (never `players/` or `vergil`) |
 | `vergil.py` | everything up to `players/`, and `superintendent` |
+| `discordbot/` | everything up to `updates/` and `content/` (never `superintendent` or `vergil`: it gets what it needs through `ctx`) |
 | `huragok.py`, `parts.py` | everything but `window/` and `commandline/` |
 | `window/`, `commandline/` | anything |
 
+`updates/` can't import `discordbot/`, so the names `discord.toml`'s settings have had are in
+`core/discordmoved.py`, where the update step and the file's own check can both read them.
 `core/files.py` and `core/text.py` import nothing of Huragok's, so any layer may
 use them. Three imports go upward on purpose, inside a function (`LET_THROUGH`):
 `core/settings.py`, `core/hostsettings.py` and `core/commandsfile.py` read
@@ -149,6 +155,7 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `background.py` | Work started to run by itself (a reply, a restart, an install, a ban passed on): `background(work, what, log)` keeps the task until it ends, logs a failure at once as "<what> failed", and `stop()` calls off what's left as Huragok stops, before the database closes. **Never a bare `asyncio.ensure_future`** for work nobody waits on: asyncio keeps only a weak reference, and a failure is logged without saying what it was. Long-running tasks are `Huragok.spawn`'s (restarted after a failure) |
 | `web.py`, `jobs.py`, `requests.py` | One way to fetch from GitHub (`fetch`, `UpdateError`); work that needs a server stopped (`StoppedJob`); what a request gets back (`Result`) |
 | `logs.py`, `desktop.py`, `priority.py`, `winproc.py` | The tagged log lines (`TaggedFormatter`) and the dashboard's recent ones (`RecentLog`); opening folders, editors, log windows, start at boot; process priority; starting `dedicated` on Windows so it outlives Huragok, and Ctrl+Break |
+| `discordmoved.py` | The settings of `discord.toml` that have a new name or a new home, in one place (`KEYS`, `LINES`, `LINE_FIELDS`, `TEXTS`): the update step moves them, and the file's check tells anyone writing an old name what it's called now. A row reaches every host at their next start. Never take one out |
 
 **`games/`**
 
@@ -177,7 +184,7 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `fleet.py` | The `Fleet`, which ticks every manager, writes `records/live.json`, answers requests from `records/requests/` and is what the window's keys call; `Lifecycle`, the thin view parts get (`restart`, `cancel`, `planned`, `busy`) |
 | `backends.py`, `ports.py`, `keepalive.py` | The **backends**: `process` (one `dedicated` per server, Windows or Linux), `docker`, `command`, `attach`. A backend only starts, stops and watches processes; it decides nothing. `PortWatch` reads the system's listening sockets (psutil) at most once a second for every stopped server, so no check blocks the loop. `Keepalive` restarts a hung server. `memory_mb` is what a server's process tree uses, for the watchdog and V alike |
 | `state.py`, `logs.py` | The live picture of each server; `server.log`, `status.json` and the console output as events. `logs.py` matches every pattern at the start of the server's own message, and the lines that carry someone's words (console echoes, refusals, kick and ban reasons: `ECHOES`) first, so typed text never passes for a server line |
-| `watchdog.py`, `eventlog.py` | The Superintendent's parts |
+| `watchdog.py`, `eventlog.py`, `tempdiscord.py`, `statsrelay.py` | The Superintendent's parts: the temporary record, and the copy of each stats report that goes in it |
 
 **`players/`** (Vergil's)
 
@@ -202,12 +209,27 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `updates/program.py`, `workshop.py` | New releases of the server program (servers with `auto_update` update themselves; the others from GitHub after their game, with `follow`); new Workshop versions swapped in after the game, as a job the manager runs while the server is stopped (the `preparing` phase) |
 | `updates/hostfiles.py` | **The host's own files brought up to date** after an update: the `STEPS`, run at Huragok's start under its lock, each once (`records/files.json`), each file backed up first (`records/previous-files/<version>/`). See "Hosts' files across updates" below |
 
+**`discordbot/`** (Huragok's: the `discord` part, in the layers above)
+
+| Module | |
+| --- | --- |
+| `part.py` | **The part**: reads `discord.toml` and again whenever it changes, runs the outbox, keeps the connection up in bot mode, and is what the feeds ask about a player. Its `problems()` are the dashboard's red lines, and `!calladmin`, `!report`, `!mods` and `!reports` are its commands |
+| `config.py`, `features.py`, `facts.py` | `discord.toml`: a setting it doesn't know is a warning, a wrong value its default. Every feature, what it needs and its state (off, waiting, on), the invite link's permissions, and the check. What Discord says is true now, read over the web API so a second window sees the same |
+| `rest.py`, `outbox.py`, `workers.py` | Discord's web API with the standard library alone, for both modes; one queue out, most urgent first, keeping to each channel's limits; Discord's calls on threads of their own, as a slow Discord mustn't hold up stopping a server |
+| `client.py`, `slash.py`, `panels.py`, `buttons.py`, `asking.py`, `console.py`, `serverpanel.py`, `staff.py` | **What needs discord.py**, imported in bot mode alone: the gateway and `/huragok`; every in-game command as a slash command, made from its `CommandSpec`; `/huragok setup`; what each button on a card does; `/report`, right-click and `/appeal`; the typed console; `/server` and `/status`; `/note`, `/flag`, `/notify`, `/ticket`, `/case`, `/help`, `/tickets` |
+| `speakers.py`, `cards.py` | Who speaks, every text and how it reaches a channel; what each event says, as pure functions from an event to a `Card` |
+| `feeds.py`, `tickets.py` | What happened, and whether it's wanted, where it goes and how often; one incident, one card, and its states (open, active, stale, closed, filed). A `Card`'s `problem` is what makes a later one the same incident |
+| `status.py`, `alerts.py` | The board, the bot's status line, bio and nickname, channel names, topics, voice status and seeding; what members asked to be told. `status.SCHEMA` is the part's database steps |
+| `reports.py`, `appeals.py`, `contact.py` | What becomes of a report, an appeal, a Contact thread |
+| `kept.py`, `tidy.py`, `consoleclear.py` | A post that stays (the console's menu, Contact's button); what only matters for a while goes, kept in `discord_tidy` so a restart loses nothing; the console channel put back as it started |
+| `ranks.py`, `records.py`, `startover.py` | Discord roles onto ranks, and what reaches every server (`REACHES_EVERY_SERVER`); what's kept in `records/` (state, claim code, logins, which commands are registered); J, Z |
+
 **`window/`** and **`commandline/`**
 
 | Module | |
 | --- | --- |
 | `window/dashboard.py`, `controllers.py` | The dashboard and its keys (`key_rows`); what the window talks to: the running Huragok (`LocalController`) or, in a second window, its files (`RemoteController`, fed by `live.json`) |
-| `window/screens/` | One `Screens` base (drawing, asking, the pickers several screens share) and a file per group: `setup.py` (N, G, I, C), `manage.py` (A, D's server settings, B, U), `files.py` (D's guided editors for Huragok's own files, O), `games.py` (playlist games' rules and options, custom games) |
+| `window/screens/` | One `Screens` base (drawing, asking, the pickers several screens share) and a file per group: `setup.py` (N, G, I, C), `manage.py` (A, D's server settings, B, U), `files.py` (D's guided editors for Huragok's own files, O), `games.py` (playlist games' rules and options, custom games), `discordsetup.py` (J) |
 | `window/tui.py`, `statuscard.py` | The terminal: the keyboard (Windows console key events, `ReadConsoleInputW`, with `msvcrt` when the console can't be opened; Linux `termios`), colours and in-place redraw. `ConsoleWriter` writes the console from a thread of its own, so a paused console (Edit > Mark) never holds up the loop; `clean` takes control characters out of what players and servers send, `cells` measures wide characters. The status card (V) |
 | `commandline/cli.py`, `common.py` | The commands `start`, `status`, `stop`, `close`, `restart`, `say`, `rcon`, `watch`, `check`, `update`, `init`, and `--help` grouped by named part (`HELP_GROUPS`); the exit codes |
 | `commandline/launcher.py`, `run.py` | The start loop below; Huragok in this process (`start --child`) |
@@ -379,6 +401,13 @@ async def seen(self, call: CommandCall) -> None:
 - `self._rcon(call, "command", *args)` passes a line to the server's console as
   the caller and shows them the answer; `self._line(call, "name")` passes the
   console command of the same name with the caller's words.
+- **A command that only makes sense while something's so** says `when="method"`, naming a
+  method of its part: while that says False there's no such command, "Unknown command" in game
+  and not in `!help` (`!report`, with no Discord to take it).
+- With the Discord bot, a new command is a slash command with nothing more to do: its boxes
+  come from `usage` (`discordbot/slash.py`), so a changed usage changes them. What a slash
+  command can't say goes in `SHAPES` there; what reaches every server goes in
+  `ranks.REACHES_EVERY_SERVER`, so it takes the rank someone holds on all of them.
 - Pick a name that says what the command does. `!yes` and `!no` are the server's
   votes; lines starting with `/` are the game's own.
 
@@ -469,6 +498,21 @@ Superintendent's parts; `VergilContext` (vergil.py) adds the players, for Vergil
 | `ctx.server_option(server, key)` | Superintendent | One of Huragok's own settings for a server (its `[[server]]` block: `automod`, `priority`…), or None |
 | `ctx.part_option(part, key, default)` | every part | A setting of another part's section (`[automod] across_servers`) |
 | `ctx.running(part)` | every part | Whether a part is on and running now |
+| `ctx.server_manager(server)` | every part | What starts, stops and restarts a server, for a person asking from outside the game (`/server`), or None |
+| `ctx.request(verb, options)` | every part | What Huragok answers itself (`check_update`, `check_program_update`…) |
+| `ctx.spawn(name, factory)` | every part | A long-running task of this part's: one that fails is logged and started again |
+| `ctx.refresh_problems()` | every part | Ask the dashboard to read `problems()` again |
+| `ctx.server_rows()` | Superintendent | Each server as the dashboard has it: `name`, `phase`, `status`, `health`, `can`, `countdown`… |
+| `ctx.run_line(name, text, server=, player=, role=, tell=, prefix=)` | Vergil | A command typed somewhere other than in game: the guards, the finding of who it names, a probationary moderator's request. Answers go through `tell` |
+| `ctx.run_as(name, target, words, server=, player=, role=, tell=)` | Vergil | A command run on someone you already have, as if typed there: a confirmed request, a button |
+| `ctx.refuses(name, target, server=, player=, role=)` | Vergil | Why either would say no, asked before anyone fills in a form; `""` if it wouldn't |
+| `ctx.console_line(server, who, role, line)` | Vergil | A console line typed elsewhere, with everything the relay checks |
+| `ctx.game_commands()`, `ctx.command_there(name)`, `ctx.command_prefix` | Vergil | Every command and the role it needs now; whether one can be used just now; the prefix |
+| `ctx.strike_rules()` | Vergil | The word list's rules, which a strike can be given on |
+| `ctx.picks_through(caller)`, `ctx.pick_of(caller, number)` | Vergil | Several lists in one answer, numbered through; what `@number` means to someone |
+| `ctx.players.add_note`, `.notes`, `.drop_note`, `.set_flag`, `.flags`, `.clear_flag`, `.named`, `.like` | Vergil | What staff write about a player; names as players were seen, in any case |
+| `ctx.moderation.adds_to_bans(note)` | Vergil | What a ban's message adds, given who it's for and how long (how to appeal) |
+| `core.storage.acting(id)` | every part | A context manager: what's written inside it records who acted, in `by_id` (`discord:<their ID>`, or a player's ID) |
 
 ## Events
 Subscribe with `@on("name")`, `@on("group.*")` or `@on("*")`. Each event has
@@ -504,7 +548,7 @@ Huragok adds its own:
 | `server.started`, `server.crashed` | from the built-in supervisor's console (backend `process`): `pid`; `reason`, `kind` (`hang`, `menus`, `error`, `panic`, `engine_exit`, `other`) |
 | `server.stopping`, `server.stopped`, `server.all_stopped` | `expected` and `exit_code` on `stopped` |
 | `server.countdown`, `server.countdown_cancelled` | `reason`, `coming_back`, `seconds`, `by` |
-| `server.restart_planned`, `server.restarting`, `server.restarted` | `when`, `reason`, `by` |
+| `server.restart_planned`, `server.restarting`, `server.restarted`, `server.plan_cancelled` | `when`, `reason`, `by` |
 | `server.start_failed` | `why`, `lines` (the console since the start): a start that never came up |
 | `server.faulted` | `reason`, `retry_at` (Unix seconds; None with `faulted_retry_minutes = []`): the Superintendent stopped trying for now |
 | `server.fault_retry` | `attempt`, `reason`: one more try after a FAULTED server's cool-down |
@@ -521,12 +565,15 @@ Huragok adds its own:
 | `log.rcon_wrong_password` | `address`, and at the fifth `times`, `refused`, `minutes`: the server locking an address out |
 | `log.vote_refused` | `caller`, `reason` |
 | `log.rcon_signin`, `log.rcon_refused`, `log.reload`, `log.online` | from `server.log` |
-| `moderation.action` | `kind`, `target_id`, `target_name`, `by`, `source` (the part), `reason`, `duration`, `evidence`, `dry_run`, `ok`, `text`, `pending` (a mute for someone not on, applied by automod as they join) |
+| `moderation.action` | `kind`, `target_id`, `target_name`, `by`, `by_id` (who acted, by ID: a player's, or `discord:<their ID>`), `source` (the part), `reason`, `duration`, `evidence`, `dry_run`, `ok`, `text`, `pending` (a mute for someone not on, applied by automod as they join), `case` (its number in the ledger) |
+| `moderation.seen` | the same fields: what the server announced that Huragok didn't send (a `/kick`, a vote's kick). Nobody acts on it; `!whois` and the Discord feed show it |
+| `commands.request`, `commands.request_decided` | a probationary moderator's request: `number`, `slot`, `by`, `what`, `target_id`, `target_name`; decided: `number`, `slot`, `status`, `by`, `by_id` (who asked), `what`, `why` |
 | `supervisor.started`, `supervisor.stopping` | `version` and `parts` on `started` |
 | `supervisor.part_disabled`, `supervisor.part_enabled` | `part`; `reason`, `for_good` and `seconds` (until it's on again) on `part_disabled` |
 | `supervisor.commands_reloaded` | `commands.toml` was read again |
+| `supervisor.update_failed`, `supervisor.relay_lockout` | `version`, `why`: an install of Huragok that failed; `who`: the relay locked out an address |
 | `supervisor.game_files` | `kind` (`halo3`, `campaign`, `odst`), `text`: game files arrived in this folder's `game/` |
-| `automod.strike`, `automod.pardon` | `player_id`, `player_name`, `rule`, `strike`, `action` (`kick`, `kick 1h`, `mute 1d`, `mute perm`, `ban`), `source` (`chat`, `manual`), `evidence`, `by`, `dry_run` |
+| `automod.strike`, `automod.pardon` | `player_id`, `player_name`, `rule`, `strike`, `action` (`kick`, `kick 1h`, `mute 1d`, `mute perm`, `ban`), `source` (`chat`, `manual`), `evidence`, `by`, `by_id`, `manual`, `dry_run` |
 | `automod.name` | `player_id`, `player_name`, `caught_by` (`names.txt line 4`, `automod.txt slurs`), `by`, `dry_run`, `ok`: a name kicked as it joined |
 | `automod.name_banned`, `automod.name_allowed` | `text` (the name), `by`; `player_id` and `note` on `name_banned` |
 | `automod.words_banned`, `automod.word_allowed` | `!banword`: `words`, `allowed` (its `-word` exceptions), `rule`, `line`, `by`; `!unbanword`: `word`, `rules` (the lines it came off), `by` |
@@ -623,7 +670,11 @@ release changes what a host's file should say:
 `always` steps run at every start and only add what's missing: in-game commands newer
 than `commands.toml` (under their default role; settled, so 150 s after the start),
 starter packages newer than `PACKAGES/` (`records/files.json` remembers which were
-offered, so one the host removed stays removed).
+offered, so one the host removed stays removed), and for `discord.toml` every setting its
+template has and the file doesn't (`discord-lines`, with its note), and every setting by the
+name it has now (`discord-moved`, from the table in `core/discordmoved.py`, so a rename is a row
+there with nothing more to do). A rename that narrows who can do what needs a settled step of
+its own, or a put-back runs on the looser default.
 
 **Notes need no step of their own** (0.5.0). Once a version, at its first start, the
 `<version>/notes` step puts Huragok's notes in every host file as that version writes
@@ -677,9 +728,8 @@ python -m venv .venv
 .venv/Scripts/python -m pytest engine -q > tests.txt 2>&1
 ```
 
-- Nearly a thousand, about four minutes on Windows (987 passed and 1 skipped at the
-  last full run: a time-zone test that needs `time.tzset`, which Windows lacks).
-  They're laid out like the package, one folder per layer, with what several share
+- About two thousand, which take a good while (a time-zone test that needs `time.tzset`
+  is skipped on Windows, which lacks it). They're laid out like the package, one folder per layer, with what several share
   in `tests/testkit/` ([tests/README.md](../engine/tests/README.md)).
   They need pytest 9 (the `test` extra says so).
 - **They start real processes.** The process backend starts, adopts, stops and
@@ -693,7 +743,7 @@ python -m venv .venv
   where text is selected, holds the run up.
 - **A hang ends the run with every thread's stack** (`faulthandler_timeout = 180`
   and `faulthandler_exit_on_timeout` in `pyproject.toml`; CI passes 120 s, and each
-  CI job has 20 minutes).
+  CI job has 60 minutes).
 - **Errors nobody sees fail the test**: an exception in a destructor, a callback or a
   thread, a coroutine never awaited (`filterwarnings` in `pyproject.toml`), and an
   error asyncio logs, such as "Task exception was never retrieved" (a test that
@@ -776,7 +826,7 @@ It fails when the tests fail.
 
 ## CI
 `.github/workflows/ci.yml`, on every push and pull request, each job with a time
-limit (20 minutes for the suites, 10 for the rest) so a hang fails the run:
+limit (60 minutes for the suites, 10 for the rest) so a hang fails the run:
 
 - **tests**: the suite on Windows and Ubuntu, Python 3.11, 3.12, 3.13 and 3.14
   (`-o faulthandler_timeout=120`);

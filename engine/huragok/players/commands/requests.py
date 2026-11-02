@@ -1,6 +1,6 @@
 """Probationary moderators (0.5.3): moderators' commands, but what they do waits for a moderator or an admin.
 
-SPR's staff meeting (29 October 2026): a rank between member and moderator, to bring new moderators in on
+a staff meeting (29 October 2026): a rank between member and moderator, to bring new moderators in on
 probation. `!promote` is still the way up (a moderator makes a member a probationary moderator, an admin makes one a
 moderator: roles.py).
 
@@ -8,7 +8,7 @@ moderator: roles.py).
   request: the player found with every guard (as if it ran), kept (commands_requests) with the lowest number not
   waiting already, and then: the probationary moderator reads "Sent for review as #3", every moderator and admin on
   any server reads who asks what (privately), and the player named reads nothing.
-- `!reports` lists them, every server's. `!confirm 3` runs it as the confirmer's own (they're who acts), on the
+- `!requests` lists them, every server's. `!confirm 3` runs it as the confirmer's own (they're who acts), on the
   server the player is on now, else the one it was asked on; `!confirm 3 strike slurs` (or `mute 1h…`) does that to
   the same player instead. `!deny 3 [why]` turns it down. Either frees the number.
 - Nothing lapses: confirmed later, it still happens, its time running from the moment it's confirmed. For someone
@@ -33,6 +33,7 @@ from ...core.part import command, on
 from ...lore import callout
 from ...rcon import RconError
 from ...servers.state import Player
+from ..ledger import kick_reason
 from ..router import CommandCall, Registered, unquote
 from ..targets import ago
 from .base import CommandsBase
@@ -74,7 +75,7 @@ class ProbationRequests(CommandsBase):
         return slot
 
     def _what(self, command: str, name: str, words: list[str]) -> str:
-        return " ".join([f"{self.ctx.permissions.prefix}{command}", name, *words])
+        return " ".join([f"{self.ctx.permissions.prefix}{command}", name, *words]).replace('"', "")  # a reason comes in quotes from a box in Discord
 
     async def _request(self, call: CommandCall, registered: Registered, target: Player, rest: list[str]) -> None:
         slot = self._free_slot()
@@ -88,6 +89,8 @@ class ProbationRequests(CommandsBase):
         self.ctx.log.info("[%s] %s (probationary moderator) asks #%d: %s", call.server, call.player.name, slot, what)
         await call.reply(f"Sent for review as #{slot}: {what}. A moderator or admin confirms it; nothing happens "
                          "until then.")
+        number = self.ctx.db.query("SELECT number FROM commands_requests WHERE slot = ? AND status = 'open' ORDER BY number DESC LIMIT 1", (slot,))[0]["number"]
+        self.ctx.emit("request", call.server, number=number, slot=slot, by=call.player.name, what=what, target_id=target.id, target_name=target.name)
         prefix = self.ctx.permissions.prefix
         await self._tell_staff(callout("request", f"{call.player.name} (probationary moderator) asks, #{slot} on "
                                                   f"{call.server}: {what}. {prefix}confirm {slot} or {prefix}deny "
@@ -110,16 +113,16 @@ class ProbationRequests(CommandsBase):
         """The waiting request the line's first word numbers (3 or #3), or None after saying why."""
         word = call.args[0].lstrip("#") if call.args else ""
         if not word.isdigit():
-            await call.reply(f"Use: {call.prefix}{call.name} <number>. {call.prefix}reports lists them.")
+            await call.reply(f"Use: {call.prefix}{call.name} <number>. {call.prefix}requests lists them.")
             return None
         row = next((r for r in self._waiting() if r["slot"] == int(word)), None)
         if row is None:
-            await call.reply(f"No request #{word} is waiting. {call.prefix}reports lists them.")
+            await call.reply(f"No request #{word} is waiting. {call.prefix}requests lists them.")
         return row
 
-    @command("reports", help="The probationary moderators' requests waiting, on every server: !confirm or !deny each",
+    @command("requests", help="The probationary moderators' requests waiting, on every server: !confirm or !deny each",
              role="moderator")
-    async def reports(self, call: CommandCall) -> None:
+    async def requests(self, call: CommandCall) -> None:
         rows = self._waiting()
         if not rows:
             await call.reply("No requests are waiting.")
@@ -148,15 +151,15 @@ class ProbationRequests(CommandsBase):
             name, words = row["command"], json.loads(row["words"])
         target = Player(0, row["target_name"] or row["target"][:8], row["target"])
         # The server they're on now (the one to act on), else the one it was asked on.
-        where = next((s for s, state in self.ctx.servers.items() if state.player_by_id(target.id)), row["server"])
-        if where not in self.ctx.servers:
+        where = next((s for s, state in self.ctx.servers.items() if state.connected and state.player_by_id(target.id)), row["server"])
+        if where not in self.ctx.servers or not self.ctx.servers[where].connected:  # stopped since: nothing can be done on it
             where = call.server
         live = self.ctx.server(where).player_by_id(target.id)
         heard: list[str] = []
 
         async def tell(_server: str, player_id: str, text: str) -> None:
             heard.append(text)
-            await self.ctx.tell(call.server, player_id, text)
+            await call._tell(call.server, player_id, text)  # wherever they are: in game, or Discord
 
         started = time.time()
         if live is None and name in NEEDS_THEM_ON:
@@ -178,6 +181,7 @@ class ProbationRequests(CommandsBase):
                           row["by_name"], self._what(row["command"], target.name, json.loads(row["words"])), done)
         await call.reply(f"Confirmed #{row['slot']}" + ("" if live else f" ({target.name} isn't on: from now, as "
                                                                         "they come back)") + ".")
+        self.ctx.emit("request_decided", row["server"], number=row["number"], slot=row["slot"], status="confirmed", by=call.player.name, by_id=row["by_id"], what=done, why="")
         await self._tell_asker(row["number"])
 
     async def _while_away(self, call: CommandCall, row: Any, name: str, target: Player, words: list[str],
@@ -186,9 +190,18 @@ class ProbationRequests(CommandsBase):
         (across.py), or read as they next join. None when done; else why not."""
         if outranked := self._outranks(call, target):
             return outranked
-        reason = unquote(words)
         moderation = self.ctx.moderation
         evidence = f"requested by {row['by_name']} (#{row['slot']})"
+        if name == "kick":
+            duration, rest, forever = self._split_time(words)
+            if forever:  # a kick for good is a ban, and takes the rank a ban does
+                return await self.ctx.run_as("ban", target, rest, server=server, player=call.player, role=call.role, tell=call._tell)
+            if duration:
+                if too_long := self.kick_too_long(call.role, duration):  # whoever confirms it is who gives it
+                    return too_long
+                await moderation.ban(server, target, duration, unquote(rest), told=kick_reason(duration, unquote(rest)), by=call.player.name, evidence=evidence)
+                return None
+        reason = unquote(words)
         if name == "kick":
             action = await moderation.kick(server, target, reason, by=call.player.name, pending=True,
                                            evidence=evidence)
@@ -212,7 +225,7 @@ class ProbationRequests(CommandsBase):
     def _acted(self, name: str, target_id: str, since: float) -> bool:
         """Whether what was confirmed left its mark: a ledger entry, a strike; other commands count as done."""
         if name in RECORDED:
-            rows = self.ctx.db.query("SELECT COUNT(*) AS n FROM actions WHERE target_id = ? AND time >= ?",
+            rows = self.ctx.db.query("SELECT COUNT(*) AS n FROM actions WHERE target_id = ? AND time >= ? AND ok = 1 AND dry_run = 0",
                                      (target_id, since - 1))
             return bool(rows and rows[0]["n"])
         if name == "strike":
@@ -241,6 +254,7 @@ class ProbationRequests(CommandsBase):
         self.ctx.log.info("[%s] %s turned down #%d (%s asked %s)%s", call.server, call.player.name, row["slot"],
                           row["by_name"], row["command"], f": {why}" if why else "")
         await call.reply(f"Turned down #{row['slot']}.")
+        self.ctx.emit("request_decided", row["server"], number=row["number"], slot=row["slot"], status="denied", by=call.player.name, by_id=row["by_id"], what=self._what(row["command"], row["target_name"] or row["target"][:8], json.loads(row["words"])), why=why)
         await self._tell_asker(row["number"])
 
     # Telling the probationary moderator -----------------------------------------------------------------------

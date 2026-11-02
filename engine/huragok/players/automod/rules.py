@@ -116,9 +116,9 @@ class Step:
         if self.action == "mute":
             muted = f"muted for {describe_time(self.duration)}" if self.duration else "muted for good"
             if self.kick:
-                return f"removed for {describe_time(self.kick)}, then {muted}"
+                return f"kicked for {describe_time(self.kick)}, then {muted}"
             return f"kicked, then {muted}" if self.plain_kick else muted
-        return f"removed for {describe_time(self.duration)}" if self.duration else "kicked"
+        return f"kicked for {describe_time(self.duration)}" if self.duration else "kicked"
 
     def __str__(self) -> str:
         if self.action == "mute":
@@ -254,7 +254,8 @@ def parse_line(text: str, number: int) -> Rule | None:
     entries = [w.strip() for w in fields[0].split(",") if w.strip()]
     words = [w for w in entries if not w.startswith("-")]
     allow = [w[1:].strip() for w in entries if w.startswith("-") and _has_text(w[1:])]
-    if not words or any(not w.strip("*").strip() for w in words):
+    named = bool(fields[4].strip())
+    if (not words and not (named and not entries)) or any(not w.strip("*").strip() for w in words):  # no words, with a name: a ladder for what it can't hear, like voice, that only !strike climbs
         raise RuleError(f"{where}: no words before the first |")
     if blank := next((w for w in words if not _has_text(w)), None):
         # A zero-width space or a lone accent pasted from the web: matched as nothing, it would catch

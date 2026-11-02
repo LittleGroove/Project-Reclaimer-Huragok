@@ -135,6 +135,20 @@ def test_a_slow_down_for_the_whole_bot_holds_everything(run: Any) -> None:
     run(scenario())
 
 
+def test_a_long_wait_is_kept_to_and_said(run: Any) -> None:
+    async def scenario() -> None:
+        clock = Clock()
+        heard: list[tuple[str, float]] = []
+        outbox = Outbox(clock=clock, long_wait=lambda: 30.0, on_long_wait=lambda job, seconds: heard.append((job.what, seconds)))
+        outbox.put(sender([], "a", SlowDown("slow", retry_after=30.0, everything=False)), bucket="a", what="short")
+        outbox.put(sender([], "b", SlowDown("slow", retry_after=600.0, everything=False)), bucket="b", what="long")
+        await flush(outbox)
+        assert heard == [("long", 600.0)] and outbox.waiting == 2  # 30 is no more than the limit: nothing to say
+        assert outbox.free_at["b"] == clock.now + 600.0
+
+    run(scenario())
+
+
 def test_a_newer_one_replaces_a_slowed_one(run: Any) -> None:
     async def scenario() -> None:
         clock = Clock()
@@ -155,6 +169,7 @@ def test_a_newer_one_replaces_a_slowed_one(run: Any) -> None:
     run(scenario())
 
 
+@pytest.mark.discord_errors
 def test_a_refusal_is_never_tried_again_and_is_heard(run: Any) -> None:
     async def scenario() -> None:
         heard: list[str] = []
@@ -168,7 +183,8 @@ def test_a_refusal_is_never_tried_again_and_is_heard(run: Any) -> None:
     run(scenario())
 
 
-def test_no_answer_is_tried_again_further_apart_then_given_up(run: Any) -> None:
+def test_no_answer_is_tried_again_further_apart_and_kept_while_nothings_getting_through(run: Any) -> None:
+    """An outage isn't a post's fault: it used to give up on the most urgent first, after four minutes."""
     async def scenario() -> None:
         clock = Clock()
         outbox, sent = Outbox(clock=clock), []
@@ -178,11 +194,30 @@ def test_no_answer_is_tried_again_further_apart_then_given_up(run: Any) -> None:
             assert outbox.waiting == 1 and outbox.paused_until - clock.now == wait
             clock.now += wait
         await flush(outbox)
-        assert outbox.waiting == 0 and outbox.dropped == 1 and len(sent) == len(RETRY_WAITS) + 1
+        assert outbox.waiting == 1 and outbox.dropped == 0 and outbox.paused_until - clock.now == RETRY_WAITS[-1]
 
     run(scenario())
 
 
+def test_a_post_only_it_cant_send_goes_once_others_are_getting_through(run: Any) -> None:
+    async def scenario() -> None:
+        clock = Clock()
+        told: list[str] = []
+        outbox, sent = Outbox(clock=clock), []
+        outbox.put(sender(sent, "bad", Unreachable("no")), bucket="a", on_fail=lambda error: told.append("told") or True)
+        for wait in RETRY_WAITS:
+            await flush(outbox)
+            clock.now += wait
+        outbox.put(sender(sent, "good"), bucket="b")
+        await flush(outbox)
+        clock.now += 200
+        await flush(outbox)
+        assert outbox.waiting == 0 and outbox.dropped == 1 and told == ["told"] and "good" in sent
+
+    run(scenario())
+
+
+@pytest.mark.discord_errors
 def test_one_bad_post_never_stops_the_rest(run: Any) -> None:
     async def scenario() -> None:
         outbox, sent = Outbox(clock=Clock()), []

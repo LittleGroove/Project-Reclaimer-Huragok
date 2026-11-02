@@ -118,10 +118,30 @@ def target_of(command: str, args: list[str] | None = None) -> str:
     return words[0] if word in ACTS_ON and words else ""
 
 
+def _name_unclear(command: str) -> bool:
+    """A line naming a player with quotes any way but the plain one: the rank check reads it one way, and the console's own reading isn't known. What's checked has to be what acts."""
+    word, _, rest = command.strip(" ").partition(" ")
+    word = word.lower()
+    rest = rest.strip()
+    if word == "startvote":
+        first, _, rest = rest.partition(" ")
+        if first.lower() != "kick":
+            return False
+        rest = rest.strip()
+    elif word not in ACTS_ON:
+        return False
+    if rest.startswith('"'):
+        return not re.match(r'"[^"]*"(\s|$)', rest)
+    first = rest.split(" ", 1)[0]
+    return '"' in first or "'" in first[:1]
+
+
 def line_refusal(command: str, args: list[str] | None = None) -> str:
     """Why a line can't go through the relay as it is, or "" when it can."""
     if CONTROL.search(command) or any(CONTROL.search(a) for a in args or []):
         return "One command per message, on one line: new lines, tabs and other control characters can't go through."
+    if args is None and _name_unclear(command):
+        return "That name's quoted oddly: write it as \"Master Chief\", with a space after the closing quote, or use their #number."
     if args is not None:
         if not command.strip(" ") or " " in command.strip(" "):
             return "With args, command is the command's name alone, like {\"command\": \"kick\", \"args\": [\"#3\"]}."
@@ -300,6 +320,8 @@ class Relay:
         if user is None:
             self.failures.setdefault(address, []).append(time.time())
             log.warning("[%s] console relay: wrong password from %s (%s)", server.name, address, protocol)
+            if self._locked(address):
+                self.bus.emit("supervisor.relay_lockout", server.name, who="an address")
             return None, "Wrong password."
         session = Session(user, server.name, address, close, protocol)
         self.sessions.setdefault(server.name, []).append(session)
@@ -316,8 +338,14 @@ class Relay:
     async def _run_command(self, session: Session, server: ServerConfig, command: str,
                            args: list[str] | None = None) -> tuple[bool, str, Any]:
         """(ok, text, data) for a command from a signed-in moderator, after the role check."""
-        user = session.user
-        args = [str(a) for a in args] if args else None
+
+        def sent() -> None:
+            session.commands += 1
+
+        return await self.run_line(session.user, server, command, [str(a) for a in args] if args else None, sent=sent)
+
+    async def run_line(self, user: RelayUser, server: ServerConfig, command: str, args: list[str] | None = None, *, sent: Callable[[], None] | None = None) -> tuple[bool, str, Any]:
+        """(ok, text, data) for a console line from someone of this rank, wherever they typed it (the relay, Discord), after the role check. `sent`: told when it's gone to the server."""
         line = " ".join([command, *args]) if args else command
         if not line.strip():
             return False, "Nothing to send: type a console command (help lists them).", None
@@ -334,6 +362,8 @@ class Relay:
         if not allows(user.role, needed):
             log.info("[%s] console: %s (%s) may not run: %s (needs %s)", server.name, user.name, user.role, masked(line),
                      needed)
+            if word not in all_commands() and word not in FIXED and word not in READ_ONLY and word not in QUERIES:  # a typo, or someone talking: not a matter of rank
+                return False, f"'{word}' isn't a console command: help lists them.", None
             return False, f"'{word}' needs the {needed} role; you're {user.role}. Ask the host to change commands.toml.", None
         if why := self._outranked(user, server.name, command, args):
             log.info("[%s] console: %s (%s) not sent: %s: %s", server.name, user.name, user.role, masked(line), why)
@@ -345,7 +375,8 @@ class Relay:
         client = self.clients.get(server.name)
         if client is None or not client.connected:
             return False, f"{server.name}'s console isn't connected right now.", None
-        session.commands += 1
+        if sent is not None:
+            sent()
         log.info("[%s] console: %s (%s): %s", server.name, user.name, user.role, masked(line))
         try:
             if args:
@@ -367,6 +398,18 @@ class Relay:
         may go: no player named, or one the console will refuse to pick (no one, or several, by that name)."""
         ref, state = target_of(command, args), self.states.get(server)
         if not ref or state is None or user.role == "owner":
+            return ""
+        word, _ = command_word(command, args)
+        try:
+            network = ipaddress.ip_network(ref, strict=False)
+        except ValueError:
+            network = None
+        if network is not None:  # an address or a range: whoever's on with it goes at once
+            for player in state.players.values():
+                if player.ip and ipaddress.ip_address(player.ip.partition(":")[0]) in network:
+                    role = self.roles.highest_role(list(self.states.values()), player)
+                    if ROLES.index(role) >= ROLES.index(user.role):
+                        return f"{player.name} is {a_role(role)}, on that address; you can't {word} them (nobody acts on their own role or above)."
             return ""
         number = re.fullmatch(r"#?(\d{1,4})", ref)
         if number and int(number[1]) in state.players:

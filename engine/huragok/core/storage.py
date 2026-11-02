@@ -9,15 +9,30 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 ID_START = re.compile(r"[0-9a-fA-F]{8,64}")
 
 
 def _casefold(text: Any) -> Any:
     return text.casefold() if isinstance(text, str) else text
+
+# Who's acting: a player's ID, or discord:<id>. Set around a command, so that nothing between it and what it writes down has to carry it. A display name isn't an identity: it can change, or be someone else's.
+ACTING_ID: ContextVar[str] = ContextVar("huragok_acting_id", default="")
+
+
+@contextmanager
+def acting(who: str) -> Iterator[None]:
+    token = ACTING_ID.set(who)
+    try:
+        yield
+    finally:
+        ACTING_ID.reset(token)
+
 
 CORE_MIGRATIONS = [
     """
@@ -41,6 +56,24 @@ CORE_MIGRATIONS = [
     CREATE TABLE ballots (
         time REAL NOT NULL, server TEXT NOT NULL, playlist TEXT NOT NULL, picked TEXT NOT NULL, plays TEXT);
     CREATE INDEX ballots_playlist ON ballots (playlist, server);
+    """,
+    """
+    CREATE TABLE player_notes (
+        number INTEGER PRIMARY KEY, player_id TEXT NOT NULL, text TEXT NOT NULL, by TEXT NOT NULL, time REAL NOT NULL, expires REAL);
+    CREATE INDEX player_notes_player ON player_notes (player_id, time);
+    CREATE TABLE player_flags (
+        player_id TEXT NOT NULL, flag TEXT NOT NULL, why TEXT NOT NULL, by TEXT NOT NULL, time REAL NOT NULL,
+        PRIMARY KEY (player_id, flag));
+    """,
+    """
+    ALTER TABLE actions ADD COLUMN by_id TEXT;
+    ALTER TABLE player_notes ADD COLUMN by_id TEXT;
+    ALTER TABLE player_flags ADD COLUMN by_id TEXT;
+    """,
+    """
+    ALTER TABLE player_names ADD COLUMN folded TEXT;
+    UPDATE player_names SET folded = casefold(name);
+    CREATE INDEX player_names_folded ON player_names (folded);
     """,
 ]
 
@@ -66,6 +99,7 @@ class Storage:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS schema_versions (owner TEXT PRIMARY KEY, version INTEGER NOT NULL)")
         self.migrate("core", CORE_MIGRATIONS)
+        self.db.execute("UPDATE player_names SET folded = casefold(name) WHERE folded IS NULL")  # what an older version wrote, if it was put back for a while
 
     def close(self) -> None:
         self.db.close()
@@ -87,6 +121,16 @@ class Storage:
                 self.db.execute("ROLLBACK")
                 raise
         return len(steps)
+
+    def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
+        """Many rows, one commit: each commit waits on the disk, and this is on the event loop."""
+        self.db.execute("BEGIN")
+        try:
+            self.db.executemany(sql, rows)
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+        self.db.execute("COMMIT")
 
     def execute(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> sqlite3.Cursor:
         return self.db.execute(sql, params)
@@ -112,19 +156,22 @@ class Storage:
 
     # Players --------------------------------------------------------------------
 
-    def record_join(self, player_id: str, name: str, ip: str | None, when: float | None = None) -> None:
+    def record_join(self, player_id: str, name: str, ip: str | None, when: float | None = None) -> float | None:
+        """Returns when they were last seen before this; None the first time."""
         when = when or time.time()
+        before = self.db.execute("SELECT last_seen FROM players WHERE id = ?", (player_id,)).fetchone()
         self.db.execute(
             "INSERT INTO players (id, first_seen, last_seen, last_name, visits) VALUES (?, ?, ?, ?, 1) "
             "ON CONFLICT (id) DO UPDATE SET last_seen = excluded.last_seen, last_name = excluded.last_name, "
             "visits = visits + 1", (player_id, when, when, name))
         self.db.execute(
-            "INSERT INTO player_names (id, name, first_seen, last_seen) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (id, name) DO UPDATE SET last_seen = excluded.last_seen", (player_id, name, when, when))
+            "INSERT INTO player_names (id, name, first_seen, last_seen, folded) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (id, name) DO UPDATE SET last_seen = excluded.last_seen", (player_id, name, when, when, name.casefold()))
         if ip:
             self.db.execute(
                 "INSERT INTO player_ips (id, ip, first_seen, last_seen) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT (id, ip) DO UPDATE SET last_seen = excluded.last_seen", (player_id, ip, when, when))
+        return float(before["last_seen"]) if before is not None else None
 
     def player(self, player_id: str) -> PlayerRecord | None:
         row = self.db.execute("SELECT * FROM players WHERE id = ?", (player_id.lower(),)).fetchone()
@@ -143,18 +190,56 @@ class Storage:
         begin with it. Names are compared casefolded in Python, since SQLite's lower() only folds A-Z.
         """
         text = text.strip()
-        by_id = ID_START.fullmatch(text) is not None
-        rows = self.query(
-            "SELECT DISTINCT p.id FROM players p LEFT JOIN player_names n ON n.id = p.id "
-            "WHERE (? AND p.id LIKE ?) OR casefold(n.name) = ? ORDER BY p.last_seen DESC LIMIT ?",
-            (by_id, text.lower() + "%", text.casefold(), limit))
-        return [r for r in (self.player(row["id"]) for row in rows) if r]
+        wanted = text.lower()
+        by_id = self.query("SELECT id FROM players WHERE id >= ? AND id < ? ORDER BY last_seen DESC LIMIT ?", (wanted, wanted + "\uffff", limit)) if ID_START.fullmatch(text) else []
+        by_name = self.query("SELECT p.id FROM player_names n JOIN players p ON p.id = n.id WHERE n.folded = ? GROUP BY p.id ORDER BY p.last_seen DESC LIMIT ?", (text.casefold(), limit))
+        found = dict.fromkeys(str(row["id"]) for row in [*by_id, *by_name])
+        return [r for r in (self.player(player_id) for player_id in list(found)[:limit]) if r]
+
+    def players_named(self, text: str, limit: int = 25) -> list[tuple[str, str]]:
+        """(ID, name) for whoever has gone by exactly this name, in any case: however many others have it in theirs."""
+        rows = self.query("SELECT id, name FROM player_names WHERE folded = ? ORDER BY last_seen DESC LIMIT ?", (text.strip().casefold(), limit))
+        return [(str(row["id"]), str(row["name"])) for row in rows]
+
+    def players_like(self, text: str, limit: int = 25) -> list[tuple[str, str]]:
+        """(ID, name) for each name with this in it, the latest first: for picking a player while typing."""
+        pattern = "%" + re.sub(r"([\\%_])", r"\\\1", text.strip().casefold()) + "%"
+        rows = self.query("SELECT id, name FROM player_names WHERE folded LIKE ? ESCAPE '\\' ORDER BY last_seen DESC LIMIT ?", (pattern, limit))
+        return [(str(row["id"]), str(row["name"])) for row in rows]
+
+    def add_note(self, player_id: str, text: str, by: str, *, expires: float | None = None, when: float | None = None) -> int:
+        cursor = self.db.execute("INSERT INTO player_notes (player_id, text, by, time, expires, by_id) VALUES (?, ?, ?, ?, ?, ?)",
+                                 (player_id.lower(), text, by, when or time.time(), expires, ACTING_ID.get() or None))
+        return int(cursor.lastrowid or 0)
+
+    def notes_of(self, player_id: str) -> list[sqlite3.Row]:
+        """The latest first, without those past their time."""
+        return self.query("SELECT * FROM player_notes WHERE player_id = ? AND (expires IS NULL OR expires > ?) ORDER BY time DESC, number DESC",
+                          (player_id.lower(), time.time()))
+
+    def drop_note(self, number: int) -> str | None:
+        """Whose note it was; None if there's no such note."""
+        rows = self.query("SELECT player_id FROM player_notes WHERE number = ?", (number,))
+        if not rows:
+            return None
+        self.db.execute("DELETE FROM player_notes WHERE number = ?", (number,))
+        return str(rows[0]["player_id"])
+
+    def set_flag(self, player_id: str, flag: str, why: str, by: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO player_flags (player_id, flag, why, by, time, by_id) VALUES (?, ?, ?, ?, ?, ?)",
+                        (player_id.lower(), flag, why, by, time.time(), ACTING_ID.get() or None))
+
+    def clear_flag(self, player_id: str, flag: str) -> bool:
+        return self.db.execute("DELETE FROM player_flags WHERE player_id = ? AND flag = ?", (player_id.lower(), flag)).rowcount > 0
+
+    def flags_of(self, player_id: str) -> list[sqlite3.Row]:
+        return self.query("SELECT * FROM player_flags WHERE player_id = ? ORDER BY time", (player_id.lower(),))
 
     def names_starting(self, word: str, limit: int = 200) -> list[str]:
         """Names of more than one word that players have used, starting with `word` (any case): so a command can
         tell where a name like "Nate Higgers" ends and the rest of the line begins. The most recent first."""
         pattern = re.sub(r"([\\%_])", r"\\\1", word.casefold()) + " %"
-        rows = self.query("SELECT name FROM player_names WHERE casefold(name) LIKE ? ESCAPE '\\' "
+        rows = self.query("SELECT name FROM player_names WHERE folded LIKE ? ESCAPE '\\' "
                           "GROUP BY name ORDER BY MAX(last_seen) DESC LIMIT ?", (pattern, limit))
         return [str(row["name"]) for row in rows]
 
@@ -166,9 +251,9 @@ class Storage:
                       reply: str = "", when: float | None = None) -> int:
         cursor = self.db.execute(
             "INSERT INTO actions (time, server, kind, target_id, target_name, by, source, reason, duration, "
-            "evidence, dry_run, ok, reply) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "evidence, dry_run, ok, reply, by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (when or time.time(), server, kind, target_id, target_name, by, source, reason, duration,
-             evidence, int(dry_run), int(ok), reply))
+             evidence, int(dry_run), int(ok), reply, ACTING_ID.get() or None))
         return int(cursor.lastrowid or 0)
 
     def actions_for(self, player_id: str, limit: int = 20) -> list[sqlite3.Row]:
@@ -188,6 +273,9 @@ class PartStore:
 
     def execute(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> sqlite3.Cursor:
         return self._storage.execute(sql, params)
+
+    def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
+        self._storage.execute_many(sql, rows)
 
     def query(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> list[sqlite3.Row]:
         return self._storage.query(sql, params)
@@ -252,3 +340,27 @@ class PlayerHistory:
     def names_starting(self, word: str) -> list[str]:
         """Names of more than one word seen here that start with `word`: where a typed name ends."""
         return self._storage.names_starting(word)
+
+    def like(self, text: str, limit: int = 25) -> list[tuple[str, str]]:
+        return self._storage.players_like(text, limit)
+
+    def named(self, text: str, limit: int = 25) -> list[tuple[str, str]]:
+        return self._storage.players_named(text, limit)
+
+    def notes(self, player_id: str) -> list[sqlite3.Row]:
+        return self._storage.notes_of(player_id)
+
+    def add_note(self, player_id: str, text: str, by: str, *, expires: float | None = None) -> int:
+        return self._storage.add_note(player_id, text, by, expires=expires)
+
+    def drop_note(self, number: int) -> str | None:
+        return self._storage.drop_note(number)
+
+    def flags(self, player_id: str) -> list[sqlite3.Row]:
+        return self._storage.flags_of(player_id)
+
+    def set_flag(self, player_id: str, flag: str, why: str, by: str) -> None:
+        self._storage.set_flag(player_id, flag, why, by)
+
+    def clear_flag(self, player_id: str, flag: str) -> bool:
+        return self._storage.clear_flag(player_id, flag)

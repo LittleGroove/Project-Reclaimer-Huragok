@@ -75,8 +75,9 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <nav class="toc" aria-label="Contents"><p class='toc-part'><a href='#top'>Part 1: Technical reference</a></p><ol><li><a href='#status-at-a-glance'>Status at a glance</a></li><li><a href='#the-road-to-1-0'>The road to 1.0</a></li><li><a href='#what-it-is-and-why-it-exists'>What it is and why it exists</a></li><li><a href='#the-three-parts'>The three parts</a></li><li><a href='#goals-scope-and-non-goals'>Goals, scope and non-goals</a></li><li><a href='#architecture'>Architecture</a></li><li><a href='#design-decisions'>Design decisions</a></li><li><a href='#concurrency-timing-and-resources'>Concurrency, timing and resources</a></li><li><a href='#on-disk-layout-and-configuration'>On-disk layout and configuration</a></li><li><a href='#server-lifecycle'>Server lifecycle</a></li><li><a href='#watchdog-and-keepalive'>Watchdog and keepalive</a></li><li><a href='#moderation'>Moderation</a></li><li><a href='#key-flows'>Key flows</a></li><li><a href='#extending-huragok'>Extending Huragok</a></li><li><a href='#the-window-and-the-command-surface'>The window and the command surface</a></li><li><a href='#window-internals'>Window internals</a></li><li><a href='#setup-and-management-in-depth'>Setup and management in depth</a></li><li><a href='#game-content'>Game content</a></li><li><a href='#logs-diagnostics-tests-and-shipping'>Logs, diagnostics, tests and shipping</a></li><li><a href='#failure-modes'>Failure modes</a></li><li><a href='#security-and-privacy'>Security and privacy</a></li><li><a href='#compatibility-versions-and-migration'>Compatibility, versions and migration</a></li><li><a href='#performance-and-scale'>Performance and scale</a></li><li><a href='#known-issues-and-open-questions'>Known issues and open questions</a></li><li><a href='#reference'>Reference</a></li></ol><p class='toc-part'><a href='#interfaces-and-data-formats'>Part 2: Interfaces and data formats</a></p><ol><li><a href='#rcon-client-protocol'>RCON client protocol</a></li><li><a href='#relay-protocols'>Relay protocols</a></li><li><a href='#files-read-from-each-server'>Files read from each server</a></li><li><a href='#files-huragok-writes'>Files Huragok writes</a></li><li><a href='#database-schema'>Database schema</a></li><li><a href='#host-file-formats'>Host file formats</a></li><li><a href='#environment-exit-codes-and-command-line-options'>Environment, exit codes and command-line options</a></li></ol></nav>
 <main>
 <h1 class='title' id="huragok-technical-reference">Huragok — Technical Reference</h1>
-<p class='byline'>As of 19 October 2026 · Huragok 0.4.4 for Windows (released 19 Oct 2026) · Project Reclaimer v0.9.20</p>
+<p class='byline'>As of 1 November 2026 · Huragok 0.6.0 · Project Reclaimer v0.9.20</p>
 <h2 id="status-at-a-glance">Status at a glance</h2>
+<p>0.6.0 adds a Discord bot each host makes for themselves (<code>discordbot/</code>, <code>discord.toml</code>, J in the window), off until they set it up: <a href="#discord-security">Security</a>, <a href="#a-press-on-a-card">a press on a card</a>, <a href="#discord-tables">its tables</a> and <a href="#discordtoml">its file</a> are below.</p>
 <p>Huragok 0.4.0 was released on 19 October 2026, the first release under this name: up to 0.2.1 (17 Oct 2026) the program was Reclaimer Supervisor. It is the Windows release (Linux, experimental, comes with 0.5.0), and carries what was built as 0.2.2 and 0.3.0, neither released on its own, and the 1.0 audit. 0.4.1 followed the same day, after the host's first full test of 0.4.0 in a folder of its own: a server folder copied in from another install wouldn't start (its shared <code>game/</code> and <code>bans.json</code> stayed behind). It puts right what a server arrives without (<a href="#what-a-server-arrives-without">What a server arrives without</a>), makes I SteamCMD's screen for Halo 3's files too, and is the first release that brings a host's own files up to date (<a href="#hosts-files-across-updates">Hosts' files across updates</a>): from 0.4.0 on, every install is treated as live, and no release may need a clean install.</p>
 <div class='table'><table>
 <thead>
@@ -87,8 +88,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </thead>
 <tbody>
 <tr>
-<td>Latest release</td>
-<td>0.4.4, tag v0.4.4, released 2026-10-19 on GitHub (LittleGroove/Project-Reclaimer-Huragok, GPL v3)</td>
+<td>Version</td>
+<td>This describes 0.6.0, on GitHub (LittleGroove/Project-Reclaimer-Huragok, GPL v3)</td>
 </tr>
 <tr>
 <td>Released as 0.4.0 (19 Oct 2026)</td>
@@ -119,8 +120,24 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>Each mod's health (<code>content/modcheck.py</code>) and why the server skipped a mod map (<code>games/halo3_mapfile.py</code>); admins change the word list from the game (<code>!banword</code>, <code>!unbanword</code>), and <code>!banname</code> is an admin's (moved in hosts' <code>commands.toml</code> once); a listed word catches a name it's run into (<code>[automod] name_match</code>, "anywhere" by default: <code>hitler</code> catches DasHitler, which 0.4.4 let in), and every name kick reads "banned name"; a command <code>commands.toml</code> lists that this version doesn't have is a warning, no longer a reason not to start; a step whose change the version before can't read (a new command) waits until the new version has stayed up (<code>settled</code>); every command that names a player finds them with one engine (<code>players/targets.py</code>: names with spaces, players sharing a name told apart and picked by #number or @number, rank), lists to lift from (<code>!bans</code>, <code>!kicks</code>, <code>!mutes</code>, <code>!bannames</code>), <code>!rules</code>, <code>!changebanword</code>, <code>!said</code> (chat lines kept 30 days), every mute kept through restarts (in-game and relay ones too) and a mute for someone who left, Vergil on, dry run or off per server, and kicks and bans reaching every server (<code>[automod] across_servers</code>); a ban list of its own for every server, always, with Huragok's own list of the bans it gives and admins it makes put on each (<code>!banall</code> and the window's B → E for a <code>/ban</code>); the relay holds the ranks</td>
 </tr>
 <tr>
+<td>0.5.1 (28 Oct 2026)</td>
+<td>Every line players read opens with the Superintendent's face and one of its phrases (<code>lore.CALLOUTS</code>); the word list's parts are <code>words | mutes | kicks | ban | name</code>, turned by a settled step; <code>!novote</code>, <code>!respawn</code>, <code>!restartserver 7m</code> and <code>gameover</code></td>
+</tr>
+<tr>
+<td>0.5.2 (29 Oct 2026)</td>
+<td>A temporary record for building on, <code>logs/temp-discord/</code>, and a copy of each stats report (<code>servers/tempdiscord.py</code>, <code>servers/statsrelay.py</code>)</td>
+</tr>
+<tr>
+<td>0.5.3 (29 Oct 2026)</td>
+<td>Probationary moderators: a rank whose commands that name a player are requests (<code>players/commands/requests.py</code>)</td>
+</tr>
+<tr>
+<td>0.6.0</td>
+<td>The Discord bot: off, webhook only, or the host's own bot; feeds, tickets, a status board, every in-game command as a slash command, a typed console, notes and flags, reports, appeals, Contact staff. In game: <code>!kick</code> takes a time, <code>!calladmin</code>, <code>!report</code> and <code>!mods</code> while Discord can take them, <code>!reports</code> is what's open for staff and the probationary moderators' list is <code>!requests</code>. New package: discord.py. Host's files: <code>discord.toml</code>, and <code>[automod] moderators_kick_at_most</code></td>
+</tr>
+<tr>
 <td>Where it runs now</td>
-<td>The live host, with one server (0.4.3 since 19 Oct 2026, where the file watcher bug showed), and a deployed copy (<code>DEPLOY/</code>) on the development PC with test servers and nobody on them</td>
+<td>Hosts' own PCs, on Windows 11 with the <code>process</code> backend</td>
 </tr>
 <tr>
 <td>Server program</td>
@@ -132,19 +149,19 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>Size</td>
-<td>About 26,000 lines of Python in 66 files under <code>engine/huragok/</code>, plus about 16,900 lines of tests in 35 files</td>
+<td>About 51,000 lines of Python in 165 files under <code>engine/huragok/</code>, plus about 38,000 lines of tests</td>
 </tr>
 <tr>
 <td>Runtime</td>
-<td>Python 3.11+; two dependencies: <code>websockets</code> 13+ (RCON and relay) and <code>psutil</code> 5.9+ (processes, listening ports)</td>
+<td>Python 3.11+; three dependencies: <code>websockets</code> 13+ (RCON and relay), <code>psutil</code> 5.9+ (processes, listening ports) and <code>discord.py</code> 2.7+, below 3 (the bot's gateway and interactions, imported only in bot mode; it brings <code>aiohttp</code> and its packages)</td>
 </tr>
 <tr>
 <td>CI</td>
-<td>GitHub Actions, each job limited to 20 minutes (10 for the small ones): the suite on Windows and Ubuntu with Python 3.11 to 3.14; a job on <code>git archive HEAD</code> (what a release zip holds), with a plain install that must import every module, pass the checkout's tests, write every template and pass <code>check</code>; <code>start.sh</code>'s first run; the Docker image built and running <code>init</code> and <code>check</code></td>
+<td>GitHub Actions, each job limited to 60 minutes (10 for the small ones): the suite on Windows and Ubuntu with Python 3.11 to 3.14; a job on <code>git archive HEAD</code> (what a release zip holds), with a plain install that must import every module, pass the checkout's tests, write every template and pass <code>check</code>; <code>start.sh</code>'s first run; the Docker image built and running <code>init</code> and <code>check</code></td>
 </tr>
 <tr>
 <td>Defaults that matter</td>
-<td>Watchdog on and acting (<code>dead</code>, <code>no_joins</code>, <code>stuck</code> restart now; the frame cases only watch; <code>memory</code> off until <code>memory_mb</code> is set); keepalive on and acting; automod on, in dry run as the first start writes it (with no <code>[automod]</code> section it runs live); relay off; Huragok's own updates checked every 6 h and installed only when asked; Project Reclaimer updates: each server's <code>auto_update</code> (on for new servers, <code>[setup] auto_update</code>), Huragok asks first for the others (<code>install = "ask"</code>), with <code>follow</code> and <code>fallback</code> on; Workshop mods: new versions installed after the game, Steam looked at every 5 minutes; new servers share the root's <code>game/</code> and <code>bans.json</code> (<code>[setup] share</code>), not <code>content/</code></td>
+<td>Watchdog on and acting (<code>dead</code>, <code>no_joins</code>, <code>stuck</code> restart now; the frame cases only watch; <code>memory</code> off until <code>memory_mb</code> is set); keepalive on and acting; automod on, in dry run as the first start writes it (with no <code>[automod]</code> section it runs live); relay off; the Discord bot off (<code>mode = "off"</code>, every feature off); Huragok's own updates checked every hour and installed only when asked; Project Reclaimer updates: each server's <code>auto_update</code> (on for new servers, <code>[setup] auto_update</code>), Huragok asks first for the others (<code>install = "ask"</code>), with <code>follow</code> and <code>fallback</code> on; Workshop mods: new versions installed after the game, Steam looked at every 5 minutes; new servers share the root's <code>game/</code> and <code>bans.json</code> (<code>[setup] share</code>), not <code>content/</code></td>
 </tr>
 <tr>
 <td>Agreed roadmap</td>
@@ -182,9 +199,9 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>b</td>
-<td><strong>Nobody is told anything</strong></td>
-<td>FAULTED, Huragok starting itself again, a console lockout, a watchdog restart, a failed update, a part switched off: all only in the window and the log</td>
-<td>One outbound channel, a Discord webhook (where the moderators already are): FAULTED, crashes, lockouts, failed updates, the day's restarts</td>
+<td><strong>Nobody was told anything</strong> (built in 0.6.0)</td>
+<td>FAULTED, Huragok starting itself again, a console lockout, a watchdog restart, a failed update, a part switched off were only in the window and the log</td>
+<td>Built: <code>feed.alerts</code> in Discord, through the bot or a webhook, one ticket per problem; and the start loop's own webhook (J, L) says when Huragok stops unexpectedly. It's for a host who sets it up: with the mode off, nobody's told</td>
 </tr>
 <tr>
 <td>c</td>
@@ -209,7 +226,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <ul>
 <li>An ODST game running, ending and moving on: which console phases it sends (Huragok treats playing then lobby as a game end).</li>
 <li>The vote-kick refusal message, and the fallback cancel (3 or more players).</li>
-<li>Vergil's mutes coming back on a rejoin, and the strike ladder from kick to mute to ban.</li>
+<li>Vergil's mutes coming back on a rejoin, and the strike ladder from mute to kick to ban.</li>
 <li>Whether a player on a dead server who never logs "left the server" stays in the console's player list (it decides how quickly <code>no_joins</code> fires).</li>
 <li>The relay with the official RCON client from another machine.</li>
 </ul>
@@ -218,7 +235,6 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li>Linux is on hold: 1.0 is for Windows, Linux experimental.</li>
 <li>The relay is unencrypted, with plain-text passwords in <code>settings.toml</code>: fine behind localhost and an SSH tunnel or VPN, and off by default.</li>
 <li><code>settings.toml</code> changes (watchdog, restart and keepalive values) apply when Huragok starts again.</li>
-<li>Mutes from <code>!mute</code> or the console still end when the server restarts; only Vergil's own are kept.</li>
 </ul>
 <h2 id="what-it-is-and-why-it-exists">What it is and why it exists</h2>
 <p>Huragok is one Python program that runs every Project Reclaimer (Halo 3 MCC) dedicated server on a machine, keeps them up, and gives the host and moderators one place to control them. It sits beside the server program, not inside it: it never patches the game. It is named for Halo 3: ODST's Engineer, and its three named parts are described under <a href="#the-three-parts">The three parts</a>.</p>
@@ -293,7 +309,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 </tbody>
 </table></div>
-<p>"Part" means two things in this document: a named part (these three, for what the host sees) and a <code>Part</code> subclass (commands, automod, watchdog, eventlog, messages, for code). Each <code>Part</code> belongs to a named part through its <code>persona</code>, which decides its <code>self.ctx</code>, and its logger, <code>part.&lt;name&gt;</code>, which decides its tag. Since 25 October 2026 the code is laid out the same way: a module's folder says whose it is (<a href="#code-layout">Code layout</a>). The module names of 0.4.4 and before (<code>manager</code>, <code>chat</code>…) are kept in <code>lore.OLD_LOGGERS</code>, so a second window still tags an older version's log lines.</p>
+<p>"Part" means two things in this document: a named part (these three, for what the host sees) and a <code>Part</code> subclass (commands, automod, watchdog, eventlog, messages, tempdiscord, discord, for code). Each <code>Part</code> belongs to a named part through its <code>persona</code>, which decides its <code>self.ctx</code>, and its logger, <code>part.&lt;name&gt;</code>, which decides its tag. Since 25 October 2026 the code is laid out the same way: a module's folder says whose it is (<a href="#code-layout">Code layout</a>). The module names of 0.4.4 and before (<code>manager</code>, <code>chat</code>…) are kept in <code>lore.OLD_LOGGERS</code>, so a second window still tags an older version's log lines.</p>
 <h3 id="where-the-names-show">Where the names show</h3>
 <ul>
 <li><strong>Log lines.</strong> <code>lore.speaker(logger)</code> maps a logger name, without the <code>huragok.</code> prefix, to its named part by whole dotted names (first match wins; Huragok otherwise). <code>core.logs.TaggedFormatter</code> writes <code>21:03:40 SUPT INFO    [Slayer] …</code> for the dashboard and the plain <code>--no-menu</code> log. <code>logs/huragok.log</code> keeps the module name instead (<code>2026-10-25 21:03:40,123 INFO    servers.server: [Slayer] …</code>); a second window maps it back to the tag.</li>
@@ -454,7 +470,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>Fast moderation</td>
 <td>Remove slurs fast; voice abuse is the main problem</td>
 <td>Automod (text and names), <code>!</code> commands by role, the relay for remote moderators, <code>!strike</code> for voice</td>
-<td>Partial. No signal tells tools who is talking, so voice is covered only by <code>!strike</code>; Vergil's mutes survive restarts (0.3.0), mutes from <code>!mute</code> or the console don't; no reports or Discord</td>
+<td>Partial. No signal tells tools who is talking, so voice is covered only by <code>!strike</code>; mutes survive restarts, whoever gave them; since 0.6.0 reports (<code>!report</code>, <code>/report</code>), moderators told in game, and a Strike button on a report for a ladder only staff climb</td>
 </tr>
 <tr>
 <td>One place to run servers</td>
@@ -593,9 +609,14 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td>Restart on failure is built; starting at boot without a logon is not (The road to 1.0, gap c)</td>
 </tr>
 <tr>
-<td>Discord, player reports, raid mode, announcer</td>
+<td>Discord, player reports</td>
+<td>Built in 0.6.0 (<code>discordbot/</code>), off until a host sets it up</td>
+<td></td>
+</tr>
+<tr>
+<td>Raid mode, announcer</td>
 <td>Not built</td>
-<td>Listed under Planned in the README</td>
+<td></td>
 </tr>
 </tbody>
 </table></div>
@@ -630,7 +651,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr><td><code>servers/</code></td><td>the Superintendent</td><td>One server's state machine, the fleet, backends, live state, logs, the keepalive, the watchdog and event log parts</td><td>the above, <code>rcon</code></td></tr>
 <tr><td><code>players/</code></td><td>Vergil</td><td>The ledger, roles, the router, who a command means, the relay, the automod, commands and messages parts</td><td>the above, <code>servers/</code></td></tr>
 <tr><td><code>updates/</code>, <code>content/</code></td><td>Huragok</td><td>Its own updates, the server program's, the Workshop's, the host's files after one; what it builds and mends</td><td>the above (and <code>content/</code> uses <code>updates/</code>)</td></tr>
-<tr><td><code>discordbot/</code></td><td>Huragok</td><td>The Discord bot: <code>discord.toml</code> (<code>config.py</code>), Discord's web API with the standard library alone (<code>rest.py</code>), what Discord says is true (<code>facts.py</code>), Discord roles onto ranks (<code>ranks.py</code>), every feature and its state (<code>features.py</code>), one way out (<code>outbox.py</code>), who speaks (<code>speakers.py</code>), the part (<code>part.py</code>); only <code>client.py</code> and <code>panels.py</code> import discord.py, and only in bot mode</td><td>everything below the named parts</td></tr>
+<tr><td><code>discordbot/</code></td><td>Huragok</td><td>The Discord bot, one part (<code>part.py</code>): <code>discord.toml</code> (<code>config.py</code>); every feature, what it needs, its state and the check (<code>features.py</code>); what Discord says is true now (<code>facts.py</code>); Discord's web API with the standard library alone (<code>rest.py</code>); one way out (<code>outbox.py</code>), on threads of its own (<code>workers.py</code>); who speaks, and every text (<code>speakers.py</code>); what each event says (<code>cards.py</code>); where it goes and how often (<code>feeds.py</code>); one incident, one card (<code>tickets.py</code>); the board and the rest of what shows how the servers are (<code>status.py</code>); members' own alerts (<code>alerts.py</code>); reports, appeals and Contact staff (<code>reports.py</code>, <code>appeals.py</code>, <code>contact.py</code>); posts that stay and what goes after a while (<code>kept.py</code>, <code>tidy.py</code>); the console put back as it started (<code>consoleclear.py</code>); Discord roles onto ranks (<code>ranks.py</code>); what's kept in <code>records/</code> (<code>records.py</code>); J, Z (<code>startover.py</code>). What needs discord.py, imported only in bot mode: <code>client.py</code> (the gateway, <code>/huragok</code>), <code>panels.py</code> (<code>/huragok setup</code>), <code>buttons.py</code>, <code>slash.py</code>, <code>asking.py</code> (<code>/report</code>, right-click, <code>/appeal</code>), <code>console.py</code>, <code>serverpanel.py</code> (<code>/server</code>, <code>/status</code>), <code>staff.py</code> (<code>/note</code>, <code>/flag</code>, <code>/notify</code>, <code>/ticket</code>, <code>/case</code>, <code>/help</code>, <code>/tickets</code>)</td><td>everything below the named parts</td></tr>
 <tr><td><code>superintendent.py</code>, <code>vergil.py</code></td><td>the Superintendent, Vergil</td><td>The two named parts, each with the context its parts get</td><td>up to <code>servers/</code>; Vergil also <code>players/</code> and <code>superintendent</code></td></tr>
 <tr><td><code>huragok.py</code>, <code>parts.py</code></td><td>Huragok</td><td>The program; every part in one list</td><td>everything but the window and the command line</td></tr>
 <tr><td><code>window/</code>, <code>commandline/</code></td><td>Huragok</td><td>The dashboard and its screens; <code>start.cmd</code>'s commands and the start loop</td><td>anything</td></tr>
@@ -1194,6 +1215,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
   automod.txt                    automod's word list          the host's; reloaded when edited
   names.txt                      automod's banned names       the host's (Vergil adds to it); reloaded when edited
   intervalmessages.txt           interval messages, every server  the host's; reloaded when edited
+  discord.toml                   the Discord bot, off until set up  the host's; reloaded when edited; can hold the token
+  discord.before-start-over-*.toml  what J, Z replaced, token and all: the host's to delete
   project-reclaimer.exe          optional: one server program for every server
   game/  content/                shared by servers made with N ([setup] share; never bans.json)
   PACKAGES/&lt;name&gt;/               package.toml + playlists/ (six starters ship in the engine)
@@ -1215,6 +1238,13 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
     previous-&lt;V&gt;/                Huragok's files from before an update to the next version
     last-update.json             which previous-&lt;V&gt;/ belongs to the version installed now
     failed-update.json           a version that installed but didn't start, and was put back
+    previous-files/&lt;V&gt;/          the host's files as they were before that version's steps (discord.toml without its token or webhook addresses)
+    discord-state.json           the bot's state, for a second window
+    discord-claim.json           the claim code, while there is one
+    discord-logins.json          today's logins to Discord (it resets a token at 1,000 a day)
+    discord-commands.json        what each Discord's slash commands were last registered as
+    temp-discord.key             the key behind the temporary record's stand-ins for player IDs
+    temp-stats-capture.json      each server's port and real stats address, while the stats reports are copied
   logs/
     huragok.log                  Huragok's log (module names; the window shows tags; the start loop as launcher)
     launcher.log                 the start loop's lines when settings.toml couldn't be read
@@ -1222,13 +1252,13 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
     console-&lt;slug&gt;.log           each server process's own output
     faulted-&lt;slug&gt;.txt           why a server was given up on, with its last 200 console lines
     events/                      eventlog output, one JSON-lines file per UTC day (off by default)
-    temp-discord/                0.5.2 until 0.6.0: the record for the Discord bot and stats (always on; nothing private);
-                                 stats-reports/ every stats report a server sent and the answer
+    temp-discord/                from 0.5.2 until the version that brings stats: the record for that (always on; nothing private);
+                                 stats-reports/ every stats report a server sent and the answer. Both pruned after 30 days
 </code></pre>
 <h3 id="how-servers-are-found">How servers are found</h3>
 <ul>
 <li>Every folder in <code>SERVERS/</code> that holds a <code>dedicated.toml</code> is read; folders starting with <code>.</code> or <code>_</code> are ignored (they are set aside or still being made). <code>server_folder</code> adds one more folder (the 0.1 layout). Discovery repeats every 10 s while running.</li>
-<li>Each enabled <code>[[server]]</code> block is one server. Its name gives the slug (<code>LG Test Server</code> becomes <code>lg-test-server</code>; a name with no a-z or 0-9 gets <code>server-&lt;8 hex&gt;</code>). Two names with one slug ("LG Slayer" and "LG-Slayer") would share their records, console log and FAULTED report, so the later folder is left out until one is renamed ("… would share their records and logs: Huragok names both lg-slayer …"); a running server keeps its slug, and <code>new</code> and rename refuse such a name.</li>
+<li>Each enabled <code>[[server]]</code> block is one server. Its name gives the slug (<code>Server 1</code> becomes <code>server-1</code>; a name with no a-z or 0-9 gets <code>server-&lt;8 hex&gt;</code>). Two names with one slug ("Big Slayer" and "Big-Slayer") would share their records, console log and FAULTED report, so the later folder is left out until one is renamed ("… would share their records and logs: Huragok names both lg-slayer …"); a running server keeps its slug, and <code>new</code> and rename refuse such a name.</li>
 <li>Its data folder is, in order: <code>[[server]] data</code> in <code>settings.toml</code>; the <code>data/*/instance.json</code> whose name matches; <code>data/&lt;slug&gt;</code>.</li>
 <li>RCON is read fresh on every connect: <code>instance.json</code>'s <code>rcon</code> block wins over <code>dedicated.toml</code>'s <code>[rcon]</code>. The RCON port is the game port unless set. <code>0.0.0.0</code> becomes <code>127.0.0.1</code>.</li>
 <li>Checks: names must be unique (the copy in a folder not named after the server is left out); ports must be unique (the second server gets an error); RCON must have a password, or the server shows CONFIG ERROR and is never started. A <code>[[server]]</code> block in <code>settings.toml</code> for a server <code>servers = [...]</code> leaves out is not a problem.</li>
@@ -1333,6 +1363,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <p>Every install since 0.4.0 counts as live: an update goes over it, and no release may need a clean install. An update replaces the program only, so a host's <code>settings.toml</code> is the one their first start wrote. Since 0.4.1 <code>updates/hostfiles.py</code> keeps it in step: as Huragok starts (in its own process, under its lock, before any server is looked after) it runs each step not yet done, and <code>check</code> lists what the next start would change.</p>
 <ul>
 <li><strong>A step</strong> is keyed <code>&lt;version&gt;/&lt;what&gt;</code> and runs once (<code>records/files.json</code> lists those done). It looks before it changes anything, changes TOML only through <code>tomledit</code> (<code>add_table_key</code>, <code>comment_out_table_key</code>, <code>replace_comments</code>), and copies the file to <code>records/previous-files/&lt;version&gt;/</code> before its first change. It adds what's missing and turns what does nothing into a comment saying why: the host's values and comments stay. (Up to 0.4.4 a changed note had a step of its own, which swapped only a comment block exactly as an earlier version wrote it; since 0.5.0 the notes step below does every note.) A step that fails, or a file that can't be read, is logged and tried again at the next start; Huragok starts regardless, reading the old form.</li>
+<li><strong>0.6.0's steps.</strong> For everyone: <code>0.6.0/discord-file</code> writes <code>discord.toml</code> with the bot off, and <code>0.6.0/moderators-kick-at-most</code> adds <code>[automod] moderators_kick_at_most = "1d"</code> (only where the file has <code>[automod]</code>). For a file a beta wrote: <code>0.6.0/discord-channels</code> (<code>public</code> is <code>status</code>, <code>appeals</code> goes to <code>reports</code>, each line to its new channel unless the host chose), <code>0.6.0/discord-buttons</code>, <code>0.6.0/discord-retired</code> (what does nothing goes, a host's own value moving to where it lives now or staying as a comment), <code>0.6.0/discord-defaults</code> (defaults that were too loud, where unchanged), <code>0.6.0/discord-one-line</code> (a line of <code>[messages]</code> written as a table of its own goes back on one line, so the panels can change it) and <code>0.6.0/discord-unbuilt</code> (settings for what isn't built: as it shipped, it goes; anything else stays as a comment saying so). At every start, with nothing to do once they've run: <code>discord-moved</code>, every setting by the name it has now, from the table in <code>core/discordmoved.py</code> (<code>[contact] ping</code> is <code>thread_role</code>, <code>[console] raw</code> and <code>[ranks] moderators_raw_console</code> are <code>[console] raw_rank</code>, <code>[commands] message_menu</code> is <code>[reports] right_click</code>, <code>[status.seeding] notify_me</code> is <code>[notify] enabled</code>, the line <code>seeding-notify</code> is <code>notify-told</code>, the field <code>remove_after</code> is <code>remove_after_minutes</code>, and <code>[feed.calls] mods_command = false</code> becomes <code>mods</code> in <code>[off]</code>), and <code>discord-lines</code>, every setting the template has and the file doesn't. Settled, 150 s after the start: <code>0.6.0/requests-command</code> moves a host's <code>reports</code> to <code>requests</code> in <code>commands.toml</code>, and the <code>commands</code> step lists the new commands. Nothing before 0.6.0 reads <code>discord.toml</code>, so a put-back doesn't mind; beta.1 only warns. The file's copy in <code>records/previous-files/</code> has its token and webhook addresses blanked.</li>
 <li><strong>0.5.0's steps:</strong> <code>[automod] name_match = "anywhere"</code> added after <code>check_names</code> with the template's comment (only where the file has <code>[automod]</code>, never over a <code># name_match = …</code> the host wrote), and <code>across_servers = true</code> the same way; <code>"bans"</code> taken out of <code>[setup] share</code> and its comment replaced only where it is exactly 0.4.0's (a ban list of its own for every server isn't a choice; 0.4.0 to 0.4.4 read <code>["game"]</code> as they did, and 0.5.0 reads a <code>"bans"</code> a host puts back as nothing); <code>!banname</code> moved from <code>[moderator]</code> to <code>[admin]</code> in <code>commands.toml</code>, only from <code>[moderator]</code>, where 0.4.0 to 0.4.4 put it: listed under another role, or put back by the host after the step ran, it stays. A command whose default role changes never moves by itself (the file wins), so a move a release means is a step like this one. <code>[updates] beta = false</code> added after <code>auto_update</code> with the template's comment (key <code>0.5.0/beta</code>; only where the file has <code>[updates]</code>, never over a <code># beta = …</code> the host wrote). Each is keyed <code>0.5.0/…</code>; a key a release has shipped is never renamed (hosts' <code>records/files.json</code> lists steps by key, and a renamed one would run again).</li>
 <li><strong>The word list with the mutes first</strong> (the host's call, 27 October; keys <code>0.5.1/…</code>). <code>automod-layout-note</code>, at the start: a word list with no note naming its parts (the host took Huragok's notes out) gets 0.5.0's, <code>#   words | kicks | mutes | ban | name</code>, at the top, so it's read as it was written until it's rewritten (a list with none is read in the new layout). <code>automod-order</code>, settled (0.5.0 would take the mutes for kicks): each line turned (<code>rules.in_this_layout()</code>, as Vergil reads the list meanwhile), the notes naming the parts the old way naming them the new way, then Huragok's notes as this version writes them, the host's kept where they put them (<code>refresh_text</code>; a list whose notes can't be brought up to date keeps them, but for that one). The log names the lines rewritten by their names (their numbers change with the notes), and any kick times left out. The <code>&lt;version&gt;/notes</code> step leaves a list of the old layout alone: its notes would name the parts the new way before its lines are.</li>
 <li><strong>Settled steps.</strong> The start loop that puts the old version back is the old version's own code, loaded before the update: it ends the new version's run and puts the old one back when the run lasts less than its <code>FAILED_START_SECONDS</code> (120 s in every version so far). A change the old version can't read must not be there by then, so a step marked <code>settled</code> runs from the running Huragok once it has been up <code>updates.hostfiles.SETTLED_SECONDS</code> (150 s; <code>Huragok._settle_files</code>, then <code>commands.toml</code> is read again), never at the start; <code>check</code> lists it with "2.5 minutes after it starts". The new-commands step is one: 0.4.0 to 0.4.4 refused to start with a command in <code>commands.toml</code> they don't have. From 0.5.0 such a command is a warning (<code>Permissions.unknown</code>, in the log at start and on reload, and in <code>check</code>) and its line does nothing.</li>
@@ -1591,7 +1622,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li><strong>A backend that can restart.</strong> With <code>attach</code>, every case can only log.</li>
 </ul>
 <h2 id="moderation">Moderation</h2>
-<p>Moderation is Vergil's part (<code>VRGL</code>). It has three ways in: in-game <code>!</code> commands, automod, and the console (the window's A key, the relay, <code>start.cmd rcon</code>). The first two go through one ledger that records who acted and why; console commands are logged but not recorded in that ledger. Bans themselves live in the server's own <code>bans.json</code>; Huragok never keeps a copy. Automod's mutes are the other way round: the server forgets its mutes when it restarts, so automod keeps its own (in <code>automod_strikes</code>) and mutes the player again as they join.</p>
+<p>Moderation is Vergil's part (<code>VRGL</code>). It has four ways in: in-game <code>!</code> commands, automod, the console (the window's A key, the relay, <code>start.cmd rcon</code>), and Discord, whose buttons, slash commands and typed console run those same commands (<code>ctx.run_as</code>, <code>ctx.run_line</code>, <code>ctx.console_line</code>) at the rank <code>[ranks]</code> gives. The first two go through one ledger that records who acted and why; console commands are logged but not recorded in that ledger. Bans themselves live in the server's own <code>bans.json</code>; Huragok never keeps a copy. Automod's mutes are the other way round: the server forgets its mutes when it restarts, so automod keeps its own (in <code>automod_strikes</code>) and mutes the player again as they join.</p>
 <h3 id="roles">Roles</h3>
 <div class='table'><table>
 <thead>
@@ -1614,7 +1645,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td><code>probationary-moderator</code> (0.5.3)</td>
-<td>Members on probation as moderators: moderators' commands, the looking ones (<code>router.LOOKING</code>) as they are, the others, which name a player, as requests a moderator or admin confirms (<code>players/commands/requests.py</code>: <code>commands_requests</code>, the lowest free number, <code>!reports</code> / <code>!confirm &lt;n&gt; [command…]</code> / <code>!deny</code>, run as the confirmer's own through <code>CommandRouter.run_as</code>; a kick for someone away keeps them off every server 10 minutes from then, a warning waits in <code>commands_notices</code>)</td>
+<td>Members on probation as moderators: moderators' commands, the looking ones (<code>router.LOOKING</code>) as they are, the others, which name a player, as requests a moderator or admin confirms (<code>players/commands/requests.py</code>: <code>commands_requests</code>, the lowest free number, <code>!requests</code> / <code>!confirm &lt;n&gt; [command…]</code> / <code>!deny</code>, run as the confirmer's own through <code>CommandRouter.run_as</code>; a kick for someone away keeps them off every server 10 minutes from then, a warning waits in <code>commands_notices</code>)</td>
 <td>Listed under <code>[member]</code> with a note, and marked in <code>commands_probation</code> (read into <code>Roles.probation</code> at the start); in game, <code>!promote</code> of a member by a moderator or above. No section of its own: 0.5.2 and before refuse a section or key they don't know (an update put back must read the file)</td>
 </tr>
 <tr>
@@ -1689,15 +1720,15 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tbody>
 <tr>
 <td>everyone</td>
-<td><code>help</code>, <code>strikes</code>, <code>respawn</code> (someone else's: admins)</td>
+<td><code>help</code>, <code>strikes</code>, <code>respawn</code> (someone else's: admins), and while Discord can take them <code>calladmin</code>, <code>report</code>, <code>mods</code></td>
 </tr>
 <tr>
 <td>moderator</td>
-<td><code>players</code>, <code>whois</code>, <code>warn</code>, <code>mute</code>, <code>unmute</code>, <code>kick</code>, <code>pardon</code>, <code>strike</code>, <code>health</code>, <code>kicks</code>, <code>mutes</code>, <code>said</code>, <code>rules</code>, <code>bannames</code>, <code>novote</code>, <code>allowvote</code>, <code>novotes</code></td>
+<td><code>players</code>, <code>whois</code>, <code>warn</code>, <code>mute</code>, <code>unmute</code>, <code>kick</code>, <code>pardon</code>, <code>strike</code>, <code>health</code>, <code>kicks</code>, <code>mutes</code>, <code>said</code>, <code>rules</code>, <code>bannames</code>, <code>novote</code>, <code>allowvote</code>, <code>novotes</code>, <code>promote</code>, <code>demote</code>, <code>roles</code>, <code>requests</code>, <code>confirm</code>, <code>deny</code>, and while the bot takes reports or calls <code>reports</code></td>
 </tr>
 <tr>
 <td>admin</td>
-<td><code>ban</code>, <code>unban</code>, <code>bans</code>, <code>banword</code>, <code>unbanword</code>, <code>changebanword</code>, <code>banname</code> (a moderator's up to 0.4.4), <code>pardonplayer</code>, <code>unbanname</code>, <code>say</code>, <code>map</code>, <code>mode</code>, <code>load</code>, <code>nextmap</code>, <code>endgame</code>, <code>endround</code>, <code>shuffle</code>, <code>team</code>, <code>teamcount</code>, <code>startvote</code>, <code>cancelvote</code>, <code>passvote</code>, <code>maxping</code>, <code>servername</code>, <code>restartserver</code>, <code>toggleglobal</code>, <code>toggleteam</code>, <code>toggleproxy</code>, <code>togglevoice</code></td>
+<td><code>ban</code>, <code>unban</code>, <code>bans</code>, <code>banall</code>, <code>banword</code>, <code>unbanword</code>, <code>changebanword</code>, <code>banname</code> (a moderator's up to 0.4.4), <code>pardonplayer</code>, <code>unbanname</code>, <code>say</code>, <code>map</code>, <code>mode</code>, <code>load</code>, <code>nextmap</code>, <code>endgame</code>, <code>endround</code>, <code>shuffle</code>, <code>team</code>, <code>teamcount</code>, <code>startvote</code>, <code>cancelvote</code>, <code>passvote</code>, <code>maxping</code>, <code>servername</code>, <code>restartserver</code>, <code>toggleglobal</code>, <code>toggleteam</code>, <code>toggleproxy</code>, <code>togglevoice</code></td>
 </tr>
 <tr>
 <td>owner</td>
@@ -1705,6 +1736,12 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 </tbody>
 </table></div>
+<h3 id="kicks-with-a-time">Kicks with a time</h3>
+<ul>
+<li><strong>What it is.</strong> A ban is for good; anything with a time is a kick. <code>!kick Bravo 7d cheating</code> goes out as the server's timed ban (<code>Moderation.ban</code> with <code>told=kick_reason(…)</code>, so the player reads "Kicked for 7 days: cheating"), with the same across-servers handling as any ban. <code>ledger.shown_kind(kind, duration, reason)</code> is what calls an action what it is, in <code>!whois</code>, <code>!bans</code> (<code>ban_note</code>), <code>!kicks</code> (<code>_timed_kicks</code>) and Discord. A ban with a time takes no role away (<code>roles.py</code> skips an event with <code>expires</code>). <code>perm</code> runs <code>!ban</code>, at the rank that needs. <code>!kick</code> finds its player on this server; <code>!ban 7d</code> and Discord's Kick reach someone who's left.</li>
+<li><strong>The limit.</strong> <code>CommandsBase.kick_too_long</code>: below admin, no longer than <code>[automod] moderators_kick_at_most</code> (a value that isn't a time counts as <code>1d</code>). It's asked for <code>!kick</code> and for a request confirmed for someone who's left, and an appeal's Shorten checks the same limit before it lifts anything (<code>buttons._cant_shorten</code>).</li>
+<li><strong>Letting them back.</strong> <code>!pardon</code>, on a kick with a time still running (<code>_kick_running</code>, from the ledger), sends the server's <code>unban</code> with the reason <code>KICK_LIFTED</code>, which <code>shown_kind</code> calls a pardon. At moderator rank only what passes <code>kick_too_long</code>.</li>
+</ul>
 <h3 id="automod">Automod</h3>
 <p>Automod acts on words on one list, <code>automod.txt</code>, one rule per line: <code>words | mutes | kicks | ban | name</code> (up to 0.5.0 <code>words | kicks | mutes | ban | name</code>: see the escalation below); and on names, against that list and <code>names.txt</code>.</p>
 <ul>
@@ -1797,6 +1834,15 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li>Automod records the strike in <code>automod_strikes</code> and emits <code>automod.strike</code>.</li>
 <li>In dry run, steps 5 and 6 send nothing and every row is marked as a dry run.</li>
 </ol>
+<h3 id="a-press-on-a-card">A press on a card</h3>
+<ol>
+<li>A card's buttons are stateless: <code>huragok:t:&lt;ticket&gt;:&lt;action&gt;</code>, and everything else is read from the database, so one from before a restart still works, on a card in a log channel too. <code>client.on_interaction</code> hands it to <code>buttons.pressed</code>.</li>
+<li><code>pressed</code> refuses a press from another Discord, from someone with no staff rank, for a ticket that isn't there, on a message that isn't that ticket's card (or the one it's replacing), or for a server they have no rank on. Then what no longer makes sense (<code>_no_longer</code>), then what their rank can't do (<code>_refused_now</code>, the router's <code>refuses</code>), all before any form.</li>
+<li>A form, if it asks. Sent, <code>_got_there_first</code> reads the ledger for the last 60 s: another moderator's act on that player stops it once, and says who. Pressed again, it's meant.</li>
+<li><code>_act</code> runs the game's command through <code>ctx.run_as</code>, as a <code>Player</code> named by <code>shown_as</code> with the ID <code>discord:&lt;their ID&gt;</code>, at <code>rank_to_run</code>: what reaches every server (<code>ranks.REACHES_EVERY_SERVER</code>, a kick with a time) takes the lowest rank they hold across the servers, the rest their rank on that server. On probation it's <code>run_line</code>, which files a request.</li>
+<li><code>tickets.expect</code> says the next act by this person on this player is this ticket's, so the feeds make no card of its own. What the press did goes on the card from the ledger (<code>_ledger_lines</code>), by their real name. If it took, a report's card counts as acted on (<code>reports.upheld</code>) and the card is redrawn, or posted back if it was in a log channel.</li>
+<li>What's done anywhere else on that player comes as <code>moderation.action</code> or <code>moderation.seen</code>: <code>feeds._case</code> redraws their live cards, puts it on an open report's or appeal's card, and otherwise posts a card of its own in <code>logs</code>.</li>
+</ol>
 <h2 id="extending-huragok">Extending Huragok</h2>
 <p>New behaviour is added as a command in an existing part, or as a new part: a <code>Part</code> subclass in <code>parts/</code>, listed in <code>parts.py</code>. Parts are a way to keep code apart, not a plugin system; everything ships together.</p>
 <h3 id="todays-parts">Today's parts</h3>
@@ -1844,14 +1890,14 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td><code>discord.toml</code> (no section in <code>settings.toml</code>)</td>
 <td>Always: its switch is <code>mode</code> in that file</td>
 <td>—</td>
-<td>— (the bot; see plans/discord-bot-design.md. Keeps <code>records/discord-state.json</code>, <code>discord-claim.json</code>, <code>discord-logins.json</code>, <code>discord-commands.json</code>)</td>
+<td>— (the bot: <code>docs/discord.md</code>. Keeps <code>records/discord-state.json</code>, <code>discord-claim.json</code>, <code>discord-logins.json</code>, <code>discord-commands.json</code>)</td>
 </tr>
 <tr>
-<td><code>tempdiscord</code> (0.5.2 until 0.6.0)</td>
+<td><code>tempdiscord</code> (0.5.2 until the version that brings stats)</td>
 <td>None: no section, nothing to set</td>
-<td>Always (0.6.0 takes it out)</td>
+<td>Always</td>
 <td>—</td>
-<td>— (writes <code>logs/temp-discord/</code>: every event, <code>players</code> at each phase and every 15 s while a game is on, <code>status</code> at each phase, kept 30 days; no IPs or devices, player IDs as stand-ins made with <code>records/temp-discord.key</code>, chat as its length) and <code>logs/temp-discord/stats-reports/</code> (every stats report and the service's answer, kept). <code>servers/statsrelay.py</code> points every server's <code>stats_server</code> at 127.0.0.1 (a port of its own in 45600-45999, where to start chosen by Huragok's folder, kept in <code>records/temp-stats-capture.json</code>) from its next start, once it knows the real service (the server's own value, or <code>Stats reporting to</code> in its server.log, also as it starts); passes each POST to the real service byte for byte; puts <code>stats_server</code> back as Huragok stops; steps aside for good for a server whose reports the service turned down twice in a row (a 4xx); leaves <code>"off"</code> alone</td>
+<td>— (writes <code>logs/temp-discord/</code>: every event, <code>players</code> at each phase and every 15 s while a game is on, <code>status</code> at each phase, kept 30 days; no IPs or devices, player IDs as stand-ins made with <code>records/temp-discord.key</code>, chat as its length) and <code>logs/temp-discord/stats-reports/</code> (every stats report and the service's answer, kept 30 days too). <code>servers/statsrelay.py</code> points every server's <code>stats_server</code> at 127.0.0.1 (a port of its own in 45600-45999, where to start chosen by Huragok's folder, kept in <code>records/temp-stats-capture.json</code>) from its next start, once it knows the real service (the server's own value, or <code>Stats reporting to</code> in its server.log, also as it starts); passes each POST to the real service byte for byte; puts <code>stats_server</code> back as Huragok stops; steps aside for good for a server whose reports the service turned down twice in a row (a 4xx); leaves <code>"off"</code> alone</td>
 </tr>
 <tr>
 <td><code>messages</code></td>
@@ -2002,16 +2048,8 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </thead>
 <tbody>
 <tr>
-<td>Mutes from <code>!mute</code> and the console that survive restarts; a shared mute list</td>
-<td>Core moderation plus a table, put back on <code>rcon.join</code> the way automod already does for its own (0.3.0)</td>
-</tr>
-<tr>
-<td>Player reports, vote-mute</td>
-<td>A part with <code>!report</code>, thresholds and a moderator queue</td>
-</tr>
-<tr>
-<td>Discord queue and alerts (The road to 1.0, gap b)</td>
-<td>A part listening to <code>moderation.action</code>, <code>server.faulted</code>, <code>watchdog.health</code>, <code>rcon.auth_failed</code> (with <code>lockout</code>), <code>supervisor.part_disabled</code>; the start loop's restarts and a failed update are in <code>huragok.log</code> and <code>records/failed-update.json</code></td>
+<td>Vote-mute</td>
+<td>A part with thresholds; moderators already hear of reports in game, and <code>!strike</code> and Discord's Strike climb a ladder with no words</td>
 </tr>
 <tr>
 <td>FAULTED cool-down (gap a)</td>
@@ -2034,11 +2072,11 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <h2 id="the-window-and-the-command-surface">The window and the command surface</h2>
 <p>The window is Huragok itself: a dashboard redrawn every second, with single-key commands, modelled on the Project Zomboid manager. Every key and every <code>start.cmd</code> verb ends in a Fleet verb or a setup routine; nothing in the window blocks the servers' care.</p>
 <h3 id="the-dashboard">The dashboard</h3>
-<pre><code class="language-text"> HURAGOK 0.4.0   (supervising)   the Engineer for Project Reclaimer servers
+<pre><code class="language-text"> HURAGOK 0.6.0   (supervising)   the Engineer for Project Reclaimer servers
  [o_O] SUPERINTENDENT · PLEASE REMAIN CALM! · Slayer restart in 2m 10s
  Sat 18 Oct 2026  21:04:12      C:\reclaimer
  SUPT backend process · servers in SERVERS/ · watchdog (act) · eventlog
- VRGL commands · automod (dry run) · consoles: Alice (Big Team Battle)  |  HRGK server program 0.9.18
+ VRGL commands · automod (dry run) · consoles: Alice (Big Team Battle)  |  HRGK discord · server program 0.9.18
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   #  SERVER          PORT   AUTO STATUS                               PLAYERS            GAME
   1  Big Team Battle 49176  yes  RUNNING  up 5h 12m                   14/16 Alice, B...  playing Valhalla Slayer
@@ -2049,7 +2087,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   SUPERINTENDENT  [S] Start  [X] Stop  [R] Restart  [K] Cancel  [T] Autostart  [L] Log  [V] View a server
   VERGIL          [P] Players  [M] Message  [A] Console  [B] Bans &amp; admins
-  HURAGOK         [N] New server  [G] Game content  [I] SteamCMD  [D] Settings  [C] Check
+  HURAGOK         [N] New server  [G] What it plays  [I] SteamCMD  [D] Settings  [J] Discord  [C] Check
                   [O] Open  [U] Updates  [W] Start at boot: ON  [H] Help  [Q] Quit
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
   RECENT EVENTS  ·  SUPT Superintendent  VRGL Vergil  HRGK Huragok  ·  logs/huragok.log has them all
@@ -2136,7 +2174,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tbody>
 </table></div>
 <h4 id="screens-and-help">Screens and help</h4>
-<p>Every screen follows one layout: a title naming the part whose key opened it, in that part's colour, then the screen (<code>SUPERINTENDENT › RESTART</code>, <code>VERGIL › BANS, ADMINS AND THE VPN BLOCK</code>, <code>HURAGOK › NEW SERVER</code>; <code>lore.KEYS</code>), a breadcrumb heading (<code>LG Test Server › Game content › Playlists</code>), numbered lists, and a block of <code>[key]</code> options. Log lines that arrive while a question waits are held, then shown together and the question is asked again. Every screen, key and answer is copied to <code>logs/window.log</code>, passwords masked; read it first on a bug report.</p>
+<p>Every screen follows one layout: a title naming the part whose key opened it, in that part's colour, then the screen (<code>SUPERINTENDENT › RESTART</code>, <code>VERGIL › BANS, ADMINS AND THE VPN BLOCK</code>, <code>HURAGOK › NEW SERVER</code>; <code>lore.KEYS</code>), a breadcrumb heading (<code>Server 1 › Game content › Playlists</code>), numbered lists, and a block of <code>[key]</code> options. Log lines that arrive while a question waits are held, then shown together and the question is asked again. Every screen, key and answer is copied to <code>logs/window.log</code>, passwords masked; read it first on a bug report.</p>
 <p>H opens with the block-letter HURAGOK banner and the motto, then "Who's who" (each part's tag, name and story), the keys grouped by part, the VISR colour key, and the commands from another terminal.</p>
 <h3 id="keys">Keys</h3>
 <div class='table'><table>
@@ -2212,6 +2250,11 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <td></td>
 <td>D</td>
 <td>Settings, a value at a time: Huragok's own files by letter (S <code>settings.toml</code> in 13 groups and the relay's moderators, C <code>commands.toml</code>, A <code>automod.txt</code>, N <code>names.txt</code>, I <code>intervalmessages.txt</code>; <code>window/screens/files.py</code>), then each server by number: everything about it in 11 groups (<code>program.settings.GROUPS</code>): every <code>dedicated.toml</code> setting with its value, origin and when it applies; what it plays (playlist, map and game, custom game, campaign co-op, Halo 3: ODST); Huragok's own per-server settings; its playlists (P), custom games (G), bans (B), mods on or off (M) and its own interval messages (I); rename a stopped server; give it its own content folder</td>
+</tr>
+<tr>
+<td></td>
+<td>J</td>
+<td>The Discord bot, a step at a time (<code>window/screens/discordsetup.py</code>): M mode and token, W which Discord, R ranks and owners, N channels, F features, E every message, I tickets, Y the typed console, P reports, appeals and Contact staff, C check, T test post, K claim code, V invite link, Z start over, L the start loop's webhook, X the texts, O the file. Each writes <code>discord.toml</code>, as <code>/huragok setup</code> does; Discord is read over its web API, so it works in a second window, and whether or not the bot is connected</td>
 </tr>
 <tr>
 <td></td>
@@ -2592,11 +2635,11 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <li><strong>Signing in:</strong> the account must own MCC (anonymous sign-in cannot fetch MCC items). Account names are 2 to 64 letters, digits and underscores (checked at I and <code>steam login</code>). It signs in once in its own window, whose command line is checked and quoted; Steam caches the login. No password is ever written to a file. Esc at the sign-in writes nothing.</li>
 <li><strong>Configuring:</strong> I writes <code>[workshop]</code> (SteamCMD path and username) into every server's <code>dedicated.toml</code> and <code>[setup] steamcmd</code> and <code>steam_username</code> into <code>settings.toml</code>, and can add SteamCMD to <code>PATH</code>.</li>
 <li><strong>Adding items to a running server:</strong> the item list is written to <code>dedicated.toml</code>; the server fetches on reload. Huragok follows the server's console for <code>Workshop &lt;id&gt;: …</code> and <code>Skipped map package …</code> lines (the last 256 KB of the console log, read in a thread) instead of running a second SteamCMD, which used to hang the window.</li>
-<li><strong>A mod map the server skips</strong> (<code>games/halo3_mapfile.py</code>): the console gives one of four reasons for a map file it can't read, and each covers many faults ("its tag index is damaged" is any of seven). Huragok makes the program's own checks on the file, in its order (0.9.21's <code>src/mcc_mod.rs</code>, read from its build on 20 October 2026 after the host's LG Test Server skipped a broken Workshop upload of HugeGrass Rebalance, which its author replaced 45 minutes later), and logs the one that failed on a <code>why:</code> line under the warning, with the Workshop version (from <code>reclaimer-workshop-version.json</code>) to quote to the author. The checks: a 16 KB header with <code>head</code>, version 13 and <code>foot</code> ("it is not a Halo 3 cache"); then the tag index header, the group table (at most 1,024 groups), the tag table (at most 32,768 tags) and the first scenario tag's first 16 bytes, each of which must lie inside the tag data (the base at 0x2E0, the tags section's size at 0x4F0: "its tag index is damaged") and inside the file ("its cache is damaged"); no <code>scnr</code> group or tag is "it has no scenario". A few hundred KB at most are read, in a worker thread. A file that now passes them all was replaced after the server looked, or the program checks more than Huragok knows: the line says so. Other reasons (a missing <code>.mapinfo</code>) are about the item's packing and the file isn't read. The Workshop screen shows the same explanation.</li>
+<li><strong>A mod map the server skips</strong> (<code>games/halo3_mapfile.py</code>): the console gives one of four reasons for a map file it can't read, and each covers many faults ("its tag index is damaged" is any of seven). Huragok makes the program's own checks on the file, in its order (0.9.21's <code>src/mcc_mod.rs</code>, read from its build on 20 October 2026 after a host's server skipped a broken Workshop upload, which its author replaced 45 minutes later), and logs the one that failed on a <code>why:</code> line under the warning, with the Workshop version (from <code>reclaimer-workshop-version.json</code>) to quote to the author. The checks: a 16 KB header with <code>head</code>, version 13 and <code>foot</code> ("it is not a Halo 3 cache"); then the tag index header, the group table (at most 1,024 groups), the tag table (at most 32,768 tags) and the first scenario tag's first 16 bytes, each of which must lie inside the tag data (the base at 0x2E0, the tags section's size at 0x4F0: "its tag index is damaged") and inside the file ("its cache is damaged"); no <code>scnr</code> group or tag is "it has no scenario". A few hundred KB at most are read, in a worker thread. A file that now passes them all was replaced after the server looked, or the program checks more than Huragok knows: the line says so. Other reasons (a missing <code>.mapinfo</code>) are about the item's packing and the file isn't read. The Workshop screen shows the same explanation.</li>
 <li><strong>Is each mod good to go?</strong> (<code>content/modcheck.py</code>): the program says little about a mod, and only when a game or a start reaches the fault. Huragok reads each content folder's <code>Mods</code> as the program does and reports, per mod, <em>broken</em> (the server won't use it, or a map of it), <em>warning</em> (trouble in some cases, or work for the host) or <em>note</em>. A package is a folder with a <code>ModInfo.json</code>, or a folder of <code>Mods</code> (or <code>Mods/Workshop</code>) holding <code>.map</code> files without one (a single map, played with or without a <code>.mapinfo</code>). The checks, each from the program's own behaviour (0.9.21, tried with <code>dedicated content</code> on 20 October 2026) or the host guide's limits:
 <ul>
 <li><code>ModInfo.json</code> readable; <code>Engine</code> <code>Halo3</code> (a mod for another game is skipped without a word); in <code>Mods/Workshop/&lt;item&gt;</code>, <code>HostedModIds</code> naming that item (else the program refuses to install it); every <code>MultiplayerMaps</code> file there.</li>
-<li><strong>Pairing:</strong> a package's <code>.map</code> (in <code>maps/</code> or its own folder; <code>shared</code>, <code>campaign</code>, <code>mainmenu</code> aside) is used only when a listed description's <code>ScenarioFile</code> ends in the map's file name, in any case. A file off by <code>-old</code>, a description naming the scenario's path instead (HugeGrass Rebalance's upload of 16 October), one not listed: each skipped at every start ("Map needs matching .mapinfo metadata"). A map whose name starts with a paired map's is called an old copy, with the space deleting it frees (the live host's <code>fixedHugeGrassTrapasRemix-old.map</code>). Campaign mods (<code>CampaignInfo.json</code>) aren't paired.</li>
+<li><strong>Pairing:</strong> a package's <code>.map</code> (in <code>maps/</code> or its own folder; <code>shared</code>, <code>campaign</code>, <code>mainmenu</code> aside) is used only when a listed description's <code>ScenarioFile</code> ends in the map's file name, in any case. A file off by <code>-old</code>, a description naming the scenario's path instead (one upload seen on 16 October), one not listed: each skipped at every start ("Map needs matching .mapinfo metadata"). A map whose name starts with a paired map's is called an old copy, with the space deleting it frees (a live host's <code>SomeMap-old.map</code>). Campaign mods (<code>CampaignInfo.json</code>) aren't paired.</li>
 <li>Each paired map: <code>games/halo3_mapfile.py</code>'s checks, a multiplayer scenario (type 1 at the scenario tag's start), and its map ID (at +0xC) for clashes. A map is read again only when its size or time changes.</li>
 <li>A Workshop item's <code>reclaimer-installed.json</code>: every file at its size (else "incomplete"); a <code>Mods/Workshop/&lt;item&gt;</code> without it can't be updated.</li>
 <li>Limits: 8 maps and 512 files a mod; a map up to 4 GB, a sound bank or movie 2 GB, an image 8 MB.</li>
@@ -2707,7 +2750,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <li>The <code>!health</code> command and the 15-minute health line: level, players, phase, RCON latency, <code>status.json</code> age, slow minutes in the last hour, memory, upload rate.</li>
 </ul>
 <h3 id="tests">Tests</h3>
-<p>Under <code>engine/tests/</code>, laid out like the package: a folder per layer, each file named for the module it tests (<code>tests/README.md</code>). 43 test files with 764 test functions (988 tests once parametrised), <code>conftest.py</code>, <code>testkit/</code> and <code>data/</code> (the game-option probe output, an ODST content listing, the files 0.4.0 wrote).</p>
+<p>Under <code>engine/tests/</code>, laid out like the package: a folder per layer, each file named for the module it tests (<code>tests/README.md</code>). About 90 test files and two thousand tests once parametrised, <code>conftest.py</code>, <code>testkit/</code> and <code>data/</code> (the game-option probe output, an ODST content listing, the files 0.4.0 wrote).</p>
 <div class='table'><table>
 <thead>
 <tr>
@@ -2783,7 +2826,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <li>Running copies find it within <code>check_hours</code> (an hour in a new install) and offer it.</li>
 </ol>
 <p>Before each release: commit everything (<code>git status</code> shows nothing untracked under <code>engine/</code>) and let CI pass, the release-zip job included (<code>docs/development.md</code>, Releasing).</p>
-<p>On the development PC, <code>deploy.ps1</code> copies the clean build in the repository folder into <code>DEPLOY/</code> the way a host update does (engine without <code>.venv</code> and tests, docs, start scripts, README, LICENSE), and stops when a copy fails (robocopy's exit code 8 or more). It refuses while Huragok runs from <code>DEPLOY/</code> (it checks <code>records/huragok.pid</code>, and <code>supervisor.pid</code> as 0.2.1 wrote it). The routine after every change: close the DEPLOY window (servers keep running), run <code>deploy.ps1</code>, start it again.</p>
+<p>On the development PC, a script copies the clean build in the repository folder into a test install the way a host update does (engine without <code>.venv</code> and tests, docs, start scripts, README, LICENSE), and stops when a copy fails (robocopy's exit code 8 or more). It refuses while Huragok runs from there (it checks <code>records/huragok.pid</code>, and <code>supervisor.pid</code> as 0.2.1 wrote it).</p>
 <h2 id="failure-modes">Failure modes</h2>
 <p>For each thing that can go wrong: how Huragok notices, what it does, and what is left to a person. Nothing in the "left to a person" column is told to anyone yet: it is in the window and the log only (The road to 1.0, gap b).</p>
 <h3 id="the-server">The server</h3>
@@ -3127,7 +3170,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </tbody>
 </table></div>
 <h2 id="security-and-privacy">Security and privacy</h2>
-<p>The security model is "the machine is trusted, the network is not": everything sensitive sits in the root folder in plain text, and the only network listeners are the server's own console and the optional relay, both meant for localhost.</p>
+<p>The security model is "the machine is trusted, the network is not": everything sensitive sits in the root folder in plain text, and the only network listeners are the server's own console and the optional relay, both meant for localhost. The Discord bot listens on nothing: it connects out to Discord, and nothing about it needs a port.</p>
 <h3 id="trust-boundaries">Trust boundaries</h3>
 <div class='table'><table>
 <thead>
@@ -3155,13 +3198,19 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td>The relay</td>
 <td>Remote moderators</td>
 <td>One password per user, roles (<code>[off]</code> applied to everyone), lockout of 5 failures in 10 minutes per address; one command per message, on one line, with no control characters; for users below admin, addresses and device fingerprints removed from replies and events (IPv4 and IPv6 in text included)</td>
-<td>Not encrypted; meant for localhost plus an SSH tunnel or VPN; no target-role check; a right password doesn't clear an address's failure count; no limit on open connections (a command over 16 KiB is refused with a reply)</td>
+<td>Not encrypted; meant for localhost plus an SSH tunnel or VPN; a right password doesn't clear an address's failure count; no limit on open connections (a command over 16 KiB is refused with a reply)</td>
 </tr>
 <tr>
 <td>Game chat and names</td>
 <td>Every player</td>
 <td>Roles by 64-character player ID, never by name; rank checked on IDs too; a name's start never picks whom to punish; <code>shlex</code> parsing; replies split and capped; automod input cut to 600 characters to keep its patterns fast; names, chat and replies cleaned of control characters before they reach the terminal or <code>window.log</code></td>
 <td>Commands are public chat by design</td>
+</tr>
+<tr>
+<td>The Discord</td>
+<td>Everyone in the host's Discord; anyone who can hand out a role there</td>
+<td>A rank is a role the host mapped in <code>[ranks]</code>; nothing counts until it's there, and Discord's own Administrator counts as nothing unless the host says. Owners by user ID, never a role. Each press and command checks the rank again, and runs the game's command with its guards. No address and no whole ID in what's posted</td>
+<td>Whoever can give out a mapped role can make a moderator. The token in <code>discord.toml</code> is as good as the bot</td>
 </tr>
 <tr>
 <td>GitHub downloads</td>
@@ -3209,6 +3258,26 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td>The host</td>
 </tr>
 <tr>
+<td>The bot's token</td>
+<td><code>discord.toml</code> <code>token</code>, or the environment variable <code>token_variable</code> names; never logged, in a <code>repr</code>, or said back in a warning. Blanked in <code>records/previous-files/</code>; still in the <code>discord.before-start-over-*.toml</code> J, Z leaves, as it says</td>
+<td>The host, through J, M (asked of Discord before it's kept) or by hand</td>
+</tr>
+<tr>
+<td>Webhook addresses</td>
+<td><code>discord.toml</code> (<code>[feed.&lt;name&gt;] webhook</code>, <code>[feed.alerts] launcher_webhook</code>, <code>also</code>). Blanked in <code>records/previous-files/</code>, never on the dashboard, and masked as they're typed</td>
+<td>The host</td>
+</tr>
+<tr>
+<td>Claim code</td>
+<td><code>records/discord-claim.json</code>: 8 characters, one use, 15 minutes, five wrong tries for each person</td>
+<td>J, K</td>
+</tr>
+<tr>
+<td>Appeal codes</td>
+<td><code>discord_appeal_codes</code>: 6 hex characters (<code>secrets</code>), kept for that player, given out only in a ban's message</td>
+<td>The bot</td>
+</tr>
+<tr>
 <td>Steam login</td>
 <td>SteamCMD's cache</td>
 <td>SteamCMD</td>
@@ -3216,12 +3285,27 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </tbody>
 </table></div>
 <p>Passwords typed into a screen are written to <code>window.log</code> as <code>********</code> (D shows them as stars and as "set (n characters)"). A console line that sets one (<code>password …</code>, from A, the relay or <code>start.cmd rcon</code>) is masked as <code>password ********</code> in <code>window.log</code>, <code>huragok.log</code> and the relay's log lines. The lock (<code>records/huragok.pid</code>) holds only process numbers and a version. The repository must never contain a real IP, player ID or password.</p>
+<h3 id="discord-security">Discord</h3>
+<ul>
+<li><strong>The file.</strong> On Linux <code>discord.toml</code> is 0600 from when it's made, and before a token or a webhook address is written to it. On Windows it's the folder's permissions.</li>
+<li><strong>What's posted.</strong> <code>cards.clean</code> takes addresses out of anything from a player or a server, escapes formatting, link brackets and what starts a heading, so nothing typed can look like the bot's own words or hide a link, and breaks <code>@</code>. <code>allowed_mentions</code> is empty unless a ping was asked for. Below admin, whole IDs are cut to 8 characters (<code>ranks.as_they_may_see</code>; <code>moderators_see_ids</code> overrules it), and in what a player autocomplete sends they're an opaque value that means them while Huragok's up (<code>part.opaque</code>).</li>
+<li><strong>The typed console.</strong> Everyone with a rank reads the channel, so every answer is what a moderator may see, without addresses, whoever asked (<code>without_addresses</code>). A line that isn't a <code>!</code> command goes through the relay's checks (<code>relay.run_line</code>) and <code>[console] raw_rank</code>. A password is deleted on arrival if the bot may, and masked in the transcript and the audit log. Clearing runs only with the console on and working, never touches what was there before its first look (<code>console:kept:</code>), refuses a channel that's also used for something else, and deletes nothing until the transcript is posted.</li>
+<li><strong>Where private things go.</strong> Staff's feeds, tickets and transcripts don't post where @everyone can read (<code>feeds.reads_by_everyone</code>; <code>[feeds] public</code> allows it). The console doesn't run there (<code>[console] public</code>). The check also names other roles that can read a staff channel.</li>
+<li><strong>Who acted.</strong> <code>core.storage.acting</code> sets <code>ACTING_ID</code> for what a command does, so <code>actions</code>, <code>player_notes</code> and <code>player_flags</code> keep <code>by_id</code> (<code>discord:&lt;their ID&gt;</code>, or a player's ID) beside the name players read.</li>
+<li><strong>Old cards.</strong> Ticket numbers are never used twice (<code>AUTOINCREMENT</code>), and a press whose message isn't that ticket's card is refused, so a card left over from before J, Z can't act on someone else.</li>
+<li><strong>Scoped ranks.</strong> What reaches every server takes the lowest rank someone holds across the servers; a look takes the highest. Both are in <code>ranks.py</code>, and a scoped role's ban belongs in that server's console.</li>
+<li><strong>What people send.</strong> A <code>/report</code>'s file is only re-posted if it's an image or video of 25 MB or less; anything else is a link while Discord keeps it. Reporters have a cooldown and a cap on open reports (<code>most_at_once</code>), Contact a cooldown per member and one thread at a time, appeals a wait per member. An appeal with only a name says so on its card, and doesn't count against the player it names.</li>
+<li><strong>Asks for no more than it uses.</strong> The invite link asks for what's switched on (<code>features.invite_permissions</code>), Message Content only with the typed console or Contact's transcripts on, and the check warns if the bot's role has Administrator, Ban Members or Kick Members.</li>
+<li><strong>With the mode off</strong> nothing goes to Discord, the start loop's webhook included, and discord.py isn't imported.</li>
+</ul>
 <h3 id="personal-data-kept">Personal data kept</h3>
 <ul>
 <li><strong>Players:</strong> player ID, every name used, every IP used, first and last seen, visit count. Kept indefinitely; there is no deletion tool.</li>
 <li><strong>Moderation:</strong> every action with target, reason and evidence (the offending chat line), and every automod strike.</li>
 <li><strong>Event log</strong> (when on): every event, including join IPs, one file per day.</li>
 <li><strong>Logs:</strong> player names and IDs in <code>huragok.log</code> and the console logs.</li>
+<li><strong>Discord:</strong> what staff wrote about players (<code>player_notes</code>, <code>player_flags</code>, kept through J, Z), reports and appeals with the Discord IDs of who made them, cards and their lines, members' <code>/notify</code> alerts.</li>
+<li><strong>The temporary record:</strong> <code>logs/temp-discord/</code>, pruned after 30 days: names, stand-ins for IDs, no addresses, chat as its length.</li>
 </ul>
 <p>No retention policy exists yet. If one is needed, the natural places are a <code>forget_after_days</code> for the player tables (automod already has one for strikes) and a cleanup of <code>logs/events/</code>.</p>
 <h3 id="process-privileges">Process privileges</h3>
@@ -3328,7 +3412,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <p>One quirk is handled on purpose: v0.9.18 can announce <code>finished</code> for the next game just before it starts, so an after-game restart only counts <code>finished</code> for the game that was <code>playing</code>.</p>
 <h3 id="platform-and-runtime">Platform and runtime</h3>
 <ul>
-<li><strong>Python</strong> 3.11 to 3.14 in CI (3.11 is the floor because of <code>tomllib</code>). Dependencies: <code>websockets</code> 13 or newer (its asyncio client and server) and <code>psutil</code> 5.9 or newer.</li>
+<li><strong>Python</strong> 3.11 to 3.14 in CI (3.11 is the floor because of <code>tomllib</code>). Dependencies: <code>websockets</code> 13 or newer (its asyncio client and server), <code>psutil</code> 5.9 or newer, and <code>discord.py</code> 2.7 or newer, below 3, which an update installs with pip before the new version starts: if it can't, the old version's files go back and it says why.</li>
 <li><strong>Windows 10 and 11</strong> (the live host is Windows 11): console APIs through <code>ctypes</code> (<code>ReadConsoleInputW</code>, QuickEdit, Ctrl+Break, shared file opens, job objects), <code>msvcrt</code> as the keyboard's fallback.</li>
 <li><strong>Linux (on hold):</strong> the same code, and CI runs the suite on Ubuntu, but nothing is tested end to end; the server program runs through <code>wine</code>. The Docker image (<code>python:3.12-slim</code>, built as <code>huragok</code>, its files in <code>/huragok</code>, running as the user <code>huragok</code>, <code>start --no-menu</code> so a settings problem is retried) can only watch and moderate (<code>attach</code>), because it cannot start the servers' containers. 0.2.1's image used <code>/supervisor</code>: an old compose file mounting that starts with fresh files.</li>
 </ul>
@@ -3409,7 +3493,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <li><strong>Watchdog:</strong> at most 120 frame samples and 500 connection and join timestamps per server, evaluated once a minute.</li>
 </ul>
 <h3 id="at-the-live-servers-scale">At the live server's scale</h3>
-<p>The live server runs 128 players on a 2 GB map (Hugegrass) and spends full games at about a third of its tick rate (<code>plans/crash-analysis-live-server.md</code>). That load is the game's, not Huragok's; the Superintendent's job there is to not restart it for being slow, which is why the frame cases only watch.</p>
+<p>The live server runs 128 players on a 2 GB map and spends full games at about a third of its tick rate (<code>plans/crash-analysis-live-server.md</code>). That load is the game's, not Huragok's; the Superintendent's job there is to not restart it for being slow, which is why the frame cases only watch.</p>
 <h3 id="disk">Disk</h3>
 <ul>
 <li><code>huragok.log</code>: at most 30 MB (5 MB × 6 files). <code>window.log</code>: at most 10 MB. <code>launcher.log</code>: appended without limit, but rarely written.</li>
@@ -3613,14 +3697,6 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td>Left for 0.5.0 (19 Oct 2026)</td>
 </tr>
 <tr>
-<td>b</td>
-<td><strong>Nobody is told.</strong> There is no outbound channel: FAULTED, the start loop restarting Huragok, a console lockout, a watchdog restart, a failed update, a part switched off are all only in the window and the log</td>
-<td>A host who isn't watching finds out from players</td>
-<td>A Discord webhook part (Extending Huragok)</td>
-<td><span class='sev sev-high'>High</span></td>
-<td></td>
-</tr>
-<tr>
 <td>c</td>
 <td><strong>Start at boot needs a logon on Windows.</strong> W writes <code>Huragok.cmd</code> to the Startup folder, which runs at user logon</td>
 <td>After an unattended reboot (Windows Update), no server starts until someone logs in</td>
@@ -3770,7 +3846,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <li><strong>automod:</strong> a name with no letters or digits (★★) is written to <code>names.txt</code> by <code>!strike … name</code> but matches nothing; its replies say "!" whatever the prefix; <code>cooldown_seconds</code> and <code>split_seconds</code> aren't type-checked.</li>
 <li><strong>Setup:</strong> a playlist whose <code>vote_seconds</code> or a weight isn't a number stops the screen that lists it; rename checks name clashes only against the servers in this run, where <code>new</code> counts disabled and left-out ones; D's <code>[master] port</code> isn't checked against the servers' ports; N asks for 1 to 127 players even for a co-op package, which then fails at the end.</li>
 <li><strong>Names in messages:</strong> <code>HURAGOK_LAUNCHER</code>'s fallback is "huragok" in some messages and <code>start.cmd</code> / <code>./start.sh</code> in others, and the Docker image doesn't set it.</li>
-<li><strong><code>deploy.ps1</code></strong> treats a lock as live by its process number alone.</li>
+<li><strong>The development PC's deploy script</strong> treats a lock as live by its process number alone.</li>
 </ul>
 <h3 id="decisions-to-revisit">Decisions the fixes made</h3>
 <ul>
@@ -3802,7 +3878,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <li>Then the medium items (console log rotation, the ledger gap, reloading <code>settings.toml</code>) with the next moderation work.</li>
 </ol>
 <h2 id="reference">Reference</h2>
-<p>File index, settings keys, events and terms in <code>engine/huragok/</code>: the file index as of 25 October 2026 (the code laid out by named part, not yet released), the rest as of 0.4.0 (19 October 2026) and the changes since.</p>
+<p>File index, settings keys, events and terms in <code>engine/huragok/</code>: the file index as of 25 October 2026 (the code laid out by named part), with the Discord rows as of 1 November, the rest as of 0.4.0 (19 October 2026) and the changes since.</p>
 <p>Protocols, file formats and the database schema are in Part 2: <a href="#interfaces-and-data-formats">Interfaces and data formats</a>.</p>
 <h3 id="module-index">Module index</h3>
 <div class='table'><table>
@@ -3896,8 +3972,8 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </tr>
 <tr>
 <td></td>
-<td><code>core/tomledit.py</code> (814), <code>core/versions.py</code> (118)</td>
-<td>Comment-keeping TOML edits, each checked before the file is replaced; every version of a host's playlist kept, with how it was made and where it came from</td>
+<td><code>core/tomledit.py</code> (814), <code>core/versions.py</code> (118), <code>core/discordmoved.py</code> (24)</td>
+<td>Comment-keeping TOML edits, each checked before the file is replaced; every version of a host's playlist kept, with how it was made and where it came from; the settings of <code>discord.toml</code> that have a new name or home, for the update step and the file's own check</td>
 </tr>
 <tr>
 <td></td>
@@ -3908,6 +3984,156 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td></td>
 <td><code>core/lock.py</code> (209), <code>core/mailbox.py</code> (161), <code>core/logs.py</code> (54), <code>core/desktop.py</code> (211), <code>core/priority.py</code> (215), <code>core/winproc.py</code> (67)</td>
 <td>One Huragok per folder; requests from outside as files; tagged log lines and the dashboard's recent ones; folders, editors, start at boot; process priority; the Windows Ctrl+Break helper</td>
+</tr>
+<tr>
+<td>Discord</td>
+<td><code>discordbot/part.py</code> (769)</td>
+<td>The part: the file, the outbox, the connection; what the feeds ask about a player; <code>!calladmin</code>, <code>!report</code>, <code>!mods</code>, <code>!reports</code>; the dashboard's red lines</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/config.py</code> (516)</td>
+<td><code>discord.toml</code>: read, checked, changed in place</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/features.py</code> (541)</td>
+<td>Every feature, what it needs, its state; <code>steps</code> (what's left to do), the invite's permissions, <code>check</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/facts.py</code> (185)</td>
+<td>What Discord says is true now: the bot, its Discord, roles, channels, who can do what where</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/rest.py</code> (317)</td>
+<td>Discord's web API with the standard library: both modes, the window, the start loop</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/outbox.py</code> (191)</td>
+<td>One queue out: most urgent first, each channel's pace, Discord's waits kept to, a refusal never tried again</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/workers.py</code> (23)</td>
+<td>Discord's calls on threads of their own</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/speakers.py</code> (325)</td>
+<td>Who speaks (<code>Delivery</code>, <code>Poster</code>), every text and its key (<code>TEXTS</code>), <code>say</code>, <code>message</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/cards.py</code> (439)</td>
+<td>What each event says: pure functions to a <code>Card</code>; <code>clean</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/feeds.py</code> (621)</td>
+<td>What's wanted, where it goes, how often; <code>_case</code>, <code>_strike</code>, the watch list, merging, blocked channels, the gallery</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/tickets.py</code> (678)</td>
+<td>One incident, one card: states, moves, the buttons a card shows, <code>standing</code>, the sweep</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/buttons.py</code> (745)</td>
+<td>What each press does: <code>pressed</code>, <code>_act</code>, the forms</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/slash.py</code> (430)</td>
+<td>Every in-game command as a slash command, from its <code>CommandSpec</code>: <code>plan_of</code>, <code>run</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/asking.py</code> (217)</td>
+<td><code>/report</code>, Report message, <code>/appeal</code>, the Contact form</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/staff.py</code> (368)</td>
+<td><code>/note</code>, <code>/flag</code>, <code>/notify</code>, <code>/ticket</code>, <code>/case</code>, <code>/help</code>, <code>/tickets</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/serverpanel.py</code> (270)</td>
+<td><code>/server</code> and its power buttons, <code>/status</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/console.py</code> (432)</td>
+<td>The typed console: <code>heard</code>, the menu, asking first, answers</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/consoleclear.py</code> (288)</td>
+<td>The console channel put back as it started</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/reports.py</code> (211)</td>
+<td>What becomes of a report: one card per player, threshold, who's told</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/appeals.py</code> (267)</td>
+<td>What becomes of an appeal: codes, waits, decisions, DMs</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/contact.py</code> (199)</td>
+<td>Private threads with staff: the button, the transcript, the sweep</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/status.py</code> (504)</td>
+<td>The board, status line, bio, nickname, channel names, topics, voice status, seeding; <code>SCHEMA</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/alerts.py</code> (84)</td>
+<td><code>/notify</code>: what members asked to be told</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/kept.py</code> (135)</td>
+<td>A post that stays: the console's menu, Contact's button</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/tidy.py</code> (148)</td>
+<td>What goes after a while: <code>discord_tidy</code>, private answers, Discord's own notices</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/panels.py</code> (1262)</td>
+<td><code>/huragok setup</code>: Home and every panel</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/client.py</code> (533)</td>
+<td>The gateway, <code>/huragok</code>, registering commands, <code>answer</code>, <code>acting_as</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/ranks.py</code> (117)</td>
+<td>Discord roles onto ranks: <code>rank_of</code>, <code>rank_to_run</code>, <code>REACHES_EVERY_SERVER</code>, <code>as_they_may_see</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/records.py</code> (118)</td>
+<td>What's kept in <code>records/</code>: state, claim code, logins, commands registered</td>
+</tr>
+<tr>
+<td></td>
+<td><code>discordbot/startover.py</code> (58)</td>
+<td>J, Z</td>
 </tr>
 <tr>
 <td>Games</td>
@@ -4000,7 +4226,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </tr>
 <tr>
 <td><code>[automod]</code></td>
-<td><code>enabled = true</code>, <code>dry_run = false</code> (the template: <code>true</code>), <code>words = "automod.txt"</code>, <code>names = "names.txt"</code>, <code>forget_after_days = 0</code>, <code>name = "Vergil"</code>, <code>exempt_roles = ["admin", "owner"]</code>, <code>check_names = true</code>, <code>name_match = "anywhere"</code>, <code>across_servers = true</code>, <code>cooldown_seconds = 10</code>, <code>split_seconds = 10</code>, <code>messages = {}</code></td>
+<td><code>enabled = true</code>, <code>dry_run = false</code> (the template: <code>true</code>), <code>words = "automod.txt"</code>, <code>names = "names.txt"</code>, <code>forget_after_days = 0</code>, <code>name = "Vergil"</code>, <code>exempt_roles = ["admin", "owner"]</code>, <code>check_names = true</code>, <code>name_match = "anywhere"</code>, <code>across_servers = true</code>, <code>cooldown_seconds = 10</code>, <code>split_seconds = 10</code>, <code>messages = {}</code>, <code>moderators_kick_at_most = "1d"</code></td>
 <td>A missing section means automod runs live; the first start writes <code>dry_run = true</code>. <code>messages</code> keys: chat, name, manual, next, muted; a message that can't be filled in (a stray brace) stops automod starting, named by <code>check</code></td>
 </tr>
 <tr>
@@ -4082,19 +4308,19 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <td>Backends: <code>starting</code>, <code>stopping</code>, <code>stopped</code> (<code>expected</code>, exit code); managers: <code>ready</code>, <code>adopted</code>, <code>start_failed</code> (why, the console lines since that start), <code>countdown</code>, <code>countdown_cancelled</code>, <code>restart_planned</code>, <code>restarting</code>, <code>restarted</code>, <code>faulted</code> (reason, <code>retry_at</code>), <code>fault_retry</code> (attempt, reason); keepalive: <code>hung</code>, <code>recovered</code>; updates: <code>program_updated</code>, <code>workshop_update</code>, <code>workshop_updated</code>; console lines: <code>started</code>, <code>crashed</code>, <code>reloaded</code>, <code>all_stopped</code>, <code>updating</code>, <code>self_update</code>, <code>update_downloading</code>, <code>update_failed</code>, <code>workshop</code>, <code>map_skipped</code></td>
 </tr>
 <tr>
-<td><code>moderation.action</code></td>
+<td><code>moderation.action</code>, <code>moderation.seen</code></td>
 <td>The ledger</td>
-<td>kind, target, by, source, reason, duration, dry run, ok</td>
+<td>kind, target, by, by_id, source, reason, duration, dry run, ok, case. <code>seen</code> is what the server announced that Huragok didn't send</td>
 </tr>
 <tr>
 <td><code>supervisor.*</code></td>
 <td>The core (a name kept from before 0.2.2)</td>
-<td><code>started</code>, <code>stopping</code>, <code>part_disabled</code>, <code>part_enabled</code> (a part back after its cool-down), <code>commands_reloaded</code></td>
+<td><code>started</code>, <code>stopping</code>, <code>part_disabled</code>, <code>part_enabled</code> (a part back after its cool-down), <code>commands_reloaded</code>, <code>update_failed</code>, <code>relay_lockout</code></td>
 </tr>
 <tr>
 <td><code>&lt;part&gt;.*</code></td>
 <td>Parts</td>
-<td><code>automod.strike</code>, <code>automod.pardon</code>, <code>automod.name</code> (a name kicked), <code>automod.name_banned</code>, <code>automod.name_allowed</code> (<code>!strike … name</code>, <code>!banname</code>, <code>!unbanname</code>), <code>automod.words_banned</code>, <code>automod.word_allowed</code> (<code>!banword</code>, <code>!unbanword</code>), <code>automod.rule_changed</code> (<code>!changebanword</code>), <code>watchdog.health</code></td>
+<td><code>commands.request</code>, <code>commands.request_decided</code>, <code>automod.strike</code> (with <code>by_id</code>, <code>manual</code>), <code>automod.pardon</code>, <code>automod.name</code> (a name kicked), <code>automod.name_banned</code>, <code>automod.name_allowed</code> (<code>!strike … name</code>, <code>!banname</code>, <code>!unbanname</code>), <code>automod.words_banned</code>, <code>automod.word_allowed</code> (<code>!banword</code>, <code>!unbanword</code>), <code>automod.rule_changed</code> (<code>!changebanword</code>), <code>watchdog.health</code></td>
 </tr>
 </tbody>
 </table></div>
@@ -4236,7 +4462,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <h3 id="signing-in">Signing in</h3>
 <pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;password&quot;: &quot;…&quot;, &quot;host_key&quot;: &quot;&lt;contents of data/&lt;slug&gt;/rcon-host.key&gt;&quot;}
 </code></pre>
-<pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;ok&quot;: true, &quot;protocol&quot;: 1, &quot;server&quot;: &quot;LG Test Server&quot;, &quot;version&quot;: &quot;0.9.18&quot;}
+<pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;ok&quot;: true, &quot;protocol&quot;: 1, &quot;server&quot;: &quot;Server 1&quot;, &quot;version&quot;: &quot;0.9.18&quot;}
 </code></pre>
 <ul>
 <li><code>host_key</code> is sent when <code>[rcon] use_host_key</code> is on and the key file exists. It puts Huragok on the spot kept for the server's own machine.</li>
@@ -4387,7 +4613,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <p>The first message must arrive within 10 s and be an <code>auth</code>:</p>
 <pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;password&quot;: &quot;&lt;this moderator's relay password&gt;&quot;}
 </code></pre>
-<pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;ok&quot;: true, &quot;protocol&quot;: 1, &quot;server&quot;: &quot;LG Test Server&quot;, &quot;version&quot;: &quot;0.9.18&quot;, &quot;relay&quot;: &quot;Superintendent&quot;, &quot;role&quot;: &quot;moderator&quot;}
+<pre><code class="language-json">{&quot;type&quot;: &quot;auth&quot;, &quot;ok&quot;: true, &quot;protocol&quot;: 1, &quot;server&quot;: &quot;Server 1&quot;, &quot;version&quot;: &quot;0.9.18&quot;, &quot;relay&quot;: &quot;Superintendent&quot;, &quot;role&quot;: &quot;moderator&quot;}
 </code></pre>
 <p><code>relay</code> is the top-level <code>name</code> setting ("Superintendent" as the first start writes it). The password picks the <code>[[relay.user]]</code>, which is why passwords must be unique. A wrong one gets <code>{"type": "auth", "ok": false, "error": "Wrong password."}</code>. After 5 wrong passwords in 10 minutes, the address is refused for the rest of that window ("Too many wrong passwords from your address; try again in ten minutes."); unlike the server, a right password does not clear the count. There is no limit on open connections.</p>
 <h3 id="websocket-commands-and-events">WebSocket commands and events</h3>
@@ -4703,7 +4929,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <h3 id="recordslivejson-every-2-s"><code>records/live.json</code> (every 2 s)</h3>
 <p>What the dashboard shows, for a second window and <code>start.cmd status</code>. Considered stale after 15 s; a second window keeps the last good copy it read.</p>
 <pre><code class="language-json">{&quot;updated&quot;: 1792303039.64, &quot;pid&quot;: 30208, &quot;version&quot;: &quot;0.4.0&quot;, &quot;backend&quot;: &quot;process&quot;, &quot;stopping_all&quot;: false,
- &quot;servers&quot;: [{&quot;index&quot;: 1, &quot;name&quot;: &quot;LG Test Server&quot;, &quot;slug&quot;: &quot;lg-test-server&quot;, &quot;port&quot;: 49176, &quot;autostart&quot;: true,
+ &quot;servers&quot;: [{&quot;index&quot;: 1, &quot;name&quot;: &quot;Server 1&quot;, &quot;slug&quot;: &quot;server-1&quot;, &quot;port&quot;: 49176, &quot;autostart&quot;: true,
    &quot;phase&quot;: &quot;running&quot;, &quot;status&quot;: &quot;RUNNING  up 1d 6h&quot;, &quot;color&quot;: &quot;green&quot;, &quot;players&quot;: &quot;0/16&quot;, &quot;names&quot;: &quot;&quot;,
    &quot;game&quot;: &quot;lobby: Guardian Slayer&quot;, &quot;detail&quot;: &quot;RCON 1 ms  |  status 3 s old&quot;, &quot;plays&quot;: &quot;playlist team-slayer&quot;,
    &quot;next&quot;: &quot;&quot;, &quot;version&quot;: &quot;0.9.18&quot;, &quot;uptime&quot;: &quot;1d 6h&quot;, &quot;health&quot;: &quot;healthy&quot;, &quot;connected&quot;: true, &quot;errors&quot;: [],
@@ -4720,7 +4946,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </code></pre>
 <p>Unknown keys are ignored when loading; missing keys take defaults. <code>restart_times</code> is pruned to the last hour when an automatic restart is added; <code>history</code> keeps a week, 60 entries at most.</p>
 <h3 id="recordsrunning-serversjson-process-backend"><code>records/running-servers.json</code> (process backend)</h3>
-<pre><code class="language-json">{&quot;LG Test Server&quot;: {&quot;pid&quot;: 30092, &quot;create_time&quot;: 1792191454.69, &quot;console&quot;: &quot;…\\logs\\console-lg-test-server.log&quot;}}
+<pre><code class="language-json">{&quot;Server 1&quot;: {&quot;pid&quot;: 30092, &quot;create_time&quot;: 1792191454.69, &quot;console&quot;: &quot;…\\logs\\console-server-1.log&quot;}}
 </code></pre>
 <p>A process is adopted only if the pid exists and its start time matches within 1 s, so a reused pid is never mistaken for a server. The file is written atomically (<code>running-servers.json.tmp</code>, then replaced); a damaged file reads as empty, and a damaged entry is left out, each with a warning. Entries for servers left out of this run (not in <code>servers = [...]</code>, a folder that can't be read) are kept until their process dies, and a server whose stop failed stays in it.</p>
 <h3 id="recordshuragokpid-the-lock"><code>records/huragok.pid</code> (the lock)</h3>
@@ -4801,6 +5027,22 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 </thead>
 <tbody>
 <tr>
+<td><code>records/discord-state.json</code></td>
+<td><code>mode</code>, <code>state</code> (off, webhook, waiting, signing in, online, stopped), <code>why</code>, <code>bot</code>, <code>guild</code>, <code>waiting</code> (posts in the outbox), <code>updated</code>: every 30 s and on each change, for the window's J. Over 90 s old, it's from a Huragok that isn't running</td>
+</tr>
+<tr>
+<td><code>records/discord-claim.json</code></td>
+<td><code>code</code>, <code>expires</code>, <code>by</code> (wrong tries, per person). Gone once it's used</td>
+</tr>
+<tr>
+<td><code>records/discord-logins.json</code></td>
+<td><code>day</code> (UTC), <code>count</code>: past <code>[limits] logins_per_day</code> the bot stays off until tomorrow</td>
+</tr>
+<tr>
+<td><code>records/discord-commands.json</code></td>
+<td>Each Discord's ID and a digest of its commands as last registered, so they're only sent when they change (Discord allows 200 registrations a day)</td>
+</tr>
+<tr>
 <td><code>logs/events/events-YYYY-MM-DD.jsonl</code></td>
 <td>One JSON object per line: <code>time</code>, <code>server</code>, <code>event</code>, then the event's fields</td>
 </tr>
@@ -4858,7 +5100,7 @@ Shown in the Workshop screen (G, 3: "Is each mod good to go?"), in <code>check</
 <p>One SQLite file, <code>records/huragok.sqlite3</code> by default (the <code>database</code> setting; a 0.2.1 <code>settings.toml</code> names <code>records/supervisor.sqlite3</code>), in WAL mode with autocommit. Times are Unix seconds (REAL); player IDs are stored lowercase. A <code>casefold()</code> SQL function is registered, so seen names are found in any case (Élodie, ÉLODIE; Straße).</p>
 <h3 id="migrations">Migrations</h3>
 <p><code>schema_versions (owner TEXT PRIMARY KEY, version INTEGER NOT NULL)</code> records how many steps each owner has applied: <code>core</code>, then each part by name. <code>Storage.migrate(owner, steps)</code> applies the missing steps in a transaction each. A released step is never edited; changes are new steps appended.</p>
-<h3 id="core-step-1">Core (step 1)</h3>
+<h3 id="core-step-1">Core (steps 1 to 5)</h3>
 <pre><code class="language-sql">CREATE TABLE players (
     id TEXT PRIMARY KEY, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
     last_name TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
@@ -4874,6 +5116,25 @@ CREATE TABLE actions (
     reason TEXT, duration TEXT, evidence TEXT, dry_run INTEGER NOT NULL, ok INTEGER NOT NULL,
     reply TEXT);
 CREATE INDEX actions_target ON actions (target_id, time);
+-- step 2 (0.5.0): what players pick on a playlist's ballots
+CREATE TABLE ballots (
+    time REAL NOT NULL, server TEXT NOT NULL, playlist TEXT NOT NULL, picked TEXT NOT NULL, plays TEXT);
+CREATE INDEX ballots_playlist ON ballots (playlist, server);
+-- step 3 (0.6.0): what staff write about players
+CREATE TABLE player_notes (
+    number INTEGER PRIMARY KEY, player_id TEXT NOT NULL, text TEXT NOT NULL, by TEXT NOT NULL, time REAL NOT NULL, expires REAL);
+CREATE INDEX player_notes_player ON player_notes (player_id, time);
+CREATE TABLE player_flags (
+    player_id TEXT NOT NULL, flag TEXT NOT NULL, why TEXT NOT NULL, by TEXT NOT NULL, time REAL NOT NULL,
+    PRIMARY KEY (player_id, flag));
+-- step 4 (0.6.0): who acted, by ID
+ALTER TABLE actions ADD COLUMN by_id TEXT;
+ALTER TABLE player_notes ADD COLUMN by_id TEXT;
+ALTER TABLE player_flags ADD COLUMN by_id TEXT;
+-- step 5 (0.6.0): a name in any case, found without reading every row
+ALTER TABLE player_names ADD COLUMN folded TEXT;
+UPDATE player_names SET folded = casefold(name);
+CREATE INDEX player_names_folded ON player_names (folded);
 </code></pre>
 <div class='table'><table>
 <thead>
@@ -4897,7 +5158,22 @@ CREATE INDEX actions_target ON actions (target_id, time);
 <tr>
 <td><code>actions</code></td>
 <td>Every <code>Moderation.act</code>: <code>kind</code> is warn, mute, unmute, kick, ban, unban or pardon; <code>source</code> is the part (<code>commands</code>, <code>automod</code>); <code>by</code> is who players read; <code>reply</code> is the server's text</td>
-<td><code>!whois</code> (the player's last 3 real actions); <code>!pardonplayer</code> doesn't read it (it reads <code>automod_strikes</code> and the server's ban list)</td>
+<td><code>!whois</code> (the player's record, with its numbers as cases); Discord's cards (how someone stands now: <code>tickets.standing</code>, their record); <code>!pardonplayer</code> doesn't read it (it reads <code>automod_strikes</code> and the server's ban list)</td>
+</tr>
+<tr>
+<td><code>player_notes</code>, <code>player_flags</code></td>
+<td><code>/note</code>, <code>/flag</code>, Discord's Add note; <code>expires</code> from <code>[notes] expire_days</code> or the command's <code>days</code></td>
+<td><code>!whois</code>, Discord's cards, the watch list (<code>watch_flags</code>). Kept through J, Z</td>
+</tr>
+<tr>
+<td><code>by_id</code> (on <code>actions</code>, <code>player_notes</code>, <code>player_flags</code>)</td>
+<td><code>ACTING_ID</code>, set by the router and Discord's presses: <code>discord:&lt;their ID&gt;</code> or a player's ID; empty for what's no one's doing. Nullable, so older versions read the table as it was</td>
+<td>Which card an act belongs to, who else just acted (<code>_got_there_first</code>), a strike a moderator gave. <code>by</code> stays what players read, which <code>shown_as</code> can make "a moderator"</td>
+</tr>
+<tr>
+<td><code>player_names.folded</code></td>
+<td>The name casefolded, on every join (and for what an older version wrote, as Huragok starts)</td>
+<td>Finding a seen name by what's typed: an index, rather than reading the table on the event loop</td>
 </tr>
 </tbody>
 </table></div>
@@ -4920,13 +5196,50 @@ ALTER TABLE automod_strikes ADD COLUMN lifted_by TEXT;
 <li><code>!pardonplayer</code> sets <code>pardoned</code> and <code>pardoned_by</code> rather than deleting rows.</li>
 <li>Rows are keyed to the rule's name, which is why an unnamed line (<code>rule2</code> by position) is warned about: a line added above it would move its strikes.</li>
 </ul>
+<h3 id="discord-tables">Discord (owner <code>discord</code>, steps 1 to 9)</h3>
+<pre><code class="language-sql">-- indexes left out. step 1: what's been posted and is kept up to date, and small facts, by key: board:&lt;server&gt;, board:list, console:menu,
+-- console:member:&lt;id&gt;, console:kept:&lt;channel&gt;, console:cleared, contact:card, seeding:&lt;server&gt;, news:&lt;line&gt;:&lt;server&gt;, profile:bio, request-from:&lt;number&gt;
+CREATE TABLE discord_posts (
+    key TEXT PRIMARY KEY, message TEXT NOT NULL DEFAULT '', value TEXT NOT NULL DEFAULT '', time REAL NOT NULL);
+-- step 2: /notify
+CREATE TABLE discord_alerts (
+    user_id TEXT NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, server TEXT NOT NULL, last REAL NOT NULL,
+    PRIMARY KEY (user_id, kind, value, server));
+-- step 3: tickets, and what's happened on each
+CREATE TABLE discord_tickets (
+    number INTEGER PRIMARY KEY, opened REAL NOT NULL, touched REAL NOT NULL, kind TEXT NOT NULL, owner TEXT NOT NULL, state TEXT NOT NULL,
+    player_id TEXT NOT NULL, player_name TEXT NOT NULL, server TEXT NOT NULL, problem TEXT NOT NULL, card TEXT NOT NULL, persona TEXT NOT NULL,
+    open_in TEXT NOT NULL, log_in TEXT NOT NULL, place TEXT NOT NULL, channel TEXT NOT NULL, message TEXT NOT NULL, thread TEXT NOT NULL);
+CREATE TABLE discord_ticket_lines (ticket INTEGER NOT NULL, time REAL NOT NULL, text TEXT NOT NULL);
+-- step 4: reports
+CREATE TABLE discord_reports (
+    number INTEGER PRIMARY KEY, time REAL NOT NULL, reporter TEXT NOT NULL, reporter_name TEXT NOT NULL, player_id TEXT NOT NULL, player_name TEXT NOT NULL, why TEXT NOT NULL, source TEXT NOT NULL,
+    ticket INTEGER NOT NULL, upheld INTEGER NOT NULL DEFAULT 0);
+-- step 5: appeals
+CREATE TABLE discord_appeals (
+    number INTEGER PRIMARY KEY, time REAL NOT NULL, member TEXT NOT NULL, member_name TEXT NOT NULL, player_id TEXT NOT NULL, player_name TEXT NOT NULL, about TEXT NOT NULL, ticket INTEGER NOT NULL,
+    outcome TEXT NOT NULL DEFAULT '', decided REAL);
+-- step 6: what goes after a while
+CREATE TABLE discord_tidy (channel TEXT NOT NULL, message TEXT NOT NULL, due REAL NOT NULL, why TEXT NOT NULL DEFAULT '', PRIMARY KEY (channel, message));
+-- step 7: the old card a move hasn't taken down yet, "channel:message"
+ALTER TABLE discord_tickets ADD COLUMN replacing TEXT NOT NULL DEFAULT '';
+-- step 8: discord_tickets made again with number AUTOINCREMENT, so no number is ever used twice,
+-- and indexes on (owner, state, touched), (problem, state), (player_id, state), (state, touched), and (number) WHERE message = ''
+-- step 9: whether an appeal came with its code, and each player's code
+ALTER TABLE discord_appeals ADD COLUMN proved INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE discord_appeal_codes (code TEXT PRIMARY KEY, player_id TEXT NOT NULL UNIQUE, time REAL NOT NULL);
+</code></pre>
+<ul>
+<li><strong><code>state</code></strong> is <code>open</code>, <code>active</code>, <code>stale</code>, <code>closed</code> or <code>filed</code> (<code>tickets.py</code>). <strong><code>kind</code></strong> is the card's line in <code>[messages]</code>. <strong><code>problem</code></strong> is what makes a later one the same incident: a server's name, <code>rcon:&lt;server&gt;</code>, <code>update</code>, <code>report:&lt;id&gt;</code>, <code>strike:&lt;id&gt;</code>, <code>appeal:&lt;id&gt;</code>, <code>contact:&lt;member&gt;</code>, <code>request:&lt;number&gt;</code>, <code>watch:&lt;kind&gt;:&lt;id&gt;</code>, <code>message:&lt;link&gt;</code>. <strong><code>card</code></strong> is JSON, read with <code>.get</code>.</li>
+<li><strong>J, Z</strong> (<code>startover.TABLES</code>) empties <code>discord_posts</code>, <code>discord_tickets</code>, <code>discord_ticket_lines</code>, <code>discord_reports</code>, <code>discord_appeals</code>, <code>discord_alerts</code> and <code>discord_tidy</code>. Appeal codes stay, as a ban's message already has them, and so do notes and flags.</li>
+</ul>
 <h2 id="host-file-formats">Host file formats</h2>
 <h3 id="commandstoml"><code>commands.toml</code></h3>
 <pre><code class="language-toml">prefix = &quot;!&quot;            # anything but &quot;/&quot; (the game keeps / lines), no spaces
 cooldown_seconds = 3    # per player and command; admins and owners wait for nothing
 
 [everyone]
-commands = [&quot;help&quot;, &quot;strikes&quot;]
+commands = [&quot;help&quot;, &quot;strikes&quot;, &quot;respawn&quot;, &quot;calladmin&quot;, &quot;report&quot;, &quot;mods&quot;]
 
 [member]
 players = [&quot;&lt;64 hex characters&gt;&quot;]
@@ -5001,6 +5314,70 @@ Bravo
 1h30m | Be nice: no slurs, no cheating.
 </code></pre>
 <p>One message per line: how often, a bar, then the message as players read it (the first bar splits them, so the message may hold more). How often is one or more of a number and <code>s</code>, <code>m</code>, <code>h</code> or <code>d</code> (<code>90s</code>, <code>1h30m</code>; spaces and capitals don't matter), 60 s at least. Blank lines and lines starting with <code>#</code> are ignored, and a missing file is no messages. A line with no bar, no message, a time that isn't one or one under a minute is left out, named with its line (<code>intervalmessages.txt line 4 has no |: …</code>), and the others are said. Same encodings as <code>automod.txt</code> (a file that isn't UTF-8 keeps the messages it had). The one in Huragok's folder is said on every server; <code>SERVERS/&lt;name&gt;/intervalmessages.txt</code> only on that server. <code>init</code> writes the first (its notes, no messages), a new server (N, <code>new</code>) its own, and the 0.5.0 update step <code>0.5.0/interval-messages</code> both, once, for the servers in <code>servers_folder</code> (and <code>server_folder</code>) that have a <code>dedicated.toml</code>; a file that's there is never touched. Edits are picked up within 5 s.</p>
+<h3 id="discordtoml"><code>discord.toml</code></h3>
+<p>Every setting there is, each with its note: <code>templates/discord.toml</code> is what's known and what the default is. A setting it doesn't know, or one with an older name, is a warning; a wrong value falls back to its default with a warning. A file that can't be read leaves the bot off at the start; on a reload what's in force stays. Changes apply within seconds, with the bot signing in again only for what needs it (the token, the mode, a privileged intent). Every door (J, <code>/huragok setup</code>, a hand edit) ends in this file, with its comments kept (<code>tomledit</code>). Channels and roles are IDs, with the name as a note, or names Huragok replaces with IDs.</p>
+<div class='table'><table>
+<thead>
+<tr>
+<th>Table</th>
+<th>What it holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Top</td>
+<td><code>mode</code> (<code>off</code>, <code>webhook</code>, <code>bot</code>), <code>token</code>, <code>token_variable</code>, <code>guild</code>, <code>voice</code></td>
+</tr>
+<tr>
+<td><code>[ranks]</code></td>
+<td>Roles for <code>admin</code>, <code>moderator</code>, <code>probationary_moderator</code>, <code>member</code>; <code>owners</code> by user ID; <code>discord_administrators</code>, <code>owners_in_game</code>, <code>moderators_see_ids</code>, <code>timeout_suspends</code>; <code>[[ranks.scoped]]</code> blocks (<code>role</code>, <code>rank</code>, <code>servers</code>)</td>
+</tr>
+<tr>
+<td><code>[channels]</code></td>
+<td><code>status</code>, <code>info</code>, <code>games</code>; <code>staff</code>, <code>reports</code>, <code>alerts</code> (tickets); <code>logs</code>, <code>huragok-logs</code> (records); <code>console</code>. <code>reports</code> and <code>alerts</code> fall back on <code>staff</code>, <code>huragok-logs</code> on <code>logs</code> (<code>config.FALLBACKS</code>)</td>
+</tr>
+<tr>
+<td><code>[tickets]</code></td>
+<td><code>when_closed</code>, <code>stale_after_days</code>, <code>close_rank</code>, <code>buttons</code>, <code>threads</code>, <code>evidence_lines</code>, <code>evidence_minutes</code>, <code>record</code>, <code>case_numbers</code>, <code>colours</code></td>
+</tr>
+<tr>
+<td><code>[feeds]</code>, <code>[feed.&lt;name&gt;]</code></td>
+<td>What every feed shares (<code>servers</code>, <code>silent</code>, <code>style</code>, <code>public</code>, <code>also</code>, <code>merge_seconds</code>) and each feed's <code>enabled</code>, <code>webhook</code>, <code>persona</code> and its own: <code>moderation</code>, <code>requests</code>, <code>vergil</code>, <code>votes</code>, <code>alerts</code>, <code>servers</code>, <code>games</code>, <code>joins</code>, <code>watch</code>, <code>calls</code>, <code>content</code>, <code>audit</code></td>
+</tr>
+<tr>
+<td><code>[messages]</code></td>
+<td>A line for each kind of message, on one line: <code>channel</code>, <code>colour</code>, <code>post</code>, <code>ping</code>, and as wanted <code>silent</code>, <code>remove_after_minutes</code>, <code>stale_after_hours</code>, <code>closes_to</code>, <code>as</code>, <code>webhook</code>. The channel decides the shape (<code>config.SHAPES</code>)</td>
+</tr>
+<tr>
+<td><code>[colours]</code></td>
+<td>The names lines can use, each <code>"#RRGGBB"</code></td>
+</tr>
+<tr>
+<td><code>[status.*]</code>, <code>[notify]</code></td>
+<td><code>board</code>, <code>seeding</code>, <code>presence</code>, <code>bio</code>, <code>nickname</code>, <code>channel_names</code>, <code>topics</code>, <code>voice_status</code>; <code>/notify</code></td>
+</tr>
+<tr>
+<td><code>[console]</code></td>
+<td><code>typed</code> (its switch), <code>layout</code>, <code>channel</code>, <code>channels</code>, <code>server_prefix</code>, <code>remember_server</code>, <code>raw_rank</code>, <code>public</code>, <code>confirm</code>, <code>answers</code>, <code>long_answers</code>, <code>ignore_others</code>, <code>ignore_prefix</code>, <code>audit</code>, <code>clear_after_minutes</code>, <code>transcript</code>, <code>forget_server</code></td>
+</tr>
+<tr>
+<td><code>[answers]</code>, <code>[commands]</code></td>
+<td>How long what the bot says stays; <code>enabled</code>, <code>game_commands</code>, <code>staff_permission</code>, <code>names</code>, <code>hidden</code>, <code>power_rank</code>, <code>power_buttons</code>, <code>shown_as</code>, <code>public</code></td>
+</tr>
+<tr>
+<td><code>[reports]</code></td>
+<td><code>enabled</code>, <code>from</code>, <code>evidence_lines</code>, <code>threshold</code>, <code>threshold_minutes</code>, <code>buttons</code>, <code>right_click</code>, <code>thank_reporter</code>, <code>reporter_cooldown_seconds</code>, <code>most_at_once</code>, <code>tell_in_game</code>, <code>tell_reporter</code>, <code>acted_after_hours</code></td>
+</tr>
+<tr>
+<td><code>[appeals]</code>, <code>[contact]</code></td>
+<td><code>enabled</code>, <code>for</code>, <code>cooldown_days</code>, <code>questions</code>, <code>buttons</code>, <code>tell_outcome</code>, <code>lift_clears_strike</code>, <code>code_only</code>, <code>in_reason</code>; <code>enabled</code>, <code>channel</code>, <code>categories</code>, <code>thread_role</code>, <code>transcript</code>, <code>close_after_days</code>, <code>cooldown_minutes</code></td>
+</tr>
+<tr>
+<td><code>[notes]</code>, <code>[personas]</code>, <code>[text]</code>, <code>[limits]</code></td>
+<td>Notes and flags; the three names and pictures; any text reworded, by its key; floors on the timers and <code>logins_per_day</code></td>
+</tr>
+</tbody>
+</table></div>
 <h3 id="packages-packagesfolder">Packages: <code>PACKAGES/&lt;folder&gt;/</code></h3>
 <pre><code class="language-text">package.toml
 playlists/*.playlist.json

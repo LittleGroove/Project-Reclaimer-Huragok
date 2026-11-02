@@ -11,7 +11,7 @@ A package is a folder (PACKAGES/<folder>/ at the root; zipped to share):
 
     name = "Infection Night"
     description = "Halo 3 Infection on the classic maps"
-    author = "LilGremlin"
+    author = "Alice"
     version = 1
     needs_maps = ["Guardian", "The Pit"]     # Halo 3 maps the server must have in its game folder
     needs_campaign = false                   # the campaign missions too (`dedicated init --maps campaign`)

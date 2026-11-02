@@ -6,7 +6,7 @@ Names are grouped by where they come from:
                 event: chat, join, leave, refused, kick, ban, unban, pardon, mute,
                 unmute, vote, kill, control, phase, cheat, admin_added, admin_removed
   log.*         lines recognised in data/<server>/server.log
-  moderation.*  action (any warn/mute/kick/ban through the supervisor)
+  moderation.*  action (any warn/mute/kick/ban through the supervisor), seen (one it only saw the server announce)
   supervisor.*  the supervisor's own: started, stopping, part_disabled, part_enabled, commands_reloaded
   <part>.*      events a part emits for the others: automod.strike…
 """

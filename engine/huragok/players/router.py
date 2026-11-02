@@ -26,6 +26,7 @@ from ..core.background import background
 from ..core.commandsfile import HELP, PROBATION, ROLES, TITLES
 from ..core.events import Event, EventBus
 from ..core.part import CommandSpec
+from ..core.storage import acting
 from ..rcon import RconError
 from ..servers.state import Player, ServerState
 from .roles import Roles, role_name
@@ -44,10 +45,10 @@ WORD = re.compile(r"[a-z][a-z0-9_-]{0,31}")
 LINE_LIMIT = 120  # characters per private line; longer replies are split
 # What a probationary moderator runs as a moderator does: looking, never acting. Every other moderators' command that
 # names a player is a request (requests.py); one that names nobody isn't theirs until they're a moderator.
-LOOKING = {"players", "whois", "said", "kicks", "mutes", "rules", "roles", "health", "bannames", "novotes", "reports",
-           "strikes", "help"}
+LOOKING = {"players", "whois", "said", "kicks", "mutes", "rules", "roles", "health", "bannames", "novotes", "reports", "requests",
+           "strikes", "help", "mods", "bans"}
 # Where the player a command names ends, for a command that finds its own (!strike: a rule's name comes next).
-REQUEST_FOLLOWS = {"strike": "_strike_word"}
+REQUEST_FOLLOWS = {"strike": "_strike_word", "pardon": ""}
 
 
 def parse_command(text: str, prefix: str) -> tuple[str, str] | None:
@@ -121,7 +122,7 @@ class CommandCall:
     async def reply(self, text: str) -> None:
         """Private lines to the caller. One the console can't deliver (slow, or away) is logged and the rest
         dropped: a reply that didn't arrive isn't the command failing, so it never counts against its part."""
-        for line in wrap(text):
+        for line in ([text] if self.channel == "discord" else wrap(text)):  # a limit for game chat: Discord takes it whole
             try:
                 await self._tell(self.server, self.player.id, line)
             except RconError as error:
@@ -149,6 +150,10 @@ class Registered:
     spec: CommandSpec
     runner: PartRunner | None  # None: the router's own (!help)
     method: Callable[[CommandCall], Awaitable[Any]]
+
+
+async def _say_nothing(_server: str, _player_id: str, _text: str) -> None:
+    return None
 
 
 class CommandRouter:
@@ -205,7 +210,23 @@ class CommandRouter:
     def _available(self, registered: Registered) -> bool:
         if registered.spec.name in self.settings.permissions.off:
             return False
-        return registered.runner is None or registered.runner.enabled
+        if registered.runner is not None and not registered.runner.enabled:
+            return False
+        part = getattr(registered.method, "__self__", None)
+        return not registered.spec.when or part is None or bool(getattr(part, registered.spec.when)())
+
+    def picks_through(self, caller: str) -> Any:
+        """Several lists in one answer, one numbering through them all."""
+        return self.picks.adding(caller)
+
+    def pick_of(self, caller: str, number: int) -> Any:
+        """What @number means to them just now: an entry of their last list, or why not, as text."""
+        return self.picks.get(caller, number)
+
+    def command_there(self, name: str) -> bool:
+        """Whether this command can be used at all just now."""
+        registered = self.commands.get(self.aliases.get(name, name))
+        return registered is not None and self._available(registered)
 
     def _usable_by(self, registered: Registered, role: str) -> bool:
         return self._available(registered) and self.roles.allows(role, self.role_needed(registered))
@@ -267,14 +288,19 @@ class CommandRouter:
         else:
             registered.runner.submit(f"!{call.name}", lambda: self._run(registered, call))
 
-    async def _run(self, registered: Registered, call: CommandCall) -> None:
+    async def _run(self, registered: Registered, call: CommandCall) -> bool:
+        """Whether it ran: False if its guards stopped it, having said why."""
+        with acting(call.player.id):
+            return await self._running(registered, call)
+
+    async def _running(self, registered: Registered, call: CommandCall) -> bool:
         """A command that declares `player` gets them found first, with every guard (targets.py): no name, a name
         several players have, someone of the caller's role or above… answer the caller, and the command doesn't run."""
         spec = registered.spec
         if spec.player:
             if not call.text.strip():
                 await call.usage(spec)
-                return
+                return False
             if spec.words_after:
                 target, rest = await call.player_and_rest(scope=spec.player, acts=spec.acts, start=spec.start,
                                                           follows=self._follows(registered))
@@ -282,19 +308,20 @@ class CommandRouter:
                 target, rest = await call.find(call.text, scope=spec.player, start=spec.start), []
                 if target is not None and spec.acts and (why := outranked(call, target)):
                     await call.reply(why)
-                    return
+                    return False
             if target is None:
-                return
+                return False
             call.target, call.rest = target, rest
         await registered.method(call)
+        return True
 
-    async def _request(self, registered: Registered, call: CommandCall) -> None:
+    async def _request(self, registered: Registered, call: CommandCall) -> bool:
         """A probationary moderator's command: the player it names found with every guard (as if it ran), and then a
         request instead of the action."""
         spec = registered.spec
         if not call.text.strip():
             await call.usage(spec)
-            return
+            return False
         follows = self._follows(registered)
         if follows is None and call.name in REQUEST_FOLLOWS:
             part = registered.runner.part if registered.runner else None
@@ -303,18 +330,65 @@ class CommandRouter:
             target, rest = await call.find(call.text, scope="seen", start=spec.start), []
             if target is not None and (why := outranked(call, target)):
                 await call.reply(why)
-                return
+                return False
         else:
             # Someone who left can be asked about too: the request may be confirmed after they've gone.
             target, rest = await call.player_and_rest(scope="seen", acts=True, start=spec.start, follows=follows)
         if target is None or self.on_request is None:
-            return
+            return False
         await self.on_request(call, registered, target, rest)
+        return True
 
-    async def run_as(self, name: str, target: Player, words: list[str], *, server: str, player: Player, role: str,
-                     tell: Callable[[str, str, str], Awaitable[Any]]) -> str | None:
+    def every_command(self) -> list[tuple[CommandSpec, str]]:
+        """Every command and the role it needs now, but those commands.toml switches off: what Discord offers."""
+        return [(registered.spec, self.role_needed(registered)) for registered in self.commands.values() if registered.spec.name not in self.settings.permissions.off]
+
+    async def run_line(self, name: str, text: str, *, server: str, player: Player, role: str, tell: Callable[[str, str, str], Awaitable[Any]], prefix: str = "") -> str | None:
+        """A command typed somewhere other than in game (Discord), by someone with this rank: everything as if it had been, the guards, the finding of who it names, and a probationary moderator's
+        being a request. Their answers go through `tell`. None when it ran; else why it couldn't, which is empty if it's said why through `tell` already."""
+        registered = self.commands.get(self.aliases.get(name, name))
+        shown = prefix or self.prefix  # what it was typed with: / for a slash command
+        if registered is None or not self._available(registered):
+            return f"There's no {shown}{name} to run."
+        state = self.states.get(server)
+        if state is None:
+            return f"There's no server {server}."
+        call = CommandCall(server, player, role, registered.spec.name, split_words(text), text, "discord", state, tell, shown, states=self.states, history=self.history,
+                           role_of=lambda who: self.roles.highest_role(list(self.states.values()), who), picks=self.picks)
+        needed = self.role_needed(registered)
+        request = False
+        if role == PROBATION and needed == "moderator" and call.name not in LOOKING:
+            if not (registered.spec.player or call.name in REQUEST_FOLLOWS) or self.on_request is None:
+                return f"{shown}{call.name} is for moderators; on probation, the commands that name a player are requests."
+            request = True
+        elif not (self.roles.allows(role, needed) or (role == PROBATION and needed == "moderator")):
+            return f"{shown}{call.name} is for {role_plural(needed)} and up."
+        log.info("[%s] %s (%s) %s %s%s %s, from Discord", server, player.name, TITLES[role], "asked for" if request else "ran", shown, call.name, text)
+        ran = await self._request(registered, call) if request else await self._run(registered, call)
+        return None if ran else ""
+
+    def refuses(self, name: str, target: Player | None, *, server: str, player: Player, role: str) -> str:
+        """Why run_as or run_line would say no, asked before anyone fills in a form: "" if it wouldn't. On probation, what names a player is a request."""
+        registered = self.commands.get(self.aliases.get(name, name))
+        state = self.states.get(server)
+        if registered is None or not self._available(registered) or state is None:
+            return f"There's no {self.prefix}{name} to run here."
+        needed = self.role_needed(registered)
+        requested = role == PROBATION and needed == "moderator" and (registered.spec.player or name in REQUEST_FOLLOWS) and self.on_request is not None
+        looks = role == PROBATION and needed == "moderator" and registered.spec.name in LOOKING  # as they can in game
+        if not requested and not looks and not self.roles.allows(role, needed):
+            return f"{self.prefix}{name} is for {role_plural(needed)} and up."
+        if target is None:
+            return ""
+        call = CommandCall(server, player, role, registered.spec.name, [], "", "requests", state, _say_nothing, self.prefix, states=self.states, history=self.history,
+                           role_of=lambda who: self.roles.highest_role(list(self.states.values()), who), picks=self.picks)
+        return outranked(call, target)
+
+    async def run_as(self, name: str, target: Player | None, words: list[str], *, server: str, player: Player, role: str,
+                     tell: Callable[[str, str, str], Awaitable[Any]], looking: bool = False) -> str | None:
         """Run `name` on `target` for `player` (`role`), on `server`, as if they'd typed it there: a confirmed
-        request (requests.py). Their replies go through `tell`. None when it ran; else why it couldn't."""
+        request (requests.py), a button in Discord. Their replies go through `tell`. None when it ran; else why it
+        couldn't. `looking`: it acts on nobody, so anyone's rank will do. `target` None: a command that names nobody."""
         registered = self.commands.get(self.aliases.get(name, name))
         if registered is None or not self._available(registered):
             return f"there's no {self.prefix}{name} to run"
@@ -324,16 +398,18 @@ class CommandRouter:
         state = self.states.get(server)
         if state is None:
             return f"there's no server {server}"
-        call = CommandCall(server, player, role, registered.spec.name, [target.id, *words],
-                           " ".join([target.id, *words]), "requests", state, tell, self.prefix, states=self.states,
+        args = [target.id, *words] if target is not None else list(words)
+        call = CommandCall(server, player, role, registered.spec.name, args,
+                           " ".join(args), "requests", state, tell, self.prefix, states=self.states,
                            history=self.history,
                            role_of=lambda who: self.roles.highest_role(list(self.states.values()), who),
                            picks=self.picks)
-        if why := outranked(call, target):
+        if target is not None and not looking and (why := outranked(call, target)):
             return why
-        if registered.spec.player:
+        if registered.spec.player and target is not None:
             call.target, call.rest = target, list(words)
-        await registered.method(call)
+        with acting(player.id):
+            await registered.method(call)
         return None
 
     @staticmethod

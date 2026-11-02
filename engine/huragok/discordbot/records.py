@@ -6,12 +6,15 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import secrets
 import time
 from pathlib import Path
 from typing import Any
 
 from ..core.files import write_atomic
+
+log = logging.getLogger(__name__)
 
 STATE_FILE = "discord-state.json"
 CLAIM_FILE = "discord-claim.json"
@@ -62,8 +65,8 @@ def new_code(records: Path) -> str:
     return shown
 
 
-def use_code(records: Path, typed: str) -> bool:
-    """True once: the code is gone after it's used, after CLAIM_TRIES wrong ones, or when it's out of time."""
+def use_code(records: Path, typed: str, who: str = "") -> bool:
+    """True once: the code is gone after it's used, after CLAIM_TRIES wrong ones from one person, or when it's out of time. Per person, so anyone in the Discord can't burn it for whoever it's for."""
     path = records / CLAIM_FILE
     data = _read(path)
     code = str(data.get("code") or "")
@@ -75,11 +78,13 @@ def use_code(records: Path, typed: str) -> bool:
     if hmac.compare_digest(typed.replace("-", "").replace(" ", "").upper().encode("utf-8"), code.encode("utf-8")):
         path.unlink(missing_ok=True)
         return True
-    data["tries"] = int(data.get("tries") or 0) + 1
-    if data["tries"] >= CLAIM_TRIES:
-        path.unlink(missing_ok=True)
-    else:
-        _write(path, data)
+    tries = {str(key): int(value) for key, value in dict(data.get("by") or {}).items()}
+    tries[who] = tries.get(who, 0) + 1
+    log.warning("A wrong claim code from %s (%s of %s)", who or "someone", tries[who], CLAIM_TRIES)
+    if tries[who] > CLAIM_TRIES:
+        return False  # theirs have run out, and it's still good for whoever it's for
+    data["by"] = tries
+    _write(path, data)
     return False
 
 

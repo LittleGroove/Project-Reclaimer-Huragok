@@ -259,7 +259,7 @@ HEADER = """\
 #              of their own yet; what they get is that no vote can kick them.
 #   probationary moderator  a member on probation as a moderator (made one in game
 #              with !promote): moderators' commands, but each kick, mute, strike…
-#              is a request a moderator or admin confirms (!reports, !confirm,
+#              is a request a moderator or admin confirms (!requests, !confirm,
 #              !deny) before it happens. Listed under [member], with a note.
 #   moderator  the players you list below. The game itself doesn't know about
 #              moderators, so what they can do is exactly what you list here.

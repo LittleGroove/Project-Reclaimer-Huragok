@@ -47,6 +47,7 @@ from .updates.workshop import WorkshopUpdateService
 from .vergil import Vergil
 
 log = logging.getLogger(__name__)
+SETTINGS_LOOK_SECONDS = 30.0
 
 RELAUNCH_WAIT = 1800.0  # a new version waits at most this long for servers part way through a restart
 RELAUNCH_POLL = 2.0
@@ -56,6 +57,7 @@ RESTART_SECONDS = 5.0  # a background task that failed runs again after this lon
 class Huragok:
     def __init__(self, settings: Settings, *, storage: Storage | None = None, recent: RecentLog | None = None) -> None:
         self.settings = settings
+        self._settings_read = self._settings_changed_at()
         self.bus = EventBus()
         self.storage = storage or Storage(settings.database)
         self.recent = recent  # the window's recent lines
@@ -90,6 +92,8 @@ class Huragok:
 
         for server in list(settings.servers):
             self.superintendent.add_server(server, listed=True)
+        for said in ("supervisor.part_disabled", "supervisor.part_enabled"):
+            self.bus.subscribe(said, lambda _event: self.refresh_problems())
         self.refresh_problems()
 
     def tool(self) -> Any:
@@ -100,7 +104,27 @@ class Huragok:
         """What the dashboard shows in red: the servers' setup, the relay's, settings that do nothing now, and what a
         part says of itself (the Discord bot's)."""
         parts = [line for runner in self.runners.values() for line in getattr(runner.part, "problems", list)()]
-        self.problems = [*self.superintendent.problems(), *self.vergil.problems(), *self.settings.retired, *parts]
+        off = [f"{runner.name} is switched off{'' if runner.for_good else ' for now'}: {runner.disabled_reason}" for runner in self.runners.values() if not runner.enabled and runner.disabled_reason]
+        self.problems = [*self.superintendent.problems(), *self.vergil.problems(), *self.settings.retired, *parts, *off, *self._settings_waiting()]
+
+    def _settings_changed_at(self) -> float:
+        try:
+            return self.settings.path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _settings_waiting(self) -> list[str]:
+        """settings.toml is read as Huragok starts: edited since, it looks done and isn't."""
+        return ["settings.toml has changed since Huragok started: it takes effect when Huragok starts again (the servers keep running)"] if self._settings_changed_at() > self._settings_read else []
+
+    async def _watch_settings(self) -> None:
+        said = False
+        while True:
+            await asyncio.sleep(SETTINGS_LOOK_SECONDS)
+            waiting = bool(self._settings_waiting())
+            if waiting != said:
+                said = waiting
+                self.refresh_problems()
 
     # Parts -------------------------------------------------------------------------------------------------
 
@@ -343,6 +367,7 @@ class Huragok:
             console.start(asyncio.get_running_loop())
         for name, runner in self.runners.items():
             self.spawn(name, runner.run, restart=False)
+        self.spawn("settings.toml's date", self._watch_settings)
         self.bus.emit("supervisor.started", None, version=__version__, parts=list(self.runners))
         try:
             await self._stop.wait()

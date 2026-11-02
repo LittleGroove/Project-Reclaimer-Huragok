@@ -293,6 +293,8 @@ def _tell_discord(settings: Settings, why: str, wait: float) -> None:
     if not address:
         return
     config = discord_config.load(settings.home / discord_config.FILE)
+    if config.mode == "off":  # off means nothing goes to Discord
+        return
     payload = {**discord_speakers.message(discord_speakers.say(config, "launcher.stopped", why=why, wait=f"{wait:.0f}"),
                                           silent=False),
                **discord_speakers.speaker(config, "superintendent")}

@@ -56,6 +56,7 @@ faulthandler_exit_on_timeout = true
 markers = [
     "slow: starts real processes (fake servers, start.cmd, several Pythons); skip them with -m \"not slow\"",
     "asyncio_errors: the test makes asyncio log an error on purpose (otherwise that fails the test)",
+    "discord_errors: the test makes the Discord bot log an error on purpose (otherwise that fails the test)",
 ]
 # An exception nobody could catch (in __del__, a callback, a thread) and a coroutine never awaited fail the test.
 filterwarnings = [

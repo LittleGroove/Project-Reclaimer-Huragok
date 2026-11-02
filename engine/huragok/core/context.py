@@ -42,6 +42,14 @@ class PartContext:
         settings = self._huragok.settings.parts.get(part)
         return settings.options.get(key, default) if settings is not None else default
 
+    def server_manager(self, server: str) -> Any:
+        """What starts, stops and restarts a server (a person asking from outside the game: Discord), or None."""
+        return self._huragok.superintendent.fleet.managers.get(server)
+
+    async def request(self, verb: str, options: dict[str, Any]) -> Any:
+        """What Huragok answers itself: is there an update, and so on."""
+        return await self._huragok.request(verb, options)
+
     def running(self, part: str) -> bool:
         """Whether a part is switched on and running now (automod keeps the mute list, say)."""
         runner = self._huragok.runners.get(part)

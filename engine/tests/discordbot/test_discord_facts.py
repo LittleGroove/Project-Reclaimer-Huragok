@@ -30,6 +30,14 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDiscord]:
 # rest.py -------------------------------------------------------------------------------------------------------
 
 
+def test_what_a_mistaken_long_wait_looked_like_is_never_read_again(fake: FakeDiscord) -> None:
+    """Going straight at the address with no version, as nothing of Huragok's does, still answers as the real one did."""
+    hook = rest.create_webhook(TOKEN, STAFF_CHANNEL, "Mine")
+    with pytest.raises(rest.SlowDown) as caught:
+        rest.send("POST", hook["url"], body={"content": "hi"})
+    assert caught.value.retry_after == 1648 and fake.unversioned == 1
+
+
 def test_a_bad_token_is_said_and_never_repeated_in_the_error(fake: FakeDiscord) -> None:
     with pytest.raises(rest.BadToken) as caught:
         rest.bot_user("not.the.token")
@@ -37,14 +45,42 @@ def test_a_bad_token_is_said_and_never_repeated_in_the_error(fake: FakeDiscord) 
 
 
 def test_slow_down_says_how_long_and_whom(fake: FakeDiscord) -> None:
-    fake.refuse_next.append(("/users/@me", 429, {"message": "slow", "retry_after": 2.5, "global": False}, {}))
+    fake.slow_down("/users/@me")  # word for word as the real Discord said it
     with pytest.raises(rest.SlowDown) as caught:
         rest.bot_user(TOKEN)
-    assert caught.value.retry_after == 2.5 and caught.value.everything is False
+    assert caught.value.retry_after == 0.387 and caught.value.everything is False
     fake.refuse_next.append(("/users/@me", 429, {"message": "slow", "retry_after": 9, "global": True}, {"Retry-After": "9"}))
     with pytest.raises(rest.SlowDown) as caught:
         rest.bot_user(TOKEN)
     assert caught.value.retry_after == 9 and caught.value.everything is True
+
+
+def test_a_webhooks_address_as_discord_gives_it_goes_to_the_version_we_use(fake: FakeDiscord) -> None:
+    """With no version, a wait of 1.6 s reads as 27 minutes (plans/discord-testing.md)."""
+    hook = rest.create_webhook(TOKEN, STAFF_CHANNEL, "Mine")
+    assert "/v10/" not in hook["url"]
+    reply = rest.execute_webhook(hook["url"], {"content": "hi"})
+    assert reply.data["content"] == "hi" and fake.unversioned == 0
+    assert rest.webhook_info(hook["url"])["name"] == "Mine" and fake.unversioned == 0
+    assert rest.delete_webhook_message(hook["url"], reply.data["id"]).data is None and fake.posted == [] and fake.unversioned == 0
+    fake.slow_down("/webhooks/")
+    with pytest.raises(rest.SlowDown) as caught:
+        rest.execute_webhook(hook["url"], {"content": "too fast"})
+    assert caught.value.retry_after == 0.387 and fake.unversioned == 0
+
+
+@pytest.mark.parametrize("given", ["https://discord.com/api/webhooks/123/abc-DEF", "https://discordapp.com/api/v6/webhooks/123/abc-DEF",
+                                   "https://canary.discord.com/api/v9/webhooks/123/abc-DEF/"])
+def test_however_an_address_is_written_it_goes_to_one_place(given: str) -> None:
+    assert rest._webhook(given) == f"{rest.API}/webhooks/123/abc-DEF"
+
+
+def test_reading_back_a_webhooks_post_has_no_text_without_message_content(fake: FakeDiscord) -> None:
+    fake.flags = 0
+    hook = rest.create_webhook(TOKEN, STAFF_CHANNEL, "Mine")
+    sent = rest.execute_webhook(hook["url"], {"content": "hi", "username": "Vergil", "flags": 4096})
+    seen = rest.call("GET", f"/channels/{STAFF_CHANNEL}/messages/{sent.data['id']}", TOKEN)
+    assert sent.data["content"] == "hi" and seen["content"] == "" and seen["author"]["username"] == "Vergil" and seen["flags"] == 4096
 
 
 def test_refusals_and_trouble_are_told_apart(fake: FakeDiscord) -> None:

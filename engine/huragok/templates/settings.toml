@@ -170,7 +170,7 @@ dry_run = true
 words = "automod.txt"
 names = "names.txt"                  # banned names: !strike <player> name adds one
 forget_after_days = 0                # strikes older than this stop counting; 0: never
-name = "Vergil"                      # players read "removed by Vergil"
+name = "Vergil"                      # players read "kicked by Vergil"
 exempt_roles = ["admin", "owner"]    # never acted on (roles as in commands.toml; "player" is everyone)
 check_names = true                   # kick names with a word from automod.txt in them (names.txt always applies)
 # How a word from automod.txt catches a player's name. "anywhere": anywhere in
@@ -187,6 +187,9 @@ name_match = "anywhere"
 # stay on their server; Huragok only writes them on the player's record. false:
 # Huragok's stay on their server too. Each server's own Vergil is on its page in D.
 across_servers = true
+# The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick
+# is a ban in all but name. Admins and owners have no limit.
+moderators_kick_at_most = "1d"
 cooldown_seconds = 10                # lines this close together count as one strike
 split_seconds = 10                   # a word split over lines this close together is caught
 

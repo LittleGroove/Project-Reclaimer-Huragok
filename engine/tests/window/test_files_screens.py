@@ -88,6 +88,7 @@ def test_typed_values_are_read_as_the_file_takes_them() -> None:
     assert hs.parse(hs.find("watchdog", "slow_share"), ".5") == 0.5
     assert hs.parse(hs.find("restarts", "backoff_seconds"), "5, 10; 30") == [5, 10, 30]
     assert hs.parse(hs.find("restarts", "daily_restart"), "4:05") == "04:05"
+    assert hs.parse(hs.find("automod", "moderators_kick_at_most"), "7d") == "7d"  # a length, not a time of day
     assert hs.parse(hs.find("process", "command"), 'wine "C:/Program Files/x.exe" run') == \
         ["wine", "C:/Program Files/x.exe", "run"]
     for setting, text, why in ((hs.find("restarts", "max_failures"), "0", "between 1 and 100"),
@@ -191,7 +192,7 @@ def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> 
     assert mean is not None and line_of(mean) == "meanword | 1d, 3d, 7d, 8 | 5 | | mean"
     rule = parse_line("badword, -badwordy | 1d, 7d | 2, 1h | 3 | slurs", 1)
     assert rule is not None and line_of(rule) == "badword, -badwordy | 1d, 7d | 2, 1h | 3 | slurs"
-    assert ladder(rule) == ["1st: muted for 1 day", "2nd: muted for 7 days", "3rd: removed for 1 hour",
+    assert ladder(rule) == ["1st: muted for 1 day", "2nd: muted for 7 days", "3rd: kicked for 1 hour",
                             "4th: banned for good"]
     assert line_of(parse_line("w | 1d | 1h", 1)) == "w | 1d | 1, 1h"  # when the kicks start, written out
     assert ladder(parse_line("w | 1d, 3d", 1)) == ["1st: muted for 1 day", "2nd and after: muted for 3 days"]
@@ -332,9 +333,9 @@ def test_d_adds_vergils_rules_and_banned_names(tmp_path: Path, run) -> None:
     text = text_of(terminal)
     rules = read_rules(path.parent / "automod.txt")
     assert [line_of(r) for r in rules] == ["badword, worseword | | | | slurs", "rudeword | 1d, perm | 3, 30m"]
-    assert "1st: muted for 1 day" in text and "3rd: removed for 1 day" in text and "4th: banned for good" in text
+    assert "1st: muted for 1 day" in text and "3rd: kicked for 1 day" in text and "4th: banned for good" in text
     assert "Added." in text and "'b4dw0rd' is caught by slurs" in text and "Saved." in text
-    assert "2nd and 3rd: muted for good" in text and "4th and after: removed for 30 minutes" in text
+    assert "2nd and 3rd: muted for good" in text and "4th and after: kicked for 30 minutes" in text
     assert "has no name, so its strikes are kept under rule2" in text
     assert read_names(path.parent / "names.txt") == []
     assert "BadName is banned" in text and "the banned name 'BadName'" in text and "BadName can be used again." in text
@@ -457,7 +458,7 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
     assert "A number, 0 or more." in text and "at least 2, so every mute and kick comes first" in text
     assert "A number, 2 or more." in text and "Not name: !strike <player> name bans a player's name." in text
     assert "The line: spam | 1d, 3d | 1, 2h | 2" in text  # Enter: the least the ban can be
-    assert "2nd: removed for 2 hours, then muted for 3 days" in text and "3rd: banned for good" in text
+    assert "2nd: kicked for 2 hours, then muted for 3 days" in text and "3rd: banned for good" in text
     assert "it would catch everyone" in text and "That name is fine." in text
 
 

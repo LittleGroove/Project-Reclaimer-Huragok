@@ -4,7 +4,7 @@
   automod    the word list, automod.txt: removes players for the words on it
   watchdog   notices a struggling server and restarts it at a good moment
   eventlog   every event as JSON, to see what the server sends
-  tempdiscord  temporary (0.5.2 until 0.6.0): what the Discord bot and players' stats will need (always on)
+  tempdiscord  temporary (from 0.5.2 until a later version brings stats): what players' stats will need (always on)
   messages   interval messages, from intervalmessages.txt: for every server, and each server's own (always on)
   discord    the Discord bot; its settings are discord.toml, its switch `mode` there (always on)
 

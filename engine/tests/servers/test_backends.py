@@ -95,6 +95,9 @@ def test_two_servers_run_crash_and_are_adopted(tmp_path: Path, run) -> None:
             assert result.ok and name == TWO
             await wait_for(lambda: managers[TWO].phase == "idle", 15)
             assert not alive(saved[TWO]["pid"])
+            assert sup.runners["watchdog"].part.summary(TWO) == "stopped"  # how it is now: this read "healthy, RCON 1 ms" for hours
+            row = next(row for row in sup.superintendent.fleet.rows() if row["name"] == TWO)
+            assert row["rcon_ms"] is None and row["status_age"] is None
             assert "All servers stopped" in (settings.logs / "console-beta-server.log").read_text(encoding="utf-8")
             assert managers[ONE].phase == "running" and alive(pid_one)
             assert managers[TWO].record.wanted == "stopped"

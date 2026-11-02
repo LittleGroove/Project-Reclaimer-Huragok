@@ -22,6 +22,7 @@ from ...core.events import Event
 from ...core.part import command, on
 from ...core.text import is_player_id
 from ...servers.state import Player
+from ..ledger import is_housekeeping, plain_reason, shown_kind
 from ..router import CommandCall
 from ..targets import ago, ask, named
 from ..who import acting_name, through_console, who
@@ -29,6 +30,7 @@ from .base import CommandsBase
 
 KINDS_SHOWN = ("ban", "kick", "mute", "warn")  # what a record counts; lifts (unban, unmute, pardon) are listed only
 RECENT, MOST = 5, 15  # actions !whois lists, and at most
+NOTES_SHOWN = 3  # staff's notes !whois lists, the latest
 READ_SECONDS = 4.0  # !whois waits this long at most for a server's ban list
 STRIKE_IN = re.compile(r"\(([^()]*strike \d+[^()]*)\)")  # "(slurs, strike 1 of 3)" in Vergil's message
 
@@ -55,7 +57,9 @@ def _seconds(value: Any) -> float | None:
 
 def label(row: Any) -> str:
     """How it was given: !kick, /ban, Vergil, the console ("" for a vote's: "by a vote" says it)."""
-    source, kind = row["source"], row["kind"]
+    source, kind = row["source"], shown_kind(row["kind"], row["duration"])
+    if source == "automod" and row["by_id"]:  # a moderator's strike: it's Vergil's ladder, and their doing
+        return "a strike"
     return {"commands": f"!{kind}", "in game": f"/{kind}", "automod": "Vergil", "vote": "",
             "console": f"console {kind}"}.get(source, f"{source} {kind}")
 
@@ -117,7 +121,15 @@ class HistoryCommands(CommandsBase):
     @on("rcon.unban")
     async def _history_unban(self, event: Event) -> None:
         target = str(event.get("target") or "").strip()
-        self._history_seen(event, "unban", target=target.lower() if is_player_id(target) else target, name=target)
+        lowered = target.lower() if is_player_id(target) else target
+        if self._across_echo(event.server, "unban", lowered, event):
+            return  # passed on from another server: that one's on the record
+        known = self.ctx.players.get(lowered) if is_player_id(target) else None
+        if not is_player_id(target):  # the console says what was typed: a name, if it's one player's, is that player, or their card goes on saying banned
+            found = self.ctx.players.find(target)
+            if len(found) == 1:
+                known, lowered = found[0], str(found[0].id).lower()
+        self._history_seen(event, "unban", target=lowered, name=known.last_name if known else target)
 
     # The rap sheet ------------------------------------------------------------------------------------------------
 
@@ -165,8 +177,7 @@ class HistoryCommands(CommandsBase):
         # kick.
         rows = [r for r in self.ctx.db.query(
             "SELECT * FROM actions WHERE target_id = ? AND dry_run = 0 AND ok = 1 ORDER BY time DESC", (player_id,))
-            if not str(r["evidence"] or "").startswith(("still muted:", "kicked on "))
-            and not (r["source"] == "automod" and r["kind"] == "pardon")]
+            if not is_housekeeping(r["evidence"]) and not (r["source"] == "automod" and r["kind"] == "pardon")]
 
         lines = [self._whois_who(call, record, player_id)]
         if len(record.names) > 1:
@@ -176,11 +187,11 @@ class HistoryCommands(CommandsBase):
         counted = [r for r in rows if r["kind"] in KINDS_SHOWN]
         if counted:
             kinds = ", ".join(f"{n} {kind}{'s' if n != 1 else ''}" for kind in KINDS_SHOWN
-                              if (n := sum(r["kind"] == kind for r in counted)))
+                              if (n := sum(shown_kind(r["kind"], r["duration"]) == kind for r in counted)))
             ways: dict[str, int] = {}
             for row in counted:
-                way = {"commands": "by !", "in game": "by /", "automod": "by Vergil", "vote": "by vote",
-                       "console": "by console"}.get(row["source"], f"by {row['source']}")
+                way = "by a strike" if row["source"] == "automod" and row["by_id"] else {"commands": "by !", "in game": "by /", "automod": "by Vergil", "vote": "by vote",
+                                                                                         "console": "by console"}.get(row["source"], f"by {row['source']}")
                 ways[way] = ways.get(way, 0) + 1
             lines.append(f"Record: {kinds} ({', '.join(f'{n} {way}' for way, n in ways.items())})")
         else:
@@ -189,15 +200,20 @@ class HistoryCommands(CommandsBase):
             lines.append("Strikes: " + strikes)
         if probation := self.probation_record(player_id):  # requests.py
             lines.append(probation)
+        for flag in self.ctx.players.flags(player_id):
+            lines.append(f"Flagged {flag['flag']} by {flag['by']}" + (f": {flag['why']}" if flag["why"] else ""))
+        for note in self.ctx.players.notes(player_id)[:NOTES_SHOWN]:
+            lines.append(f"Note by {note['by']}: {note['text']}")
         for row in rows[:shown]:
             when = time.strftime("%m-%d %H:%M", time.localtime(row["time"]))
             reason = str(row["reason"] or "")
             if row["source"] == "automod":  # its message to the player: the strike in it, or what it acted on
                 found = STRIKE_IN.search(reason)
-                reason = found.group(1) if found else str(row["evidence"] or reason)[:80]
+                written = str(row["evidence"] or "").partition(": ")[2] if row["by_id"] else ""  # what the moderator who gave it wrote
+                reason = (found.group(1) if found else str(row["evidence"] or reason)[:80]) + (f": {written}" if written else "")
             length = shown_time(row["duration"])
             how = label(row)
-            lines.append(f"{when} {row['server']}: {row['kind']}" + (f" {length}" if length else "")
+            lines.append(f"{when} case {row['number']} {row['server']}: {shown_kind(row['kind'], row['duration'], row['reason'])}" + (f" {length}" if length else "")
                          + f" by {row['by']}" + (f" ({how})" if how else "") + (f": {reason}" if reason else ""))
         if len(rows) > shown:
             lines.append(f"…{len(rows) - shown} older: {call.prefix}whois {record.last_name} {min(len(rows), MOST)}")
@@ -250,8 +266,9 @@ class HistoryCommands(CommandsBase):
         bits: list[str] = []
         everywhere = self.every_server("ban", player_id)[-1:] if self._across() else []
         for row in everywhere:
-            bits.append(f"banned on every server, {left(row['expires'])} (by {row['by']}"
-                        + (f": {row['reason']}" if row["reason"] else "") + ")")
+            reason = plain_reason(row["reason"])
+            bits.append(("kicked off" if row["expires"] else "banned on") + f" every server, {left(row['expires'])} (by {row['by']}"
+                        + (f": {reason}" if reason else "") + ")")
 
         async def read(server: str) -> tuple[str, list[dict[str, Any]] | None]:
             try:
@@ -276,7 +293,8 @@ class HistoryCommands(CommandsBase):
                 key = (left(entry.get("expires")), f"{how}by {who(entry.get('banned_by'))}", str(entry.get("reason") or ""))
                 same.setdefault(key, []).append(server)
         for (time_left, by, reason), servers in same.items():
-            bits.append(f"banned on {', '.join(servers)}, {time_left} ({by}" + (f": {reason}" if reason else "") + ")")
+            reason = plain_reason(reason)
+            bits.append(("banned on" if time_left == "for good" else "kicked off") + f" {', '.join(servers)}, {time_left} ({by}" + (f": {reason}" if reason else "") + ")")
         for server in sorted(unread):  # stopped, or its list didn't answer: what the record says was last done there
             rows = self.ctx.db.query("SELECT * FROM actions WHERE target_id = ? AND server = ? AND kind IN ('ban', "
                                      "'unban') AND ok = 1 AND dry_run = 0 ORDER BY time DESC LIMIT 1",
@@ -292,8 +310,9 @@ class HistoryCommands(CommandsBase):
             time_left = "for good" if not length else (f"{ago(ban['time'] + seconds - now)} left" if seconds
                                                        else f"for {length}")
             how = "/ban " if ban["source"] == "in game" else ""
-            bits.append(f"banned on {server}, {time_left} ({how}by {ban['by']}"
-                        + (f": {ban['reason']}" if ban["reason"] else "") + f"; from the record: {server}'s list "
+            reason = plain_reason(ban["reason"])
+            bits.append(("kicked off" if length else "banned on") + f" {server}, {time_left} ({how}by {ban['by']}"
+                        + (f": {reason}" if reason else "") + f"; from the record: {server}'s list "
                         "can't be read now)")
         return bits
 

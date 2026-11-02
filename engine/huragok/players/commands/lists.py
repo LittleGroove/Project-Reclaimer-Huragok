@@ -18,8 +18,10 @@ from typing import Any
 
 from ...core.events import Event
 from ...core.part import command, on
+from ...core.text import TIME, seconds_of
 from ...rcon import ban_list
 from ...servers.state import Player
+from ..ledger import KICK_LIFTED, plain_reason
 from ..router import CommandCall
 from ..targets import FULL_ID, PICK, Candidate, ago, ask, offer, plain
 from ..who import from_console, who
@@ -54,10 +56,12 @@ class Kick:
 def ban_note(entry: dict[str, Any], now: float) -> str:
     at = entry.get("banned_at")
     at = at / 1000 if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 1e11 else at
-    note = "banned" + (f" {ago(now - at)} ago" if isinstance(at, (int, float)) and at else "")
-    note += f" by {who(entry.get('banned_by'))}" if entry.get("banned_by") else ""
-    note += f": {entry['reason']}" if entry.get("reason") else ""
     expires = entry.get("expires")
+    timed = isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0  # one with a time is a kick, whatever the server's list calls it
+    note = ("kicked" if timed else "banned") + (f" {ago(now - at)} ago" if isinstance(at, (int, float)) and at else "")
+    note += f" by {who(entry.get('banned_by'))}" if entry.get("banned_by") else ""
+    reason = plain_reason(entry.get("reason"))
+    note += f": {reason}" if reason else ""
     if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0:
         expires = expires / 1000 if expires > 1e11 else expires
         note += f"; {ago(expires - now)} left" if expires > now else "; running out"
@@ -131,9 +135,9 @@ class ListCommands(CommandsBase):
             await call.reply("Nobody is banned" + (f" with '{call.text.strip()}' in their name." if call.text.strip()
                                                    else " on this server's list."))
             return
-        lines = await offer(call, entries[:LISTED])
+        lines = await offer(call, entries[:LISTED] if call.channel != "discord" else entries)
         more = (f"…and {len(entries) - LISTED} more: {call.prefix}bans <name> narrows it."
-                if len(entries) > LISTED else "")
+                if len(entries) > LISTED and call.channel != "discord" else "")
         await call.reply("\n".join([*lines, more, f"{call.prefix}unban @number lifts one; {call.prefix}banall @number "
                                                   "puts one on every server."]))
 
@@ -222,13 +226,26 @@ class ListCommands(CommandsBase):
         return [k for k in reversed(self._kicks_list())
                 if now - k.time < KICKS_KEPT and (server is None or k.server == server)]
 
+    def _timed_kicks(self) -> list[Kick]:
+        """Kicks with a time: on Huragok's list as timed bans, for every server."""
+        return [Kick(row["time"], row["server"] or "", row["target"], row["name"] or row["target"][:8], row["by"] or "", row["reason"] or "", row["expires"] - row["time"], True, True)
+                for row in self.every_server("ban") if row["expires"]]
+
+    def _kick_running(self, target: str) -> str:
+        """How long a kick with a time was given for, if that's the last word on them and it's still running; "" if not. It's the ledger's, which holds with across_servers off too."""
+        rows = self.ctx.db.query("SELECT kind, duration, time FROM actions WHERE target_id = ? AND kind IN ('ban', 'unban') AND ok = 1 AND dry_run = 0 ORDER BY number DESC LIMIT 1",
+                                 (target.lower(),))
+        duration = str(rows[0]["duration"] or "") if rows and rows[0]["kind"] == "ban" else ""
+        return duration if TIME.fullmatch(duration) and time.time() < rows[0]["time"] + seconds_of(duration) else ""
+
     async def _kick_entries(self, call: CommandCall) -> list[Candidate]:
         """This server's kicks, and the ones through Huragok on another server keeping them off this one too."""
         now = time.time()
         across = bool(self.ctx.part_option("automod", "across_servers", True))
         elsewhere = [k for k in self.recent_kicks() if across and k.server != call.server and k.through_console
                      and k.time + k.seconds > now]
-        return [k.candidate(now, call.server) for k in self.recent_kicks(call.server) + elsewhere]
+        timed = [k for k in self._timed_kicks() if not any(other.id == k.id for other in [*self.recent_kicks(call.server), *elsewhere])]
+        return [k.candidate(now, call.server) for k in self.recent_kicks(call.server) + elsewhere + timed]
 
     @command("kicks", help="Who's been kicked lately (here, or off every server by a ! kick), with who and why; "
                            "@numbers for !pardon", role="moderator")
@@ -251,6 +268,12 @@ class ListCommands(CommandsBase):
             return
         target = await self._listed(call, text, self._kick_entries)
         if not target:
+            return
+        if running := self._kick_running(target):  # the server's timed ban underneath, so its unban, at a pardon's rank: it's still a kick. What a moderator could have given, they can lift
+            if too_long := self.kick_too_long(call.role, running):
+                await call.reply(too_long.replace("an admin can make it longer", "an admin can lift a longer one"))
+                return
+            await self._done(call, await self.ctx.moderation.unban(call.server, target, reason=KICK_LIFTED, by=call.player.name))
             return
         # A kick through Huragok keeps them off every server: pardoned where it was given, wherever this is typed.
         lifted = await self._pardon_elsewhere(call.server, target, call.player.name)

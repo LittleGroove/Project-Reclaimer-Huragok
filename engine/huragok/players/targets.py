@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
-from ..core.commandsfile import ROLES
+from ..core.commandsfile import PROBATION, ROLES
 from ..core.text import PLAYER_ID, lookalike
 from ..servers.state import Player
 from .roles import a_role
@@ -114,9 +116,28 @@ class Picks:
 
     def __init__(self) -> None:
         self._lists: dict[str, tuple[float, list[Candidate]]] = {}
+        self._adding: set[str] = set()
 
-    def offer(self, caller: str, entries: list[Candidate]) -> None:
+    @contextmanager
+    def adding(self, caller: str) -> Iterator[None]:
+        """Each server's list in one answer: one numbering through them all, and someone they all name once. Without it @1 would mean the last server's, whichever one it was read from."""
+        self._lists.pop(caller, None)
+        self._adding.add(caller)
+        try:
+            yield
+        finally:
+            self._adding.discard(caller)
+
+    def offer(self, caller: str, entries: list[Candidate]) -> list[tuple[int, Candidate]]:
+        """Each entry with its number."""
+        if caller in self._adding and caller in self._lists:
+            have = self._lists[caller][1]
+            known = {entry.id or entry.target or entry.name for entry in have}
+            fresh = [entry for entry in entries if (entry.id or entry.target or entry.name) not in known]
+            self._lists[caller] = (time.monotonic(), have + fresh)
+            return list(enumerate(fresh, len(have) + 1))
         self._lists[caller] = (time.monotonic(), list(entries))
+        return list(enumerate(entries, 1))
 
     def get(self, caller: str, number: int) -> Candidate | str:
         """The entry, or why there's none."""
@@ -231,7 +252,8 @@ async def ask(call: CommandCall, about: str, found: list[Candidate], *, alike: b
         else:
             n += 1
             handle = f"@{n}"
-        items.append(c.describe(handle, _role(call, c)))
+        # A plain player asking (!report) sees names and how to pick: others' ranks, mutes and IDs aren't theirs.
+        items.append(c.describe(handle, _role(call, c)) if ROLES.index(call.role) >= ROLES.index(PROBATION) else f"{handle} {c.name}")
     more = f" and {len(found) - LISTED} more" if len(found) > LISTED else ""
     use = "#number" if not away else "@number" if len(away) == len(shown) else "#number or @number"
     if alike:
@@ -391,7 +413,5 @@ async def player_and_rest(call: CommandCall, text: str | None = None, *, scope: 
 
 async def offer(call: CommandCall, entries: list[Candidate]) -> list[str]:
     """A list's entries numbered @1, @2… for the caller (ten minutes), each described: for !bans, !mutes, !kicks."""
-    if call.picks is not None:
-        call.picks.offer(call.player.id, entries)
-    return [c.describe(f"@{n}" + (f" #{c.number}" if c.number else ""), _role(call, c))
-            for n, c in enumerate(entries, 1)]
+    numbered = call.picks.offer(call.player.id, entries) if call.picks is not None else list(enumerate(entries, 1))
+    return [c.describe(f"@{n}" + (f" #{c.number}" if c.number else ""), _role(call, c)) for n, c in numbered]

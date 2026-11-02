@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ...core.commandsfile import ROLES
 from ...core.part import Part
+from ...core.text import describe_time, seconds_of
 from ...games.plays import console_refusal
 from ...rcon import RconError
 from ..ledger import Action
@@ -25,6 +27,14 @@ MAX_REPLY_LINES = 8
 
 class CommandsBase(Part):
     defaults = {"max_reply_lines": MAX_REPLY_LINES}
+
+    def kick_too_long(self, role: str, duration: str) -> str:
+        """Why this kick is longer than someone of this rank can give ([automod] moderators_kick_at_most): a long one is a ban in all but name. "" if it isn't."""
+        most = str(self.ctx.part_option("automod", "moderators_kick_at_most", "1d")).strip().lower()
+        most = most if TIME.fullmatch(most) else "1d"  # a typo in the file doesn't hand moderators the longest kick there is
+        if ROLES.index(role) < ROLES.index("admin") and seconds_of(duration) > seconds_of(most):
+            return f"A moderator's kick lasts {describe_time(most)} at most here: an admin can make it longer."
+        return ""
 
     async def _reply_text(self, call: CommandCall, text: str) -> None:
         lines = [l for l in text.splitlines() if l.strip()]
@@ -98,7 +108,7 @@ class CommandsBase(Part):
         raise NotImplementedError("AcrossServers's")
 
     async def _banned_elsewhere(self, server: str, target: str) -> tuple[list[str], list[str]]:
-        """The other servers' own bans of this target (a /ban there): "Other by LilGremlin (/ban: spam)", and the
+        """The other servers' own bans of this target (a /ban there): "Other by Mod (/ban: spam)", and the
         servers whose list didn't answer in time."""
         raise NotImplementedError("AcrossServers's")
 

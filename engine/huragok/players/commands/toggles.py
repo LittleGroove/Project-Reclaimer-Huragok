@@ -160,8 +160,8 @@ class SettingToggles(CommandsBase):
                       call.prefix, call.name)
         line = callout("voice on" if now else "voice off",
                        f"{call.player.name} turned {toggle.label} {_state(now)}{spoken}.")
-        if not await self._say(call.server, line):
-            await call.reply(line)  # the console wouldn't take a [Server] line: the admin reads it at least
+        if not await self._say(call.server, line) or call.channel == "discord":
+            await call.reply(line)  # the console wouldn't take a [Server] line, or they aren't in the game to see it: the admin reads it at least
         if notes := self._notes(call, data, toggle, now):
             await call.reply(" ".join(f"Note: {note}." for note in notes))
 

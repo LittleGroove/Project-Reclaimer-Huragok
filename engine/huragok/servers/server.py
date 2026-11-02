@@ -854,6 +854,8 @@ class ServerManager:
                       "it died or hung", self.name, format_duration(uptime), format_duration(INFERRED_ALIVE_SECONDS))
         self.record.remember("crash", f"exited after {format_duration(uptime)}"
                              + (f" (exit code {code})" if code is not None else ""))
+        self.fleet.bus.emit("server.crashed", self.name, why=f"exited after {format_duration(uptime)}"
+                            + (f" (exit code {code})" if code is not None else ""), uptime=uptime, exit_code=code)
         for line in self.backend.last_console_lines(self.server, 4):
             log.error("[%s]   | %s", self.name, line)
         self.backend.forget(self.server)
@@ -1316,6 +1318,7 @@ class ServerManager:
         if self.planned is not None:
             plan, self.planned = self.planned, None
             log.info("[%s] planned restart cancelled (%s)", self.name, plan.reason)
+            self.fleet.bus.emit("server.plan_cancelled", self.name, reason=plan.reason)
             return Result(True, "the planned restart is cancelled")
         return Result(False, "there is no countdown to cancel")
 
@@ -1514,7 +1517,7 @@ class ServerManager:
             "fault_reason": self.record.fault_reason if self.record.faulted else "",
             "retry_at": self.record.retry_at if self.record.faulted else None,  # FAULTED: its next try (Unix s)
             "rcon_ms": round(state.rcon_latency_ms) if state.rcon_latency_ms is not None else None,
-            "status_age": round(state.status_age) if state.status_age is not None else None,
+            "status_age": round(state.status_age) if state.status_age is not None and phase not in DOWN else None,  # the file a stopped server left behind
             "jobs": [job.label for job in self.jobs],
             "waiting": self.waiting_for,
             "can": {

@@ -1169,6 +1169,7 @@ def test_the_watchdog_reports_and_says_what_it_would_do(tmp_path: Path, caplog, 
     sup = supervisor_on(tmp_path)
     sup.start_parts()
     watchdog = sup.runners["watchdog"].part
+    sup.superintendent.states["Alpha"].connected = True  # it answers: what's said of one that doesn't is test_a_real_fleet's
 
     async def scenario() -> None:
         await watchdog.setup()

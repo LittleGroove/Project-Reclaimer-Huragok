@@ -5,7 +5,7 @@
 Everyone holds exactly one role. !promote moves a player one step up (out of the role they had), !demote one step
 down: an admin becomes a moderator, a moderator a probationary moderator, then a member, a member a player again. A
 player can be promoted up to the role below the caller's own (moderators make probationary moderators, admins make
-moderators, owners make admins) and demoted only by someone above them. A probationary moderator (0.5.3, SPR's staff
+moderators, owners make admins) and demoted only by someone above them. A probationary moderator (0.5.3, a staff
 meeting) uses moderators' commands as requests a moderator or admin confirms (requests.py); commands.toml lists them
 as members, with a note, and Huragok's database marks them (an older Huragok, if an update is put back, refuses a
 section it doesn't know, and sees a member). Owners are the host's: changed only in commands.toml. A ban through Huragok (!ban,
@@ -120,10 +120,11 @@ class RoleCommands(CommandsBase):
     @on("rcon.ban")
     async def banned(self, event: Event) -> None:
         """A ban through Huragok (!ban, Vergil's, the relay's) takes every role away: the role goes with the right to
-        play, on every server. The game's own /ban is that server's alone: the roles stay."""
+        play, on every server. The game's own /ban is that server's alone: the roles stay. One with a time is a kick:
+        they'll be back, and so will their role."""
         player_id = str(event.get("id") or "").lower()
         by = str(event.get("by") or "").strip()
-        if not player_id or not event.server or not from_console(by, self.ctx.servers, event.server):
+        if not player_id or not event.server or event.get("expires") or not from_console(by, self.ctx.servers, event.server):
             return
         target = Player(0, str(event.get("name") or self._role_seen(player_id)), player_id)
         now = self.ctx.highest_role(target)

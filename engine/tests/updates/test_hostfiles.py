@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import tomllib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -40,8 +41,8 @@ COMMANDS_0_4_0 = {c for section in tomllib.loads((HOST_0_4_0 / "commands.toml").
 
 # In-game commands since 0.4.0, each listed in a host's commands.toml under its default role once the new version
 # has stayed up.
-NEW_COMMANDS = {"allowvote", "banall", "bannames", "bans", "banword", "changebanword", "confirm", "deny", "kicks", "mutes",
-                "novote", "novotes", "reports", "respawn", "restartserver", "rules", "said", "toggleglobal", "toggleproxy",
+NEW_COMMANDS = {"report", "allowvote", "banall", "bannames", "bans", "banword", "calladmin", "changebanword", "confirm", "deny", "kicks", "mods", "mutes",
+                "novote", "novotes", "reports", "requests", "respawn", "restartserver", "rules", "said", "toggleglobal", "toggleproxy",
                 "toggleteam", "togglevoice", "unbanword"}
 
 
@@ -116,6 +117,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "settings.toml: [updates] beta = false added: true offers beta releases of Huragok too, before they're "
         "full releases (new in 0.5.0)",
         "discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)",
+        "settings.toml: [automod] moderators_kick_at_most = \"1d\" added: the longest kick with a time a moderator can give (new in 0.6.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
         AUTOMOD_ORDER, *new_command_lines()]
@@ -124,6 +126,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     template = TEMPLATE.read_text(encoding="utf-8")
     added = ([f"# {c}" for c in migrate.NAME_MATCH_COMMENT] + ['name_match = "anywhere"']
              + [f"# {c}" for c in migrate.ACROSS_COMMENT] + ["across_servers = true"]
+             + [f"# {c}" for c in migrate.KICK_LIMIT_COMMENT] + ['moderators_kick_at_most = "1d"']
              + migrate.UPDATES_COMMENT_0_4_2 + [f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT] + ["auto_update = false"]
              + [f"# {c}" for c in migrate.BETA_COMMENT] + ["beta = false"]
              + [c for c in migrate.SHARE_COMMENT_0_5_0 if c not in migrate.SHARE_COMMENT_0_4_0] + ['share = ["game"]']
@@ -225,7 +228,7 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     text = text.replace('steam_username = ""\n', 'steam_username = ""\n# download_game_files = false\n', 1)
     text = text.replace("# SteamCMD, for Workshop items (the window's I key", "# My SteamCMD notes (the window's I key", 1)
     text = text.replace("stop_servers_on_exit = false\n", 'stop_servers_on_exit = false\n# priority = "normal"\n', 1)
-    text = text.replace("check_names = true ", '# name_match = "words"\n# across_servers = false\ncheck_names = true ',
+    text = text.replace("check_names = true ", '# name_match = "words"\n# across_servers = false\n# moderators_kick_at_most = "2d"\ncheck_names = true ',
                         1)
     settings_path.write_text(text, encoding="utf-8")
     changed = up_to_date(settings_path)
@@ -467,8 +470,8 @@ def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_s
     words.write_text(old, encoding="utf-8")
     before = [(r.name, ladder(r)) for r in read_rules_lenient(words)[0]]
     assert before[0] == ("hate", ["1st: muted for 4 days", "2nd: muted for 5 days", "3rd: muted for 6 days",
-                                  "4th: removed for 1 day", "5th: removed for 2 days", "6th: removed for 3 days",
-                                  "7th to 10th: removed for 3 days, then muted for good", "11th: banned for good"])
+                                  "4th: kicked for 1 day", "5th: kicked for 2 days", "6th: kicked for 3 days",
+                                  "7th to 10th: kicked for 3 days, then muted for good", "11th: banned for good"])
     changed = up_to_date(settings_path, settled=False)  # as the new version starts
     assert not any(line.startswith("automod.txt") for line in changed)
     assert words.read_text(encoding="utf-8") == old  # the version before still reads it as it did
@@ -526,3 +529,87 @@ def test_a_word_list_in_the_new_layout_is_left_as_it_is(tmp_path: Path) -> None:
     before = words.read_text(encoding="utf-8")
     assert not any(line.startswith("automod.txt") for line in up_to_date(settings_path))
     assert words.read_text(encoding="utf-8") == before
+
+
+def _beta_discord_file(tmp_path: Path) -> Path:
+    """discord.toml as 0.6.0-beta.1's update wrote it, as far as this step reads it."""
+    path = tmp_path / "discord.toml"
+    path.write_text('mode = "bot"\n\n[channels]\nstaff = "1"\npublic = "2"\nappeals = "3"\nlogs = "4"\n\n[status.board]\nenabled = true\nchannel = "public"\n\n[messages]\n'
+                    'moderation-kick = { channel = "staff", colour = "orange", post = true, ping = "" }\n'
+                    'moderation-ban = { channel = "alerts", colour = "crimson", post = true, ping = "" }\n'
+                    'seeding-wanted = { channel = "public", colour = "chartreuse", post = true, ping = "@Seeder" }\n'
+                    'servers-countdown = { channel = "alerts", colour = "amber", post = true, ping = "" }\n'
+                    'games-started = { channel = "games", colour = "green", post = true, ping = "" }\n'
+                    'vergil-strike = { channel = "staff", colour = "gold", post = true, ping = "" }\n', encoding="utf-8")
+    return path
+
+
+def _run_step(tmp_path: Path, *, dry: bool = False) -> list[str]:
+    from types import SimpleNamespace
+
+    from huragok.updates.hostfiles import discord_channels
+
+    return discord_channels(SimpleNamespace(home=tmp_path, dry=dry, backup=lambda path: None))
+
+
+def test_a_betas_discord_file_moves_to_the_new_channels(tmp_path: Path) -> None:
+    path = _beta_discord_file(tmp_path)
+    said = _run_step(tmp_path)
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert data["channels"]["status"] == "2" and "public" not in data["channels"]
+    assert data["channels"]["appeals"] == "3"  # a channel of their own again: nothing that was set moves
+    assert data["status"]["board"]["channel"] == "status"
+    assert data["messages"]["moderation-kick"]["channel"] == "logs"
+    assert data["messages"]["seeding-wanted"]["channel"] == "info" and data["messages"]["seeding-wanted"]["ping"] == "@Seeder"  # only where it goes
+    assert data["messages"]["servers-countdown"] == {"channel": "info", "colour": "amber", "post": False, "ping": ""}
+    assert data["messages"]["games-started"]["post"] is False
+    assert any("status now" in line for line in said) and any("lines moved" in line for line in said)
+
+
+def test_a_line_the_host_pointed_elsewhere_stays_theirs(tmp_path: Path) -> None:
+    path = _beta_discord_file(tmp_path)
+    _run_step(tmp_path)
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert data["messages"]["moderation-ban"]["channel"] == "alerts"
+    assert data["messages"]["vergil-strike"]["channel"] == "staff"
+
+
+def test_moving_channels_only_says_so_when_it_is_only_asked(tmp_path: Path) -> None:
+    path = _beta_discord_file(tmp_path)
+    before = path.read_text(encoding="utf-8")
+    assert _run_step(tmp_path, dry=True)
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_file_already_on_the_new_channels_is_left_alone(tmp_path: Path) -> None:
+    from huragok.updates.notes import template_text
+
+    path = tmp_path / "discord.toml"
+    path.write_text(template_text("discord.toml"), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    assert _run_step(tmp_path) == []
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_the_first_betas_lists_of_buttons_are_brought_up_to_date(tmp_path: Path) -> None:
+    """A list still as the beta wrote it: its names mean nothing now, and whole buttons were missing."""
+    from huragok.discordbot.config import load
+    from huragok.updates.hostfiles import OLD_BUTTONS, discord_buttons
+
+    path = tmp_path / "discord.toml"
+    path.write_text('mode = "off"\n\n[reports]\nenabled = true\nbuttons = ["mute-30m", "kick", "ban-1d", "ban-7d", "ban", "whois", "dismiss"]\n\n[appeals]\nbuttons = ["unban", "shorten", "deny"]\n', encoding="utf-8")
+    ctx = SimpleNamespace(home=tmp_path, dry=False, backup=lambda _path: None)
+    assert len(discord_buttons(ctx)) == 2  # type: ignore[arg-type]
+    config = load(path)
+    assert config.section("reports")["buttons"] == OLD_BUTTONS["reports"][1] and config.section("appeals")["buttons"] == OLD_BUTTONS["appeals"][1]
+    assert config.section("reports")["enabled"] is True and not config.warnings
+    assert discord_buttons(ctx) == []  # type: ignore[arg-type]
+
+
+def test_a_list_the_host_changed_is_theirs(tmp_path: Path) -> None:
+    from huragok.updates.hostfiles import discord_buttons
+
+    path = tmp_path / "discord.toml"
+    path.write_text('[reports]\nbuttons = ["kick"]\n', encoding="utf-8")
+    assert discord_buttons(SimpleNamespace(home=tmp_path, dry=False, backup=lambda _path: None)) == []  # type: ignore[arg-type]
+    assert 'buttons = ["kick"]' in path.read_text(encoding="utf-8")

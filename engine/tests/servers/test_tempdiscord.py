@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from conftest import free_port
 from conftest import ALICE, BRAVO, wait_for
 from testkit.running import SERVER, everyone_joins, running
 
@@ -174,7 +175,7 @@ class FakeService:
         self.status = status
 
     async def __aenter__(self) -> FakeService:
-        self.server = await asyncio.start_server(self._serve, "127.0.0.1", 0)
+        self.server = await asyncio.start_server(self._serve, "127.0.0.1", free_port())  # off 49170-49199, as every fake is
         return self
 
     async def __aexit__(self, *_: Any) -> None:

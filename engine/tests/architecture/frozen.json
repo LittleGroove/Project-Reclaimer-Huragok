@@ -1,0 +1,211 @@
+{
+ "schema": {
+  "core": [
+   "e09ebd32824629e44f5c36396b59d47799f4da3ce98102fe2e3d5d6c8576ea41",
+   "40cdc1e9a0ff8bc21bfaf756f76cf24537624e2ff8427876c0362583ecc13f46",
+   "2de14a526d56ea5cf0f80c8a0035fb6cb6a837bbd4b25e66ee310cc6bba51c7b",
+   "4a58afaf539c7b98c7584bd0ea125209ebca64c7e12458dfe21bf6a09e07e6d8",
+   "9b4a39d4ebc81b1db693794fa8884d0664224f820b510f8365117bf1e2d70ba5"
+  ],
+  "automod": [
+   "0911cd753edd248bb1d89542b099c801d2079dc6a83b7c8877f844b5e0cd28a9",
+   "acad194dcab19aee64580f3b620d70001241a39d2bafbb92a54c742c105dba50",
+   "6401d605798bd92ecdf5efc94f9b3315d5164f26a4d9d1faa50ff59e81a9dc17",
+   "ab00c9ab143162ead6c7bc9b2ae18604ff658d59901fad219bcebbe5aac74c21"
+  ],
+  "commands": [
+   "6808165601b7c6574ed2740136e4c34fb82e26f132aafcc61e1ea271f7381d5a",
+   "2cadc39e9745f6d7b51873420fea16184a788b377a071a5f027500cb569ce9c3",
+   "3517a0c095b679f2c2661df2460e6fc9173c87be8a6eadfee0da788a51ac64e3",
+   "4e801df8a7f0fde7e4875f5a3823219703a07fa9c6e39a6bdd3b01982cb4eb29",
+   "b92ad97584b075bddacf6d4a19753d0f1dcfd29226014af529576bb44f7c8b99",
+   "8ae748066fc7309dc773de85294359f4cc448b9bd31265091dd81aed919ca00c",
+   "5b4316f86537016d8d76f45789c969f3f1f67e13413f12ac0582ee866c1490ce",
+   "b8f1178693d2e96c9431a99c9939ee00bcaab7910d857e8a45945e3ab5a1be05",
+   "4f1b260c66d57f8120ee8dac42b3115e13aa5f8e27defab9d9dfb51489bcfefb"
+  ],
+  "discord": [
+   "0ff2483b272f9964792be946e25a96f23c4ceb88a1a1fc1ebf24e59b05a054a5",
+   "50159df06ffc28c982b663ec72e3cbe473b9133008c87b2ac93fd9f744e8ac75",
+   "5538cc3e2e5b4f7fdd3a2f759a83bf4e4a8e95aa610a56f6f2474c374a800e92",
+   "88e831153095d2b99777a5bda68a830ea8c1395bd35056cbe9c671957f0d89df",
+   "0a8e451758d70aac268614626b182dc4f661aa456b5d308c3bd18ce897bdda0a",
+   "7d7429b9624c0b0d8f933290aedab1fdad5bba401c3256f99cdca7770a9b3548",
+   "6a37ff94b3986e6962150c2db8b936e598b6777eb2de00c78400e58c3d9bed68",
+   "00f1413de491d26611b9b79128ef948c277d794e92ffca727f44228a452fea0d",
+   "83636834c79f33f04d73532f63a097f7136fcf1af1923c0183f323127e5e1e9d",
+   "1f56f6da91d41e1952d638af54b15aa4e0d452983b2ffd864b7acfeb1624c4fe"
+  ]
+ },
+ "slash": {
+  "admin": [
+   "action",
+   "player"
+  ],
+  "allowvote": [
+   "player"
+  ],
+  "ban": [
+   "player",
+   "time",
+   "reason"
+  ],
+  "banall": [
+   "player"
+  ],
+  "banname": [
+   "player"
+  ],
+  "bannames": [
+   "text"
+  ],
+  "bans": [
+   "name"
+  ],
+  "banword": [
+   "words"
+  ],
+  "cancelvote": [],
+  "changebanword": [
+   "words"
+  ],
+  "confirm": [
+   "number",
+   "instead"
+  ],
+  "demote": [
+   "player"
+  ],
+  "deny": [
+   "number",
+   "reason"
+  ],
+  "endgame": [],
+  "endround": [],
+  "health": [],
+  "kick": [
+   "player",
+   "time",
+   "reason"
+  ],
+  "kicks": [],
+  "load": [
+   "map",
+   "mode"
+  ],
+  "map": [
+   "map"
+  ],
+  "maxping": [
+   "limit"
+  ],
+  "mode": [
+   "mode"
+  ],
+  "mods": [],
+  "mute": [
+   "player",
+   "time",
+   "reason"
+  ],
+  "mutes": [],
+  "nextmap": [
+   "map",
+   "mode"
+  ],
+  "novote": [
+   "player",
+   "time",
+   "reason"
+  ],
+  "novotes": [],
+  "pardon": [
+   "player"
+  ],
+  "pardonplayer": [
+   "player",
+   "rule",
+   "reason"
+  ],
+  "passvote": [],
+  "players": [
+   "name"
+  ],
+  "promote": [
+   "player"
+  ],
+  "reload": [],
+  "requests": [],
+  "respawn": [
+   "player"
+  ],
+  "restartserver": [
+   "time",
+   "reason"
+  ],
+  "roles": [],
+  "rules": [
+   "search"
+  ],
+  "said": [
+   "player",
+   "lines"
+  ],
+  "say": [
+   "text"
+  ],
+  "servername": [
+   "name"
+  ],
+  "shuffle": [],
+  "startvote": [
+   "vote",
+   "player"
+  ],
+  "strike": [
+   "player",
+   "rule",
+   "reason"
+  ],
+  "team": [
+   "player",
+   "team"
+  ],
+  "teamcount": [
+   "teams"
+  ],
+  "toggleglobal": [
+   "state",
+   "time"
+  ],
+  "toggleproxy": [
+   "state",
+   "time"
+  ],
+  "toggleteam": [
+   "state",
+   "time"
+  ],
+  "togglevoice": [],
+  "unban": [
+   "player"
+  ],
+  "unbanname": [
+   "name"
+  ],
+  "unbanword": [
+   "word"
+  ],
+  "unmute": [
+   "player"
+  ],
+  "warn": [
+   "player",
+   "reason"
+  ],
+  "whois": [
+   "player",
+   "lines"
+  ]
+ }
+}

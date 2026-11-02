@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -182,7 +183,17 @@ class Context:
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
+            if path.name == "discord.toml":  # a password has no business in a folder of old copies, and each update would leave another
+                target.write_text(without_secrets(target.read_text(encoding="utf-8")), encoding="utf-8")
         self.backed_up.add(path)
+
+
+SET_TOKEN = re.compile(r'''^(\s*token\s*=\s*)"[^"]*"''', re.M)
+WEBHOOK_ADDRESS = re.compile(r"https://(?:[\w-]+\.)?discord(?:app)?\.com/api/webhooks/[^\s\"',\]}]+")
+
+
+def without_secrets(text: str) -> str:
+    return WEBHOOK_ADDRESS.sub("(left out of this copy)", SET_TOKEN.sub(r'\1""', text))
 
 
 @dataclass(frozen=True)
@@ -416,6 +427,34 @@ def across_servers(ctx: Context) -> list[str]:
     return said
 
 
+KICK_LIMIT_COMMENT = [  # the template's, above [automod] moderators_kick_at_most
+    "The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick",
+    "is a ban in all but name. Admins and owners have no limit.",
+]
+
+
+def moderators_kick_at_most(ctx: Context) -> list[str]:
+    """[automod] moderators_kick_at_most (0.6.0): !kick takes a time now, so the line shows the host its limit. Only added where the file has [automod]."""
+    from ..core.tomledit import add_table_key
+
+    automod = _read(ctx.settings_path).get("automod")
+    if not isinstance(automod, dict) or "moderators_kick_at_most" in automod:
+        return []
+    try:
+        text = ctx.settings_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    if commented_in(text, "automod", "moderators_kick_at_most"):
+        return []
+    said = [f"{ctx.settings_path.name}: [automod] moderators_kick_at_most = \"1d\" added: the longest kick with a time a moderator can give (new in 0.6.0)"]
+    if ctx.dry:
+        return said
+    ctx.backup(ctx.settings_path)
+    if not add_table_key(ctx.settings_path, "automod", "moderators_kick_at_most", "1d", KICK_LIMIT_COMMENT, after="across_servers"):
+        return []
+    return said
+
+
 def own_ban_lists(ctx: Context) -> list[str]:
     """Every server keeps a ban list of its own from 0.5.0 (the host's call: a /ban in game is that server's; Huragok
     keeps its own bans on every one), so [setup] share loses "bans" (new servers got one shared bans.json). The
@@ -469,6 +508,37 @@ def banname_for_admins(ctx: Context) -> list[str]:
                         width=entry_width())
 
     _checked(path, change, "!banname for admins")
+    return said
+
+
+def requests_command(ctx: Context) -> list[str]:
+    """!reports, the probationary moderators' list, is !requests from 0.6.0, beside the new !report; and !reports is the list of what's open for staff. Where a host listed the old one, the new name goes in its place, so it stays where they put it.
+    Settled, so that a put-back finds the name it knows."""
+    from ..core.commandsfile import SECTIONS, _checked, _listed_as, all_commands, entry_width, load_permissions
+    from ..core.tomledit import add_to_list, remove_from_list
+
+    path = ctx.commands_path
+    if not path.is_file() or not _read(path):
+        return []
+    try:
+        prefix = load_permissions(path).prefix
+    except Exception:  # noqa: BLE001 - a file Huragok can't read isn't changed (check names its problem)
+        return []
+    where = {section: written for section in [*SECTIONS, "off"] if (written := _listed_as(path, section, "reports", prefix))}
+    if not where or any(_listed_as(path, section, "requests", prefix) for section in [*SECTIONS, "off"]):
+        return []
+    said = [f"{path.name}: !reports is !requests now, where you had it: {prefix}reports lists what's open for staff"]
+    if ctx.dry:
+        return said
+    ctx.backup(path)
+
+    def change(copy: Path) -> None:
+        for section, written in where.items():
+            for entry in written:
+                remove_from_list(copy, section, "commands", entry)
+            add_to_list(copy, section, "commands", "requests", all_commands()["requests"].help, width=entry_width())
+
+    _checked(path, change, "!requests")
     return said
 
 
@@ -678,7 +748,505 @@ def discord_file(ctx: Context) -> list[str]:
         return []
     if not ctx.dry:
         write_atomic(path, template_text("discord.toml"))
+        if os.name != "nt":  # it'll hold a password
+            os.chmod(path, 0o600)
     return ["discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)"]
+
+
+# Where a message's line moved when channels were sorted out (30 October), and whether it stopped posting by default. Only a line still at its old channel moves: one a host pointed elsewhere is theirs.
+MOVED_LINES = {**{f"moderation-{kind}": ("staff", "logs", None) for kind in ("ban", "kick", "mute", "warn", "unmute", "unban", "pardon")},
+               "vergil-would": ("staff", "huragok-logs", None), "watch-first-time-quiet": ("staff", "huragok-logs", None), "calls-called": ("staff", "reports", None),
+               "alerts-recovered": ("alerts", "huragok-logs", None), "alerts-huragok-started": ("alerts", "huragok-logs", None),
+               **{f"servers-{kind}": ("alerts", "huragok-logs", None) for kind in ("started", "adopted", "stopped", "restarted", "repaired")},
+               **{f"servers-{kind}": ("alerts", "info", None) for kind in ("restart-planned", "program-updated", "workshop-updated")},
+               "servers-countdown": ("alerts", "info", False), "games-started": ("games", "games", False),
+               "seeding-wanted": ("public", "info", None), "seeding-notify": ("public", "info", None), "content-workshop": ("logs", "huragok-logs", None)}
+
+
+def discord_channels(ctx: Context) -> list[str]:
+    """discord.toml from 0.6.0-beta.1 on, to tickets, logs, boards and feeds: `public` is `status` now, and each message's line goes to its new channel, unless the host chose where it went."""
+    from ..core.tomledit import remove_table_key, set_nested_key, set_table_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    said: list[str] = []
+    channels = data.get("channels") if isinstance(data.get("channels"), dict) else {}
+    if "public" in channels:
+        said.append("discord.toml: [channels] public is status now: only the server cards go there. Make an info channel for the rest")
+    lines = data.get("messages") if isinstance(data.get("messages"), dict) else {}
+    moved = {key: move for key, move in MOVED_LINES.items() if isinstance(lines.get(key), dict) and lines[key].get("channel") == move[0] and (move[0] != move[1] or (move[2] is not None and lines[key].get("post") is not move[2]))}
+    if moved:
+        said.append(f"discord.toml: [messages]: {len(moved)} lines moved to their new channels")
+    board = (data.get("status") or {}).get("board") or {}
+    if ctx.dry or not said and board.get("channel") != "public":
+        return said
+    ctx.backup(path)
+    if "public" in channels:
+        if not str(channels.get("status") or "").strip():
+            set_table_key(path, "channels", "status", str(channels["public"]))
+        remove_table_key(path, "channels", "public")
+    for key, (_, new, post) in moved.items():
+        set_table_key(path, "messages", key, {**lines[key], "channel": new, **({} if post is None else {"post": post})})
+    if board.get("channel") == "public":
+        set_nested_key(path, ("status", "board"), "channel", "status")
+    return said
+
+
+# What the first beta wrote, and what they are now. Only a list still as it was written: one the host has edited is theirs, and the file's check says what's wrong in it.
+# What each list said in a released or a test version, exactly: anything else is the host's own, which stays, and warns if a name in it means nothing now.
+OLD_BUTTONS = {"reports": ([["mute-30m", "kick", "ban-1d", "ban-7d", "ban", "whois", "dismiss"], ["mute", "kick", "ban", "whois", "note"]], ["mute", "kick", "ban", "strike", "warn", "whois", "note"]),
+               "appeals": ([["unban", "shorten", "deny"], ["lift", "shorten", "refuse"], ["lift", "shorten", "deny", "close"]], ["lift", "shorten", "deny"])}
+
+
+def discord_buttons(ctx: Context) -> list[str]:
+    """The first beta's lists of buttons held names that no longer mean anything, so those buttons were simply missing."""
+    from ..core.tomledit import set_table_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    said: list[str] = []
+    for table, (olds, new) in OLD_BUTTONS.items():
+        section = data.get(table)
+        if isinstance(section, dict) and section.get("buttons") in olds:
+            said.append(f"discord.toml: [{table}] buttons: the ones this version has")
+            if not ctx.dry:
+                ctx.backup(path)
+                set_table_key(path, table, "buttons", new)
+    return said
+
+
+def discord_lines(ctx: Context) -> list[str]:
+    """Every setting discord.toml's template has and the host's file doesn't, in whatever table, so each can be seen and changed. Only what's missing: nothing the host set is touched,
+    and a line they took out comes back with its default, which is what it does anyway. Before the notes step, so these get their notes in the same update."""
+    import tomllib
+
+    from ..core.tomledit import set_nested_key, set_table_key
+    from .notes import template_text
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    written = template_text("discord.toml")
+    one_line: set[tuple[tuple[str, ...], str]] = set()
+    table: tuple[str, ...] = ()
+    for line in written.splitlines():
+        if line.startswith("[") and not line.startswith("[["):
+            table = tuple(line.split("#", 1)[0].strip().strip("[]").split("."))
+        elif found := re.match(r'"?([\w -]+)"?\s*=\s*\{', line):
+            one_line.add((table, found.group(1).strip()))
+    missing: list[tuple[tuple[str, ...], str, Any]] = []
+    fuller: list[tuple[str, dict[str, Any]]] = []  # a line of [messages] that's there, with fields it hasn't heard of
+
+    def walk(wanted: dict[str, Any], have: dict[str, Any], where: tuple[str, ...]) -> None:
+        for key, value in wanted.items():
+            if where == ("messages",) and isinstance(value, dict) and isinstance(have.get(key), dict):
+                if set(value) - set(have[key]):
+                    fuller.append((key, {**value, **have[key]}))
+            elif isinstance(value, dict) and value and (where, key) not in LEAVE_ALONE and (where, key) not in one_line:  # written on one line, it's one value: nothing can be added under it
+                inner = have.get(key)
+                if inner is None or isinstance(inner, dict):
+                    walk(value, inner or {}, (*where, key))
+            elif key not in have and where:  # the top of the file is set up by the steps that make it
+                missing.append((where, key, value))
+
+    walk(tomllib.loads(written), data, ())
+    if not missing and not fuller:
+        return []
+    if not ctx.dry:
+        ctx.backup(path)
+        for where, key, value in missing:
+            set_nested_key(path, where, key, value)
+        for key, line in fuller:
+            set_table_key(path, "messages", key, line)
+    return [f"discord.toml: {len(missing) + len(fuller)} new setting{'s' if len(missing) + len(fuller) != 1 else ''}"]
+
+
+def discord_old_copies(ctx: Context) -> list[str]:
+    """The first beta kept discord.toml as it stood in its folder of old copies, token and all."""
+    changed = []
+    for copy in sorted((ctx.records / BACKUPS).glob("*/discord.toml")):
+        text = copy.read_text(encoding="utf-8")
+        if without_secrets(text) != text:
+            if not ctx.dry:
+                copy.write_text(without_secrets(text), encoding="utf-8")
+            changed.append(f"took the token out of the old copy {copy.parent.name}/discord.toml")
+    return changed
+
+
+def discord_appeals_channel(ctx: Context) -> list[str]:
+    """Appeals have a channel of their own to set, which is reports until someone does, so nothing moves today."""
+    from ..core.tomledit import set_table_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    lines = data.get("messages") if isinstance(data.get("messages"), dict) else {}
+    line = lines.get("appeals-made")
+    if not path.is_file() or not isinstance(line, dict) or line.get("channel") != "reports":
+        return []
+    if not ctx.dry:
+        ctx.backup(path)
+        set_table_key(path, "messages", "appeals-made", {**line, "channel": "appeals"})
+    return ["discord.toml: appeals have a channel of their own to set in [channels]: until then, they stay in reports"]
+
+
+def discord_one_line(ctx: Context) -> list[str]:
+    """A line of [messages] written as a table of its own, as an earlier discord-lines did by mistake: the same values, back on one line, so the panels can change it and its notes come back."""
+    import tomllib
+
+    from ..core.tomledit import remove_empty_table, remove_nested_key, set_table_key
+
+    path = ctx.home / "discord.toml"
+    if not path.is_file() or not _read(path):
+        return []
+    text = path.read_text(encoding="utf-8")
+    keys = re.findall(r"^\[messages\.\"?([\w-]+)\"?\]", text, re.M)
+    if not keys:
+        return []
+    if not ctx.dry:
+        ctx.backup(path)
+        data = tomllib.loads(text)
+        for key in keys:
+            line = data["messages"][key]
+            for field in list(line):
+                remove_nested_key(path, ("messages", key), field)
+            remove_empty_table(path, ("messages", key))
+            set_table_key(path, "messages", key, line)
+    return [f"discord.toml: {len(keys)} line{'s' if len(keys) != 1 else ''} of [messages] back on one line, as they should be"]
+
+
+def discord_unbuilt(ctx: Context) -> list[str]:
+    """Settings for what isn't built gone from discord.toml: they do nothing, and each is something a later version would have to recognise for good. They come back, with their notes, in the version that builds them.
+    Left as the first beta wrote it, a setting just goes. Anything else was someone's choice, so it stays as a comment saying so."""
+    import json
+    from importlib import resources
+
+    from ..core.tomledit import comment_out_nested_key, remove_empty_table, remove_nested_key, remove_table_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    shipped = json.loads(resources.files("huragok").joinpath("templates/discord-not-built.json").read_text(encoding="utf-8"))
+    found: list[tuple[tuple[str, ...], str, Any]] = []  # what's still there: each with where it lives
+    tables: list[tuple[str, ...]] = []  # deepest last, and taken out the other way round
+
+    def walk(given: dict[str, Any], where: tuple[str, ...]) -> None:
+        tables.append(where)
+        for key, value in given.items():
+            if isinstance(value, dict) and (where, key) not in ONE_VALUE_TABLES:
+                walk(value, (*where, key))
+            else:
+                found.append((where, key, value))
+
+    for top in shipped["tables"]:
+        if top == "feed":
+            kills = (data.get("feed") or {}).get("kills")
+            if isinstance(kills, dict):
+                walk(kills, ("feed", "kills"))
+        elif isinstance(data.get(top), dict):
+            walk(data[top], (top,))
+    if not found and not tables and not any(key in (data.get("channels") or {}) for key in shipped["channels"]) and not any(key in (data.get("limits") or {}) for key in shipped["limits"]):
+        return []
+    said: list[str] = []
+    gone = 0
+
+    def first_said(where: tuple[str, ...], key: str) -> Any:
+        table: Any = shipped["tables"]
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        return table.get(key) if isinstance(table, dict) else None
+
+    if not ctx.dry:
+        ctx.backup(path)
+    for where, key, value in found:
+        if value == first_said(where, key):
+            gone += 1
+            if not ctx.dry:
+                remove_nested_key(path, where, key)
+        else:
+            said.append(f"discord.toml: [{'.'.join(where)}] {key}: what it's for isn't built yet, so it's a comment for now, as you'd set it")
+            if not ctx.dry:
+                comment_out_nested_key(path, where, key, f"Not used yet: [{'.'.join(where)}] comes back with the version that builds it:")
+    for name in shipped["channels"]:
+        reference = (data.get("channels") or {}).get(name)
+        if reference is None:
+            continue
+        if str(reference).strip():
+            said.append(f"discord.toml: [channels] {name}: what it's for isn't built yet, so it's a comment for now, as you'd set it")
+            if not ctx.dry:
+                comment_out_nested_key(path, ("channels",), name, "Not used yet: this channel comes back with the version that builds what it's for:")
+        else:
+            gone += 1
+            if not ctx.dry:
+                remove_table_key(path, "channels", name)
+    for name, first in shipped["limits"].items():
+        value = (data.get("limits") or {}).get(name)
+        if value is None:
+            continue
+        if value == first:
+            gone += 1
+            if not ctx.dry:
+                remove_table_key(path, "limits", name)
+        else:
+            said.append(f"discord.toml: [limits] {name}: what it's for isn't built yet, so it's a comment for now, as you'd set it")
+            if not ctx.dry:
+                comment_out_nested_key(path, ("limits",), name, "Not used yet: this limit comes back with the version that builds what it's for:")
+    if not ctx.dry:
+        for where in reversed(tables):
+            remove_empty_table(path, where)
+    if gone:
+        said.append(f"discord.toml: {gone} settings for what isn't built yet are gone: they come back with the version that builds them")
+    return said
+
+
+def discord_moved(ctx: Context) -> list[str]:
+    """Every setting that has a new name, or a new home, moved to it with its value. The table's in core/discordmoved.py: a row there reaches hosts with nothing more to do, so this runs at every start and does nothing once the old names have gone."""
+    from ..core.discordmoved import KEYS, LINE_FIELDS, LINES
+    from ..core.tomledit import remove_nested_key, remove_table_key, rename_nested_key, set_nested_key, set_table_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+
+    def table_of(parts: tuple[str, ...]) -> dict[str, Any]:
+        table: Any = data
+        for part in parts:
+            table = table.get(part) if isinstance(table, dict) else None
+        return table if isinstance(table, dict) else {}
+
+    said: list[str] = []
+    console, ranks = table_of(("console",)), table_of(("ranks",))
+    backed_up = False
+
+    def backup() -> None:
+        nonlocal backed_up
+        if not backed_up and not ctx.dry:
+            ctx.backup(path)
+            backed_up = True
+
+    if "raw" in console or "moderators_raw_console" in ranks:  # two keys for one choice
+        rank = "off" if console.get("raw") is False else "moderator" if ranks.get("moderators_raw_console") else "admin"
+        said.append(f"discord.toml: who can type console lines is [console] raw_rank now: {rank}")
+        backup()
+        if not ctx.dry:
+            set_nested_key(path, ("console",), "raw_rank", rank)
+            remove_nested_key(path, ("console",), "raw")
+            remove_nested_key(path, ("ranks",), "moderators_raw_console")
+    menu = table_of(("commands",)).get("message_menu")
+    if menu is not None:
+        said.append("discord.toml: [commands] message_menu is [reports] right_click now")
+        backup()
+        if not ctx.dry:
+            set_nested_key(path, ("reports",), "right_click", "report" in (menu if isinstance(menu, list) else []))
+            remove_nested_key(path, ("commands",), "message_menu")
+    seeding = table_of(("status", "seeding"))
+    if "notify_me" in seeding:
+        said.append("discord.toml: [status.seeding] notify_me is [notify] enabled now, a feature of its own")
+        backup()
+        if not ctx.dry:
+            set_nested_key(path, ("notify",), "enabled", bool(seeding["notify_me"]))
+            if isinstance(seeding.get("cooldown_minutes"), (int, float)):
+                set_nested_key(path, ("notify",), "cooldown_minutes", seeding["cooldown_minutes"])  # it shared this one until now
+            remove_nested_key(path, ("status", "seeding"), "notify_me")
+    for (where, key), (home, new_key) in KEYS.items():
+        if key in ("raw", "moderators_raw_console", "message_menu", "notify_me") or key not in table_of(where):
+            continue  # those need their values turned: above
+        said.append(f"discord.toml: [{'.'.join(where)}] {key} is [{'.'.join(home)}] {new_key} now")
+        backup()
+        if ctx.dry:
+            continue
+        if where == home:
+            rename_nested_key(path, where, key, new_key)
+        else:
+            set_nested_key(path, home, new_key, table_of(where)[key])
+            remove_nested_key(path, where, key)
+    lines = table_of(("messages",))
+    for key, line in list(lines.items()):
+        if not isinstance(line, dict):
+            continue
+        new_key = LINES.get(key, key)
+        new_line = {LINE_FIELDS.get(field, field): value for field, value in line.items()}
+        if new_key == key and new_line == line:
+            continue
+        said.append(f"discord.toml: [messages] {key} is {new_key} now" if new_key != key else f"discord.toml: [messages] {key}: remove_after is remove_after_minutes now")
+        backup()
+        if ctx.dry:
+            continue
+        if new_key != key:
+            remove_table_key(path, "messages", key)
+        set_table_key(path, "messages", new_key, new_line)
+    commands = table_of(("commands",))
+    for key in ("public", "hidden"):
+        written = commands.get(key)
+        if isinstance(written, list) and "reports" in written:
+            said.append(f"discord.toml: [commands] {key}: reports is requests now")
+            backup()
+            if not ctx.dry:
+                set_nested_key(path, ("commands",), key, ["requests" if name == "reports" else name for name in written])
+    if isinstance(commands.get("names"), dict) and "reports" in commands["names"]:
+        said.append("discord.toml: [commands] names: reports is requests now")
+        backup()
+        if not ctx.dry:
+            set_nested_key(path, ("commands",), "names", {"requests" if name == "reports" else name: value for name, value in commands["names"].items()})
+    confirm = console.get("confirm")
+    if isinstance(confirm, list) and "reports" in confirm:
+        said.append("discord.toml: [console] confirm: reports is requests now")
+        backup()
+        if not ctx.dry:
+            set_nested_key(path, ("console",), "confirm", ["requests" if name == "reports" else name for name in confirm])
+    if table_of(("feed", "calls")).get("mods_command") is not None:
+        off = table_of(("feed", "calls"))["mods_command"] is False
+        said.append("discord.toml: [feed.calls] mods_command is gone" + (": !mods is in [off] in commands.toml now" if off else ""))
+        backup()
+        if not ctx.dry:
+            remove_nested_key(path, ("feed", "calls"), "mods_command")
+            if off and ctx.commands_path.is_file():
+                from ..core.tomledit import add_to_list
+
+                ctx.backup(ctx.commands_path)
+                add_to_list(ctx.commands_path, "off", "commands", "mods")
+    return said
+
+
+# Defaults that turned out too loud, or wrong, where they're still as an earlier version wrote them. Anything else is someone's choice, and stays.
+OLD_DEFAULTS: dict[tuple[str, ...], dict[str, tuple[Any, Any]]] = {
+    ("limits",): {"status_seconds": (120, 60), "rename_minutes": (10, 5), "voice_status_minutes": (3, 1), "presence_seconds": (120, 30)},
+    ("tickets",): {"stale_after_days": (7, 2)},
+    ("status", "presence"): {"lines": (["Watching {players_total} Spartans on {servers_up} servers", "{map} · {mode} on {server}"], ["{players_total} Spartans on {servers_up} servers", "{map} · {mode} on {server}"])},
+    ("contact",): {"categories": (["Question", "Report a player", "Ban appeal", "Other"], ["Question", "A problem with a server", "Something else"])},
+    ("appeals",): {"questions": (["What happened?", "Why should the ban be lifted?"], ["What happened?", "Why should it be lifted?"])},
+}
+
+
+def discord_defaults(ctx: Context) -> list[str]:
+    """What's changed since the first beta in what a new file would say, for a file that's still as it was."""
+    from ..core.tomledit import set_nested_key
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    said: list[str] = []
+    for where, values in OLD_DEFAULTS.items():
+        table: Any = data
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        for key, (old, new) in values.items():
+            if isinstance(table, dict) and table.get(key) == old:
+                said.append(f"discord.toml: [{'.'.join(where)}] {key}: the new default")
+                if not ctx.dry:
+                    ctx.backup(path)
+                    set_nested_key(path, where, key, new)
+    return said
+
+
+# Tables whose keys are the host's to name: a key that's not there was taken out, and it isn't missing.
+ONE_VALUE_TABLES = {(("roles",), "per_server"), (("roles",), "top"), (("chat",), "channels"), (("community",), "team_voice_channels"), (("community",), "self_roles"), (("community",), "level_roles")}  # one-line tables in what isn't built: one value, not keys to walk
+LEAVE_ALONE = {(("notes",), "flags"), (("tickets",), "colours"), (("status", "board"), "colours"), (("status", "board"), "join_address"), (("commands",), "names")}
+# What the first beta's file said for settings that have gone since: left as it was, it just goes. Anything else was someone's choice.
+DEAD_IN_BETA_1: dict[tuple[str, ...], dict[str, Any]] = {
+    (): {"time_zone": "local", "date_format": "discord"},
+    ("privacy",): {"player_ids": "staff", "opt_out": True, "keep_days": 365, "forget_me": True},
+    ('ranks',): {"needs_link": False},
+    ('channels',): {"public": ""},
+    ('feeds',): {"ping": ""},
+    ('feed', 'moderation'): {"channel": "staff", "kinds": ["kick", "ban", "mute", "unmute", "unban", "pardon"], "evidence_lines": 5, "record": True, "case_numbers": True, "threads": True, "buttons": ["undo", "ban-1d", "ban-7d", "ban", "extend-mute", "whois", "said", "note"], "requests": True},
+    ('feed', 'vergil'): {"channel": "staff", "kinds": ["strike", "name-ban", "word-ban", "word-allowed", "rule-changed"], "dry_run": True},
+    ('feed', 'votes'): {"channel": "staff", "kinds": ["called", "passed", "failed", "cancelled", "novote"], "evidence_lines": 5, "buttons": ["cancel-vote", "whois", "said"]},
+    ('feed', 'alerts'): {"channel": "alerts", "ping": "", "ping_for": ["crashed", "faulted", "hung", "start-failed", "update-failed", "huragok-down"], "kinds": ["crashed", "faulted", "hung", "recovered", "watchdog-restart", "start-failed", "update-failed", "part-off", "rcon-sign-in", "relay-lockout", "huragok-restarted", "canary"]},
+    ('feed', 'servers'): {"channel": "alerts", "kinds": ["started", "stopped", "restarted", "restart-planned", "countdown", "program-updated", "workshop-updated", "repaired"]},
+    ('feed', 'games'): {"channel": "games", "kinds": ["started", "ended"]},
+    ('feed', 'joins'): {"channel": "staff", "who": "first-time", "refused": True, "new_names": True, "leaves": False},
+    ('feed', 'watch'): {"channel": "staff", "ping": "", "kinds": ["flagged-joined", "back-after-kick", "staff-lookalike-name", "first-time-quiet", "banned-elsewhere", "anti-cheat"]},
+    ('feed', 'calls'): {"channel": "staff", "ping": "", "command": "calladmin"},
+    ('feed', 'content'): {"channel": "alerts", "kinds": ["playlist", "workshop", "map-skipped"]},
+    ('feed', 'audit'): {"channel": "staff", "kinds": ["console", "command", "settings", "roles", "link", "setup"]},
+    ('status', 'board'): {"staff_buttons": False, "pin": True, "power_buttons": ["start", "stop", "restart", "restart-after-game", "restart-when-empty", "cancel", "updates"]},
+    ('status', 'seeding'): {"role": "", "channel": "public", "notify_channel": ""},
+    ('status', 'channel_names'): {"only_on_change": True},
+    ('commands',): {"private": ["whois", "said", "bans", "kicks", "mutes", "players", "rcon"], "everyone": ["status", "servers", "stats", "leaderboard", "link", "unlink", "report", "appeal", "game"], "member_menu": ["whois", "link", "stats"]},
+    ('reports',): {"channel": "reports", "ping": ""},
+    ('appeals',): {"channel": "appeals"},
+    ('tickets',): {"enabled": False, "channel": "", "categories": ["Question", "Report a player", "Ban appeal", "Other"], "ping": "", "transcript": True, "close_after_days": 7},
+    ('notes',): {"reasons": ["Slurs in chat: 1 day", "Slurs in voice: 7 days", "Team killing: kick", "Cheating: ban"], "evidence_files": True, "appeal_codes": False, "appeal_text": "Appeal at {invite} with code {code}"},
+}
+# Where a choice someone made has moved to: (the table it's in now, its key).
+MOVED_TO = {(("tickets",), "enabled"): (("contact",), "enabled"), (("tickets",), "channel"): (("contact",), "channel"), (("tickets",), "categories"): (("contact",), "categories"), (("tickets",), "ping"): (("contact",), "ping"),
+            (("tickets",), "transcript"): (("contact",), "transcript"), (("tickets",), "close_after_days"): (("contact",), "close_after_days"), (("status", "board"), "power_buttons"): (("commands",), "power_buttons"),
+            (("feed", "moderation"), "evidence_lines"): (("tickets",), "evidence_lines"), (("feed", "moderation"), "record"): (("tickets",), "record"), (("feed", "moderation"), "case_numbers"): (("tickets",), "case_numbers"), (("feed", "moderation"), "threads"): (("tickets",), "threads")}
+# A ping, which is on the lines of [messages] now.
+PINGS_NOW_ON = {(("feed", "alerts"), "ping"): ("alerts-crashed", "alerts-faulted", "alerts-hung", "alerts-start-failed"), (("feed", "watch"), "ping"): ("watch-flagged-joined", "watch-back-after-kick", "watch-staff-lookalike", "watch-banned-elsewhere", "watch-anti-cheat"),
+                (("feed", "calls"), "ping"): ("calls-called",), (("status", "seeding"), "role"): ("seeding-wanted",), (("reports",), "ping"): ("reports-many",), (("feeds",), "ping"): ()}
+
+
+def discord_retired(ctx: Context) -> list[str]:
+    """Settings that do nothing any more, gone from discord.toml so nobody's left editing a line with no effect. Left as the first beta wrote it, it goes. A host's own value moves to where that lives now, or,
+    with no new home, stays as a comment saying so: they chose it, so they should hear what became of it."""
+    import tomllib
+
+    from ..core.tomledit import comment_out_nested_key, remove_nested_key, set_nested_key, set_table_key
+    from .notes import template_text
+
+    path = ctx.home / "discord.toml"
+    data = _read(path)
+    if not path.is_file() or not data:
+        return []
+    said: list[str] = []
+    backed_up = False
+    gone_quietly = 0
+    from ..core.tomledit import remove_empty_table
+
+    for where, gone in DEAD_IN_BETA_1.items():
+        table: Any = data
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        if not isinstance(table, dict):
+            continue
+        for key, first in gone.items():
+            if key not in table or isinstance(first, dict):
+                continue
+            value = table[key]
+            if value == first:
+                gone_quietly += 1
+                action = "remove"
+            elif (where, key) in MOVED_TO:
+                home, new_key = MOVED_TO[(where, key)]
+                said.append(f"discord.toml: {'.'.join(where)} {key} moved to [{'.'.join(home)}] {new_key}")
+                action = "move"
+            elif (where, key) in PINGS_NOW_ON:
+                said.append(f"discord.toml: {'.'.join(where)} {key}: each message has its own ping now, and it's on those lines")
+                action = "ping"
+            else:
+                said.append(f"discord.toml: {'.'.join(where) or 'the top'} {key} does nothing any more: it's a comment now, as you'd set it")
+                action = "comment"
+            if ctx.dry:
+                continue
+            if not backed_up:
+                ctx.backup(path)
+                backed_up = True
+            if action == "move":
+                home, new_key = MOVED_TO[(where, key)]
+                set_nested_key(path, home, new_key, value)
+            elif action == "ping":
+                template = tomllib.loads(template_text("discord.toml"))["messages"]
+                written = _read(path).get("messages") or {}
+                for line in PINGS_NOW_ON[(where, key)]:
+                    set_table_key(path, "messages", line, {**template[line], **(written.get(line) or {}), "ping": value})
+            if action == "comment":
+                comment_out_nested_key(path, where, key, "Huragok no longer uses this:")
+            else:
+                remove_nested_key(path, where, key)
+    if not ctx.dry:
+        remove_empty_table(path, ("privacy",))
+    if gone_quietly:
+        said.append(f"discord.toml: {gone_quietly} settings that did nothing any more are gone")
+    return said
 
 
 def new_commands(ctx: Context) -> list[str]:
@@ -756,9 +1324,21 @@ STEPS: list[Step] = [
     Step("0.5.1/automod-layout-note", "the word list's note naming its parts, where it had none",
          automod_layout_note),
     Step("0.6.0/discord-file", "discord.toml, for the Discord bot", discord_file),
+    Step("0.6.0/moderators-kick-at-most", "[automod] moderators_kick_at_most", moderators_kick_at_most),
+    Step("0.6.0/discord-channels", "discord.toml to tickets, logs, boards and feeds", discord_channels),
+    Step("0.6.0/discord-buttons", "the first beta's lists of buttons in discord.toml", discord_buttons),
+    Step("0.6.0/discord-retired", "settings in discord.toml that do nothing any more", discord_retired),
+    Step("0.6.0/discord-defaults", "defaults in discord.toml that were too loud, where they're unchanged", discord_defaults),
+    Step("0.6.0/discord-old-copies", "the token out of old copies of discord.toml", discord_old_copies),
+    Step("0.6.0/discord-one-line", "lines of [messages] back on one line each", discord_one_line),
+    Step("0.6.0/discord-unbuilt", "settings for what isn't built out of discord.toml", discord_unbuilt),
+    Step("0.6.0/discord-appeals-channel", "appeals get a channel of their own to set", discord_appeals_channel),
+    Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
+    Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.
     Step(f"{__version__}/notes", "Huragok's notes in your files, as this version writes them", notes),
     Step("0.5.1/automod-order", "the word list with the mutes before the kicks", automod_order, settled=True),
+    Step("0.6.0/requests-command", "!reports is !requests in commands.toml", requests_command, settled=True),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True, settled=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

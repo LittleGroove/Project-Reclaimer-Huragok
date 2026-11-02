@@ -460,7 +460,7 @@ def _refresh_toml(kind: str, units: list[_Unit], template: list[_Unit], history:
     things = {u.anchor for u in template if u.kind == "thing" and u.anchor is not None}
     real = {u.anchor for u in units if u.kind == "thing" and u.anchor is not None}
     every = {line for lines in known.values() for line in lines} | {u.text for u in template if u.kind == "note"}
-    distinct = {line for line in every if len(line) >= DISTINCT}
+    distinct = {line for line in every if len(line) >= DISTINCT or COMMENTED_KEY.match(line) or COMMENTED_HEADER.match(line)}
     # A setting the host made a comment (`# check_hours = 6`) keeps its notes above it.
     for unit in units:
         match = COMMENTED_KEY.match(unit.lines[0]) if unit.kind == "note" else None

@@ -6,10 +6,16 @@ write in discord.toml. What each rank may then do is commands.toml's job, in gam
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..core.commandsfile import PROBATION, ROLES
 from .config import RANK_KEYS, DiscordConfig
+
+
+WHOLE_ID = re.compile(r"\b[0-9a-fA-F]{64}\b")
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,13 @@ def _higher(one: str, other: str) -> str:
     return one if ROLES.index(one) >= ROLES.index(other) else other
 
 
+def as_they_may_see(config: DiscordConfig, rank: str, text: str) -> str:
+    """An answer for someone of this rank: below admin, unless `moderators_see_ids` says otherwise, a player's whole ID is cut to its start, which is enough to tell two apart. Names and #numbers are how moderators work."""
+    if rank in ("admin", "owner") or config.section("ranks").get("moderators_see_ids"):
+        return text
+    return WHOLE_ID.sub(lambda found: found[0][:8], text)
+
+
 def is_owner(config: DiscordConfig, user_id: str) -> bool:
     return str(user_id) in {str(owner).strip() for owner in config.section("ranks").get("owners", [])}
 
@@ -57,11 +70,46 @@ def rank_of(config: DiscordConfig, someone: Someone, server: str | None = None) 
             continue
         rank = str(block.get("rank", "")).strip().replace("_", "-")
         servers = block.get("servers") or []
+        servers = [servers] if isinstance(servers, str) else servers  # "Server 10" isn't in "Server 1"
         if rank in RANK_KEYS and (server is not None and (server in servers or "*" in servers) or "*" in servers):
             found = _higher(found, rank)
     if someone.administrator and ranks.get("discord_administrators") in ("moderator", "admin"):
         found = _higher(found, str(ranks["discord_administrators"]))
     return found
+
+
+def in_game(config: DiscordConfig, rank: str) -> str:
+    """What a rank is when a command runs from Discord: an owner of the bot acts as owner, unless the file keeps them to admin."""
+    return str(config.section("ranks").get("owners_in_game") or "owner") if rank == "owner" else rank
+
+
+def game_rank(config: DiscordConfig, someone: Someone, server: str | None = None) -> str:
+    return in_game(config, rank_of(config, someone, server))
+
+
+def highest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]) -> str:
+    """Their rank at its highest, on any of these servers: for what isn't about one server, as someone scoped to one is still staff."""
+    found = rank_of(config, someone)
+    for server in servers:
+        found = _higher(found, rank_of(config, someone, str(server)))
+    return found
+
+
+# What reaches further than the server it's run on, so it takes the rank someone has on all of them. A kick with a time does too.
+REACHES_EVERY_SERVER = {"ban", "banall", "unban", "promote", "demote", "admin", "banname", "unbanname", "banword", "unbanword", "changebanword", "pardonplayer", "confirm", "deny"}
+
+
+def rank_to_run(config: DiscordConfig, someone: Someone, servers: Iterable[Any], server: str | None, command: str, *, timed: bool = False) -> str:
+    """Their rank, for this command on this server."""
+    return lowest_rank(config, someone, servers) if command in REACHES_EVERY_SERVER or (command == "kick" and timed) else game_rank(config, someone, server)
+
+
+def lowest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]) -> str:
+    """Their rank at its lowest, on any of these servers: for what reaches them all, as a rank on one server isn't a rank on the rest. An owner's holds everywhere, and rank_of says so."""
+    names = [str(server) for server in servers]
+    if not names:
+        return in_game(config, rank_of(config, someone))
+    return in_game(config, min((rank_of(config, someone, name) for name in names), key=ROLES.index))
 
 
 def can_act(rank: str) -> bool:

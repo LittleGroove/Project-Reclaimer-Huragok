@@ -17,7 +17,7 @@ prefix = "!"
 cooldown_seconds = 3
 
 [everyone]
-commands = ["help", "strikes"]
+commands = ["help", "strikes", "respawn", "calladmin", "report", "mods"]
 
 [member]
 players = [
@@ -87,8 +87,9 @@ that file says otherwise (the reply says so). Owners change only in the file.
 
 **A ban through Huragok takes every role away** (`!ban`, Vergil's, the relay's, the
 window's), on every server, and the reply says so ("Alice's moderator role goes with
-the ban."). The game's own `/ban` is that server's alone: the roles stay. Since nobody
-acts on their own role or above, only an owner can ban an admin.
+the ban."). A kick with a time takes nothing away: they'll be back, and so will their
+role. The game's own `/ban` is that server's alone: the roles stay. Since nobody acts
+on their own role or above, only an owner can ban an admin.
 
 Roles follow the **player ID**, never the name: anyone can use any name. A player
 ID is 64 letters and digits. Players find theirs in game under Settings >
@@ -102,8 +103,8 @@ player is named by ID while they're away, too (`!ban <an owner's player ID>` fro
 an admin reads "… is an owner; you can't do that to them"). Owners can act on anyone.
 Admins are each server's own, and a `!` command reaches every server, so a player
 counts as the highest role they hold on **any** server: someone who's an admin only
-on LG Testing Grounds is an admin everywhere as far as a `!ban` is concerned, and
-`!roles` lists them "(on LG Testing Grounds)".
+on Server 2 is an admin everywhere as far as a `!ban` is concerned, and `!roles` lists
+them "(on Server 2)".
 
 ## Votes to kick
 Players can vote to kick anyone the server doesn't protect, and the server
@@ -177,7 +178,7 @@ spamming votes. Any vote they call is cancelled.` when it's given.
   `#6` is someone on this server: their team, how long they've been on, their role
   if they have one, "muted", the start of their player ID. `@1` and `@2` are players
   who aren't on (for the commands that reach them, like `!ban`): when they were last
-  here, or the server they're on now. `!ban @2 7d cheating` bans exactly that one,
+  here, or the server they're on now. `!ban @2 cheating` bans exactly that one,
   by player ID, never whoever has the name now. Your @numbers are yours alone, and
   last 10 minutes or until your next list.
 - The same holds for a name that's the start of a longer one: with Nate and Nate
@@ -215,10 +216,11 @@ spamming votes. Any vote they call is cancelled.` when it's given.
 - **`!` reaches every server, `/` stays on one** (`[automod] across_servers`, on by
   default; changed in the window, D → S → Vergil). What Huragok does goes across: a
   `!mute` (or Vergil's) follows the player to any server they join; a `!kick` keeps
-  them off every server until its time is up ("Kicked from LG Test Server by Alice
-  (spam): you can join again in 7m."); a `!ban` reaches every server, and so does an
+  them off every server until its time is up ("Kicked from Server 1 by Alice: spam.
+  You can join again in 7 minutes."); a `!ban` reaches every server, and so does an
   `!unban`. The game's own `/kick` and `/ban`, and votes, stay on the server they
-  were used on, and Huragok only writes them on the player's record.
+  were used on, and Huragok only writes them on the player's record. A slash command
+  in Discord is the `!` one: `/kick` there goes across.
 - **Every server keeps its own ban list; Huragok keeps one of its own** of the bans
   it gives (`!ban`, Vergil, the relay, the window's console) and the admins it
   makes, and puts them on every server's: as they're given, whenever a server's
@@ -229,8 +231,8 @@ spamming votes. Any vote they call is cancelled.` when it's given.
   it. The window does the same: B → the server → E.
 - **`!whois <player> [lines]` is their whole record**: where they are, their other
   names, what's on them now, totals by kind and by how (`!`, `/`, Vergil, a vote,
-  the console), strikes on each line, and the latest entries with who, why, how long
-  and on which server.
+  the console), strikes on each line, and the latest entries with their case numbers,
+  who, why, how long and on which server. A kick with a time is a kick there.
 - Times are like `30m`, `1h`, `7d`, `2w`; `perm` means for good.
 - `cooldown_seconds` holds back repeats of the same command by the same player.
   Admins and owners aren't held back.
@@ -240,50 +242,105 @@ spamming votes. Any vote they call is cancelled.` when it's given.
   so); the commands keep working.
 
 ## Probationary moderators
-A way to bring new moderators in (SPR's staff meeting, October 2026). A moderator
+A way to bring new moderators in. A moderator
 promotes a member once more and they're a **probationary moderator**; an admin
 promotes them to moderator once they've shown they're ready.
 
 - **They use moderators' commands, as moderators type them.** The looking ones work
   as they do for a moderator (`!players`, `!whois`, `!said`, `!kicks`, `!mutes`,
-  `!rules`, `!roles`, `!health`, `!bannames`, `!novotes`, `!reports`). The others,
+  `!rules`, `!roles`, `!health`, `!bannames`, `!novotes`, `!requests`, `!reports`). The others,
   which name a player (`!kick`, `!mute`, `!strike`, `!warn`, `!unmute`, `!pardon`,
   `!novote`, `!allowvote`, `!promote`, `!demote`), become **requests**: the player is
   found with the usual checks, and then nothing happens yet. They read
   `Sent for review as #3: !kick Bravo spam.`; every moderator and admin on any
   server reads, privately, `[o_o] BE A HERO! REPORT VIOLATORS! Nate (probationary
-  moderator) asks, #3 on SPR 1: !kick Bravo spam. !confirm 3 or !deny 3`; the player
+  moderator) asks, #3 on Server 1: !kick Bravo spam. !confirm 3 or !deny 3`; the player
   named reads nothing.
-- **`!reports`** lists the requests waiting, on every server. **`!confirm 3`** makes
+- **`!requests`** lists the requests waiting, on every server. **`!confirm 3`** makes
   it happen, as the confirmer's own (they're who acts: the player reads their name),
   on the server the player is on now. **`!confirm 3 strike slurs`**, or `!confirm 3
   mute 1h language`, does that to the same player instead. **`!deny 3 [why]`** turns
-  it down. A request's number is the lowest one free; a decided one frees it.
+  it down. A request's number is the lowest one free; a decided one frees it. With the
+  Discord bot, each is a card too, whose Confirm and Deny do the same.
 - **Nothing runs out.** A request waits until someone decides it, and what's
   confirmed happens then, its time counting from that moment, even for a player who
-  has left: a mute as they next join, a kick keeps them off every server for 10
-  minutes from the confirmation, a warning waits for their next join, a strike counts
-  at once.
-- **The probationary moderator is told how each went**, now or as they next join.
+  has left: a mute as they next join; a kick keeps them off every server for 10
+  minutes from the confirmation, or for its time if it was given one, within what
+  the confirmer's rank can give (`perm` is a ban, and needs that rank); a warning waits
+  for their next join; a strike counts at once.
+- **The probationary moderator is told how each went**, now or as they next join, or
+  by DM if they asked from Discord.
   `!whois <them>` shows their record ("Requests as a probationary moderator: 12 (9
   confirmed, 2 turned down, 1 waiting)"), and the ledger keeps "requested by" beside
   the confirmer's action.
 - They can't confirm requests, and nobody confirms their own.
+
+## Telling the staff
+`!calladmin`, `!report` and `!mods` are for hosts with the Discord bot
+([discord.md](discord.md)). They only exist while Discord can take them: without it, or
+with that part of it switched off, they read "Unknown command" and `!help` doesn't list
+them. `[off]` in `commands.toml` switches them off either way.
+
+- **`!calladmin [why]`** puts a card in front of the staff, with the last of the
+  server's chat on it. Once per `cooldown_seconds` in `[feed.calls]`. The `words` there
+  are chat words that call too.
+- **`!report <player> [why]`** tells them about a player: someone on, or someone who's
+  left, by a name Vergil has seen. Not yourself. A player has one card while it's open,
+  however many report them, and saying it again adds to yours. The player isn't told who
+  reported them. Once in `reporter_cooldown_seconds`, and `most_at_once` open at a time.
+- **Moderators and up, on any server, are told privately** as each comes in, since
+  they're the only staff who can hear what's being reported: `[o_o] BE A HERO! REPORT
+  VIOLATORS! Charlie reported Bravo on Server 1: voice abuse` (`tell_in_game` in
+  `[reports]`, in `discord.toml`). **`!reports`** lists what's open, on every server.
+- **Whoever reported is told when staff act on it** ("The staff acted on your report of
+  Bravo."), now or as they next join (`tell_reporter`).
+- **Quoting a word doesn't count.** A word from the word list in `!report` or
+  `!calladmin` isn't struck, while Discord can take them: whoever's reporting it is
+  helping. See [automod.md](automod.md#what-players-read).
+- **`!mods`** says which staff are in a game now. Staff who are only on Discord aren't
+  counted: `!calladmin` reaches them.
+
+## Acting from Discord
+With the Discord bot, staff can do all this without being in a game: the buttons on a
+card, a slash command for each of these commands, and lines typed in a console channel.
+[discord.md](discord.md) says how to set them up. They run these same commands, by the
+same rules:
+
+- **Rank comes from `[ranks]` in `discord.toml`:** the Discord roles you've mapped onto
+  moderator, admin and the rest, and owners by Discord user ID. Being a moderator in game
+  isn't being one in Discord, or the other way round, as Discord doesn't know who a player
+  is. What each rank may use is still `commands.toml`, and nobody acts on someone of their
+  own rank or above. On probation, what names a player is a request.
+- **Players read their name in that Discord** ("Bravo was kicked by Mod"), or whatever
+  `shown_as` in `[commands]` says, which can be "a moderator". `!whois` shows it too, with
+  how it was given as for one typed in game (`!kick`).
+- **A slash command is the `!` one,** whatever the slash looks like: `/kick` in Discord
+  is `!kick`, and reaches every server. The game's own `/kick` in game chat stays on its
+  server.
+- **Some have another name there,** where the game's would mislead: `/letback` is
+  `!pardon`, `/wordlist` `!rules`, `/clearstrikes` `!pardonplayer`, `/reloadserver`
+  `!reload`. `!calladmin` and `!strikes` aren't there; `/report` and `/tickets` have their
+  own forms, for `!report` and `!reports`.
+- **Someone who's left** can be kept off with the Kick button, or `/kick` with a time and
+  picked from the list as you type, which `!kick` in game can't do.
 
 ## Every command
 | Command | Default role | |
 | --- | --- | --- |
 | `!help [command]` | everyone | The commands you can use, or how to use one |
 | `!strikes [player]` | everyone | Your automod strikes; moderators can name anyone |
+| `!calladmin [why]` | everyone | Call the staff on Discord. Only while Discord can take it: see [Telling the staff](#telling-the-staff) |
+| `!report <player> [why]` | everyone | Tell the staff on Discord about a player. Only while Discord can take it: see [Telling the staff](#telling-the-staff) |
+| `!mods` | everyone | Which staff are in a game now. Only with the Discord bot on |
 | `!respawn [reason]`, `!respawn <player> [reason]` | everyone; admins for someone else | Stuck? Respawns you on your own team: Huragok moves you to another team and straight back, as the game's admin menu does (the server has no kill command). Everyone reads `[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Red team: stuck in a wall.` Team games during a round only: not free-for-all, and not a team's last player (the server refuses, and you read why). Once a minute for your own; admins aren't held to it, and name a player to respawn them (not someone of their own role or above). Not yet tried with players: whether the move back is a second respawn, and whether it counts as a death |
 | `!players [name]` | moderator | Who's on, with `#numbers`, player IDs, team, time on and roles; `!players nate` lists only those with "nate" in their name (a busy server has more than one answer shows) |
-| `!whois <player \| ID> [lines]` | moderator | Their whole record, from every server: where they are, other names, what's on them now (a mute, a kick keeping them out, their bans as each server's list has them), every kick, mute, ban and warning (by `!`, `/`, Vergil, a vote or the console, who, why, on which server), strikes on each line |
+| `!whois <player \| ID> [lines]` | moderator | Their whole record, from every server: where they are, other names, what's on them now (a mute, a kick keeping them out, their bans as each server's list has them), every kick, mute, ban and warning with its case number (by `!`, `/`, Vergil, a vote or the console, who, why, on which server), strikes on each line |
 | `!warn <player> [reason]` | moderator | A private warning, recorded |
 | `!mute <player> [time] [reason]` | moderator | Nobody hears their voice or reads their chat; someone who left is muted as they next join |
-| `!unmute <player \| ID>` | moderator | Also for someone who left; ends Vergil's own mute on them too. Someone on another server is unmuted there |
-| `!kick <player> [reason]` | moderator | The server keeps them out 10, 30, 60, then 120 minutes |
-| `!pardon <@number \| name \| ID \| IP>` | moderator | Let a kicked player back in now; a `!kick`'s keeps them off every server, so it's pardoned where it was given and they can join every server again; `@number` from `!kicks` |
-| `!kicks` | moderator | Who's been kicked here lately (two hours, since Huragok started), and who a `!kick` on another server keeps off this one, with who, why and how long they're out; numbered for `!pardon` |
+| `!unmute <player \| ID>` | moderator | Also for someone who left; ends Vergil's own mute on them too. Someone on another server is that server's to unmute: it says which |
+| `!kick <player> [time] [reason]` | moderator | No time: the server keeps them out 10, 30, 60, then 120 minutes, the count starting again after a day without a kick. A time: off every server that long, a moderator's for 1 day at most. `perm` is a ban. They have to be on this server: see [Kicks with a time](#kicks-with-a-time-and-bans) |
+| `!pardon <@number \| name \| ID \| IP>` | moderator | Let a kicked player back in now; a `!kick`'s keeps them off every server, so it's pardoned where it was given and they can join every server again. A kick with a time too: at moderator rank, one a moderator could have given, and a longer one takes an admin. On probation it's a request. `@number` from `!kicks` |
+| `!kicks` | moderator | Who's been kicked here lately (two hours, since Huragok started), who a `!kick` on another server keeps off this one, and every kick with a time for as long as it runs, with who, why and how long they're out; numbered for `!pardon` |
 | `!mutes` | moderator | Who's muted: Vergil's list (strikes', moderators', admins') and the server's own; numbered for `!unmute` |
 | `!novote <player> [time \| perm] [reason]` | moderator | They can't call votes: any vote they call is cancelled as it opens, and they're told why. They can still vote on other players' votes. No time means until `!allowvote`; see [Players who spam votes](#players-who-spam-votes) |
 | `!allowvote <player \| @number>` | moderator | Give their votes back; `@number` from `!novotes` |
@@ -291,18 +348,19 @@ promotes them to moderator once they've shown they're ready.
 | `!said <player> [lines]` | moderator | The last lines (5, up to 15) they typed in chat, on any server; kept 30 days |
 | `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do; one line in full |
 | `!bannames [text]` | moderator | The banned names (`names.txt`), numbered for `!unbanname` |
-| `!strike <player> <rule> [note]` | moderator | An automod strike, for something automod can't see, like voice: the rule's next kick, mute or ban |
+| `!strike <player> <rule> [note]` | moderator | An automod strike, for something automod can't see, like voice: the rule's next mute, kick or ban. A line of the word list with no words is only for this: see [automod.md](automod.md#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name (adds it to `names.txt`): they're kicked every time they join with it, until they change it. No strike, no ban |
 | `!health` | moderator | How the server is running |
 | `!promote <player>` | moderator | One step up the roles, up to the role below yours |
 | `!demote <player>` | moderator | One step down, for someone below you: admin to moderator, moderator to probationary moderator, then member, member to player |
 | `!roles` | moderator | Who has which role |
-| `!reports` | moderator | The probationary moderators' requests waiting, on every server |
+| `!requests` | moderator | The probationary moderators' requests waiting, on every server |
+| `!reports` | moderator | What's open for staff on Discord: reports and calls for an admin, on every server, how long each has waited, and whether someone's on it. Only while the full bot takes reports or calls |
 | `!confirm <number> [command and its words]` | moderator | Confirm a request: it happens now, as yours; or name another command to do to that player instead (`!confirm 3 strike slurs`) |
 | `!deny <number> [why]` | moderator | Turn a request down; the probationary moderator is told why |
-| `!ban <player \| ID> [time \| perm] [reason]` | admin | Their ID, address and device; works on players who left, by ID or a name Vergil has seen |
+| `!ban <player \| ID> [time \| perm] [reason]` | admin | Their ID, address and device, for good; works on players who left, by ID or a name Vergil has seen. A time makes it a kick that long: see [Kicks with a time](#kicks-with-a-time-and-bans) |
 | `!unban <@number \| name \| ID \| IP>` | admin | Lift a ban with everything linked to it, on every server; another server's own `/ban` of them stays, and the reply says where; `@number` from `!bans` |
-| `!bans [name]` | admin | The bans in force, newest first, with who banned, why, how long is left, and whether it's on every server or this one; numbered for `!unban` and `!banall` |
+| `!bans [name]` | admin | The bans in force, newest first, with who banned, why, how long is left, and whether it's on every server or this one; a kick with a time is on the server's list too, and reads "kicked"; numbered for `!unban` and `!banall` |
 | `!banall <@number \| player \| ID>` | admin | Put a ban from this server's list (a `/ban`) on every server's: on Huragok's list, with its time left, reason and who gave it; `@number` from `!bans` |
 | `!changebanword <line \| word> \| mutes \| kicks \| ban` | admin | New steps for a line of the word list, its words and name kept: `!changebanword slurs \| 1d 7d \| 2, 1h 1d \| 5` |
 | `!banword <words> <line>` | admin | Add words to a line of the word list (`automod.txt`), with its steps: `!banword word slurs` (`slur` finds `slurs`). A line that isn't there: the answer says how to make it |
@@ -335,3 +393,28 @@ names, the commands that change the game, teams or rounds (`!map`, `!mode`, `!lo
 `!nextmap <game>`, `!endgame`, `!endround`, `!shuffle`, `!team`, `!teamcount`,
 `!startvote` but `!startvote kick`) answer "This server plays Halo 3: ODST: the
 console cannot change its game, teams or rounds." without reaching the server.
+
+## Kicks with a time, and bans
+
+**A ban is for good.** Anything with a time is a kick: `!kick Bravo 7d cheating` removes them and
+keeps them off every server for 7 days (with `[automod] across_servers` off, only this one). Each
+time they try to join, the server tells them how much is left and why. `!pardon` lets them back
+early. `!kick Bravo perm` is a ban, and needs the rank a ban does.
+
+**`!kick` needs them on this server.** For someone who's left, an admin types `!ban Bravo 7d
+cheating`, which is a kick too; at the door it gives the reason as typed, where a `!kick`'s says
+"Kicked for 7 days: cheating". From Discord, the Kick button and `/kick` reach them.
+
+Without a time, `!kick` is the server's own: 10, 30, 60, then 120 minutes for repeat kicks, the
+count starting again after a day without one.
+
+Underneath, a kick with a time is the server's timed ban, so it blocks their address and device
+too, and holds while Huragok is down. It shows as a kick in `!whois`, `!bans`, `!kicks` and Discord,
+and it doesn't take away anyone's role, as a ban does. The one place the word "banned" still shows
+is the server's own lines: what it tells everyone as it happens, and what it tells the player at
+the door: "You are banned from this server for another 6 days. Reason: Kicked for 7 days: cheating".
+
+A moderator's kick lasts one day at most: `moderators_kick_at_most` in `[automod]` changes that.
+Admins and owners have no limit. It holds on Discord's buttons too, and when a moderator confirms a
+request. `!pardon` goes by the same line: at moderator rank it lifts what a moderator could have
+given, and a longer one takes an admin.

@@ -133,8 +133,8 @@ class Screens:
         self.terminal.print_parts([(text, "white"), ("".join(buffer), None)], end="", record=False)
 
     async def prompt_line(self, prompt: str, default: str = "", *, panel: Block | None = None,
-                          secret: bool = False, masked: Callable[[str], str] | None = None) -> str | None:
-        """A line of text; Esc or two idle minutes give None. A secret (or a prompt about a password) shows as
+                          secret: bool = False, masked: Callable[[str], str] | None = None, waits: bool = False) -> str | None:
+        """A line of text; Esc or two idle minutes give None (`waits`: Esc alone, as someone's gone to fetch it: a token pasted at the menu that came back would be keys). A secret (or a prompt about a password) shows as
         stars and goes into the transcript as ********; `masked` hides the secret part of a line (the console's)."""
         self.held.flush()
         secret = secret or "password" in prompt.lower()
@@ -147,6 +147,8 @@ class Screens:
             while True:
                 key = await self.keyboard.read(PROMPT_TIMEOUT)
                 if key is None:
+                    if waits:
+                        continue
                     self.terminal.print(("" if not buffer else " ") + "(timed out)", "gray")
                     return None
                 if key == "ENTER":

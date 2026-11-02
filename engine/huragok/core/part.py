@@ -60,6 +60,7 @@ class CommandSpec:
     start: bool = False  # it only looks or lifts: the start of a name will do, when one player on has it
     follows: str = ""  # what may come right after the name: "time", "team", or the name of a method of the part
     words_after: bool = True  # False: nothing follows the player, so everything typed is their name (!whois)
+    when: str = ""  # the name of a method of the part: while it says False, there's no such command (!report with no Discord)
 
 
 def on(*patterns: str) -> Callable[[F], F]:
@@ -74,14 +75,14 @@ def on(*patterns: str) -> Callable[[F], F]:
 
 def command(name: str, *, help: str = "", usage: str = "", role: str = "player",
             aliases: tuple[str, ...] | list[str] = (), cooldown: float | None = None, player: str = "",
-            acts: bool = False, start: bool = False, follows: str = "", words_after: bool = True) -> Callable[[F], F]:
+            acts: bool = False, start: bool = False, follows: str = "", words_after: bool = True, when: str = "") -> Callable[[F], F]:
     """A chat command: players type !name (the prefix is set in commands.toml). With `player`, the player the line
     names first is found before it runs (call.target, and the words after them call.rest): see targets.py."""
 
     def mark(method: F) -> F:
         method.__dict__["_part_command"] = CommandSpec(name.lower(), help, usage, role,
                                                        tuple(a.lower() for a in aliases), cooldown, player, acts,
-                                                       start, follows, words_after)
+                                                       start, follows, words_after, when)
         return method
 
     return mark

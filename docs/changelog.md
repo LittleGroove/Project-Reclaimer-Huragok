@@ -1,5 +1,131 @@
 # Changelog
 
+## 0.6.0
+**Huragok 0.6.0 adds a Discord bot, each host making their own.** It stays off until you set it up (J in the window; docs/discord.md).
+The update downloads discord.py from PyPI. If it can't, the old version stays and says why.
+In game: `!kick` takes a time (`!kick Bravo 7d cheating`). A moderator's is at most 1 day (`[automod] moderators_kick_at_most`).
+With Discord set up, players get `!calladmin`, `!report` and `!mods`. Without it `!help` shows nothing new. Moderators' `!reports` is `!requests` now.
+Vergil's line now says "kicked for 1 hour" instead of "removed for 1 hour", and `!whois` shows case numbers.
+Your servers keep running while it updates.
+
+### What you'll notice in game, with Discord off
+| What | Before | Now |
+| --- | --- | --- |
+| A strike's line | `removed for 1 hour. Next time: removed for 1 day.` | `kicked for 1 hour. Next time: kicked for 1 day.` |
+| With a mute | `removed for 1 day, then muted for 7 days` | `kicked for 1 day, then muted for 7 days` |
+| `!whois` | `10-30 21:04 Server 1: ban 7d by Alice (!ban): cheating` | `10-30 21:04 case 17 Server 1: kick 7d by Alice (!kick): cheating`, old rows too |
+| `!kick` | `<player> [reason]` | `<player> [time] [reason]`; `perm` is a ban |
+| `!ban` | no time means for good | that, and a time makes it a kick that long |
+| `!bans` | a ban with a time reads "banned" | reads "kicked" |
+| A kick on another server | `Kicked from Server 1 by Alice (spam): you can join again in 7m.` | `Kicked from Server 1 by Alice: spam. You can join again in 7 minutes.` |
+| `!mute` of someone who's left | `for 7d from now` | `for 7 days from now` |
+| `!reports` (moderators) | the probationary moderators' requests | that's `!requests` now, and your `commands.toml` follows. `!reports` is what's open for staff on Discord, and isn't there without the bot |
+| The relay, a word it doesn't know | `'foo' needs the admin role...` | `'foo' isn't a console command: help lists them.` |
+
+- **A ban is for good, and anything with a time is a kick.** Underneath it's the server's timed
+  ban, with the reason `Kicked for 7 days: cheating`, so the server tells them how long is left
+  each time they try to join. Whoever kicked reads `Bravo is kicked for 7 days: the server tells
+  them how long is left each time they try to join.` Over the limit: `A moderator's kick lasts 1
+  day at most here: an admin can make it longer.` Timed kicks are on `!kicks` for as long as they
+  run. See [commands.md](commands.md#kicks-with-a-time-and-bans).
+- **Two rank changes you should know about.** A moderator's `!pardon` now lifts a kick with a time,
+  if a moderator could have given it: a longer one takes an admin, whoever gave it. And anything
+  with a time leaves someone's role alone: only a ban for good takes it.
+- **The word list can have a line with no words:** `| 1d, 7d | 2, 1h | 3 | voice`, a ladder only
+  staff climb, with `!strike Bravo voice`.
+- **The relay** refuses an address or range that someone of the moderator's own role or above is on.
+- **Smaller:** an `!unban` passed around the servers is one line on the record. A confirmed request
+  whose action failed stays waiting, and says why. Saving a file while a virus scan has it open is
+  tried again. The dashboard says in red when `settings.toml` has changed since Huragok started.
+- **The temporary record** from 0.5.2 (`logs/temp-discord`) stays until the version that brings
+  players' stats, not 0.6.0 as its notes said. It and its stats reports are now pruned after 30 days.
+
+**Off until you set it up:** `discord.toml` starts with `mode = "off"` and every feature off. With
+the mode off nothing goes to Discord, not even the start loop's webhook, and discord.py isn't
+imported. **Not switchable:** kicks with a time, the wording above, the temporary record.
+
+### The Discord bot
+Each host makes their own bot in Discord's developer portal; Huragok runs it. No port to open.
+[discord.md](discord.md) goes from nothing to a bot that answers, in about ten minutes.
+
+- **Three modes:** off, webhook only (posts, no bot), or your own bot.
+- **Setting it up:** J in the window, or `/huragok setup` in Discord, where **Recommended** turns on
+  what staff need and says what's left to do. `/huragok check` says what's wrong, `/huragok gallery`
+  shows every message, and J, Z starts over. Changes apply within seconds, with no restart.
+- **Ranks:** Discord roles mapped onto Huragok's ranks, and nothing counts until it is. Owners by user
+  ID, with a claim code. A role can count on only some servers: what reaches every server takes the
+  rank someone holds on all of them.
+- **The channel decides the shape:** tickets in `staff`, `reports` and `alerts`; records in `logs` and
+  `huragok-logs`; posts in `status`, `info` and `games`. Every message has its own line: channel,
+  colour, on or off, ping, and whether it makes a sound.
+- **One incident, one card,** updated in place, with Mute, Kick with a time, Let back, Ban, Strike,
+  Pardon strike, Warn, Whois, Said, Add note, Discuss, Acknowledge and Close, each needing the rank its
+  command does. A **Now** field says where the player is and how they stand. One live card per player
+  for Vergil's strikes, and a card in a log channel keeps its buttons.
+- **Feeds:** what moderators and Vergil did, votes, alerts that close when it's over, servers, games,
+  joins, a watch list, calls for an admin, probationary moderators' requests, an audit log.
+- **The status board** and more: a live card per server ("Stopped" isn't "Offline", and it stays Online
+  through a countdown), seeding pings, `/notify`, the bot's status line, bio and nickname, channel names
+  and topics, voice channel status.
+- **Every in-game command as a slash command,** at your rank, with a box for each thing it takes. In
+  Discord some have the name that doesn't mislead: `/letback`, `/wordlist`, `/clearstrikes`,
+  `/reloadserver`. `/server` shows a server's state and, for those with the rank, its power buttons.
+  `/tickets` lists what's waiting, reports first, with what's been done.
+- **The typed console:** lines in a private channel run on a server, as your rank allows. Answers never
+  show an address. It clears itself when it's quiet, keeps what was said as a file in the logs, and
+  never touches what was there before it first looked.
+- **Notes and flags** on players, shown on `!whois` and on cards.
+- **Reports:** `!report` in game, `/report`, or a right-click. A report makes a sound, moderators in game
+  are told of reports and calls, and whoever reported is told when staff act. A moderator's strike typed
+  in game goes on an open report's card. Quoting a listed word in `!report` or `!calladmin` isn't struck.
+- **Who a list offers:** as you type a player, `/unban` lists who's banned, `/mute` leaves out who's muted, and so on, each saying how they stand. A whole player ID works in any of them, and what's posted calls someone by the name they were last seen with.
+- **Several roles on a ping:** any line of `[messages]`, and Contact's `thread_role`, can be a list. **Who gets told** and each line's panel take as many as it's for.
+- **The watchdog's word for a stopped server:** its line in the log, `!health` and `/health` said `healthy · RCON 1 ms` for as long as a server stayed stopped, from what it last saw. They say `stopped` now, or `not answering` when the console's gone and it isn't known why.
+- **Appeals:** `/appeal`, in a channel of its own or in `reports`, with **Lift it**, **Shorten it** and **Deny**, told by DM. **Deny** says whether they can appeal again: after the usual wait, another, or no more; **Let them appeal again** undoes it. Codes are random and
+  kept. A name alone is accepted unless `code_only` says otherwise, the card says which it was, and only
+  a code counts against the player for the wait. An accepted appeal against Vergil takes that strike off.
+- **Contact staff:** a button that opens a private thread with the staff.
+- **The start loop** can say Huragok is down, through a webhook, when the bot can't.
+
+**What's not in it:** linking Discord accounts to players, role sync, stats, leaderboards, medals, game
+chat, minigames, or moderating the Discord itself.
+
+### If you ran 0.6.0-beta.1
+Your `discord.toml` is brought up to date as it starts. The token, the mode, which Discord, your
+owners, ranks and channels stay, and so does what you set. The log says what it did, along these
+lines (the numbers are yours):
+
+```text
+discord.toml: [channels] public is status now: only the server cards go there. Make an info channel for the rest
+discord.toml: appeals have a channel of their own to set in [channels]: until then, they stay in reports
+discord.toml: [reports] buttons: the ones this version has
+discord.toml: 69 settings that did nothing any more are gone
+discord.toml: feeds ping: each message has its own ping now, and it's on those lines
+discord.toml: 53 settings for what isn't built yet are gone: they come back with the version that builds them
+discord.toml: [contact] ping is [contact] thread_role now
+discord.toml: who can type console lines is [console] raw_rank now: admin
+discord.toml: 20 new settings
+discord.toml: Huragok's notes as this version writes them
+```
+
+- **Make `info` and `logs` channels,** and tell Huragok which they are: most of what used to go to
+  `public` goes to `info`, and moderators' actions go to `logs`, which has nothing to fall back on.
+  `/huragok check` says what's waiting for one.
+- **Settings for what isn't built are gone:** `[link]`, `[roles]`, `[chat]`, `[stats]`, `[achievements]`,
+  `[leaderboards]`, `[matches]`, `[community]`, `[games]`, `[moderation]`, `[feed.kills]`, and the
+  channels `stats`, `chat`, `minigames` and `minigames-logs`. As it shipped, each just goes. Anything you
+  changed stays as a comment saying so, for the version that builds it.
+- **Some have a new name,** and yours moves: `[contact] ping` is `thread_role`; `[console] raw` and
+  `[ranks] moderators_raw_console` are `[console] raw_rank` (moderator, admin, owner or off); `[commands]
+  message_menu` is `[reports] right_click`; `[status.seeding] notify_me` is `[notify] enabled`, with its
+  own `cooldown_minutes`; the line `seeding-notify` is `notify-told`; a line's `remove_after` is
+  `remove_after_minutes`. `[feed.calls] mods_command` is gone: `mods` under `[off]` in `commands.toml`
+  does it, and false moves there.
+- **New settings:** `[reports] tell_in_game, tell_reporter, acted_after_hours, most_at_once`; `[appeals]
+  lift_clears_strike, code_only`; `[contact] cooldown_minutes`; `[tickets] evidence_minutes`.
+- **The backup:** the file as it was is in `records/previous-files/<version>/`, with its token and webhook
+  addresses left out of the copy. The copy the first beta kept has them taken out too.
+
 ## 0.6.0-beta.1
 **The Discord bot's foundation: a beta, the first of several.** 0.6.0 brings a Discord bot
 in stages, each a beta; this one is what everything else stands on. It posts nothing by
@@ -236,7 +362,7 @@ version's, with every note of your own kept where you put it.
   over it: a map the server skips because no description names it (the server pairs
   a map with the `multiplayer/*.json` whose `ScenarioFile` ends in the map's file
   name), an old copy of a map left beside the new one (the live server's
-  `fixedHugeGrassTrapasRemix-old.map`, skipped at every start), a mod made for another
+  `SomeMap-old.map`, skipped at every start), a mod made for another
   game (ignored without a word), a Workshop item missing files or copied in by hand,
   two maps with one map ID, a Forge layout made on a map that isn't installed, a mod
   too big for players to download, character mods without Halo 3's 27 multiplayer
@@ -255,8 +381,8 @@ version's, with every note of your own kept where you put it.
   warning naming the part that is broken (a tag table that runs past the end of the
   map's tag data, more tags than the server takes, a file cut short before its
   header's length…), with the Workshop upload's date to quote to its author, and
-  what to do. The Workshop screen says the same. A broken upload of HugeGrass
-  Rebalance on 20 October, replaced by its author 45 minutes later, showed the
+  what to do. The Workshop screen says the same. A broken Workshop upload on
+  20 October, replaced by its author 45 minutes later, showed the
   server's reason alone wasn't enough to act on.
 - **Admins change the word list from the game.** `!banword newword slurs` adds a
   word to the `slurs` line, with its steps (`slur` finds it too); a line that isn't
@@ -344,7 +470,7 @@ version's, with every note of your own kept where you put it.
   The game's own `/kick` and `/ban` (and a `/mute`, when the game has one) and votes
   stay on the server they were used on: Huragok writes them on the player's record
   and does nothing else with them. The server tells the two apart for Huragok: it
-  names an admin in game "LilGremlin", and anything through the console "LilGremlin
+  names an admin in game "Alice", and anything through the console "Alice
   (RCON)". Each server's moderation commands stay its own: `!kick` and `!mute` for
   someone on another server say where they are. Huragok adds the line, with what it
   does, to your `settings.toml`.
@@ -375,7 +501,7 @@ version's, with every note of your own kept where you put it.
   command was gone over again for anything still assuming one server or one shared
   list. `!whois` says where someone is banned now from every server's own list ("banned
   on every server, 6d left (by Owner: cheating)", "banned on Other, 3d left (/ban by
-  LilGremlin: spam)"); before, it took the latest ban or unban anywhere. A `!kick` keeps
+  Alice: spam)"); before, it took the latest ban or unban anywhere. A `!kick` keeps
   the player off every server, and now so does its pardon: `!kicks` on any server
   lists the `!` kicks keeping someone off it, and `!pardon` (or a pardon from the
   window or the relay) lifts it where it was given. `!pardonplayer` lifts Vergil's
@@ -391,10 +517,10 @@ version's, with every note of your own kept where you put it.
   `/ban` is that server's, and the roles stay. A player is protected by the highest
   role they hold on any server: admins are each server's own, and a `!` command
   reaches every one, so an admin of one server can't `!ban` an admin of another, and
-  `!roles` lists every server's admins ("(on LG Testing Grounds)" for one who isn't
+  `!roles` lists every server's admins ("(on Server 2)" for one who isn't
   an admin everywhere). `!unban` lifts Huragok's ban on every server and leaves
   another server's own `/ban` of the player, saying where it is ("Still banned on
-  Other by LilGremlin (/ban: spam)"). The bans your servers shared before this
+  Other by Alice (/ban: spam)"). The bans your servers shared before this
   version go on Huragok's list as Huragok starts (they were every server's when
   given), so a server you add later gets them too and `!bans` says "every server";
   each list is read once, so a ban taken off later stays off. The commands' database
@@ -1685,8 +1811,8 @@ the root, each server in `SERVERS/<name>/`.
   the time, for finding out what happened afterwards; the supervisor's log notes
   each screen opened and closed.
 - **Every screen is laid out the same way:** a title with one line on what the
-  screen does, section headings that show where you are as a path (`LG Test
-  Server › Game content › Playlists`), numbered lists in aligned columns with the
+  screen does, section headings that show where you are as a path (`Server
+  1 › Game content › Playlists`), numbered lists in aligned columns with the
   description in gray, and a menu block of `[key]` options in two columns when
   they fit (one when each has a note), with the way back in gray beneath it.
   **Log lines and server events no longer land inside a question.** While a

@@ -154,7 +154,7 @@ class StateTracker:
             state.connected, state.version = True, data.get("version")
             self._refresh_now[state.name].set()
         elif name == "rcon.disconnected":
-            state.connected = False
+            state.connected, state.rcon_latency_ms = False, None  # the last answer's time says nothing about now
         elif name == "rcon.lagged":
             self._refresh_now[state.name].set()
         elif name in ("rcon.join", "rcon.leave"):

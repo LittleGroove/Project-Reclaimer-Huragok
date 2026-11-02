@@ -11,7 +11,7 @@ from ...core.part import command
 from ...core.text import describe_time, seconds_of
 from ...servers.backends import LifecycleError, LifecycleUnavailable
 from ...servers.server import AFTER_GAME_LIMIT
-from ..router import CommandCall
+from ..router import CommandCall, unquote
 from ..targets import TIME
 from .base import CommandsBase
 
@@ -133,6 +133,7 @@ class ServerCommands(CommandsBase):
                              "makes a countdown end in a restart.")
             return
         asked = f"requested by {call.player.name}"
+        text = unquote(text.split())
         reason = f"{text} ({asked})" if text else asked
         options: dict[str, object] = {"countdown": float(seconds_of(length))} if length else {}
         try:

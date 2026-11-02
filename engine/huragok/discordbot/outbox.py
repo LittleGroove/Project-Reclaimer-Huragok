@@ -5,7 +5,8 @@ with the same key, so only the newest status edit is ever sent. Each `bucket` (a
 `gap` seconds between jobs, longer when Discord says its limit is used up. Discord's "slow down" holds that bucket (or
 everything, when it's about the whole bot) for as long as it says, and nothing is sent into it meanwhile; other channels
 carry on. No answer from Discord is tried again a few times, further apart each time. A refusal is never tried again:
-10,000 of those in 10 minutes blocks the PC's address, so `on_refused` hears of each one, and the feature waits.
+10,000 of those in 10 minutes blocks the PC's address, so `on_refused` hears of each one, and the feature waits. A wait longer
+than `long_wait` ([limits] wait_seconds) is real and kept to, but `on_long_wait` hears of it: a channel never goes quiet unexplained.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ ALERT, ANSWER, MODERATION, STATUS, CHAT = range(5)
 
 MAX_WAITING = 2000  # past this, the least urgent goes
 RETRY_WAITS = (5.0, 15.0, 30.0, 60.0, 120.0)  # after each time Discord can't be reached
+KEEP_TRYING_SECONDS = 21600.0  # a job that's failed this long while nothing else got through goes: the 2,000 above keeps memory safe till then
 DEFAULT_GAP = 1.0  # Discord: about 5 messages per 5 s per channel
 
 
@@ -37,16 +39,25 @@ class Job:
     key: str | None = field(default=None, compare=False)
     gap: float = field(default=DEFAULT_GAP, compare=False)
     what: str = field(default="", compare=False)
+    tag: str = field(default="", compare=False)  # the feature it's for: a refusal stops that feature
     tries: int = field(default=0, compare=False)
+    failing_since: float = field(default=0.0, compare=False)
+    expires: float | None = field(default=None, compare=False)  # only true until then: it isn't sent after that
     on_done: Callable[[Any], None] | None = field(default=None, compare=False)
+    on_fail: Callable[[DiscordError], bool] | None = field(default=None, compare=False)  # True: it's dealt with
 
 
 class Outbox:
     def __init__(self, *, on_refused: Callable[[Job, DiscordError], None] | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 on_long_wait: Callable[[Job, float], None] | None = None,
+                 long_wait: Callable[[], float] = lambda: 30.0, clock: Callable[[], float] = time.monotonic) -> None:
         self.on_refused = on_refused
+        self.on_long_wait = on_long_wait
+        self.long_wait = long_wait
         self.clock = clock
         self.jobs: list[Job] = []
+        self.last_worked = clock()
+        self.failing = False  # Discord couldn't be reached, the last time anything tried
         self.free_at: dict[str, float] = {}
         self.paused_until = 0.0
         self.dropped = 0
@@ -58,13 +69,14 @@ class Outbox:
         return len(self.jobs)
 
     def put(self, send: Callable[[], Awaitable[Any]], *, priority: int = STATUS, bucket: str = "", key: str | None = None,
-            gap: float = DEFAULT_GAP, what: str = "", on_done: Callable[[Any], None] | None = None) -> None:
+            gap: float = DEFAULT_GAP, what: str = "", tag: str = "", on_done: Callable[[Any], None] | None = None,
+            on_fail: Callable[[DiscordError], bool] | None = None, expires: float | None = None) -> None:
         if key is not None:
             for job in self.jobs:
                 if job.key == key:  # the newest wins, in the place the first one waited
-                    job.send, job.what, job.on_done, job.gap = send, what, on_done, gap
+                    job.send, job.what, job.on_done, job.on_fail, job.gap, job.tag, job.expires = send, what, on_done, on_fail, gap, tag, expires
                     return
-        self.jobs.append(Job(priority, next(self._numbers), send, bucket, key, gap, what, on_done=on_done))
+        self.jobs.append(Job(priority, next(self._numbers), send, bucket, key, gap, what, tag, on_done=on_done, on_fail=on_fail, expires=expires))
         if len(self.jobs) > MAX_WAITING:
             last = max(self.jobs)
             self.jobs.remove(last)
@@ -99,10 +111,15 @@ class Outbox:
     async def send_one(self, job: Job) -> None:
         self.jobs.remove(job)
         now = self.clock()
+        if job.expires is not None and now > job.expires:  # "come and fill it", hours late, after an outage
+            log.info("%s is out of date, so it isn't posted", job.what or "a post")
+            return
         try:
             reply = await job.send()
         except SlowDown as error:
             log.warning("%s; %s waits", error, job.what or "a post")
+            if error.retry_after > self.long_wait() and self.on_long_wait is not None:
+                self.on_long_wait(job, error.retry_after)
             if error.everything:
                 self.paused_until = now + error.retry_after
             else:
@@ -111,23 +128,40 @@ class Outbox:
             return
         except Unreachable as error:
             job.tries += 1
+            job.failing_since = job.failing_since or now
+            self.failing = True
             if job.tries > len(RETRY_WAITS):
-                self.dropped += 1
-                log.warning("%s; gave up on %s", error, job.what or "a post")
-                return
-            self.paused_until = now + RETRY_WAITS[job.tries - 1]
-            log.info("%s; %s tried again in %.0f s", error, job.what or "a post", RETRY_WAITS[job.tries - 1])
+                if self.last_worked > job.failing_since or now - job.failing_since > KEEP_TRYING_SECONDS:  # others are getting through, or it's been hours: it's this one
+                    self.dropped += 1
+                    log.warning("%s; gave up on %s", error, job.what or "a post")
+                    try:
+                        if job.on_fail is not None:
+                            job.on_fail(error)
+                    except Exception:  # noqa: BLE001 - it mustn't stop the rest
+                        log.exception("Telling of a failure failed, for %s", job.what or "a post")
+                    return
+                job.number = next(self._numbers)  # it's nobody's fault while nothing's getting through, and others of its priority go first in case it's only this one
+            wait = RETRY_WAITS[min(job.tries, len(RETRY_WAITS)) - 1]
+            self.paused_until = now + wait
+            log.info("%s; %s tried again in %.0f s", error, job.what or "a post", wait)
             self._again(job)
             return
         except DiscordError as error:
-            level = logging.ERROR if isinstance(error, BadToken) else logging.WARNING
-            log.log(level, "Discord refused %s: %s", job.what or "a post", error)
-            if self.on_refused is not None:
-                self.on_refused(job, error)
+            try:
+                if job.on_fail is not None and job.on_fail(error):
+                    return
+                level = logging.ERROR if isinstance(error, BadToken) else logging.WARNING
+                log.log(level, "Discord refused %s: %s", job.what or "a post", error)
+                if self.on_refused is not None:
+                    self.on_refused(job, error)
+            except Exception:  # noqa: BLE001 - what's told of a refusal failing mustn't stop the rest either
+                log.exception("Telling of a refusal failed, for %s", job.what or "a post")
             return
         except Exception:  # noqa: BLE001 - one bad post must never stop the rest
             log.exception("%s couldn't be sent", job.what or "a post")
             return
+        self.last_worked = self.clock()
+        self.failing = False
         gap = job.gap
         if isinstance(reply, Reply) and reply.remaining == 0 and reply.reset_after:
             gap = max(gap, reply.reset_after)

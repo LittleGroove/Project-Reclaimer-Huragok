@@ -459,6 +459,7 @@ class UpdateService:
     def __init__(self, settings: Settings, bus: EventBus, relaunch: Callable[[], None]) -> None:
         self.settings = settings
         self.config = settings.updates
+        self.bus = bus
         self.relaunch = relaunch
         self.pending: Release | None = None
         self.announced: str | None = None
@@ -580,6 +581,7 @@ class UpdateService:
         except (UpdateError, OSError, subprocess.SubprocessError) as error:
             self.failed, self.last_failure = release.version, str(error)
             log.error("Update failed, still on %s: %s", __version__, error)
+            self.bus.emit("supervisor.update_failed", None, version=release.version, why=str(error))
             if self.config.auto_update:
                 log.warning("  Huragok doesn't try %s again by itself; it tries a newer release when one is out. "
                             "To try %s again: U in the window (or run: %s update)", release.version,

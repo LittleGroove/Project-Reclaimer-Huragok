@@ -10,7 +10,8 @@
   "0.5.1",
   "0.5.2",
   "0.5.3",
-  "0.6.0-beta.1"
+  "0.6.0-beta.1",
+  "0.6.0-beta.2"
  ],
  "files": {
   "settings.toml": {
@@ -399,6 +400,13 @@
      "# true: beta releases too (GitHub pre-releases), to try what's coming before it's",
      "# a full release; a beta can have bugs the full release won't. false: full releases",
      "# only. Turning it off doesn't go back: a beta stays until a full release passes it."
+    ],
+    "automod|moderators_kick_at_most": [
+     "# A kick with a time (!kick Bravo 7d) keeps someone off every server, and tells them how",
+     "# long each time they try. A ban is for good. This is the longest a moderator can",
+     "# give, as a long kick is a ban in all but name; admins and owners have no limit.",
+     "# The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick",
+     "# is a ban in all but name. Admins and owners have no limit."
     ]
    },
    "inline": {
@@ -457,7 +465,8 @@
      "# strikes older than this stop counting; 0: never"
     ],
     "automod|name": [
-     "# players read \"removed by Vergil\""
+     "# players read \"removed by Vergil\"",
+     "# players read \"kicked by Vergil\""
     ],
     "automod|exempt_roles": [
      "# never acted on (roles as in commands.toml; \"player\" is everyone)"
@@ -547,7 +556,9 @@
      "#     1st: muted 1 day   2nd: muted 7 days   3rd: out 1 hour   4th: banned for good",
      "#   insultword         | 1d, 3d        | 1, 1h, 1d | 4 | insults",
      "#     1st: muted 1 day   2nd: out 1 hour, then muted 3 days   3rd and 4th: out 1 day",
-     "# !banword word | 1d 7d | 2, 1h 1d | 5 | slurs; and take one off: !unbanword word."
+     "# !banword word | 1d 7d | 2, 1h 1d | 5 | slurs; and take one off: !unbanword word.",
+     "# No words, with a name: a ladder for what the word list can't hear, that only staff climb, with !strike",
+     "# or the Strike button on a report. Voice, say:  | 1d, 7d | 2, 1h | 3 | voice"
     ]
    },
    "inline": {}
@@ -619,7 +630,8 @@
      "# admin, owner. In game, !promote <player> moves someone one step up (up to the",
      "# role below your own) and !demote one step down (only someone below you):",
      "# moderators make members and probationary moderators, admins make moderators,",
-     "# owners make admins. A !ban takes every role away. Each change"
+     "# owners make admins. A !ban takes every role away. Each change",
+     "#              is a request a moderator or admin confirms (!requests, !confirm,"
     ]
    },
    "inline": {
@@ -648,7 +660,9 @@
      "How this server is running"
     ],
     "kick": [
-     "Remove them; the server keeps them out 10, 30, 60, then 120 minutes"
+     "Remove them; the server keeps them out 10, 30, 60, then 120 minutes",
+     "Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban",
+     "Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban. Someone who has left can be kept off with a time"
     ],
     "mute": [
      "Nobody hears their voice or reads their chat, e.g. !mute Bravo 30m spam",
@@ -684,7 +698,9 @@
      "A player's record: names, where they are, mutes, kicks, bans and warnings on every server, by ! or / and by whom, and their strikes"
     ],
     "ban": [
-     "Ban their ID, address and device; no time means for good, e.g. !ban Bravo 7d cheating"
+     "Ban their ID, address and device; no time means for good, e.g. !ban Bravo 7d cheating",
+     "Ban their ID, address and device, for good. Give a time and it's a kick that long instead, e.g. !ban Bravo 7d cheating",
+     "Ban their ID, address and device; no time means for good, and a time makes it a kick that long, e.g. !ban Bravo 7d cheating"
     ],
     "cancelvote": [
      "End the vote under way with no result"
@@ -814,6 +830,19 @@
      "Turn down a probationary moderator's request (they're told why)"
     ],
     "reports": [
+     "The probationary moderators' requests waiting, on every server: !confirm or !deny each",
+     "What's open for staff on Discord: reports and calls for an admin, on every server"
+    ],
+    "calladmin": [
+     "Call the staff on Discord"
+    ],
+    "mods": [
+     "Which staff are on the servers now"
+    ],
+    "report": [
+     "Tell the staff on Discord about a player"
+    ],
+    "requests": [
      "The probationary moderators' requests waiting, on every server: !confirm or !deny each"
     ]
    }
@@ -895,7 +924,10 @@
      "# Channels and roles: an ID (the setup writes IDs, with the name as a note) or a name",
      "# (\"#admin-log\", \"@Server Admin\"), which Huragok looks up and replaces with the ID.",
      "# Servers: their names as in Huragok's window, or \"*\" for every server.",
-     "# A feature that's on but missing something says what: /huragok check, or the window."
+     "# A feature that's on but missing something says what: /huragok check, or the window.",
+     "# seconds after it changes. A setting it doesn't know is only a warning. A file it can't",
+     "# read leaves what's in force as it was, and says why; at the start, the bot stays off.",
+     "# Your servers carry on either way."
     ],
     "[ranks]": [
      "# ---------------------------------------------------------------------------------",
@@ -920,23 +952,31 @@
     ],
     "[channels]": [
      "# ---------------------------------------------------------------------------------",
-     "# Channel names features can share: a feature's channel = \"staff\" means this one."
+     "# Channel names features can share: a feature's channel = \"staff\" means this one.",
+     "# The channels, by what happens in them. The channel decides how a message looks: send one to `staff` and it's a",
+     "# ticket, to `logs` and it's a record, to `info` and it's a post. See `[messages]`, below."
     ],
     "[feeds]": [
      "# ---------------------------------------------------------------------------------",
      "# Feeds: cards about what happened. [feeds] is every feed's default; each",
-     "# [feed.<name>] block changes only what it names."
+     "# [feed.<name>] block changes only what it names.",
+     "# [feed.<name>] block changes only what it names. Which channel each message goes to,",
+     "# its colour and whether it posts at all are in [messages], below."
     ],
     "[status.board]": [
      "# ---------------------------------------------------------------------------------",
      "# The servers at a glance. Every template takes placeholders: {server} {map} {mode}",
      "# {players} {max} {next} {state} {fps} {uptime} {playlist} {players_total}",
-     "# {servers_up} {servers} {unique_players} {games_today} {top_player} {top_streak}."
+     "# {servers_up} {servers} {unique_players} {games_today} {top_player} {top_streak}.",
+     "# {players} {max} {next} {state} {uptime} {playlist} {players_total}",
+     "# {servers_up} {servers} {unique_players}."
     ],
     "[console]": [
      "# ---------------------------------------------------------------------------------",
      "# The console from Discord. typed: lines typed in a channel (needs the Message",
-     "# Content switch). slash: /rcon and every command as a slash command."
+     "# Content switch). slash: /rcon and every command as a slash command.",
+     "# The console from Discord: lines typed in a channel. Every command as a slash command",
+     "# is [commands]; these ask for Message Content Intent on the developer portal's Bot page."
     ],
     "[commands]": [
      "# ---------------------------------------------------------------------------------",
@@ -973,7 +1013,10 @@
      "# ---------------------------------------------------------------------------------"
     ],
     "[notes]": [
-     "# Staff tools on players (bot mode): notes, flags, reason templates, evidence, appeal codes."
+     "# Staff tools on players (bot mode): notes, flags, reason templates, evidence, appeal codes.",
+     "# Staff tools on players (bot mode): notes, flags, evidence, appeal codes.",
+     "# ---------------------------------------------------------------------------------",
+     "# What staff write down about players (bot mode)."
     ],
     "[games]": [
      "# ---------------------------------------------------------------------------------",
@@ -994,7 +1037,9 @@
     ],
     "[text]": [
      "# Every text the bot posts can be reworded here: [text] key = \"words with {placeholders}\".",
-     "# The window lists every key and its default."
+     "# The window lists every key and its default.",
+     "# Every text the bot posts can be reworded here: \"ticket.closed\" = \"words with {placeholders}\". The quotes around the name matter.",
+     "# What the bot says on its cards and in its answers can be reworded here: \"ticket.closed\" = \"words with {placeholders}\"."
     ],
     "[privacy]": [
      "# ---------------------------------------------------------------------------------"
@@ -1002,6 +1047,96 @@
     "[limits]": [
      "# ---------------------------------------------------------------------------------",
      "# Floors on every timer. Raise them freely; Huragok won't go below the numbers in the notes."
+    ],
+    "[messages]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Every kind of message the feeds post, one line each. Change where it goes, or switch it off.",
+     "#   channel: a name from [channels] (\"staff\"), or a channel itself (\"#my-channel\")",
+     "#   colour:  a name from [colours] below, or \"#RRGGBB\"",
+     "#   post:    false: this one isn't posted at all",
+     "#   ping:    a role to ping when it's posted, e.g. \"@On Call\"",
+     "# /huragok gallery shows every one of them in its colour. [feed.<name>] enabled switches a whole group.",
+     "#   silent:  false: it makes a sound for those who get notifications from the channel, ping or no ping",
+     "#   ping:    who to ping when it's posted: a role, e.g. \"@On Call\", or several, e.g. [\"@Moderators\", \"@Admins\"]"
+    ],
+    "messages|moderation-ban": [
+     "# What staff and Vergil did",
+     "# What people did with their own hands: a card each in logs, whose buttons still work (acting on it brings it back to staff)",
+     "# A ticket's line can also say where that kind of card goes when it's finished, over [tickets] when_closed: closes_to = \"#its-own-channel\", \"logs\" to share one, \"stay\" or \"thread\".",
+     "# Any line can say: remove_after = minutes (the post goes after that long), stale_after_hours = hours (a ticket nobody's touched finishes itself), as = \"ticket\", \"log\" or \"post\" (what it is, whichever channel it's sent to).",
+     "# Any line can say: remove_after_minutes = minutes (the post goes after that long), stale_after_hours = hours (a ticket nobody's touched finishes itself), as = \"ticket\", \"log\" or \"post\" (what it is, whichever channel it's sent to)."
+    ],
+    "messages|vergil-name-ban": [
+     "# On the record: changes to Vergil's lists, votes",
+     "# One line each, with nothing to act on: what people did"
+    ],
+    "messages|alerts-crashed": [
+     "# What's going wrong, and when it's over",
+     "# What's wrong with the servers: a ticket per problem, closed when it's over"
+    ],
+    "messages|servers-started": [
+     "# The servers' own news"
+    ],
+    "messages|games-started": [
+     "# Games"
+    ],
+    "messages|joins-first": [
+     "# Who's coming and going"
+    ],
+    "messages|content-workshop": [
+     "# Content and the audit trail"
+    ],
+    "[colours]": [
+     "# ---------------------------------------------------------------------------------",
+     "# The colours [messages] can name. Change any, or add your own: name = \"#RRGGBB\"."
+    ],
+    "messages|watch-flagged-joined": [
+     "# Who to keep an eye on, and staff being called"
+    ],
+    "messages|seeding-wanted": [
+     "# Bringing players in",
+     "# News for everyone: a post each"
+    ],
+    "notes|reasons": [
+     "# Offered in the forms behind the ban, kick and mute buttons. What's before a colon becomes the reason; the button says how long."
+    ],
+    "channels|status": [
+     "# For everyone to read. Nobody should be able to type in these."
+    ],
+    "channels|staff": [
+     "# Tickets: one card per incident, for staff to act on, updated until it's dealt with."
+    ],
+    "channels|logs": [
+     "# Records, for staff. A card here keeps its buttons: acting on it sends it back to be dealt with."
+    ],
+    "channels|console": [
+     "# Where people talk.",
+     "# Where staff type lines for a server."
+    ],
+    "[tickets]": [
+     "# ---------------------------------------------------------------------------------",
+     "# Tickets: one incident, one card. What's done on a card updates it, and it becomes the record: no card is ever",
+     "# posted about it. It stays usable wherever it is: acting on one in a log channel sends it back here, needing",
+     "# acknowledging again."
+    ],
+    "tickets|colours": [
+     "# A card's colour says where it stands. Untouched, and a person's own action, use their own line's colour in [messages]."
+    ],
+    "messages|vergil-strike": [
+     "# What Vergil did, and who to keep an eye on: a ticket each, for staff to act on or acknowledge"
+    ],
+    "messages|calls-called": [
+     "# People asking staff for something: a ticket each, until someone closes it"
+    ],
+    "messages|vergil-would": [
+     "# One line each, with nothing to act on: what Vergil and the Superintendent are up to"
+    ],
+    "[answers]": [
+     "# ---------------------------------------------------------------------------------",
+     "# How long what the bot says stays, so channels hold what's still needed. 0: it stays until someone dismisses it."
+    ],
+    "[notify]": [
+     "# ---------------------------------------------------------------------------------"
     ]
    },
    "inline": {
@@ -1120,22 +1255,26 @@
      "# leaderboard -> role for its top players: { \"season-kills\" = \"@Top Slayer\" }"
     ],
     "channels|staff": [
-     "# e.g. \"#admin-log\""
+     "# e.g. \"#admin-log\"",
+     "# what Vergil did and who to keep an eye on, e.g. \"#staff-tickets\""
     ],
     "channels|public": [
      "# e.g. \"#servers\""
     ],
     "channels|games": [
-     "# match summaries"
+     "# match summaries",
+     "# games ending"
     ],
     "channels|stats": [
-     "# leaderboards, achievements"
+     "# leaderboards, achievements",
+     "# leaderboards"
     ],
     "channels|chat": [
      "# game chat"
     ],
     "channels|logs": [
-     "# Discord moderation logs"
+     "# Discord moderation logs",
+     "# what people did: moderators' actions, closed tickets, votes, joins, settings"
     ],
     "feeds|ping": [
      "# a role to ping, or \"\" for none"
@@ -1144,7 +1283,9 @@
      "# post without notifying anyone"
     ],
     "feeds|style": [
-     "# card | compact (one line) | both (a line, details in its thread)"
+     "# card | compact (one line) | both (a line, details in its thread)",
+     "# card | compact (one line)",
+     "# card | compact (one line), for what's a post, not a ticket"
     ],
     "feeds|public": [
      "# true lets a feed post where @everyone can read"
@@ -1153,13 +1294,17 @@
      "# extra webhook URLs to post copies to (a partner's Discord)"
     ],
     "feeds|merge_seconds": [
-     "# a burst of the same kind becomes one card that grows"
+     "# a burst of the same kind becomes one card that grows",
+     "# a burst of the same kind becomes one card when it's over",
+     "# a burst of posts of the same kind (joins, say) becomes one when it's over"
     ],
     "feed.moderation|webhook": [
-     "# webhook mode: this channel's webhook URL"
+     "# webhook mode: this channel's webhook URL",
+     "# webhook mode: where it posts, unless a message says otherwise"
     ],
     "feed.moderation|sources": [
-     "# \"!\" | \"/\" (in game) | vergil | console | relay | window | discord | vote"
+     "# \"!\" | \"/\" (in game) | vergil | console | relay | window | discord | vote",
+     "# \"!\" | \"/\" (in game) | vergil | console | relay | window | discord | vote: which actions it shows"
     ],
     "feed.moderation|evidence_lines": [
      "# their chat before the action, from every server"
@@ -1168,7 +1313,8 @@
      "# their record so far (\"3rd mute, 1 kick\")"
     ],
     "feed.moderation|threads": [
-     "# a thread under each case"
+     "# a thread under each case",
+     "# a Discuss button on each case, which makes a thread under it for whoever presses it"
     ],
     "feed.moderation|requests": [
      "# probationary moderators' requests here, with Confirm and Deny"
@@ -1183,10 +1329,12 @@
      "# the launcher posts \"Huragok stopped; restarting\" here (the bot is down then)"
     ],
     "feed.alerts|repeat_minutes": [
-     "# an ongoing problem is re-posted at most this often"
+     "# an ongoing problem is re-posted at most this often",
+     "# an ongoing problem is added to its ticket at most this often"
     ],
     "feed.alerts|recovery_summary": [
-     "# when it's over: what failed, what was done, how long it was down"
+     "# when it's over: what failed, what was done, how long it was down",
+     "# when it's over: how long it was down"
     ],
     "feed.alerts|grace_seconds": [
      "# no performance alerts this soon after a start"
@@ -1204,7 +1352,8 @@
      "# a player ID turning up under a new name"
     ],
     "feed.joins|returning_days": [
-     "# \"returning\": back after this many days"
+     "# \"returning\": back after this many days",
+     "# joins-back: back after this many days"
     ],
     "feed.kills|which": [
      "# all | medals | off-colour (betrayals, suicides, deaths to the world too)"
@@ -1222,22 +1371,26 @@
      "# !calladmin [reason] in game"
     ],
     "feed.calls|words": [
-     "# chat words that also call, e.g. [\"admin pls\"]"
+     "# chat words that also call, e.g. [\"admin pls\"]",
+     "# chat words that also call, as !calladmin does, e.g. [\"admin pls\"]"
     ],
     "feed.calls|cooldown_seconds": [
      "# per player"
     ],
     "feed.calls|mods_command": [
-     "# !mods in game: which staff are reachable on Discord now"
+     "# !mods in game: which staff are reachable on Discord now",
+     "# !mods in game: which staff are on the servers now"
     ],
     "status.board|layout": [
      "# per-server (a message each) | one (one message for all)"
     ],
     "status.board|show": [
-     "# also: fps, votes, version"
+     "# also: fps, votes, version",
+     "# also: votes, version"
     ],
     "status.board|player_list": [
-     "# names | count | off"
+     "# names | count | off",
+     "# names | off"
     ],
     "status.board|join_button": [
      "# public servers get a Join button (the game's own join page)"
@@ -1258,13 +1411,15 @@
      "# an opt-in role, e.g. \"@Seeder\""
     ],
     "status.seeding|seed_at": [
-     "# ping when a server has between this many players"
+     "# ping when a server has between this many players",
+     "# post when a server has between this many players (seeding-wanted in [messages]: ping an opt-in role there)"
     ],
     "status.seeding|cooldown_minutes": [
      "# per server"
     ],
     "status.seeding|notify_me": [
-     "# members pick their own alerts: a server reaching N players, a game type starting"
+     "# members pick their own alerts: a server reaching N players, a game type starting",
+     "# /notify: members pick their own alerts, a server reaching N players or a game type starting (seeding-notify in [messages])"
     ],
     "status.presence|activity": [
      "# playing | listening | watching | competing | custom"
@@ -1273,19 +1428,23 @@
      "# at least 30"
     ],
     "status.presence|dot": [
-     "# health (online / idle when one is down / do-not-disturb when all are) | online"
+     "# health (online / idle when one is down / do-not-disturb when all are) | online",
+     "# health (online / idle when one is down / do-not-disturb when all are; one you stopped isn't down) | online"
     ],
     "status.channel_names|channels": [
-     "# channel -> template: { \"#server1\" = \"{state_emoji} Server 1: {players}/{max}\" }"
+     "# channel -> template: { \"#server1\" = \"{state_emoji} Server 1: {players}/{max}\" }",
+     "# \"#server1\" = { server = \"Server 1\", template = \"{state_emoji} Server 1: {players}/{max}\" }, or a template about them all: \"#totals\" = \"{players_total} on\""
     ],
     "status.channel_names|update_minutes": [
      "# at least 5: Discord allows a channel 2 name/topic changes in 10 minutes"
     ],
     "status.topics|channels": [
-     "# channel -> template"
+     "# channel -> template",
+     "# as channel_names"
     ],
     "status.voice_status|channels": [
-     "# voice channel -> template: { \"Server 1 Comms\" = \"{map} · {mode} {players}/{max}\" }"
+     "# voice channel -> template: { \"Server 1 Comms\" = \"{map} · {mode} {players}/{max}\" }",
+     "# \"Server 1 Comms\" = { server = \"Server 1\", template = \"{map} · {mode} {players}/{max}\" }"
     ],
     "status.voice_status|update_minutes": [
      "# at least 1"
@@ -1294,7 +1453,8 @@
      "# per-server (a channel each) | picker (one channel, pick the server)"
     ],
     "console|channel": [
-     "# the picker layout's channel"
+     "# the picker layout's channel",
+     "# the picker's channel, on per-server too if it's set: the way to a server without a channel"
     ],
     "console|channels": [
      "# the per-server layout: { \"Server 1\" = \"#server1-console\" }"
@@ -1321,7 +1481,9 @@
      "# every in-game command as a slash command, same rank as commands.toml"
     ],
     "commands|names": [
-     "# rename any: { whois = \"lookup\", leaderboard = \"top\" }"
+     "# rename any: { whois = \"lookup\", leaderboard = \"top\" }",
+     "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /requests (!reports), /wordlist (!rules), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)",
+     "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /wordlist (!rules), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)"
     ],
     "commands|hidden": [
      "# never registered"
@@ -1339,16 +1501,19 @@
      "# !report in game, /report and right-click in Discord"
     ],
     "reports|threshold": [
-     "# this many different reporters..."
+     "# this many different reporters...",
+     "# this many different reporters... (0: never. Who's pinged is [messages] reports-many)"
     ],
     "reports|threshold_minutes": [
      "# ...within this long pings staff"
     ],
     "appeals|for": [
-     "# ban | kick | mute"
+     "# ban | kick | mute",
+     "# what can be appealed: ban | kick | mute"
     ],
     "appeals|tell_outcome": [
-     "# dm | thread"
+     "# dm | thread",
+     "# dm | no"
     ],
     "tickets|channel": [
      "# where the \"Contact staff\" button lives"
@@ -1576,7 +1741,8 @@
      "# (never under 30)"
     ],
     "limits|profile_minutes": [
-     "# bio and nickname (never under 15); pictures never under 60"
+     "# bio and nickname (never under 15); pictures never under 60",
+     "# bio and nickname (never under 15)"
     ],
     "limits|roles_per_second": [
      "# role changes (bursts of 5 at most)"
@@ -1594,7 +1760,234 @@
      "# past this, the bot stops and alerts the host (Discord resets the token at 1,000)"
     ],
     "limits|wait_seconds": [
-     "# give up on any Discord wait longer than this and report it"
+     "# give up on any Discord wait longer than this and report it",
+     "# a Discord wait longer than this is reported. Huragok keeps to the wait: it won't provoke Discord"
+    ],
+    "status.board|pin": [
+     "# needs Pin Messages; pinning isn't done yet"
+    ],
+    "feed.watch|back_after_kick_minutes": [
+     "# watch-back-after-kick: back within this long",
+     "# watch-back-after-kick: back within this long of the server letting them (it blocks a kicked player 10, 30, 60, then 120 minutes)"
+    ],
+    "feed.watch|quiet_players": [
+     "# watch-first-time-quiet: someone new, with this few on"
+    ],
+    "feed.calls|recent_lines": [
+     "# the server's last chat lines on the card"
+    ],
+    "notes|flags": [
+     "# a word and its colour: add your own"
+    ],
+    "notes|watch_flags": [
+     "# these tell staff when the player joins (watch-flagged-joined in [messages])"
+    ],
+    "notes|note_lines": [
+     "# the latest notes shown on a case"
+    ],
+    "feed.moderation|buttons": [
+     "# kick too, if you like; each needs the same rank as its command in game",
+     "# \"said\" too, if you like. Mute and Kick ask how long, Ban is for good; each needs the same rank as its command in game"
+    ],
+    "channels|status": [
+     "# the server cards and nothing else, e.g. \"#servers\""
+    ],
+    "channels|info": [
+     "# news: pings people asked for, seeding, restarts planned, updates, e.g. \"#server-news\""
+    ],
+    "channels|reports": [
+     "# people asking staff for something: calls for an admin, later reports and appeals. Empty: staff",
+     "# people asking staff for something: calls for an admin, reports, appeals, Contact. Empty: staff",
+     "# people asking staff for something: calls for an admin, reports, Contact. Empty: staff"
+    ],
+    "channels|alerts": [
+     "# what's wrong with the servers right now. Empty: staff"
+    ],
+    "channels|huragok-logs": [
+     "# what Vergil and the Superintendent did, a feed of its own. Empty: logs"
+    ],
+    "channels|minigames": [
+     "# games under way"
+    ],
+    "channels|minigames-logs": [
+     "# games that have finished. Empty: minigames"
+    ],
+    "tickets|stale_after_days": [
+     "# Vergil's and the Superintendent's untouched this long go to huragok-logs. 0: never. People's wait until someone closes them",
+     "# Vergil's and the Superintendent's untouched this long count as finished, in the stale colour. 0: never. People's wait until someone closes them",
+     "# Vergil's and the Superintendent's untouched this long count as finished, in the stale colour. 0: never. People's wait until someone closes them. A line in [messages] can say its own: stale_after_hours = 12, as the watch list's and reports' do"
+    ],
+    "tickets|close_rank": [
+     "# who can Acknowledge or Close: moderator | admin | owner"
+    ],
+    "tickets|buttons": [
+     "# \"said\" too, if you like. Mute and Kick ask how long, Ban is for good; each needs the same rank as its command in game",
+     "# also \"strike\", \"warn\", \"said\". Mute and Kick ask how long, Ban is for good, Strike goes on the word list's ladder; each needs the same rank as its command in game"
+    ],
+    "tickets|threads": [
+     "# a Discuss button, which makes a thread under the card for whoever presses it"
+    ],
+    "tickets|evidence_lines": [
+     "# their chat before it, from every server"
+    ],
+    "tickets|record": [
+     "# their record (\"2 mutes, 1 kick\")"
+    ],
+    "tickets|case_numbers": [
+     "# the ledger's number for the action, as !whois has it"
+    ],
+    "tickets|colours": [
+     "# someone's acted and not acknowledged it | nobody touched it | someone said that's enough"
+    ],
+    "status.board|channel": [
+     "# the bot deletes and reposts its own cards here when a server's added or removed"
+    ],
+    "contact|channel": [
+     "# where the \"Contact staff\" button lives",
+     "# where the \"Contact the staff\" button lives. Everyone needs to see it, and to have Send Messages in Threads there"
+    ],
+    "contact|transcript": [
+     "# a file of the thread when it's closed",
+     "# a file of the thread when it's closed. It needs the bot's Message Content switch",
+     "# a file of the thread when it's closed. It needs Message Content Intent, on the developer portal's Bot page"
+    ],
+    "tickets|when_closed": [
+     "# move: to its log channel | stay: where it is, in the closed colour | thread: where it is, with a thread of its own from the start, which closing locks and hides"
+    ],
+    "commands|staff_permission": [
+     "# staff's commands only show to members with this Discord permission (\"\"): your rank is what decides, whatever shows. Server Settings, Integrations can change who sees each"
+    ],
+    "commands|power_rank": [
+     "# who can use /server's power buttons: moderator | admin | owner"
+    ],
+    "commands|power_buttons": [
+     "# on /server, each asking first"
+    ],
+    "console|typed": [
+     "# lines typed in a console channel run on a server. It needs the bot's Message Content switch",
+     "# lines typed in a console channel run on a server. It needs Message Content Intent, on the developer portal's Bot page"
+    ],
+    "console|confirm": [
+     "# lines that ask \"are you sure?\" first"
+    ],
+    "messages|reports-many": [
+     "# ping: who to tell when enough people report the same player"
+    ],
+    "reports|buttons": [
+     "# on its card, with Dismiss. Empty: as [tickets] buttons",
+     "# on its card, with Dismiss. Strike is for what the word list can't hear, like voice. Warn shows while they're on. Empty: as [tickets] buttons"
+    ],
+    "appeals|cooldown_days": [
+     "# before they can appeal it again, unless something new's against them",
+     "# the usual wait before they can appeal it again, unless something new's against them. Whoever denies one picks: this, a longer or shorter wait, or no more appeals"
+    ],
+    "appeals|questions": [
+     "# up to five"
+    ],
+    "appeals|buttons": [
+     "# on its card, for staff",
+     "# on its card, for staff. deny: says why, tells them, and closes it. close: nothing more's wanted, and they're told nothing",
+     "# on its card, for staff, with Close always there. deny: says why, tells them, and closes it. Close: nothing more's wanted",
+     "# on its card, for staff, with Close always there. deny: says why and whether they can ask again, tells them, and closes it. Close: nothing more's wanted, and it isn't held against them"
+    ],
+    "appeals|in_reason": [
+     "# added to a ban's message in game, e.g. \"Appeal on discord.gg/yours: /appeal {code}\""
+    ],
+    "contact|categories": [
+     "# empty: it doesn't ask",
+     "# empty: it doesn't ask. Reporting a player is /report's, and an appeal is /appeal's: those have the buttons"
+    ],
+    "contact|ping": [
+     "# a role brought into each thread. Others press Discuss on its card to join"
+    ],
+    "contact|close_after_days": [
+     "# with nothing said for this long, a thread closes. 0: never"
+    ],
+    "console|public": [
+     "# true: it runs in a channel anyone can read, answers and all. Otherwise it waits until the channel's private"
+    ],
+    "ranks|owners_in_game": [
+     "# what an owner of the bot acts as, running commands from Discord: owner | admin"
+    ],
+    "status.presence|lines": [
+     "# a line that comes out with nothing to say is skipped"
+    ],
+    "console|ignore_prefix": [
+     "# a line starting with this is ignored, so staff can talk there: \"//\""
+    ],
+    "console|audit": [
+     "# changes | everything: which lines go in the audit log. What only looks isn't worth a line"
+    ],
+    "console|clear_after_minutes": [
+     "# nothing said or pressed this long: the channel's cleared, and it's ready to use again. 0: never. At least 5. The bot needs Manage Messages there"
+    ],
+    "console|transcript": [
+     "# what was there goes to console-cleared first, as a file. false: it's only cleared"
+    ],
+    "console|forget_server": [
+     "# clearing also forgets the server each person picked, so a line after a long quiet doesn't go to one they've forgotten choosing"
+    ],
+    "answers|done_minutes": [
+     "# a private answer saying what happened. At most 14, as Discord won't let the bot touch it later"
+    ],
+    "answers|looks_minutes": [
+     "# a private answer someone asked to read: /whois, /case, /status. At most 14"
+    ],
+    "answers|public_minutes": [
+     "# a command's answer that everyone can see ([commands] public)"
+    ],
+    "answers|tests_minutes": [
+     "# /huragok test's posts"
+    ],
+    "commands|shown_as": [
+     "# how someone acting from Discord is named, on cards and to players (\"Bravo was kicked by Mod\"). {name} is their name in this Discord. \"{name} (Discord)\", or \"a moderator\" to name nobody",
+     "# how someone acting from Discord is named to players (\"Bravo was kicked by Mod\"). {name} is their name in this Discord. \"{name} (Discord)\", or \"a moderator\" to name nobody. Staff's cards always have their real name"
+    ],
+    "commands|public": [
+     "# commands whose answer everyone in the channel sees. The rest are only the asker's"
+    ],
+    "notify|enabled": [
+     "# /notify: members pick their own alerts, a server reaching N players or a game type starting (notify-told in [messages])"
+    ],
+    "notify|cooldown_minutes": [
+     "# each alert, at most this often"
+    ],
+    "console|raw_rank": [
+     "# who can type console lines, not only Huragok's ! commands: moderator | admin | owner | off"
+    ],
+    "reports|right_click": [
+     "# \"Report message\" when someone right-clicks a message"
+    ],
+    "contact|thread_role": [
+     "# a role brought into each thread. Others press Discuss on its card to join",
+     "# the role brought into each thread, or several, e.g. [\"@Moderators\", \"@Admins\"]. Others press Discuss on its card to join"
+    ],
+    "appeals|lift_clears_strike": [
+     "# accepting an appeal against what Vergil did takes that strike off too, or the next word carries on from it"
+    ],
+    "appeals|code_only": [
+     "# with {code} in in_reason: a name alone isn't enough to appeal. A /ban in game has no code, so those need Contact the staff"
+    ],
+    "reports|most_at_once": [
+     "# how many open tickets one person's reports can have at a time. 0: no limit"
+    ],
+    "contact|cooldown_minutes": [
+     "# one person can open another this long after their last, as each is a thread, a card and a ping. 0: any time"
+    ],
+    "tickets|evidence_minutes": [
+     "# ...from this long before it at most, as it's read as what they said just now"
+    ],
+    "reports|tell_in_game": [
+     "# moderators and up on the servers are told of a report or a call: they're the only staff who can hear what's being reported"
+    ],
+    "reports|tell_reporter": [
+     "# acted: they're told when staff act on their report | all: and when it's dismissed | no"
+    ],
+    "reports|acted_after_hours": [
+     "# a report someone's acted on finishes itself after this long, so `reports` holds what's still waiting. 0: as its line says"
+    ],
+    "channels|appeals": [
+     "# people appealing what's against them. Empty: reports"
     ]
    }
   }

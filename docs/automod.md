@@ -19,11 +19,14 @@ What a player gets each time:
 
 | Line | 1st | 2nd | 3rd | 4th | after that |
 | --- | --- | --- | --- | --- | --- |
-| `slurs` | muted 1 day | muted 7 days | out 1 hour | banned for good | |
+| `slurs` | muted 1 day | muted 7 days | kicked for 1 hour | banned for good | |
 | `rude` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | muted 7 days: never kicked or banned |
 | `mean` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | 5th: muted 7 days; 6th to 8th: kicked; 9th on: kicked, then muted for good; never banned |
 | `threats` | banned for good | | | | |
 | `kickword` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
+
+"Out 1 hour" further down is the same as "kicked for 1 hour" here: a kick with a time, which
+keeps them off every server that long (see [What players read](#what-players-read)).
 
 **You don't have to write the lines yourself.** In the window, **D → A** lists the rules
 as players meet them, adds one from the words and a ready-made ladder (or your own, a
@@ -33,7 +36,7 @@ within seconds.
 
 A strike is the next step down its line: the mutes come first, then the kicks, then
 the ban. The mutes start with the first strike. The kicks start with how many strikes
-come before them (the mutes'), so `| 1d, 3d | 2, 1h |` mutes twice, then removes for
+come before them (the mutes'), so `| 1d, 3d | 2, 1h |` mutes twice, then kicks for
 an hour each time; with that number left out they start once every mute time is used
 (`| 1d, 3d | 1h |` is the same line), and with no times after it, it's the server's
 own kick from then on (`| 1d | 2 |`). A line with no mutes kicks from the first strike
@@ -120,6 +123,18 @@ catch every line of chat, so the line is refused, named with the character's cod
 Save the file as UTF-8 (with or without a BOM) or as Notepad's "Unicode"; one saved
 as ANSI is refused with "save it as UTF-8 in your editor". While an editor is still
 saving it, the old list stays and the file is read again a moment later.
+
+### A ladder only staff climb
+A line with a name and no words catches nothing in chat, as there's nothing to catch. Its
+steps are there for what the word list can't hear, like voice:
+
+```text
+| 1d, 7d | 2, 1h | 3 | voice
+```
+
+Moderators climb it with `!strike Bravo voice`, or the Strike button on a report in Discord.
+Strikes count down the line as on any other, and `!pardonplayer Bravo voice` (admins) clears
+them. The name is needed: with no words and no name, it's a mistake.
 
 ### Lines from before mutes
 Before mutes, a line had four parts: `words | timers | chances | name`. A line
@@ -289,10 +304,14 @@ says what was done, "Bravo was muted by Vergil"):
 Not for a name kick, a dry run, or someone who isn't on; `messages = { public = "" }`
 turns it off.
 
-`strike 2 of 3` counts toward the ban; a line with no ban says `strike 2`. A timed
-kick is a timed ban underneath, because the server's own kick times are fixed, so
-the server's announcement says "banned by Vergil" (the `name` setting below); the
-reason says how long.
+`strike 2 of 3` counts toward the ban; a line with no ban says `strike 2`.
+
+**A kick with a time** reads `kicked for 1 hour`. It's a timed ban underneath, because
+the server's own kick times are fixed, so the server's announcement says "banned by
+Vergil" (the `name` setting below) and its line at the door says "You are banned from
+this server for another 58 minutes"; the reason says what for. Everywhere Huragok says it
+(`!whois`, `!bans`, `!kicks`, Discord) it's a kick, and it takes away nobody's role, as a
+ban does. A ban is for good. See [commands.md](commands.md#kicks-with-a-time-and-bans).
 
 One line counts once: a line repeating a word twenty times is one strike, and so
 are lines sent within `cooldown_seconds` of each other. A word split over two lines
@@ -301,7 +320,11 @@ one with the heaviest next step counts (a ban, then a kick with or without a mut
 after it, then a mute; longer beats shorter). A muted player's chat never reaches Vergil, so it doesn't add
 strikes. A moderator's command line isn't chat: `!strike Bravo slurs he said <the
 word>` from someone who may use `!strike` (or `!mute`, `!warn`…) doesn't strike the
-moderator. A player's own commands still count, so `!help <the word>` is struck.
+moderator. A probationary moderator's quoting it in what they can ask for doesn't count
+either. Nor does anyone's in `!report` or `!calladmin` while Discord can take them
+(`!report Bravo he said <the word>`): whoever's reporting it is helping. With no Discord to
+tell, those aren't commands at all, and the line is chat like any other. A player's own
+commands still count, so `!help <the word>` is struck.
 
 Tested against a real night's chat: the n-word on one line caught all four lines
 that used it (digits for letters, spaced out, a slang plural, and one mixed with
@@ -328,7 +351,7 @@ and so does the status card (V → Safety → Vergil).
 | --- | --- | --- |
 | `!strikes` | everyone | Your own strikes, what happens next, and how long a mute has left |
 | `!strikes <player>` | moderator | Someone else's |
-| `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next kick, mute or ban |
+| `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
 | `!banword <words> \| [mutes] \| [kicks] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
 | `!unbanword <word>` | admin | Takes a word off `automod.txt` (a line left with no words goes too) |
@@ -355,8 +378,14 @@ starts as they next join.
 lifts a ban only when Vergil gave it (the list names the same one acting as the
 strike did, within two minutes of it); when someone else banned that player too, it lifts nothing
 and says whose ban stays (`!unban` lifts both). If the ban list can't be read,
-nothing is lifted. The server's own `pardon` (`!pardon`) only lets a kicked player
-back early; it doesn't touch automod's strikes.
+nothing is lifted. `!pardon` only lets a kicked player back early, a strike's kick with a time
+too; it doesn't touch automod's strikes. At moderator rank it lifts what a moderator could
+have given (`moderators_kick_at_most`, below), and a longer one takes an admin. From a
+probationary moderator, it's a request.
+
+From Discord, **Pardon strike** on a strike's card does what `!pardonplayer` does, for that
+rule. Lifting an appeal against what Vergil did takes that one strike off
+(`lift_clears_strike` in `[appeals]`), or the next word would carry on from it.
 
 Who can use each one is set in `commands.toml`, like every command: see [commands.md](commands.md).
 
@@ -383,10 +412,11 @@ its name):
 | `words` | `"automod.txt"` | The word list |
 | `names` | `"names.txt"` | The banned names |
 | `forget_after_days` | `0` | Strikes older than this stop counting; `0` means never. A mute runs its time either way |
-| `name` | `"Vergil"` | Who players read as acting ("banned by Vergil"). A `settings.toml` written before 0.4.0 says `"AutoMod"` |
+| `name` | `"Vergil"` | Who players read as acting ("muted by Vergil"). A `settings.toml` written before 0.4.0 says `"AutoMod"` |
 | `exempt_roles` | `["admin", "owner"]` | Never acted on, in chat or by name |
 | `check_names` | `true` | Kick names with a word from `automod.txt` in them. `names.txt` applies either way |
 | `name_match` | `"anywhere"` | How a word from `automod.txt` catches a name: `"anywhere"` in it, or `"words"` (only as a word of its own, the name taken apart at its capitals and digits). See [Names](#names) |
+| `moderators_kick_at_most` | `"1d"` | The longest kick with a time a moderator can give, and lift with `!pardon`. Admins and owners have no limit. A value that isn't a time counts as `"1d"`. See [commands.md](commands.md#kicks-with-a-time-and-bans) |
 | `across_servers` | `true` | Huragok's moderation (`!` commands, Vergil, the relay, the window's console) reaches every server: a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), and so does an admin Huragok makes. The game's own `/kick` and `/ban`, and votes, stay on their server (only written on the player's record; `!banall` puts a `/ban` on every server). `false`: Huragok's stay on theirs too |
 | `cooldown_seconds` | `10` | Lines this close together count as one strike |
 | `split_seconds` | `10` | Catch a word split over lines this close together |

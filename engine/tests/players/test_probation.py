@@ -46,7 +46,7 @@ def test_a_request_waits_for_a_moderator_and_happens_as_theirs(tmp_path: Path, r
             await heard(fake, ALICE, "Sent for review as #2: !mute Bravo 30m rude.")
             await fake.chat(ALICE, "Alice", "!confirm 1")  # never their own (nor anyone's)
             await heard(fake, ALICE, "!confirm is for moderators")
-            await fake.chat(MOD, "Mod", "!reports")
+            await fake.chat(MOD, "Mod", "!requests")
             await heard(fake, MOD, "Alice asks !mute Bravo 30m rude")
             await fake.chat(MOD, "Mod", "!confirm 1")
             kick = await wait_for(lambda: fake.named("kick"))
@@ -68,7 +68,7 @@ def test_a_request_waits_for_a_moderator_and_happens_as_theirs(tmp_path: Path, r
             assert mute[0]["args"][:2] == [BRAVO, "1h"] and mute[0]["by"] == "Admin"
             await heard(fake, ALICE, "Admin confirmed your request #1, !warn Bravo watch it (!mute Bravo 1h language "
                                      "instead).")
-            await fake.chat(MOD, "Mod", "!reports")
+            await fake.chat(MOD, "Mod", "!requests")
             await heard(fake, MOD, "No requests are waiting.")
             await fake.chat(MOD, "Mod", "!whois alice")
             await heard(fake, MOD, "Requests as a probationary moderator: 3 (2 confirmed, 1 turned down, 0 waiting)")

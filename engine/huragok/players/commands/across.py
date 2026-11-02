@@ -36,7 +36,7 @@ from typing import Any
 from ...core.background import background
 from ...core.events import Event
 from ...core.part import command, every, on
-from ...core.text import is_player_id
+from ...core.text import describe_seconds, is_player_id
 from ...program.settings import path_setting
 from ...rcon import RconError, ban_list
 from ...servers.state import Player
@@ -118,9 +118,8 @@ class AcrossServers(CommandsBase):
                      and not self._across_echo(k.server, "kick", k.id)), None)
 
     async def _across_kick(self, server: str, player: Any, kick: Any) -> None:
-        left = ago(kick.time + kick.seconds - time.time())
-        reason = (f"Kicked from {kick.server} by {kick.by}" + (f" ({kick.reason})" if kick.reason else "")
-                  + f": you can join again in {left}.")
+        left = describe_seconds(kick.time + kick.seconds - time.time())
+        reason = f"Kicked from {kick.server} by {kick.by}" + (f": {kick.reason}." if kick.reason else ".") + f" You can join again in {left}."
         self._across_mark(server, "kick", player.id)
         moderation = self.ctx.moderation
         action = await moderation.kick(server, player, reason, by=kick.by, evidence=f"kicked on {kick.server}",
@@ -179,9 +178,9 @@ class AcrossServers(CommandsBase):
         target = target.lower()
         if existing := self.every_server(kind, target):
             row = existing[-1]
-            if row["expires"] is not None and (expires is None or expires > row["expires"]):
-                self.ctx.db.execute("UPDATE commands_every_server SET expires = ? WHERE number = ?",
-                                    (expires, row["number"]))
+            if row["expires"] is not None and (expires is None or expires > row["expires"]):  # what's said of it hardens with it
+                self.ctx.db.execute("UPDATE commands_every_server SET expires = ?, reason = ?, by = ? WHERE number = ?",
+                                    (expires, reason, by, row["number"]))
             return False
         self.ctx.db.execute(
             "INSERT INTO commands_every_server (time, kind, target, name, reason, by, server, expires) "
@@ -314,8 +313,8 @@ class AcrossServers(CommandsBase):
                 self._across_unmark(server, "unban", target)
         except RconError as error:
             ok, text = False, str(error)
-        self.ctx.log.info("[%s] unban of %s on %s by %s passed on here%s", server, target, origin, by,
-                          "" if ok else f": {text}")
+        if not ok:  # one line for an unban, the one on the server it was given on
+            self.ctx.log.info("[%s] unban of %s on %s by %s not passed on here: %s", server, target, origin, by, text)
         return ok
 
     @staticmethod
@@ -326,7 +325,7 @@ class AcrossServers(CommandsBase):
             or (bool(entry.get("name")) and plain(str(entry["name"])) == plain(target))
 
     async def _banned_elsewhere(self, server: str, target: str) -> tuple[list[str], list[str]]:
-        """The other servers' own bans of this target (a /ban there): "Other by LilGremlin (/ban: spam)", and the
+        """The other servers' own bans of this target (a /ban there): "Other by Mod (/ban: spam)", and the
         servers whose list didn't answer. The lists are read side by side, ASK_SECONDS at most: one that doesn't
         answer by then isn't waited on."""
         said: list[str] = []
@@ -387,6 +386,8 @@ class AcrossServers(CommandsBase):
         target = str(event.get("id") or event.get("target") or "").strip()
         if not target or not event.server or self._across_echo(event.server, "pardon", target, event):
             return
+        if self.ctx.moderation.housekeeping_pardon(event.server, target):
+            return  # Huragok letting them straight back after a kick passed on: nobody's let them off anything
         listed = self._kicks_list()
         for kick in [k for k in listed if k.server == event.server
                      and (k.id == target.lower() or plain(k.name) == plain(target))]:
@@ -680,7 +681,8 @@ class AcrossServers(CommandsBase):
                           if not (failed or waiting) else f"on {', '.join(sent) or 'none yet'}; "
                           f"still to come: {', '.join(failed + waiting)}")
         self.ctx.moderation.record_seen("ban", server, target if is_player_id(target) else None, name, by=by,
-                                        source="commands", reason=f"every server: {reason}" if reason else "every server")
+                                        source="commands", reason=f"every server: {reason}" if reason else "every server",
+                                        duration=f"{max(1, round(until - time.time()))}s" if until is not None else None)
         left = "for good" if until is None else f"{ago(until - time.time())} left"
         later = failed + waiting
         return (f"{name}'s ban (by {given}" + (f": {reason}" if reason else "") + f", {left}) is on every server "

@@ -104,6 +104,9 @@ def _number(value: Any) -> int | None:
         return None
 
 
+STOPPED_WORDS = {"idle": "stopped", "faulted": "faulted: it won't start again by itself", "backoff": "waiting to try starting again"}
+
+
 class Watchdog(Part):
     persona = SUPERINTENDENT
     old_options = frozenset(OLD_NAMES)
@@ -415,7 +418,13 @@ class Watchdog(Part):
 
     def summary(self, server: str) -> str:
         state = self.ctx.server(server)
-        parts = [self.level.get(server, "healthy"),
+        lifecycle = self.ctx.lifecycle
+        if lifecycle.can_control and lifecycle.is_stopped(server):  # what it last saw is no use: it isn't running
+            return STOPPED_WORDS.get(str(lifecycle.phase(server)), "stopped")
+        level = self.level.get(server, "healthy")
+        if not state.connected:  # its last players and game are out of date, and "healthy" isn't known
+            return " · ".join([level if level != "healthy" else "not answering", "RCON not connected", *self.found.get(server, {}).values()])
+        parts = [level,
                  f"{len(state.players)} players",
                  f"{state.phase or 'phase unknown'} {state.map or ''}".strip()]
         if state.rcon_latency_ms is not None:

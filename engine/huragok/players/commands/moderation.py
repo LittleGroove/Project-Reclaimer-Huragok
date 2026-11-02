@@ -7,8 +7,12 @@ role or above.
 
 from __future__ import annotations
 
-from ...core.commandsfile import PROBATION
+from typing import Any
+
+from ...core.commandsfile import PROBATION, ROLES
 from ...core.part import command
+from ...core.text import TIME, describe_time, seconds_of
+from ..ledger import kick_reason
 from ..roles import role_name
 from ..router import CommandCall, unquote
 from .base import CommandsBase
@@ -54,7 +58,7 @@ class ModerationCommands(CommandsBase):
             return
         await call.reply(f"{target.name} isn't on now: muted as they next join" + (", on any server" if across else
                                                                                   " this server")
-                         + (f", for {duration} from now." if duration else ", until someone unmutes them."))
+                         + (f", for {describe_time(duration)} from now." if duration else ", until someone unmutes them."))
 
     @command("unmute", usage="<player | player ID>", help="Lift a mute, also for someone who left", role="moderator",
              player="seen", start=True, words_after=False)
@@ -70,15 +74,36 @@ class ModerationCommands(CommandsBase):
                 return
         await self._done(call, await self.ctx.moderation.unmute(call.server, call.target, by=call.player.name))
 
-    @command("kick", usage="<player> [reason]", help="Remove them; the server keeps them out 10, 30, 60, then 120 minutes",
-             role="moderator", player="on", acts=True)
+    @command("kick", usage="<player> [time] [reason]",
+             help="Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, "
+                  "e.g. !kick Bravo 7d cheating; perm is a ban", role="moderator", player="on", acts=True, follows="time")
     async def kick(self, call: CommandCall) -> None:
-        assert call.target is not None
-        action = await self.ctx.moderation.kick(call.server, call.target, unquote(call.rest), by=call.player.name)
-        await self._done(call, action)
+        target = call.target
+        assert target is not None
+        duration, rest, forever = self._split_time(call.rest)
+        if forever:  # a kick for good is a ban, and takes the rank a ban does
+            why = await self.ctx.run_as("ban", target, rest, server=call.server, player=call.player, role=call.role, tell=call._tell)
+            if why:
+                await call.reply(f"A kick for good is a ban: {why}")
+            return
+        if duration:
+            await self._kick_for(call, target, duration, unquote(rest))
+            return
+        await self._done(call, await self.ctx.moderation.kick(call.server, target, unquote(rest), by=call.player.name))
+
+    async def _kick_for(self, call: CommandCall, target: Any, duration: str, reason: str) -> None:
+        """Off every server for this long. A moderator's has a limit ([automod] moderators_kick_at_most): a long one is a ban in all but name."""
+        if too_long := self.kick_too_long(call.role, duration):
+            await call.reply(too_long)
+            return
+        action = await self.ctx.moderation.ban(call.server, target, duration, reason, told=kick_reason(duration, reason), by=call.player.name)
+        if action.ok and not action.dry_run:
+            await call.reply(f"{target.name} is kicked for {describe_time(duration)}: the server tells them how long is left each time they try to join.")
+        else:
+            await self._done(call, action)
 
     @command("ban", usage="<player | player ID> [time | perm] [reason]",
-             help="Ban their ID, address and device; no time means for good, e.g. !ban Bravo 7d cheating",
+             help="Ban their ID, address and device; no time means for good, and a time makes it a kick that long, e.g. !ban Bravo 7d cheating",
              role="admin", player="seen", acts=True, follows="time")
     async def ban(self, call: CommandCall) -> None:
         # Offline bans work by ID, and a name Vergil has seen finds theirs; rank counts either way.
@@ -88,5 +113,5 @@ class ModerationCommands(CommandsBase):
         duration, rest, _ = self._split_time(call.rest)
         action = await self.ctx.moderation.ban(call.server, target, duration, unquote(rest), by=call.player.name)
         await self._done(call, action)
-        if action.ok and not action.dry_run and role in ("member", PROBATION, "moderator", "admin"):  # roles.py takes it
+        if action.ok and not action.dry_run and not duration and role in ("member", PROBATION, "moderator", "admin"):  # roles.py takes it
             await call.reply(f"{target.name}'s {role_name(role)} role goes with the ban.")

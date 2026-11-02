@@ -31,6 +31,6 @@ class PlayerCommands(CommandsBase):
                                 "muted" if p.muted else "") if t]
             lines.append(f"#{p.number} {p.name} {p.short_id} ({', '.join(tags)})")
         limit = int(self.config.get("max_reply_lines", 8))
-        if len(lines) > limit:
+        if len(lines) > limit and call.channel != "discord":  # a limit for game chat: Discord takes it whole
             lines = lines[:limit - 1] + [f"…and {len(lines) - limit + 1} more: {call.prefix}players <name> narrows it."]
         await call.reply("\n".join(lines))

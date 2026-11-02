@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, staff, wait_for, write_server_folder, write_settings
+from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, free_port, staff, wait_for, write_server_folder, write_settings
 from testkit.fake_rcon import FakeRcon
 
 from huragok.core.events import Event
@@ -43,6 +43,28 @@ async def running(tmp_path: Path, body: str = "", *, commands: str | None = None
         finally:
             supervisor.stop()
             await asyncio.wait_for(task, 10)
+
+
+@asynccontextmanager
+async def fleet(tmp_path: Path, *, up: tuple[str, ...], down: tuple[str, ...] = (), body: str = "", commands: str | None = None) -> AsyncIterator[tuple[Huragok, dict[str, FakeRcon]]]:
+    """Huragok on several servers, as a real host is: those in `up` running, those in `down` stopped, with nothing behind their console. Each with its own console, and the list in the order Huragok reads it."""
+    consoles = {name: FakeRcon() for name in up}
+    for name, console in consoles.items():
+        await console.__aenter__()
+        write_server_folder(tmp_path / "SERVERS" / name, console.port, name=name)
+    for name in down:
+        write_server_folder(tmp_path / "SERVERS" / name, free_port(), name=name)
+    settings = load(write_settings(tmp_path, None, body, commands=staff() if commands is None else commands))
+    supervisor = Huragok(settings)
+    task = asyncio.ensure_future(supervisor.run())
+    try:
+        await wait_for(lambda: all(supervisor.superintendent.states[name].connected for name in up), timeout=20)
+        yield supervisor, consoles
+    finally:
+        supervisor.stop()
+        await asyncio.wait_for(task, 10)
+        for console in consoles.values():
+            await console.__aexit__(None, None, None)
 
 
 def tells_to(fake: FakeRcon, player_id: str) -> list[str]:

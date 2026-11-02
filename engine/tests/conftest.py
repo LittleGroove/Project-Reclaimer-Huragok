@@ -363,6 +363,23 @@ def no_asyncio_errors(request: pytest.FixtureRequest) -> Iterator[None]:
         pytest.fail("asyncio logged an error during the test: " + "; ".join(handler.lines), pytrace=False)
 
 
+@pytest.fixture(autouse=True)
+def no_discord_errors(request: pytest.FixtureRequest) -> Iterator[None]:
+    """discord.py logs what fails in a press or an event and carries on, as does the bot: the test fails instead, or a panel that dies in someone's Discord passes here. A test that provokes one on purpose is
+    marked @pytest.mark.discord_errors."""
+    handler = _AsyncioErrors()
+    loggers = [logging.getLogger(name) for name in ("discord", "huragok.discordbot")]
+    for logger in loggers:
+        logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        for logger in loggers:
+            logger.removeHandler(handler)
+    if handler.lines and request.node.get_closest_marker("discord_errors") is None:
+        pytest.fail("the Discord bot logged an error during the test: " + "; ".join(handler.lines), pytrace=False)
+
+
 @pytest.fixture
 def run() -> Callable[..., Any]:
     def runner(coroutine: Any) -> Any:

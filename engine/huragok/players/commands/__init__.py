@@ -17,7 +17,7 @@ reads a player's back as a rap sheet. said.py keeps every player's chat lines 30
 ([automod] across_servers). votekicks.py has no commands: it keeps everyone
 commands.toml lists safe from votes to kick. novotes.py stops a player calling votes (!novote: their votes are
 cancelled as they're called). respawn.py respawns a stuck player (!respawn: a move to another team and back).
-requests.py is the probationary moderators': what they do is a request a moderator or admin confirms (!reports,
+requests.py is the probationary moderators': what they do is a request a moderator or admin confirms (!requests,
 !confirm, !deny).
 toggles.py switches a server's voice and chat (dedicated.toml), for a while or for good.
 Finding the player a command names, with its guards, is targets.py's.

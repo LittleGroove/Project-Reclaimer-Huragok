@@ -1,0 +1,624 @@
+# ---------------------------------------------------------------------------------
+# discord.toml: Huragok's Discord bot.
+#
+# Every feature is off until you set it up. Set it up in Huragok's window, in Discord
+# with /huragok setup, or here; all three change this file. Huragok reloads it a few
+# seconds after it changes. A setting it doesn't know is only a warning, and a mistake
+# turns the bot off with the reason while your servers carry on.
+#
+# Channels and roles: an ID (the setup writes IDs, with the name as a note) or a name
+# ("#admin-log", "@Server Admin"), which Huragok looks up and replaces with the ID.
+# Servers: their names as in Huragok's window, or "*" for every server.
+# A feature that's on but missing something says what: /huragok check, or the window.
+# ---------------------------------------------------------------------------------
+
+mode = "off"                   # off | webhook (posts only, no bot) | bot (everything)
+token = ""                     # bot mode: the bot's token. It's a password: keep this file to yourself.
+token_variable = ""            # or the name of an environment variable that holds the token
+guild = ""                     # the Discord the bot works in (the setup lists the ones it's in)
+voice = "lore"                 # lore: the Superintendent, Vergil and Huragok speak | plain: plain words
+time_zone = "local"            # for schedules and "today": local, or a name like "Europe/London"
+date_format = "discord"        # discord: Discord shows each reader their own time | iso
+
+
+# ---------------------------------------------------------------------------------
+# Who's who: Discord roles onto Huragok's ranks. Nothing counts until it's here.
+# What each rank may do is commands.toml's job, in game and in Discord alike.
+[ranks]
+admin = []                     # roles whose members are Huragok admins on every server, e.g. ["@Server Admin"]
+moderator = []                 # e.g. ["@Server Mod"]
+probationary_moderator = []    # e.g. ["@Probation"]: their actions are requests a moderator confirms
+member = []                    # e.g. ["@Member"]
+owners = []                    # Discord USER IDs with owner rights from Discord. People, never a role.
+discord_administrators = "nothing"  # what Discord's own Administrator permission counts as: nothing | moderator | admin
+needs_link = false             # true: a Discord rank only acts once its member has linked their player
+moderators_see_ids = false     # moderators see players' 64-character IDs in Discord
+moderators_raw_console = false # moderators may type raw console lines (otherwise only commands)
+timeout_suspends = true        # a member timed out in Discord can't use their rank meanwhile
+
+# A rank on some servers only (one block each):
+# [[ranks.scoped]]
+# role = "@Server1 Admin"
+# rank = "admin"
+# servers = ["Server 1"]
+
+
+# ---------------------------------------------------------------------------------
+# Linking a Discord account to a player: !link in game sends a private code;
+# /link <code> in Discord finishes it.
+[link]
+enabled = false
+methods = ["game-code"]        # game-code | staff (admins link someone by picking them and a player)
+code_minutes = 10              # how long a code works (once)
+linked_role = ""               # a role for linked members, e.g. "@Verified Spartan" (gate channels with it)
+nickname = "off"               # off | on: at every join to a server, set their Discord nickname from nickname_format
+nickname_format = "{name} {tag}"   # their in-game name and service tag: "Rookie R117" (32 characters at most)
+unlink = "self"                # self | staff: who may unlink
+staff_keep_link = true         # members with a rank can't unlink themselves
+one_per_player = true          # a player links to one Discord account
+one_per_discord = true         # a Discord account links to one player
+announce = false               # post "<member> linked as <player>" in a channel
+announce_channel = ""
+
+
+# ---------------------------------------------------------------------------------
+# Roles kept in step. Huragok owns every rank: a mapped role given or taken in Discord changes
+# the player's rank on every server; a rank changed in game (by anyone) changes the role; linking
+# gives the current rank as a role. Every change is written down with who and where. Owner is never synced.
+[roles]
+sync = false                   # keep the ranks and the mapped roles in step (needs linking)
+from_discord = true            # a role given or taken in Discord changes the rank
+to_discord = true              # a rank changed in game changes the role
+check_minutes = 15             # a full comparison now and then (anything missed while the bot was offline)
+online = ""                    # a role while a linked member is on any server, e.g. "@In Game"
+per_server = {}                # a role while on that server: { "Server 1" = "@On Server 1" }
+veteran = ""                   # a role after veteran_hours played
+veteran_hours = 50
+banned = ""                    # a role while banned from the servers (hide channels with it)
+rank_roles = false             # Halo 3 rank roles, Recruit to General (roles named after the ranks)
+rank_source = "official"       # official (Project Reclaimer's rank from the log) | huragok (playtime + EXP)
+top = {}                       # leaderboard -> role for its top players: { "season-kills" = "@Top Slayer" }
+top_count = 3
+
+
+# ---------------------------------------------------------------------------------
+# Channel names features can share: a feature's channel = "staff" means this one.
+[channels]
+staff = ""                     # e.g. "#admin-log"
+alerts = ""
+console = ""
+public = ""                    # e.g. "#servers"
+games = ""                     # match summaries
+stats = ""                     # leaderboards, achievements
+reports = ""
+appeals = ""
+chat = ""                      # game chat
+minigames = ""
+logs = ""                      # Discord moderation logs
+
+
+# ---------------------------------------------------------------------------------
+# Feeds: cards about what happened. [feeds] is every feed's default; each
+# [feed.<name>] block changes only what it names.
+[feeds]
+servers = "*"
+ping = ""                      # a role to ping, or "" for none
+silent = true                  # post without notifying anyone
+style = "card"                 # card | compact (one line) | both (a line, details in its thread)
+public = false                 # true lets a feed post where @everyone can read
+also = []                      # extra webhook URLs to post copies to (a partner's Discord)
+merge_seconds = 30             # a burst of the same kind becomes one card that grows
+
+[feed.moderation]
+enabled = false
+channel = "staff"
+webhook = ""                   # webhook mode: this channel's webhook URL
+persona = "vergil"
+kinds = ["kick", "ban", "mute", "unmute", "unban", "pardon"]
+sources = ["*"]                # "!" | "/" (in game) | vergil | console | relay | window | discord | vote
+evidence_lines = 5             # their chat before the action, from every server
+record = true                  # their record so far ("3rd mute, 1 kick")
+case_numbers = true
+threads = true                 # a thread under each case
+buttons = ["undo", "ban-1d", "ban-7d", "ban", "extend-mute", "whois", "said", "note"]
+requests = true                # probationary moderators' requests here, with Confirm and Deny
+
+[feed.vergil]
+enabled = false
+channel = "staff"
+persona = "vergil"
+kinds = ["strike", "name-ban", "word-ban", "word-allowed", "rule-changed"]
+dry_run = true                 # also post what Vergil would have done while in dry run
+
+[feed.votes]
+enabled = false
+channel = "staff"
+persona = "vergil"
+kinds = ["called", "passed", "failed", "cancelled", "novote"]
+evidence_lines = 5
+buttons = ["cancel-vote", "whois", "said"]
+
+[feed.alerts]
+enabled = false
+channel = "alerts"
+persona = "superintendent"
+silent = false
+ping = ""                      # e.g. "@Server Admin"
+ping_for = ["crashed", "faulted", "hung", "start-failed", "update-failed", "huragok-down"]
+kinds = ["crashed", "faulted", "hung", "recovered", "watchdog-restart", "start-failed", "update-failed",
+         "part-off", "rcon-sign-in", "relay-lockout", "huragok-restarted", "canary"]
+launcher_webhook = ""          # the launcher posts "Huragok stopped; restarting" here (the bot is down then)
+repeat_minutes = 30            # an ongoing problem is re-posted at most this often
+recovery_summary = true        # when it's over: what failed, what was done, how long it was down
+grace_seconds = 120            # no performance alerts this soon after a start
+
+[feed.servers]
+enabled = false
+channel = "alerts"
+persona = "superintendent"
+kinds = ["started", "stopped", "restarted", "restart-planned", "countdown", "program-updated",
+         "workshop-updated", "repaired"]
+
+[feed.games]
+enabled = false
+channel = "games"
+persona = "superintendent"
+kinds = ["started", "ended"]   # ended posts the match summary when [matches] is on
+min_players = 2
+
+[feed.joins]
+enabled = false
+channel = "staff"
+persona = "superintendent"
+who = "first-time"             # everyone | first-time | linked | staff | returning
+refused = true                 # joins the server refused (banned, VPN)
+new_names = true               # a player ID turning up under a new name
+returning_days = 30            # "returning": back after this many days
+leaves = false
+
+[feed.kills]
+enabled = false
+channel = "games"
+persona = "superintendent"
+public = true
+which = "medals"               # all | medals | off-colour (betrayals, suicides, deaths to the world too)
+medals = ["overkill+", "running-riot+", "extermination", "perfection", "killjoy"]
+first_blood = true
+delay_seconds = 60             # so nobody watching Discord can call out positions to a friend in game
+
+[feed.watch]
+enabled = false
+channel = "staff"
+persona = "vergil"
+ping = ""                      # e.g. "@Watch"
+kinds = ["flagged-joined", "back-after-kick", "staff-lookalike-name", "first-time-quiet", "banned-elsewhere",
+         "anti-cheat"]
+back_after_kick_minutes = 15
+
+[feed.calls]
+enabled = false
+channel = "staff"
+persona = "vergil"
+ping = ""                      # the on-duty role
+command = "calladmin"          # !calladmin [reason] in game
+words = []                     # chat words that also call, e.g. ["admin pls"]
+cooldown_seconds = 300         # per player
+mods_command = true            # !mods in game: which staff are reachable on Discord now
+
+[feed.content]
+enabled = false
+channel = "alerts"
+persona = "huragok"
+kinds = ["playlist", "workshop", "map-skipped"]
+
+[feed.audit]
+enabled = false
+channel = "staff"
+persona = "huragok"
+kinds = ["console", "command", "settings", "roles", "link", "setup"]
+
+
+# ---------------------------------------------------------------------------------
+# The servers at a glance. Every template takes placeholders: {server} {map} {mode}
+# {players} {max} {next} {state} {fps} {uptime} {playlist} {players_total}
+# {servers_up} {servers} {unique_players} {games_today} {top_player} {top_streak}.
+[status.board]
+enabled = false
+channel = "public"
+webhook = ""
+layout = "per-server"          # per-server (a message each) | one (one message for all)
+servers = "*"
+show = ["state", "map", "mode", "players", "next", "uptime", "playlist"]  # also: fps, votes, version
+player_list = "names"          # names | count | off
+join_button = true             # public servers get a Join button (the game's own join page)
+join_address = {}              # "Server 1" = "203.0.113.4:11774"; empty: the server's public address
+staff_buttons = false          # Players, Restart after game, Console (staff only; needs the bot)
+update_seconds = 120           # at least 60
+pin = true
+colours = { up = "green", busy = "gold", down = "red", restarting = "grey" }
+all_servers = false            # also one message with a row per server
+power_buttons = ["start", "stop", "restart", "restart-after-game", "restart-when-empty", "cancel", "updates"]
+
+[status.seeding]
+enabled = false
+role = ""                      # an opt-in role, e.g. "@Seeder"
+seed_at = [1, 3]               # ping when a server has between this many players
+cooldown_minutes = 120         # per server
+channel = "public"
+notify_me = false              # members pick their own alerts: a server reaching N players, a game type starting
+notify_channel = ""
+
+[status.presence]
+enabled = false
+lines = ["Watching {players_total} Spartans on {servers_up} servers", "{map} · {mode} on {server}"]
+activity = "watching"          # playing | listening | watching | competing | custom
+rotate_seconds = 120           # at least 30
+dot = "health"                 # health (online / idle when one is down / do-not-disturb when all are) | online
+
+[status.bio]
+enabled = false
+text = "{servers_up} servers up · {players_total} playing · {unique_players} Spartans so far"
+update_minutes = 30
+
+[status.nickname]
+enabled = false
+template = "Huragok · {players_total} on"
+update_minutes = 15
+
+[status.channel_names]
+enabled = false
+channels = {}                  # channel -> template: { "#server1" = "{state_emoji} Server 1: {players}/{max}" }
+update_minutes = 10            # at least 5: Discord allows a channel 2 name/topic changes in 10 minutes
+only_on_change = true
+
+[status.topics]
+enabled = false
+channels = {}                  # channel -> template
+update_minutes = 10
+
+[status.voice_status]
+enabled = false
+channels = {}                  # voice channel -> template: { "Server 1 Comms" = "{map} · {mode} {players}/{max}" }
+update_minutes = 3             # at least 1
+
+
+# ---------------------------------------------------------------------------------
+# The console from Discord. typed: lines typed in a channel (needs the Message
+# Content switch). slash: /rcon and every command as a slash command.
+[console]
+typed = false
+layout = "picker"              # per-server (a channel each) | picker (one channel, pick the server)
+channel = "console"            # the picker layout's channel
+channels = {}                  # the per-server layout: { "Server 1" = "#server1-console" }
+server_prefix = true           # "server1: kick 3" names the server on the line
+remember_server = "member"     # the picker remembers each member's server | channel (one for everyone)
+raw = true                     # false: only Huragok's ! commands, no console lines
+confirm = ["endgame", "endround", "reload", "password", "restartserver", "ban"]
+answers = "reply"              # reply | thread
+long_answers = "file"          # file | split
+ignore_others = "ignore"       # ignore | delete: lines from people without a rank
+
+
+# ---------------------------------------------------------------------------------
+# Slash commands and right-click commands.
+[commands]
+enabled = false
+game_commands = true           # every in-game command as a slash command, same rank as commands.toml
+names = {}                     # rename any: { whois = "lookup", leaderboard = "top" }
+hidden = []                    # never registered
+private = ["whois", "said", "bans", "kicks", "mutes", "players", "rcon"]  # answers only the asker sees
+everyone = ["status", "servers", "stats", "leaderboard", "link", "unlink", "report", "appeal", "game"]
+member_menu = ["whois", "link", "stats"]     # right-click on a member
+message_menu = ["report"]                    # right-click on a message
+
+
+# ---------------------------------------------------------------------------------
+[reports]
+enabled = false
+channel = "reports"
+from = ["game", "discord"]     # !report in game, /report and right-click in Discord
+evidence_lines = 8
+threshold = 3                  # this many different reporters...
+threshold_minutes = 10         # ...within this long pings staff
+ping = ""
+buttons = ["mute-30m", "kick", "ban-1d", "ban-7d", "ban", "whois", "dismiss"]
+thank_reporter = true
+reporter_cooldown_seconds = 60
+
+[appeals]
+enabled = false
+channel = "appeals"
+for = ["ban"]                  # ban | kick | mute
+cooldown_days = 7
+questions = ["What happened?", "Why should the ban be lifted?"]
+buttons = ["unban", "shorten", "deny"]
+tell_outcome = "dm"            # dm | thread
+
+[tickets]
+enabled = false
+channel = ""                   # where the "Contact staff" button lives
+categories = ["Question", "Report a player", "Ban appeal", "Other"]
+ping = ""
+transcript = true              # a file of the thread when it's closed
+close_after_days = 7
+
+
+# ---------------------------------------------------------------------------------
+# Game chat. to_discord: each server's chat in a channel. to_game: Discord lines into the game.
+[chat]
+to_discord = false
+channels = {}                  # per server: { "Server 1" = "#server1-chat" }; empty: channel = "chat" for all
+webhook = ""
+as_player = true               # each line under the player's name (the bot's own webhook)
+team_chat = "off"              # off | staff (team lines only ever go to the staff channel)
+delay_seconds = 0              # hold the public bridge back, as on the killfeed
+server_lines = false
+hide_commands = true
+blur_banned_words = true
+batch_seconds = 3
+to_game = false
+to_game_who = "staff"          # staff | linked | everyone
+to_game_format = "[Discord] {name}: {text}"
+to_game_vergil = true          # Vergil's word list first
+to_game_slow_seconds = 10
+across_servers = false         # a line on one server shown on the others as [Server 1] Nate: ...
+staff_chat = false             # !staff <text> in game -> the staff channel, and back by tell
+staff_chat_channel = "staff"
+
+
+# ---------------------------------------------------------------------------------
+# Stats: Huragok counts; Discord shows. !stats works in game too.
+[stats]
+enabled = false
+count = ["games", "wins", "kills", "deaths", "assists", "betrayals", "suicides", "streaks",
+         "multikills", "playtime", "maps", "modes", "rivals"]
+servers = "*"                  # whose games count
+min_players = 4                # games with fewer players don't count
+rating = "skill"               # off | elo | skill (team-aware, with certainty)
+rating_min_games = 10
+official_rank = true           # show Project Reclaimer's own rank (from the server log) when it's sure
+season = "monthly"             # off | monthly | quarterly
+private_allowed = true         # players may hide themselves (!stats private)
+cards = true                   # /stats and !stats player cards
+
+# Medals, worked out from each game's kills the way Halo 3 awards them.
+[achievements]
+enabled = false
+channel = "stats"
+announce = "rare"              # every | rare | first-time | off: post medals in Discord
+rare = ["killtacular+", "rampage+", "extermination", "perfection", "steaktacular"]
+in_game = false                # also say it in game
+multikill_window = 4           # seconds between kills, as Halo 3 (timed by when Huragok hears each, to the millisecond)
+sprees = [5, 10, 15, 20, 25, 30]          # Killing Spree ... Invincible
+firefight_sprees = [10, 20, 30, 40, 50, 100]  # the same names on ODST Firefight
+halo3 = ["multikills", "sprees", "killjoy", "extermination", "perfection", "steaktacular",
+         "death-from-the-grave", "infection", "last-man-standing", "weapons"]  # weapons: only if the report byte proves to be the weapon
+own = ["first-strike", "revenge", "nemesis", "comeback", "hours", "games", "every-map", "days-in-a-row",
+       "linked", "clean-appeal"]
+
+[leaderboards]
+enabled = false
+channel = "stats"
+boards = ["season-kills", "season-wins", "season-rating", "best-spree", "playtime-week", "friendly-fire-week"]
+                               # any stat or medal x period x server/map/mode; "*" = a rotating board of the day
+rows = 10
+min_games = 5
+for_fun = true                 # boards like Friendly Fire (team kills), suicides, deaths to the world
+keep_updated = true            # one message per board, edited
+update_minutes = 15
+post = "weekly"                # off | daily | weekly | season-end: also post a fresh copy
+post_at = "Sunday 20:00"
+season_end_post = true
+records = true                 # post when an all-time record falls (longest spree, biggest multi-kill)
+
+# A board of your own:
+# [leaderboards.board.valhalla-kd]
+# stat = "kd"                  # any stat or medal
+# period = "month"             # all | season | month | week | today
+# servers = ["Server 1"]
+# maps = ["Valhalla"]
+# modes = ["Slayer"]
+# min_games = 10
+
+[matches]
+enabled = false
+channel = "games"
+which = "notable"              # every | min-players | notable (sprees, records, first wins)
+min_players = 8
+show = ["winner", "top-3", "best-streak", "multikills", "first-blood", "betrayals"]
+
+
+# ---------------------------------------------------------------------------------
+[community]
+welcome = false
+welcome_channel = ""
+welcome_dm = false
+welcome_text = "Welcome, Spartan. Servers: /servers. Rules: {rules}. Link your player: !link in game."
+first_game_post = false        # a linked member's first game
+server_list = false            # /servers and a pinned list with Join buttons
+game_nights = false            # /gamenight makes a Discord event; the server's playlist can switch for it
+game_night_playlist_switch = true
+polls_to_game = false          # a Discord poll's winner becomes that server's next game
+announce = false               # /announce sends a line to every server (staff)
+milestones = false             # the community's own: 1,000th unique player, 10,000 games
+milestone_channel = "public"
+server_birthdays = false
+balance = "off"                # off | command (/balance) | auto: split teams by rating before each game
+balance_servers = []
+team_voice = false             # move linked members in voice to Red/Blue channels for team games
+team_voice_channels = { lobby = "", red = "", blue = "" }
+self_roles = {}                # button roles members pick: { "Seeder" = "@Seeder", "Game nights" = "@Game Nights" }
+levels = false                 # levels from playtime on the servers, with level roles
+level_roles = {}               # { 5 = "@Level 5" }
+weekly_recap = false
+recap_at = "Monday 09:00"
+host_digest = false            # the staff version: uptime, crashes, actions per moderator, appeals
+digest_channel = "staff"
+awards = "off"                 # off | daily | weekly: Most Kills, Best K/D, Iron Man, the shame awards...
+award_ribbons = true
+
+# Staff tools on players (bot mode): notes, flags, reason templates, evidence, appeal codes.
+[notes]
+enabled = false
+expire_days = 0                # 0: notes never expire
+flags = { watch = "red", "voice abuser" = "orange", trusted = "green", regular = "blue" }
+reasons = ["Slurs in chat: 1 day", "Slurs in voice: 7 days", "Team killing: kick", "Cheating: ban"]
+evidence_files = true          # ban and mute forms take a clip or screenshot
+appeal_codes = false           # a ban's reason in game ends with a code for /appeal
+appeal_text = "Appeal at {invite} with code {code}"
+
+
+# ---------------------------------------------------------------------------------
+# Minigames: each its own block, off until set up. Rewards are earned only: they can't
+# be bought, given to someone else or cashed out. Forecasts are free; nothing is staked.
+[games]
+channel = "minigames"
+currency = "Tax Dollars"       # the joke currency's name
+season_reset = true            # Tax Dollars reset each season
+daily_limit = 20               # plays per member per day across all games
+quiet_hours = "01:00-08:00"    # no random posts (payphone, bounties) in these hours
+min_players = 4                # a game counts only with this many players...
+min_minutes = 5                # ...and this long played
+practice_servers = []          # servers whose games never count
+
+[games.record]                 # /record: the service record
+enabled = false
+[games.carnage_report]         # the end-of-game card (also [matches])
+enabled = false
+[games.audio_logs]             # Sadie's Story: 30 logs from milestones, log 30 hidden until 29
+enabled = false
+caches = true                  # a finished Circle opens a cosmetic cache
+[games.skulls]                 # the 13 skulls by feats; all 13 = the Hayabusa title
+enabled = false
+[games.drop_pod]               # /drop: the daily check-in
+enabled = false
+reward = 10
+streak_bonus = 2
+[games.payphone]               # random "SUPERINTENDENT ONLINE": first to answer wins a map fragment
+enabled = false
+per_day = 3
+answer_seconds = 60
+[games.kiosk]                  # /kiosk trivia
+enabled = false
+per_day = 5
+questions = "kiosk-questions.toml"   # a Discord can add its own
+[games.data_hive]              # the weekly puzzle, floor by floor
+enabled = false
+[games.repair]                 # the Huragok repair puzzle after a real crash, once the server is back
+enabled = false
+[games.huragok_name]           # /huragokname
+enabled = false
+[games.birthdays]              # Grunt Birthday Party milestones
+enabled = false
+[games.rare_lines]             # IWHBYD: rare canon city lines in routine posts
+enabled = false
+one_in = 40
+[games.forecast]               # Traffic Forecast: who wins the team game
+enabled = false
+min_players = 6
+close_seconds = 120
+reward = 5
+[games.ballot_forecast]        # which game will the lobby ballot pick
+enabled = false
+[games.bounty]                 # Wanted: Killjoy bounty on the week's opted-in top player
+enabled = false
+[games.king]                   # Hail to the King: a role for the last big game's top scorer
+enabled = false
+role = ""
+min_players = 8
+[games.seven_on_seven]         # 7 EXP on the 7th
+enabled = false
+[games.wave_meter]             # Firefight: the community wave meter, skulls, Bonus Round
+enabled = false
+kills_per_wave = 250
+bonus_minutes = 30
+lives = 7
+[games.be_like_marty]          # a win with 0 kills
+enabled = false
+[games.linktacular]            # a game of only linked members
+enabled = false
+[games.last_train]             # seasons as the train's stops
+enabled = false
+# [games.public_works] and the recycling drive spend Tax Dollars: later, once the community has decided
+# what Tax Dollars can be spent on (0.6.0 only earns and counts them).
+[games.fireteams]              # five-member squads with Alpha-Nine roles
+enabled = false
+[games.rookie]                 # the Rookie's first 10 games and six clues
+enabled = false
+mentors = true
+[games.traffic_signs]          # DETOUR: point players at the server with room
+enabled = false
+[games.drop_call]              # /dropcall: gather players for a server
+enabled = false
+cooldown_minutes = 30
+[games.friends]                # mutual opt-in: told when a friend joins
+enabled = false
+[games.passport]               # VISR passport: servers and maps played
+enabled = false
+[games.forge_contest]          # monthly maps and variants contest
+enabled = false
+[games.good_citizens]          # public totals; Good Samaritan for a clean month
+enabled = false
+
+
+# ---------------------------------------------------------------------------------
+# Moderating the Discord itself. All off by default.
+[moderation]
+enabled = false
+automod_words = false          # write Vergil's banned words into a Discord AutoMod rule
+automod_action = "block"       # block | alert | timeout
+automod_preset = []            # Discord's own lists: profanity | sexual | slurs
+automod_spam = false
+automod_mentions = 0           # 0 off; else the most mentions in one message
+vergil_on_chat = false         # Vergil's ladder on Discord messages (needs Message Content)
+shared_strikes = false         # Discord strikes and game strikes count together
+mute_as = "timeout"            # how a Vergil mute looks in Discord: timeout | role
+mute_role = ""
+cross_ban_game_to_discord = "ask"   # nothing | ask | timeout | kick | ban
+cross_ban_discord_to_game = "ask"   # nothing | ask | ban
+commands = false               # /timeout /dkick /dban /purge /slowmode /lock for Discord staff
+raid_guard = false
+raid_joins = 10                # this many joins...
+raid_seconds = 60              # ...within this long
+raid_action = "alert"          # alert | lock
+min_account_days = 0           # hold accounts younger than this
+logs = false                   # edited and deleted messages, joins, leaves, role and nickname changes
+logs_channel = "logs"
+
+
+# ---------------------------------------------------------------------------------
+# Who the bot posts as (bot mode posts through its own webhooks for this).
+[personas]
+enabled = true
+superintendent = { name = "Superintendent", picture = "" }
+vergil = { name = "Vergil", picture = "" }
+huragok = { name = "Huragok", picture = "" }
+
+# Every text the bot posts can be reworded here: [text] key = "words with {placeholders}".
+# The window lists every key and its default.
+[text]
+
+
+# ---------------------------------------------------------------------------------
+[privacy]
+player_ids = "staff"           # staff (staff channels only) | never. IP addresses are never posted.
+opt_out = true                 # players may hide from public stats and boards
+keep_days = 365                # Discord-only records: reports, tickets, links of members who left
+forget_me = true               # /forget me: a member deletes what the bot keeps about them
+
+
+# ---------------------------------------------------------------------------------
+# Floors on every timer. Raise them freely; Huragok won't go below the numbers in the notes.
+[limits]
+status_seconds = 120           # status boards (never under 60)
+rename_minutes = 10            # channel names and topics, together (never under 5; Discord allows 2 in 10 minutes)
+voice_status_minutes = 3       # (never under 1)
+presence_seconds = 120         # (never under 30)
+profile_minutes = 15           # bio and nickname (never under 15); pictures never under 60
+roles_per_second = 1           # role changes (bursts of 5 at most)
+roles_check_minutes = 15       # a full check of every synced role
+boards_minutes = 15            # leaderboards edited (never under 5); posted never more than hourly
+chat_batch_seconds = 3         # the chat bridge (never under 2), at most chat_per_minute messages
+chat_per_minute = 20
+logins_per_day = 100           # past this, the bot stops and alerts the host (Discord resets the token at 1,000)
+wait_seconds = 30              # give up on any Discord wait longer than this and report it
