@@ -174,9 +174,9 @@ class FakeDiscord:
             if self._runner is not None:
                 await self._runner.cleanup()
 
-        asyncio.run_coroutine_threadsafe(down(), self._loop).result(10)
+        asyncio.run_coroutine_threadsafe(down(), self._loop).result(30)  # CI's Windows runners can take more than 10 s
         self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(10)
+        self._thread.join(30)
 
     def next_id(self) -> str:
         """As Discord's: they say when, and later ones are always higher."""

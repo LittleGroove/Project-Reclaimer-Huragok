@@ -1536,10 +1536,9 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
             fake.ban_list.append({"id": BRAVO, "name": "Bravo", "reason": "cheating", "banned_by": "Owner (RCON)",
                                   "banned_at": int(time.time()) - 86400})
             await fake.chat(ADMIN, "Admin", "!pardonplayer bravo")
-            await wait_for(lambda: any(t.startswith("Pardoned Bravo") for t in tells_to(fake, ADMIN)))
+            await wait_for(lambda: "ban not lifted: Owner banned them too (cheating), and the server's unban lifts every ban on them; "
+                                   "!unban lifts both" in told(fake, ADMIN))  # a long answer is two tells: the second can come a moment later
             assert not fake.named("unban") and len(fake.ban_list) == 2
-            assert "ban not lifted: Owner banned them too (cheating), and the server's unban lifts every ban on them; " \
-                   "!unban lifts both" in told(fake, ADMIN)
 
             # Automod's ban that timed out (the server may have run it): it's in the list, so it's lifted.
             add_strike(part, ALICE, ok=False)

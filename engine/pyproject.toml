@@ -63,4 +63,7 @@ filterwarnings = [
     "error::pytest.PytestUnraisableExceptionWarning",
     "error::pytest.PytestUnhandledThreadExceptionWarning",
     "error::RuntimeWarning",
+    # A transport asyncio closes for itself when it's collected, after its loop has gone: its own warning fails inside it
+    # (CI's Linux runners, 3.13 and 3.14), in whichever test the collector happens to run.
+    'ignore:Exception ignored.*_SelectorTransport\.__del__:pytest.PytestUnraisableExceptionWarning',
 ]

@@ -159,7 +159,8 @@ def free_ports(count: int) -> list[int]:
             sock.close()
 
 
-async def wait_for(predicate: Callable[[], Any], timeout: float = 5.0) -> Any:
+async def wait_for(predicate: Callable[[], Any], timeout: float = 15.0) -> Any:
+    """As soon as it's so: the time's only how long a slow machine (CI's) gets before it counts as never."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = predicate()
@@ -344,7 +345,10 @@ class _AsyncioErrors(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         error = record.exc_info[1] if record.exc_info else None
-        self.lines.append(record.getMessage().splitlines()[0] + (f" ({error!r})" if error else ""))
+        message = record.getMessage().splitlines()[0]
+        if isinstance(error, AssertionError) and "BaseProactorEventLoop._start_serving" in message:
+            return  # Windows' own loop: a connection arriving as a test server closes trips an assert in asyncio itself, not in anything here
+        self.lines.append(message + (f" ({error!r})" if error else ""))
 
 
 @pytest.fixture(autouse=True)
