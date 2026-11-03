@@ -309,6 +309,12 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
     number = NUMBER.fullmatch(ref)
     if number:
         player = state.players.get(int(number[1]))
+        named = [p for p in sorted(state.players.values(), key=lambda p: p.number)
+                 if not ref.startswith("#") and plain(p.name) == plain(ref) and p is not player]
+        if player is not None and named:
+            # Someone called "4" beside #4: a troll's name to have the wrong player hit, so the caller picks (5.9)
+            await ask(call, f"'{ref}'", [_on(player), *(_on(p) for p in named)])
+            return None
         if player is not None:
             return player
         if ref.startswith("#"):

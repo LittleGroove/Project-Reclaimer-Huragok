@@ -162,6 +162,38 @@ def test_a_part_switched_off_for_failing_is_on_again_after_a_while(run, caplog) 
     assert "flaky on again after 1 s off" in caplog.text
 
 
+def test_a_part_off_for_failing_is_still_torn_down_as_huragok_stops(run) -> None:
+    """In its cool-down, its teardown was skipped: Discord's queued cards were lost and its state file said it was
+    still running (audit 2026-11, 2.5). One whose setup failed has nothing to tear down."""
+    torn: list[str] = []
+
+    class Tidy(Flaky):
+        async def teardown(self) -> None:
+            torn.append(self.ctx.name)
+
+    class TidyBroken(BrokenSetup):
+        async def teardown(self) -> None:
+            torn.append("broken")
+
+    bus = EventBus()
+    part = Tidy(Ctx("flaky"))
+    runner = PartRunner(part, bus, cool_down=600.0)
+    broken = PartRunner(TidyBroken(Ctx("broken")), bus)
+
+    async def scenario() -> None:
+        tasks = [asyncio.ensure_future(runner.run()), asyncio.ensure_future(broken.run())]
+        await wait_for(lambda: runner.enabled and runner._unsubscribe)
+        for n in range(5):
+            bus.emit("rcon.chat", "Alpha", text=str(n))
+        await wait_for(lambda: not runner.enabled and runner.back_at is not None)
+        await runner.stop()
+        await broken.stop()
+        await asyncio.gather(*tasks)
+
+    run(scenario())
+    assert torn == ["flaky"]
+
+
 def test_a_part_whose_setup_fails_stays_off_and_a_silent_server_isnt_the_part_failing(run) -> None:
     bus = EventBus()
     broken = PartRunner(BrokenSetup(Ctx("broken")), bus, cool_down=0.05)
@@ -173,7 +205,7 @@ def test_a_part_whose_setup_fails_stays_off_and_a_silent_server_isnt_the_part_fa
         await wait_for(lambda: slow.enabled and slow._unsubscribe)  # listening (its setup done)
         for n in range(6):
             bus.emit("rcon.chat", "Alpha", text=str(n))
-        await wait_for(lambda: slow.queue.empty())
+        await wait_for(lambda: slow.queued() == 0)
         await asyncio.sleep(0.2)
         assert not broken.enabled and broken.for_good and "setup failed" in (broken.disabled_reason or "")
         assert slow.enabled and slow.disabled_reason is None  # the server not answering, six times: still on
@@ -189,3 +221,49 @@ def test_a_handler_gets_longer_than_an_rcon_command() -> None:
     assert handler_time_limit(10, 10) == 15
     assert handler_time_limit(30, 10) == 30
     assert handler_time_limit(10, 20) == 25
+
+
+class FrozenOnAlpha(Part):
+    name = "frozen"
+    description = "Alpha's console stopped answering while connected"
+
+    def __init__(self, ctx: Any) -> None:
+        super().__init__(ctx)
+        self.handled: list[str] = []
+
+    @on("rcon.chat")
+    async def chat(self, event: Event) -> None:
+        if event.server == "Alpha":
+            await asyncio.sleep(10)  # every job there overruns its time limit
+        self.handled.append(f"{event.server}: {event['text']}")
+
+
+def test_one_servers_frozen_console_holds_up_only_its_own_lane(run, caplog) -> None:
+    """One queue per part: a server whose console stopped answering while connected held up that part's work for
+    every server, and its overruns switched the part off everywhere for 10 minutes. Each server has a lane now
+    (the host's call, 2 Nov 2026): Bravo's are handled meanwhile, and Alpha's lane alone is paused."""
+    bus = EventBus()
+    part = FrozenOnAlpha(Ctx("frozen"))
+    runner = PartRunner(part, bus, handler_timeout=0.05, max_failures=3, cool_down=600.0)
+    seen: list[str] = []
+    bus.subscribe("supervisor.*", lambda e: seen.append(e.name))
+
+    async def scenario() -> None:
+        task = asyncio.ensure_future(runner.run())
+        await wait_for(lambda: runner.enabled and runner._unsubscribe)
+        for n in range(3):
+            bus.emit("rcon.chat", "Alpha", text=str(n))
+            bus.emit("rcon.chat", "Bravo", text=str(n))
+        await wait_for(lambda: len([h for h in part.handled if h.startswith("Bravo")]) == 3)
+        await wait_for(lambda: "Alpha" in runner.paused)
+        assert runner.enabled and "supervisor.part_disabled" not in seen and "supervisor.part_paused" in seen
+        bus.emit("rcon.chat", "Alpha", text="while paused")  # dropped
+        bus.emit("rcon.chat", "Bravo", text="still on")
+        await wait_for(lambda: "Bravo: still on" in part.handled)
+        assert not any(h.startswith("Alpha") for h in part.handled)
+        await runner.stop()
+        await task
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert "frozen paused on Alpha for 10 minutes: 3 failures in 10 minutes there (the other servers carry on)" in caplog.text

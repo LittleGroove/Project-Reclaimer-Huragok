@@ -34,6 +34,7 @@ import zlib
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,9 @@ HOP = {"host", "connection", "keep-alive", "transfer-encoding", "content-length"
        "proxy-authorization", "te", "trailer", "upgrade"}
 MAX_BODY = 16 * 1024 * 1024
 TIMEOUT = 30.0
+# The relay's own few threads: a stats service that hangs held Huragok's shared pool, a burst of joins at a time (each
+# asks it), and server stops, playlist checks and the window waited behind them (audit 2026-11, 8.8).
+FORWARDS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="stats relay")
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -298,8 +302,8 @@ class StatsCapture:
                 status, reason, answer_headers, answer = 502, "Bad Gateway", [], b"Huragok doesn't know the service"
             else:
                 try:
-                    status, reason, answer_headers, answer = await asyncio.to_thread(
-                        forward, upstream + path, method, headers, body)
+                    status, reason, answer_headers, answer = await asyncio.get_running_loop().run_in_executor(
+                        FORWARDS, forward, upstream + path, method, headers, body)
                 except (OSError, ValueError) as error:
                     status, reason, answer_headers, answer = 502, "Bad Gateway", [], str(error).encode()
             out = [f"HTTP/1.1 {status} {reason}"]

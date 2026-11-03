@@ -5,7 +5,8 @@
     worstword               |                  |              | 0   | threats
     rudeword                | 1d, 3d, 7d       |              |     | rude
     meanword                | 1d, 3d, 7d, 8    | 5            |     | mean
-    kickword
+    kickword                |                  | 0            |     | kicks
+    askword                 |                  |              |     | ask
 
 Each strike moves a player one step down the line's ladder: mutes first, then
 kicks, then the ban. Mute times listed past the start of the kicks overlap them:
@@ -25,11 +26,19 @@ kicks    how many strikes come before the kicks (left out: once every mute time
          the player out, in order (30m, 1h, 1d, 2w); the last repeats until the
          ban. No times: the server's own kick (out 10, 30, 60, then 120 minutes).
          Empty: never kicked, or with no mutes either, the server's kick every
-         time. A kick with a time is a timed ban underneath, since the server's
-         kick times are fixed.
+         time up to the ban. A kick with a time is a timed ban underneath, since
+         the server's kick times are fixed.
 ban      how many strikes come before the ban for good (0: banned the first
          time). Empty: never banned.
 name     what players read, and what moderators type in !strike. Optional.
+
+Mutes, kicks and ban all empty: the line only reports. Nothing is done or said in
+the game and no strike is counted; each time, a ticket for the staff on Discord,
+who decide (it's how a word is said that matters). A name with one of its words
+isn't kicked either: the staff are asked whether to ban the name or allow it. Up
+to 0.6.0 such a line was the server's kick every time, "kickword | | 0" now; an
+update writes the 0 into the lines a host's list had (updates/hostfiles.py), and
+the 0.2 layout's still read as they always were.
 
 So "badword, otherword | 1d, 7d | 2, 1h, 1d | 5 | slurs" is 1st: muted 1 day,
 2nd: muted 7 days, 3rd: out 1 hour, 4th and 5th: out 1 day, 6th: banned.
@@ -37,7 +46,8 @@ So "badword, otherword | 1d, 7d | 2, 1h, 1d | 5 | slurs" is 1st: muted 1 day,
 3 days, 3rd: out 1 hour then muted 7 days, 4th: out 1 hour, 5th: banned.
 "meanword | 1d, 3d, 7d, 8 | 5" is 1st: muted 1 day, 2nd: muted 3 days, 3rd to
 5th: muted 7 days, 6th to 8th: kicked, 9th and after: kicked, then muted for
-good, never banned. "kickword" alone is a plain kick every time. There's no
+good, never banned. "kickword | | 0" is a plain kick every time, "askword" alone
+a ticket for the staff every time and nothing in game. There's no
 limit on the counts or on how many times a line lists, only that every time
 comes before the ban.
 
@@ -79,9 +89,9 @@ class RuleError(ValueError):
 class Step:
     """What one strike does: a kick (for `duration`, or the server's plain kick), a mute (for `duration`, or for
     good; after a timed `kick`, or the server's plain kick when `plain_kick`, if one comes with it), or a ban for
-    good."""
+    good. A line that only reports has a "report": nothing in game, a ticket for the staff, and no strike counted."""
 
-    action: str  # kick | mute | ban
+    action: str  # kick | mute | ban | report
     duration: str | None = None
     kick: str | None = None  # a mute's: removed for this long first, the mute starting once they're back
     plain_kick: bool = False  # a mute's: the server's own kick first, the mute kept for when they're back
@@ -97,12 +107,16 @@ class Step:
     @property
     def removes(self) -> bool:
         """Whether it takes them off the server: a kick, a mute with a kick first, the ban."""
+        if self.action == "report":
+            return False
         return self.action != "mute" or self.kick is not None or self.plain_kick
 
     @property
     def severity(self) -> tuple[int, float, float]:
-        """Heavier steps sort later: a mute, then a kick (a mute after it or not), then the ban, each longer beating
-        shorter."""
+        """Heavier steps sort later: a report (nothing done), a mute, then a kick (a mute after it or not), then the
+        ban, each longer beating shorter."""
+        if self.action == "report":
+            return (0, 0, 0)
         if self.action == "ban":
             return (3, 0, 0)
         muted = 0.0 if self.action != "mute" else float("inf") if self.duration is None else float(self.seconds or 0)
@@ -111,6 +125,8 @@ class Step:
         return (1, muted, 0)
 
     def describe(self) -> str:
+        if self.action == "report":
+            return "a ticket for the staff, nothing in game"
         if self.action == "ban":
             return "banned for good"
         if self.action == "mute":
@@ -141,8 +157,16 @@ class Rule:
     line: int = 0
     old_layout: bool = False  # written as "words | timers | chances | name"
 
+    @property
+    def reports(self) -> bool:
+        """A line with no steps at all (mutes, kicks and ban empty): it only reports, to the staff on Discord."""
+        return (not self.mutes and self.mute_forever_after is None and self.kick_after is None and not self.kicks
+                and self.ban_after is None)
+
     def step_for(self, previous: int) -> Step:
         """The step for a player's next strike, given how many still count."""
+        if self.reports:
+            return Step("report")
         if self.ban_after is not None and previous >= self.ban_after:
             return Step("ban")
         kicking = self.kick_after is not None and previous >= self.kick_after
@@ -299,7 +323,9 @@ def parse_line(text: str, number: int) -> Rule | None:
         if kick_after:
             raise RuleError(f"{where}: the kicks start after {_many(kick_after, 'strike')}, but no mutes come before "
                             f"them: list the mutes first ({PARTS}), or take out the {kick_after}")
-        kick_after = 0  # no mutes: every strike kicks
+        # No mutes: every strike kicks; with no kicks or ban either, the line only reports (Rule.reports). The 0.2
+        # layout's lines never had that, so one with nothing in its timers and chances still kicks.
+        kick_after = None if not fields[2] and not fields[3] and not old else 0
     elif kick_after is None and fields[2]:
         kick_after = len(mutes)  # once every mute time is used
 
@@ -366,7 +392,9 @@ def from_kicks_first(text: str) -> str:
     ban | name), the host's call (27 October): the mute times come first, the strikes before muted for good still
     last among them; the strikes that came before the mutes now come before the kicks, then the kick times. A line
     that only muted (0, and no kick times) still only mutes, and one that only kicked still only kicks; one in the 0.2
-    layout, or with neither, reads the same either way and is left as it is. Kick times that would now come after the
+    layout, or with neither but a ban, reads the same either way and is left as it is. One with nothing at all, the
+    server's kick every time, gets the 0 in its kicks that says so now (since 0.6.0 a line with nothing only reports).
+    Kick times that would now come after the
     ban are left out: no strike reaches them. A line that didn't read is turned the same way, part by part, and keeps
     its place in the count (an unnamed line below it keeps its rule<n>, and its strikes)."""
     return _turned(text)[0]
@@ -378,11 +406,14 @@ def _turned(text: str) -> tuple[str, list[str]]:
     if not stripped or stripped.startswith("#"):
         return text, []
     fields = [f.strip() for f in stripped.split("|")]
-    if len(fields) < 2 or len(fields) > 5 or _is_old_layout(fields):
+    if len(fields) > 5 or _is_old_layout(fields):
         return text, []
     fields += [""] * (5 - len(fields))
     if not fields[1] and not fields[2]:
-        return text, []  # neither kicks nor mutes: it reads the same either way
+        if fields[3]:
+            return text, []  # neither kicks nor mutes: it reads the same either way
+        fields[2] = "0"  # the server's kick every time, as it was: with every part empty, a line only reports now
+        return _joined(fields), []
     kicks, mutes = _entries(fields[1]), _entries(fields[2])
     before = mutes.pop(0) if mutes and is_count(mutes[0]) else None  # the strikes before the mutes
     if not mutes and before is not None:
@@ -394,11 +425,30 @@ def _turned(text: str) -> tuple[str, list[str]]:
             kicks, cut = kicks[:reached], kicks[reached:]
         kicks = [before, *kicks]
     fields[1], fields[2] = ", ".join(mutes), ", ".join(kicks)
+    return _joined(fields), cut
+
+
+def _nothing_in(line: str) -> bool:
+    """Whether a line of a word list has words or a name and nothing in its mutes, kicks and ban, read as written in
+    either layout (not the 0.2 layout's, whose empty timers and chances kick every time, as they always did): up to
+    0.6.0 the server's kick every time, now a line that only reports."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    fields = [f.strip() for f in stripped.split("|")]
+    if len(fields) > 5 or _is_old_layout(fields) or not (fields[0] or (len(fields) == 5 and fields[4])):
+        return False
+    fields += [""] * (5 - len(fields))
+    return not fields[1] and not fields[2] and not fields[3]
+
+
+def _joined(fields: list[str]) -> str:
+    """A line's five parts as one, the empty ones at the end left off."""
     while len(fields) > 1 and not fields[-1]:
         fields.pop()
     if fields[-1] and len(fields) == 4 and not is_count(fields[3]):
         fields.append("")  # four parts ending in a name read as the 0.2 layout
-    return fields[0] + "".join(f" | {part}" if part else " |" for part in fields[1:]), cut
+    return fields[0] + "".join(f" | {part}" if part else " |" for part in fields[1:])
 
 
 def _this_layout(text: str) -> list[str]:
@@ -414,6 +464,7 @@ class Turned:
     text: str
     turned: list[int] = field(default_factory=list)  # the lines whose parts changed places
     cut: dict[int, list[str]] = field(default_factory=dict)  # kick times left out, by line: after the ban now
+    kicking: list[int] = field(default_factory=list)  # the lines with nothing in them, given the 0 that kicks
 
 
 def in_this_layout(text: str) -> Turned:
@@ -430,7 +481,7 @@ def in_this_layout(text: str) -> Turned:
             if "".join(match[1].lower().split()) in _KICKS_FIRST_NOTES:
                 new = HEADER
         elif new != line:
-            result.turned.append(number)
+            (result.kicking if _nothing_in(line) else result.turned).append(number)
         if cut:
             result.cut[number] = cut
         out.append(new)
@@ -599,9 +650,11 @@ def rule_line(words: list[str], mutes: list[str], forever_after: int | None, kic
     """A rule as its line in the word list. With a name it's written in all five parts (four parts ending in a
     name read as the 0.2 layout); without one, the empty parts at the end are left off. `forever_after` goes last
     in the mutes (the strikes before muted for good); `kick_after` first in the kicks, on a line with mutes (one
-    without starts kicking at once)."""
+    without starts kicking at once), or alone on a line that does nothing else (every part empty only reports)."""
     forever = [] if forever_after is None else [str(forever_after)]
     start = [] if not mutes or kick_after is None else [str(kick_after)]
+    if not mutes and kick_after == 0 and not kicks and ban_after is None:
+        start = ["0"]  # the server's kick every time: with every part empty, the line would only report
     parts = [", ".join(words), ", ".join([*mutes, *forever]),
              "" if mutes and kick_after is None else ", ".join([*start, *kicks]),
              "" if ban_after is None else str(ban_after), name]
@@ -618,13 +671,16 @@ def line_of(rule: Rule) -> str:
 def change_rule(path: Path, line: int | None, text: str | None) -> list[Rule]:
     """Put `text` in place of the rule on `line` (None: added at the end); a text of None takes that line out.
     The whole list is read again before it's written, so a change that would break it raises RuleError and the
-    file stays as it was. The rules as they are now."""
+    file stays as it was. A line Vergil runs without already (parse_lenient) doesn't stop a change to the others:
+    read strictly, one such line made every !banword, !unbanword and !changebanword fail with its error (audit
+    2026-11, 5.13). The rules as they are now."""
     try:
         lines = lines_of(read_text(path, RuleError))
     except FileNotFoundError:
         from importlib import resources
 
         lines = lines_of(resources.files("huragok").joinpath("templates/automod.txt").read_text("utf-8"))
+    already = {item.text.strip() for item in parse_lenient("\n".join(lines))[1]}  # left out before this change
     if kicks_first("\n".join(lines)):
         # Written in this layout, a line would read the old way in a file of the old layout; the file is rewritten
         # in this one a couple of minutes after Huragok starts (updates/hostfiles.py), once the version before it
@@ -644,7 +700,10 @@ def change_rule(path: Path, line: int | None, text: str | None) -> list[Rule]:
     if text is not None and (rule := parse_line(text, line or len(lines))) is not None and rule.zero_times():
         raise RuleError(f"{rule.zero_times()[0]} is no time at all: write how long (10m, 1h, 7d), or perm for good")
     new = "\n".join(lines) + "\n"
-    rules = parse_text(new)
+    rules, left = parse_lenient(new)
+    edited = None if text is None else line or len(lines)
+    if brought := [item for item in left if item.line == edited or item.text.strip() not in already]:
+        raise RuleError("; ".join(item.why for item in brought))
     path.write_text(new, encoding="utf-8")
     return rules
 

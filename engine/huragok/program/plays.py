@@ -13,7 +13,9 @@ A server's settings come in three areas, each with its own home:
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import re
 import shutil
 import socket
@@ -51,7 +53,14 @@ def plays_problem(values: dict[str, Any], program_version: str | None) -> str | 
     return next((p for k in keys if (p := version_problem(k, since[k], program_version))), None)
 
 
-CHECK_FILE = ".huragok-check.toml"  # beside a server's dedicated.toml while its program checks a change
+CHECK_FILE = ".huragok-check.toml"  # beside a server's dedicated.toml while its program checks a change: each check
+# its own (.huragok-check-<process>-<n>.toml), so two at once (the window's U and playlists by player count) never
+# write over each other's draft (audit 2026-11, 8.4)
+_checks = itertools.count(1)
+
+
+def _check_name(stem: str, suffix: str) -> str:
+    return f"{stem}-{os.getpid()}-{next(_checks)}{suffix}"
 CHECK_PORTS = range(50500, 51000)  # the draft's own port: away from servers' (49170-49199) and Windows' own
 CHECK_SECONDS = 300.0  # `dedicated check` takes a tenth of a second (0.9.21); more only to fetch a Workshop item
 
@@ -102,7 +111,8 @@ def check_plays(tool: Any, server: ServerConfig, values: dict[str, Any], playlis
         block = {k: v for k, v in own.items() if k not in PLAYS_KEYS}
         block.update(values)
         if playlist is not None:
-            draft = playlist.path.with_name(f".{playlist.path.name.removesuffix('.playlist.json')}.huragok-check.json")
+            draft = playlist.path.with_name(
+                _check_name(f".{playlist.path.name.removesuffix('.playlist.json')}.huragok-check", ".json"))
             draft.parent.mkdir(parents=True, exist_ok=True)
             write_atomic(draft, json.dumps(playlist.data(), indent=2, ensure_ascii=False) + "\n")
             block["playlist"] = draft_ref = draft.relative_to(server.folder).as_posix() \
@@ -134,7 +144,7 @@ def _run_check(tool: Any, server: ServerConfig, block: dict[str, Any]) -> Any:
     """`dedicated check` of a draft config beside the server's own, holding `block` alone on a port of its own: no
     console port of its own (the running server holds that one; the console follows the free game port) and no
     Workshop items (a check mustn't start SteamCMD fetching one)."""
-    check = server.folder / CHECK_FILE
+    check = server.folder / _check_name(CHECK_FILE.removesuffix(".toml"), ".toml")
     try:
         shutil.copy2(server.config_path, check)
         draft = {k: v for k, v in block.items() if k != "rcon_port"}
@@ -143,7 +153,7 @@ def _run_check(tool: Any, server: ServerConfig, block: dict[str, Any]) -> Any:
         set_top_key(check, "auto_update", False)
         set_top_key(check, "upnp", False)
         set_table_key(check, "master", "enabled", False)
-        return tool.run_sync(server.folder, "check", config=CHECK_FILE, timeout=CHECK_SECONDS)
+        return tool.run_sync(server.folder, "check", config=check.name, timeout=CHECK_SECONDS)
     finally:
         check.unlink(missing_ok=True)
 
@@ -197,5 +207,5 @@ def applies_when(before: str, after: str) -> str:
 def write_plays(config: Path, server_name: str, values: dict[str, Any]) -> None:
     """What it plays: the new keys in, every other kind's keys out (a server plays one kind of thing), in one
     write, so a change that can't be made safely leaves the file as it was rather than playing nothing."""
-    change_server_settings(config, server_name, values, PLAYS_KEYS, what="what it plays")
+    change_server_settings(config, server_name, values, PLAYS_KEYS, what="what it plays", add=False)
 

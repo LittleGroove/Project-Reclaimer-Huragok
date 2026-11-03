@@ -137,3 +137,51 @@ def test_the_rank_guards_and_a_promotion_by_request(tmp_path: Path, run) -> None
             assert ALICE in sup.settings.permissions.members["member"]
 
     run(scenario())
+
+
+def test_a_request_number_int_cant_read_is_told_not_a_crash(run) -> None:
+    """`!confirm ²`: "²" is a digit to Python, which int() refuses: it raised, and counted towards switching every
+    command off (audit 2026-11, 5.12)."""
+    from types import SimpleNamespace
+
+    from huragok.players.commands.requests import ProbationRequests as Requests
+
+    said: list[str] = []
+
+    async def reply(text: str) -> None:
+        said.append(text)
+
+    call = SimpleNamespace(args=["²"], prefix="!", name="confirm", reply=reply)
+    holder = SimpleNamespace(_waiting=lambda: [{"slot": 2}])
+    assert run(Requests._picked(holder, call)) is None  # type: ignore[arg-type]
+    assert said and said[0].startswith("Use: !confirm <number>")
+
+
+def test_five_requests_wait_at_most_and_a_demotion_drops_them(tmp_path: Path, run) -> None:
+    """Requests never lapsed and had no cap, each told to every staff member, and stayed confirmable after the asker
+    lost the rank (the host's calls, 2 Nov 2026): five wait at most, and they're dropped once the asker isn't on
+    probation any more."""
+    from huragok.players.commands.requests import MOST_WAITING
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (sup, fake, _):
+            await on_probation(sup, fake)
+            for number in range(1, MOST_WAITING + 1):
+                await fake.chat(ALICE, "Alice", f"!warn bravo number {number}")
+                await heard(fake, ALICE, f"Sent for review as #{number}:")
+                await asyncio.sleep(3.1)  # past the 3 s a player has between uses of one command
+            await fake.chat(ALICE, "Alice", "!warn bravo one more")
+            await heard(fake, ALICE, f"You have {MOST_WAITING} requests waiting already")
+            open_rows = lambda: sup.storage.query("SELECT 1 FROM commands_requests WHERE status = 'open'")  # noqa: E731
+            assert len(open_rows()) == MOST_WAITING
+            await fake.chat(MOD, "Mod", "!demote alice")  # back to member: not on probation any more
+            alice = sup.superintendent.states[SERVER].players[3]
+            await wait_for(lambda: sup.vergil.roles.role_of(sup.superintendent.states[SERVER], alice) == "member")
+            await fake.chat(MOD, "Mod", "!requests")
+            await wait_for(lambda: not open_rows())
+            dropped = sup.storage.query("SELECT why FROM commands_requests WHERE status = 'dropped'")
+            assert len(dropped) == MOST_WAITING and dropped[0]["why"] == "they aren't a probationary moderator any more"
+            await fake.chat(MOD, "Mod", "!confirm 1")
+            await heard(fake, MOD, "No request #1 is waiting.")
+
+    run(scenario())

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import itertools
 import os
+import shutil
 import stat
 import time
 from pathlib import Path
@@ -23,28 +25,50 @@ REPLACE_TRIES = 5
 REPLACE_WAIT_SECONDS = 0.1
 
 
-def write_atomic(path: Path, text: str, *, encoding: str = "utf-8", newline: str | None = None) -> None:
+def write_atomic(path: Path, text: str, *, encoding: str = "utf-8", newline: str | None = None,
+                 durable: bool = True) -> None:
     """Replace a file in one step: written whole to a hidden file beside it (`.<name>.<pid>-<n>.tmp`, which a
     program watching the folder never takes for one of its files), then swapped in with os.replace. A reader never
     sees it half written, a crash part way leaves the old one, and a chmod 600 file stays private. `newline` as
-    open() takes it: "" writes the text's own line ends as they are."""
+    open() takes it: "" writes the text's own line ends as they are. `durable`: on the disk before it's swapped in,
+    so a power cut can't leave an empty settings file or record (audit 2026-11); False for one rewritten every few
+    seconds that's worth nothing after a restart (live.json)."""
+    if path.is_symlink():  # the file it points at is what's changed: replaced, the link became a copy (audit 4.9)
+        path = path.resolve()
     temp = path.with_name(f".{path.name}.{os.getpid()}-{next(_temp_names)}.tmp")
     try:
         with open(temp, "w", encoding=encoding, newline=newline) as file:
             file.write(text)
+            if durable:
+                file.flush()
+                os.fsync(file.fileno())
         if os.name != "nt" and path.exists():
             os.chmod(temp, stat.S_IMODE(path.stat().st_mode))
-        for tries_left in reversed(range(REPLACE_TRIES)):
-            try:
-                os.replace(temp, path)
-                break
-            except PermissionError:  # on Windows, something reading the file just then (a virus scan, an indexer) stops it for a moment
-                if os.name != "nt" or not tries_left:
-                    raise
-                time.sleep(REPLACE_WAIT_SECONDS)
+        replace(temp, path)
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
+
+
+def replace(source: Path, path: Path) -> None:
+    """os.replace, tried again for a moment on Windows: something reading the file just then (a virus scan, an indexer)
+    refuses it with PermissionError. Every file Huragok swaps in goes through here (audit 2026-11, 4.8)."""
+    for tries_left in reversed(range(REPLACE_TRIES)):
+        try:
+            os.replace(source, path)
+            return
+        except PermissionError:
+            if os.name != "nt" or not tries_left:
+                raise
+            time.sleep(REPLACE_WAIT_SECONDS)
+        except OSError as error:
+            if error.errno != errno.EBUSY:
+                raise
+            # A single file mounted into a container (Docker's bind mount) can't be replaced, only written: the
+            # whole text at once, then the file it came from removed (audit 2026-11, 4.9).
+            shutil.copyfile(source, path)
+            os.unlink(source)
+            return
 
 
 def folder_size(path: Path) -> int:

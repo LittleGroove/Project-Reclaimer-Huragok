@@ -54,6 +54,12 @@ def describe_event(event: Event) -> str | None:
         return f"{clock} anti-cheat {data.get('action', '')}: {who} ({data.get('detail', '')})"
     if name in ("connected", "disconnected"):
         return f"{clock} (console {name})"
+    if name == "byplayers.changed":
+        players = data.get("players", "?")
+        return (f"{clock} {players} player{'' if players == 1 else 's'} on: plays {data.get('name', '')} "
+                f"({data.get('range', '')}) from the next vote")
+    if name == "byplayers.refused":
+        return f"{clock} ! not switched to {data.get('playlist', '')}: {data.get('why', '')}"
     return None
 
 
@@ -168,12 +174,14 @@ class ManageScreens(Screens):
             rows = [(title, f"{counts[key]}", summary(entries, key) or what) for key, title, what in GROUPS]
             row = next((r for r in self.controller.rows() if r["name"] == row["name"]), row)  # its phase now
             stopped = row.get("phase") in ("idle", "faulted", "offline")  # backoff: about to be restarted
+            mates = self._folder_mates_running(settings, server)
+            first = "stop it first (X)" if not stopped else f"stop {', '.join(mates)} first: in its folder" if mates else ""
+            stopped = stopped and not mates
             extra = [(key, what, count, about) for key, what, count, about in self.server_page_extras(settings, server)]
-            extra.append(("N", "rename this server", "", "its name everywhere: block, data, records, folder"
-                          if stopped else "stop it first (X)"))
+            extra.append(("N", "rename this server", "", first or "its name everywhere: block, data, records, folder"))
             if self._shared_content(settings, server):
-                extra.append(("O", "its own content folder", "", "stop sharing the root's content/ (no copy on the "
-                              "same drive)" if stopped else "stop it first (X)"))
+                extra.append(("O", "its own content folder", "", first or "stop sharing the root's content/ (no copy "
+                              "on the same drive)"))
             keys = [str(n) for n in range(1, len(rows) + 1)] + [key for key, *_ in extra]
             panel = self.listing(rows + [(what, count, about) for _, what, count, about in extra], keys=keys)
             answer = await self.prompt_line("  Which group? (number, or a letter; Esc goes back)", panel=panel)
@@ -308,7 +316,24 @@ class ManageScreens(Screens):
         else:
             self.note(f"{setting.key} = {display(setting, new)} written for {setting.where}. Takes effect: "
                       f"{APPLIES[setting.applies]}. The dashboard's events show the server's answer.", "green")
+        if setting.key == "max_players":
+            self._by_players_reach(server)
         await self._offer_restart(row, server.name, setting)
+
+    def _by_players_reach(self, server: Any) -> None:
+        """A new max_players can leave a playlist by player count out of reach: said here, as G -> P says it."""
+        from ...games.byplayers import ByPlayersError, setup_of, unreachable_text
+        from ...program.settings import effective
+        from ...core.tomledit import read_toml
+
+        try:
+            setup = setup_of(server.folder, server.name)
+            data = read_toml(server.config_path)
+        except (ByPlayersError, OSError, ValueError):
+            return
+        if setup is not None:
+            for warning in unreachable_text(setup, effective(data, "max_players", server.name)):
+                self.note(f"! Playlists by player count: {warning} (G -> P)", "yellow")
 
     async def _offer_restart(self, row: Row, name: str, setting: Any) -> None:
         """A setting `dedicated` only reads as it starts: restart it at a good moment, or leave it for later."""
@@ -425,10 +450,18 @@ class ManageScreens(Screens):
             self.note(f"Not changed: {problem}.", "yellow")
             await self.wait_any_key(4)
             return
-        if ("campaign" in values or "odst" in values) and not await self._co_op_players(server):
-            return
+        if "campaign" in values or "odst" in values:
+            lower = await self._co_op_players(server)
+            if lower is None:
+                return
+            if lower:  # checked with the rest and written with it, never before (audit 2026-11, 7.4)
+                from ...games.plays import CO_OP_MAX_PLAYERS
+
+                values = {**values, "max_players": CO_OP_MAX_PLAYERS}
         if "playlist" not in values and not await self._plays_checked(settings, server, values):
             return  # (a playlist picked was checked as it was picked)
+        if not await self._by_players_before_use(server, values.get("playlist")):
+            return
         before = server.plays_kind
         try:
             write_plays(server.config_path, server.name, values)
@@ -472,9 +505,11 @@ class ManageScreens(Screens):
             return {}
         return block[key] if isinstance(block.get(key), dict) else {}
 
-    async def _co_op_players(self, server: Any) -> bool:
+    async def _co_op_players(self, server: Any) -> bool | None:
         """A campaign or ODST server holds 16 players at most, and a higher max_players stops its start: offer to
-        bring this server's down first. False: the host would rather not switch."""
+        bring this server's down with the switch. True: lower it (written with what it plays, once that's checked and
+        sure: written first, a refused switch or an Esc after it still left 16); False: nothing to lower; None: the
+        host would rather not switch."""
         from ...games.plays import CO_OP_MAX_PLAYERS
         from ...program.settings import current, find
         from ...core.tomledit import read_toml
@@ -488,17 +523,10 @@ class ManageScreens(Screens):
             return True
         self.note(f"max_players is {value} ({where}): a campaign or ODST server takes {CO_OP_MAX_PLAYERS} at most and "
                   "won't start with more.", "yellow")
-        if not await self.prompt_yes_no(f"  Set this server's max_players to {CO_OP_MAX_PLAYERS}?", True):
+        if not await self.prompt_yes_no(f"  Set this server's max_players to {CO_OP_MAX_PLAYERS} with it?", True):
             self.note("Nothing changed.", "yellow")
             await self.wait_any_key(4)
-            return False
-        try:
-            write(server.config_path, server.name, setting, CO_OP_MAX_PLAYERS)
-        except OSError as error:
-            self.note(f"Couldn't write {server.config_path.name}: {error}", "red")
-            await self.wait_any_key(5)
-            return False
-        self.note(f"max_players = {CO_OP_MAX_PLAYERS} written for this server.", "green")
+            return None
         return True
 
     async def _modifier_values(self, existing: dict[str, Any]) -> dict[str, Any] | None:
@@ -652,6 +680,14 @@ class ManageScreens(Screens):
 
     # Renaming, and a content folder of its own -----------------------------------------------
 
+    def _folder_mates_running(self, settings: Any, server: Any) -> list[str]:
+        """The other servers in its folder (one dedicated.toml can have several) that aren't stopped. Renaming moves the
+        folder under them, and its own content changes `content` for all of them: only the one being changed was
+        checked (audit 2026-11, 7.5)."""
+        phases = {str(r["name"]): r.get("phase") for r in self.controller.rows()}
+        return [s.name for s in settings.servers if s is not server and s.config_path == server.config_path
+                and phases.get(s.name, "idle") not in ("idle", "faulted", "offline")]
+
     def _shared_content(self, settings: Any, server: Any) -> bool:
         from ...content.serverops import shares_content
 
@@ -662,13 +698,19 @@ class ManageScreens(Screens):
         from ...content.serverops import ServerOpError, rename_server
 
         if not stopped:
-            self.note("Renaming moves its data and folder: stop it first (X), then rename it.", "yellow")
+            mates = self._folder_mates_running(settings, server)
+            self.note(f"Renaming moves its folder, and {', '.join(mates)} run from it: stop them first." if mates else
+                      "Renaming moves its data and folder: stop it first (X), then rename it.", "yellow")
             await self.wait_any_key(5)
             return False
         name = await self.prompt_line(f"  New name for {server.name}")
         if not name:
             return False
         row = next((r for r in self.controller.rows() if r["name"] == server.name), {})  # as it is now
+        if mates := self._folder_mates_running(settings, server):  # started while the name was typed
+            self.note(f"Not renamed: {', '.join(mates)} started meanwhile, from its folder. Stop them first.", "yellow")
+            await self.wait_any_key(5)
+            return False
         try:
             rename_server(settings, server, name, say=lambda text: self.note(text, "gray"),
                           phase=row.get("phase", "gone"), pid=row.get("pid"))
@@ -690,10 +732,16 @@ class ManageScreens(Screens):
         self.note(f"It shares {server.content_dir} with {', '.join(sharing)}. Its own copy lets the Superintendent "
                   "install Workshop updates after its games, and keeps its maps and game types its own.")
         if not stopped:
-            self.note("Stop it first (X): the server program reads its content folder as it starts.", "yellow")
+            mates = self._folder_mates_running(settings, server)
+            self.note(f"Its folder's content setting is theirs too: stop {', '.join(mates)} first." if mates else
+                      "Stop it first (X): the server program reads its content folder as it starts.", "yellow")
             await self.wait_any_key(6)
             return
         if not await self.prompt_yes_no("  Give it its own content folder?", True):
+            return
+        if mates := self._folder_mates_running(settings, server):
+            self.note(f"Not done: {', '.join(mates)} started meanwhile, from its folder. Stop them first.", "yellow")
+            await self.wait_any_key(6)
             return
         try:
             await self.slow(own_content, settings, server, lambda text: None)

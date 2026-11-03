@@ -6,6 +6,7 @@ share, and the screens one group opens in another.
     GameScreens    (games.py)    custom games and a playlist's games
     FileScreens    (files.py)    D's Huragok files, O open
     DiscordScreens (discordsetup.py)  J the Discord bot
+    ByPlayersScreens (byplayers.py)   G -> P, playlists by player count
 
 Each extends Screens; Menu (dashboard.py) is all of them, with the dashboard and its keys. A screen asks with
 `choose`, `prompt_line`, `prompt_key`, `prompt_yes_no`; it draws with `title`, `heading`, `note`, `listing`; slow work
@@ -488,6 +489,12 @@ class Screens:
 
     async def _content_home(self, settings: Settings, server: ServerConfig, row: Row) -> None:
         raise NotImplementedError("SetupScreens's")
+
+    async def _by_players(self, settings: Any, tool: Any, server: Any, row: Row) -> None:
+        raise NotImplementedError("ByPlayersScreens's")
+
+    async def _by_players_before_use(self, server: Any, reference: str | None) -> bool:
+        raise NotImplementedError("ByPlayersScreens's")
 
     async def _other_servers(self, settings: Settings, server: ServerConfig, what: str) -> list[ServerConfig]:
         raise NotImplementedError("SetupScreens's")

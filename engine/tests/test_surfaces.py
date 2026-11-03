@@ -996,7 +996,7 @@ def test_keepalive_says_when_it_cant_restart_a_server(run, caplog) -> None:
 
 
 RESTARTS = ("[restarts]\nwarn_seconds = [10, 5, 2]\nbackoff_seconds = [5, 60]\nmax_failures = 2\n"
-            "good_run_seconds = 600\nrestarts_per_hour = 3\nready_seconds = 30\nempty_seconds = 4\n"
+            "good_run_seconds = 600\nready_seconds = 30\nempty_seconds = 4\n"
             "after_game_seconds = 3\n")
 
 
@@ -1663,3 +1663,25 @@ def test_wrapped_listings_break_paths_after_a_separator() -> None:
     texts = ["".join(t for t, _ in parts) for parts in block]
     assert len(texts) >= 2 and texts[0].rstrip().endswith("\\")
     assert not any(t.strip().startswith("RS\\") for t in texts)  # no "SERVE / RS" split any more
+
+
+def test_a_character_split_across_two_reads_comes_through_on_linux(monkeypatch) -> None:
+    """Each 64-byte read was decoded on its own, so a pasted "é" that ended one read and began the next was dropped
+    (audit 2026-11, 7.9)."""
+    import os
+    import select
+    import sys
+    import threading
+
+    from huragok.window import tui
+
+    chunks = [b"caf\xc3", b"\xa9!", b""]
+    monkeypatch.setattr(select, "select", lambda read, *_: (read, [], []))
+    monkeypatch.setattr(os, "read", lambda _fd, _size: chunks.pop(0))
+    monkeypatch.setattr(sys, "stdin", type("Stdin", (), {"fileno": lambda self: 0})())
+    keyboard = tui.Keyboard.__new__(tui.Keyboard)
+    keyboard._stop = threading.Event()
+    pushed: list[str] = []
+    keyboard._push = pushed.append  # type: ignore[method-assign]
+    keyboard._read_posix()
+    assert pushed == list("café!")

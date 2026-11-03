@@ -84,7 +84,8 @@ def active_keys(path: Path) -> set[tuple[str, ...]]:
 def test_this_version_reads_0_4_0s_files_as_they_are(tmp_path: Path) -> None:
     settings_path = host(tmp_path)
     settings = load(settings_path)  # before anything is brought up to date: nothing in them is wrong or unknown
-    assert settings.retired == []  # retired keys and unknown ones alike
+    # Retired keys and unknown ones alike: none but 0.6.0's restarts_per_hour, which the update takes out
+    assert [line for line in settings.retired if "restarts_per_hour" not in line] == [] and len(settings.retired) == 1
     # Only a key renamed since, still read under its old name until the start renames it (0.4.2):
     assert len(settings.notes) == 1 and "install_on_server_restart = false is auto_update's name" in settings.notes[0]
     assert settings.setup.download_game_files is True  # a setting 0.4.0 never had takes its default
@@ -122,6 +123,10 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "Workshop item is kept up to date too (new in 0.6.0)",
         "settings.toml: [workshop_updates] layouts = true added: the Forge layouts mods ship are copied into "
         "content/Maps and kept in step with each new version (new in 0.6.0)",
+        "settings.toml: [restarts] restarts_per_hour taken out: automatic restarts aren't held to a number an hour "
+        "since 0.6.0",
+        "settings.toml: [watchdog] memory = \"watch\": it only warns unless you turn it on (\"act\"), and counts growth "
+        "past memory_mb once a run has settled (new in 0.6.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
         AUTOMOD_ORDER, *new_command_lines()]
@@ -487,9 +492,12 @@ def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_s
               "rewritten so, the strikes that came before the mutes now before the kicks; Huragok's notes as this "
               "version writes them")
     later = " (2.5 minutes after it starts: the version before can't read it)"
-    assert pending[:2] == [turned + later,
+    assert pending[:3] == [turned + later,
                            "automod.txt: the spam line: kick times 1d, 2d left out, the ban coming before them now"
-                           + later]
+                           + later,
+                           "automod.txt: line 50 had nothing in its mutes, kicks and ban, the server's kick every time: a "
+                           "0 in its kicks keeps it kicking, as a line with nothing in them only reports now (a ticket "
+                           "for the staff on Discord)" + later]
 
     # Once it has stayed: the lines in the new layout, reading as they did meanwhile, and this version's notes.
     assert migrate.bring_up_to_date(settings_path, records, packages, settled=True)[:2] == [
@@ -499,7 +507,7 @@ def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_s
     assert text[len(template_text("automod.txt")):].splitlines() == [
         "word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate", "slur | | 1h, 1d, 7d | 3 | slurs",
         "# my own note, kept where it is", "rude | 1d, 3d | | | rude", "spam | 1d | 2, 1h | 3 | spam",
-        "broken | | 1x", "kickword"]
+        "broken | | 1x", "kickword | | 0"]
     assert [(r.name, ladder(r)) for r in read_rules_lenient(words)[0]] == before
     kept = records / "previous-files" / __version__ / "automod.txt"
     assert kept.read_text(encoding="utf-8") == old
@@ -535,6 +543,67 @@ def test_a_word_list_in_the_new_layout_is_left_as_it_is(tmp_path: Path) -> None:
     before = words.read_text(encoding="utf-8")
     assert not any(line.startswith("automod.txt") for line in up_to_date(settings_path))
     assert words.read_text(encoding="utf-8") == before
+
+
+def test_a_line_with_nothing_in_it_goes_on_kicking_after_the_update(tmp_path: Path) -> None:
+    """Up to 0.6.0 a line with nothing in its mutes, kicks and ban was the server's kick every time; now such a line
+    only reports (the host's design, 2 November). The host's lines like that get the 0 that keeps them kicking, written
+    in where they had it, the rest of the line as they wrote it; the version before reads them the same. A line the
+    host writes later with nothing in it only reports."""
+    from huragok.players.automod.rules import ladder, parse_line, read_rules_lenient
+
+    settings_path = host(tmp_path)
+    words = settings_path.parent / "automod.txt"
+    lines = ["troon                   |              |                |     | transphobia", "grimbo", "solo |",
+             "spam | | | 3 | spam", "w | | | oldname", "rude | 1d, 3d | 2 | | rude", "broken | 1x", "| | | | voice"]
+    words.write_text(template_text("automod.txt") + "\n".join(lines) + "\n", encoding="utf-8")
+    untouched = ("spam", "rude")
+    before = [(r.name, ladder(r)) for r in read_rules_lenient(words)[0] if r.name in untouched]
+    changed = up_to_date(settings_path)
+    first = len(template_text("automod.txt").splitlines()) + 1  # by their line numbers in the file, as the host sees them
+    assert (f"automod.txt: the transphobia and voice lines and lines {first + 1} and {first + 2} had nothing in their mutes, kicks and ban, "
+            "the server's kick every time: a 0 in their kicks keeps them kicking, as a line with nothing in them only "
+            "reports now (a ticket for the staff on Discord)") in changed
+    text = words.read_text(encoding="utf-8")
+    assert text[len(template_text("automod.txt")):].splitlines() == [
+        "troon                   |              | 0              |     | transphobia", "grimbo | | 0", "solo | | 0",
+        "spam | | | 3 | spam", "w | | | oldname", "rude | 1d, 3d | 2 | | rude", "broken | 1x", "| | 0 | | voice"]
+    rules = read_rules_lenient(words)[0]
+    assert not any(r.reports for r in rules)
+    assert {r.name: ladder(r) for r in rules if r.name in ("transphobia", "rule2", "rule3", "voice", "oldname")} == {
+        name: ["every time: kicked"] for name in ("transphobia", "rule2", "rule3", "voice", "oldname")}  # oldname: the 0.2 layout's, as ever
+    assert [(r.name, ladder(r)) for r in rules if r.name in untouched] == before
+    assert not parse_line("w | | 0", 1).reports  # and the version before reads a 0 there as the same kick
+    assert not any(line.startswith("automod.txt") for line in up_to_date(settings_path))  # once
+    words.write_text(text + "askword | | | | ask\n", encoding="utf-8")  # one the host adds now: theirs, and it reports
+    assert not any(line.startswith("automod.txt") for line in up_to_date(settings_path))
+    assert read_rules_lenient(words)[0][-1].reports
+
+
+def test_a_new_hosts_own_word_list_is_never_taken_for_one_from_before(tmp_path: Path) -> None:
+    """The playlists thread's audit (2 November): a first start only writes the files, so the second ran every step,
+    and a new host's own list in today's layout, with no note naming its parts, got the old layout's note and then its
+    mutes and kicks swapped for good (7d lost); a line that only reports would have been made a kick. A word list
+    Huragok writes itself is this version's: its steps are done."""
+    from huragok.commandline import firstrun
+    from huragok.players.automod.rules import kicks_first, parse_text
+
+    assert set(migrate.WORD_LIST_STEPS) <= {step.key for step in migrate.STEPS}
+    settings_path = tmp_path / "settings.toml"
+    firstrun.write_files(tmp_path, settings_path=settings_path)  # the first start
+    words = tmp_path / "automod.txt"
+    mine = "badword, otherword | 1d, 7d | 2, 1h | 3 | slurs\ntheword | | | | badwords\n"
+    words.write_text(mine, encoding="utf-8")
+    changed = up_to_date(settings_path)  # the second start, and once it's settled
+    assert [line for line in changed if line.startswith("automod.txt")] == ["automod.txt: Huragok's notes as this version writes them"]
+    text = words.read_text(encoding="utf-8")
+    assert not kicks_first(text) and [line for line in text.splitlines() if not line.startswith("#") and line.strip()] == mine.splitlines()
+    rules = parse_text(text)
+    assert rules[0].mutes == ["1d", "7d"] and rules[0].kicks == ["1h"] and rules[1].reports
+    done = json.loads((tmp_path / "records" / "files.json").read_text(encoding="utf-8"))["steps"]
+    assert "0.6.0/discord-file" in done or (tmp_path / "discord.toml").exists()  # the rest ran as ever
+    firstrun.write_files(tmp_path, settings_path=settings_path)  # every start after: nothing more
+    assert json.loads((tmp_path / "records" / "files.json").read_text(encoding="utf-8"))["steps"] == done
 
 
 def _beta_discord_file(tmp_path: Path) -> Path:
@@ -619,3 +688,19 @@ def test_a_list_the_host_changed_is_theirs(tmp_path: Path) -> None:
     path.write_text('[reports]\nbuttons = ["kick"]\n', encoding="utf-8")
     assert discord_buttons(SimpleNamespace(home=tmp_path, dry=False, backup=lambda _path: None)) == []  # type: ignore[arg-type]
     assert 'buttons = ["kick"]' in path.read_text(encoding="utf-8")
+
+
+def test_a_restart_budget_of_the_hosts_own_becomes_a_comment(tmp_path: Path) -> None:
+    """restarts_per_hour does nothing from 0.6.0: Huragok's own 6 is taken out (above), and a number the host set is
+    made a comment saying why, so they still see it. Huragok's old note above it goes either way."""
+    from huragok.core.tomledit import set_table_key
+
+    settings_path = host(tmp_path)
+    set_table_key(settings_path, "restarts", "restarts_per_hour", 10)
+    changed = up_to_date(settings_path)
+    assert "settings.toml: [restarts] restarts_per_hour made a comment: automatic restarts aren't held to a number an "\
+           "hour since 0.6.0" in changed
+    text = settings_path.read_text(encoding="utf-8")
+    assert "\n# restarts_per_hour = 10\n" in text and "# Not read since 0.6.0: automatic restarts" in text
+    assert migrate.RESTART_BUDGET_OLD_NOTE not in text
+    assert load(settings_path).retired == []

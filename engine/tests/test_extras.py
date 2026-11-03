@@ -175,6 +175,7 @@ def test_the_startup_item_works_whatever_the_folder_is_called(tmp_path: Path, ru
     unit = desktop.linux_startup_unit(PurePosixPath("/home/jo sé/50% off"))  # type: ignore[arg-type]
     assert 'ExecStart="/home/jo sé/50%% off/start.sh" start --no-menu\n' in unit
     assert "WorkingDirectory=/home/jo sé/50%% off\n" in unit
+    assert "KillMode=process\n" in unit  # its servers outlive Huragok's service (audit 2026-11, 1.3)
     assert desktop.systemd_quote('a "b" $HOME \\ c') == '"a \\"b\\" $$HOME \\\\ c"'
     if os.name == "nt":  # what cmd.exe makes of a script written that way
         home.mkdir()
@@ -230,3 +231,25 @@ def test_steamcmds_saved_sign_in_is_found_where_linux_keeps_it(tmp_path: Path, m
     config.parent.mkdir(parents=True)
     config.write_text('"InstallConfigStore"\n{\n\t"Accounts"\n\t{\n\t\t"host"\n\t\t{\n\t\t}\n\t}\n}\n', encoding="utf-8")
     assert steam.cached_accounts(tmp_path / "steamcmd" / "steamcmd.sh") == ["host"]
+
+
+def test_a_log_window_on_linux_takes_a_home_folder_with_a_space(tmp_path: Path, monkeypatch) -> None:
+    """The launcher's path went into `sh -c` unquoted: a home folder with a space in it broke L (audit 2026-11, 7.9)."""
+    import shlex
+    import subprocess
+
+    from huragok.core import desktop
+
+    home = tmp_path / "my servers"
+    started: list[list[str]] = []
+    from testkit import os_as
+
+    monkeypatch.setattr(desktop, "os", os_as("posix"))
+    monkeypatch.setenv("DISPLAY", ":0")
+    for program in ("gnome-terminal", "xterm"):
+        monkeypatch.setattr(desktop.shutil, "which", lambda name, wanted=program: name if name == wanted else None)
+        monkeypatch.setattr(subprocess, "Popen", lambda args, **_: started.append(args))
+        assert desktop.open_log_window(home, ["watch", '"LG Test Server"'], "LG Test Server console").startswith(f"opened a {program}")
+    gnome, xterm = started
+    assert shlex.split(gnome[-1]) == [str(home / "start.sh"), "watch", "LG Test Server"]
+    assert shlex.split(shlex.split(xterm[-1])[-1]) == [str(home / "start.sh"), "watch", "LG Test Server"]

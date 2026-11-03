@@ -371,6 +371,12 @@ def _merge(above: list[_Unit], gap: list[str], ours: set[str], pool: list[str], 
                 tops.append(lines)
             else:
                 middles.setdefault(at, []).append(lines)
+    # The host's lines either side of one bare # of Huragok's go together before it: read again, that # would be
+    # theirs (it's between their lines), and this version's put in beside it, a # more each time.
+    for number in sorted(middles):
+        before = max((j for j in filled if j < number), default=None)
+        if number in middles and before in middles and SPACER.fullmatch(gap_text[number]):
+            middles[before].extend(middles.pop(number))
     out: list[tuple[str, str]] = []
     if not filled:  # no notes of Huragok's here, only its blank lines: the host's lines, or those blank lines
         hosts = [*tops, *(lines for number in sorted(middles) for lines in middles[number]), *bottoms]

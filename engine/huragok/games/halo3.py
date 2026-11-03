@@ -61,8 +61,12 @@ class Playlist:
             raise PlaylistError(f"{path.name} isn't a playlist")
         games = [g for g in data.get("games", []) if isinstance(g, dict)]
         extra = {k: v for k, v in data.items() if k not in ("version", "name", "vote_seconds", "games")}
-        return cls(path, str(data.get("name") or path.stem.removesuffix(".playlist")),
-                   int(data.get("vote_seconds") or 20), games, extra)
+        try:
+            vote_seconds = int(data.get("vote_seconds") or 20)
+        except (TypeError, ValueError):  # "30s", [30]: what's wrong with the file, never a traceback (audit 8.6)
+            raise PlaylistError(f"{path.name}: vote_seconds must be a whole number of seconds, not "
+                                f"{data.get('vote_seconds')!r}") from None
+        return cls(path, str(data.get("name") or path.stem.removesuffix(".playlist")), vote_seconds, games, extra)
 
     @property
     def relative(self) -> str:
@@ -75,8 +79,11 @@ class Playlist:
             if game.get("name") and game.get("game"):
                 label += f" ({game['game']})"
             bits = [label]
-            if int(game.get("weight", 1)) != 1:
-                bits.append(f"weight {game['weight']}")
+            weight = game.get("weight", 1)
+            if weight != 1:
+                # As it's written: "two" or 1.5 broke every playlist screen (int() raised), and the program's check says
+                # what's wrong with it (audit 2026-11, 7.9)
+                bits.append(f"weight {weight}")
             if game.get("base_map"):
                 bits.append(f"on mod map {game['base_map']}")
             for key in ("rules", "options", "world"):

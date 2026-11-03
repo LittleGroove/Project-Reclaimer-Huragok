@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..core.files import write_atomic
 from ..games.odst import Listing
 from ..games.odst import parse_listing as parse_odst
 from ..program.dedicated import Dedicated
@@ -468,8 +469,8 @@ def set_mod_disabled(content_root: Path, package: str, off: bool) -> list[str]:
     if off:
         packages.append(package)
     path = content_root / DISABLED_MODS
-    if packages:
-        path.write_text(json.dumps({"packages": packages}, indent=2) + "\n", encoding="utf-8")
+    if packages:  # replaced, not written through: a server's own content made by hard links shares nothing (7.1)
+        write_atomic(path, json.dumps({"packages": packages}, indent=2) + "\n")
     else:
         path.unlink(missing_ok=True)
     return packages

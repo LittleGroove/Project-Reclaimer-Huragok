@@ -68,7 +68,8 @@ after_game_seconds = 15
 # Restart every server every day at this local time (24-hour clock), like "04:00".
 # Empty: never. One server's own time goes in its [[server]] block below.
 daily_restart = ""
-# A daily restart waits until the server has been up this long.
+# A new run settles this long before the watchdog's memory and frame cases count. A
+# daily restart is skipped for a server restarted in the 6 hours before it: it's fresh.
 min_uptime_seconds = 900
 # A server that died: wait this long before each new start, in turn (the last repeats).
 backoff_seconds = [5, 10, 30, 60, 300]
@@ -77,8 +78,6 @@ good_run_seconds = 600
 # …and this many failed starts in a row stop the Superintendent trying for now: the window
 # shows FAULTED, logs/faulted-<server>.txt says why, and S starts it again at once.
 max_failures = 5
-# More automatic restarts than this in one hour means something is looping: FAULTED.
-restarts_per_hour = 6
 # FAULTED is a pause, not the end: the Superintendent tries once more after this many
 # minutes, in turn (the last repeats: 30 minutes, then every hour), until a run lasts
 # good_run_seconds. [] leaves a FAULTED server for you to start (S).
@@ -134,8 +133,10 @@ very_slow = "watch"                  # nearly all of every minute, minutes on en
 very_slow_share = 0.9                # this share of each minute,
 very_slow_minutes = 3                # this many minutes in a row
 
-# Memory: the server program using more than this many MB.
-memory = "act"
+# Memory: the server program using more than this many MB, having grown past it (what
+# the run used once settled, min_uptime_seconds, was under it). "watch" says so; "act"
+# restarts it after the game.
+memory = "watch"
 memory_mb = 0                        # 0: never checked
 
 [keepalive]

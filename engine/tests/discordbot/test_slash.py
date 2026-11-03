@@ -167,8 +167,8 @@ def test_names_and_hidden_are_settings(tmp_path: Path, run: Any, fake: FakeDisco
             await up(huragok, fake)
             commands = registered(fake)
             assert "lookup" in commands and "whois" not in commands and "endgame" not in commands
-            assert {"requests", "wordlist", "letback", "clearstrikes", "reloadserver"} <= set(commands)  # where the game's own name would mislead
-            assert not {"reports", "rules", "pardon", "pardonplayer", "reload", "servers", "strikes"} & set(commands)
+            assert {"requests", "bannedwords", "bannednames", "letback", "clearstrikes", "reloadserver"} <= set(commands)  # where the game's own name would mislead
+            assert not {"reports", "rules", "bannames", "pardon", "pardonplayer", "reload", "servers", "strikes"} & set(commands)
 
     run(scenario())
 

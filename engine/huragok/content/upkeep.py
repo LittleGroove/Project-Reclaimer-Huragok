@@ -265,6 +265,13 @@ def copy_engine(game_dir: Path, mcc_dir: Path, servers: list[str] | None = None)
     """MCC's engine files into the server's game folder; each old one is renamed (a running server holds it).
     A game folder that is MCC's own (a junction to it) has the very same file: nothing is done to it. `servers`:
     every server using that game folder, so the screen can name them."""
+    from .gamefiles import into_mcc
+
+    if into_mcc(game_dir):
+        # MCC's own folder (or a link to it): Huragok never writes there, Steam keeps it. With files from a depot
+        # download (no MCC found), this renamed MCC's own engine file and put another in (audit 2026-11, 7.7).
+        return (f"{game_dir} is MCC's own folder (or a link to it), and Huragok never writes into MCC: update MCC in "
+                "Steam, and its servers pick the new engine file up as they restart")
     stamp = time.strftime('%Y%m%d-%H%M%S')
     copied: list[str] = []
     same: list[str] = []

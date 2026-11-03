@@ -3,6 +3,7 @@
   commands   in-game commands; commands.toml says which role may use each (always on)
   automod    the word list, automod.txt: removes players for the words on it
   watchdog   notices a struggling server and restarts it at a good moment
+  byplayers  plays each server's playlist for how many players are on, once it's set up (G -> P) (always on)
   eventlog   every event as JSON, to see what the server sends
   tempdiscord  temporary (from 0.5.2 until a later version brings stats): what players' stats will need (always on)
   messages   interval messages, from intervalmessages.txt: for every server, and each server's own (always on)
@@ -26,6 +27,7 @@ from .discordbot.part import DiscordPart
 from .players.automod import AutoMod
 from .players.commands import Commands
 from .players.messages import Messages
+from .servers.byplayers import ByPlayers
 from .servers.eventlog import EventLog
 from .servers.tempdiscord import TempDiscord
 from .servers.watchdog import Watchdog
@@ -33,8 +35,8 @@ from .servers.watchdog import Watchdog
 if TYPE_CHECKING:
     from .core.settings import Settings
 
-PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages, TempDiscord,
-                                                          DiscordPart)}
+PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, ByPlayers, EventLog, Messages,
+                                                          TempDiscord, DiscordPart)}
 
 
 def config_problem(settings: Settings, name: str, cls: Any) -> str | None:
@@ -48,6 +50,8 @@ def config_problem(settings: Settings, name: str, cls: Any) -> str | None:
         cls(ctx).check_config()
     except ValueError as error:
         return str(error)
+    except (TypeError, KeyError) as error:  # a setting of the wrong kind: what would keep it off as Huragok starts
+        return f"a setting it can't use ({type(error).__name__}: {error})"
     except Exception as error:  # noqa: BLE001 - a part that needs the running Huragok to check itself
         logging.getLogger(__name__).debug("%s's check_config needs more than check gives it: %s", name, error)
     return None

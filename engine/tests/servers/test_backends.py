@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import psutil
@@ -452,3 +453,109 @@ def test_a_servers_memory_counts_its_whole_tree_as_task_manager_does() -> None:
     rss = sum(p.memory_info().rss for p in [psutil.Process(), *psutil.Process().children(recursive=True)])
     assert lifecycle_module.memory_mb(os.getpid()) == pytest.approx(rss / (1 << 20), rel=0.25)
     assert lifecycle_module.memory_mb(None) is None and lifecycle_module.memory_mb(0) is None
+
+
+@pytest.mark.slow
+def test_servers_stopped_as_huragok_closes_arent_taken_for_crashes(tmp_path: Path, run) -> None:
+    """stop_servers_on_exit: the backend stops them one by one as Huragok closes. The fleet went on ticking meanwhile,
+    took the first one's clean stop for a crash and started it again, left running once Huragok had gone (audit
+    2026-11, 2.2)."""
+    from huragok.core.tomledit import set_table_key
+
+    settings_path = process_root(tmp_path)
+    set_table_key(settings_path, "process", "stop_servers_on_exit", True)
+    seen: list[str] = []
+
+    async def close_with_them() -> tuple[Huragok, dict[str, int | None]]:
+        sup = Huragok(load(settings_path))
+        sup.bus.subscribe("server.*", lambda event: seen.append(f"{event.name} {event.server}"))
+        task = asyncio.ensure_future(sup.run())
+        managers = sup.superintendent.fleet.managers
+        await wait_for(lambda: all(m.phase == "running" for m in managers.values()), 40)
+        backend = sup.superintendent.backend
+        original = backend._signal_stop
+
+        def slow(managed: Any) -> Any:  # a real server's clean stop takes a few seconds
+            if managed.server.name == TWO:
+                time.sleep(3)
+            return original(managed)
+
+        backend._signal_stop = slow
+        pids = {name: managers[name].pid for name in (ONE, TWO)}
+        seen.clear()
+        sup.stop()
+        await asyncio.wait_for(task, 60)
+        return sup, pids
+
+    sup, pids = run(close_with_them())
+    assert not any(alive(pid) for pid in pids.values())
+    assert not any("crashed" in line or "starting" in line or "started" in line for line in seen), seen
+    managers = sup.superintendent.fleet.managers
+    assert not any(alive(m.pid) for m in managers.values())
+
+
+def test_stopping_every_server_goes_on_past_one_that_wont_end(tmp_path: Path, run) -> None:
+    """The first process that wouldn't end stopped the loop: the servers after it were left running, and only the
+    failing one was named (audit 2026-11, 1.5)."""
+    from types import SimpleNamespace
+
+    settings = load(process_root(tmp_path))
+    backend = ProcessBackend(settings, EventBus(), {})
+    one, two = settings.servers
+    backend.managed = {one.name: SimpleNamespace(server=one), two.name: SimpleNamespace(server=two)}
+    asked: list[str] = []
+
+    async def stop(server: Any, timeout: float | None = None) -> None:
+        asked.append(server.name)
+        if server.name == one.name:
+            raise LifecycleError("couldn't end process 4242")
+
+    backend.stop = stop  # type: ignore[method-assign]
+    with pytest.raises(LifecycleError) as raised:
+        run(backend.stop_all())
+    assert asked == [ONE, TWO]
+    assert str(raised.value) == f"stopped {TWO}; not stopped: {ONE}: couldn't end process 4242"
+
+
+def test_a_start_command_that_leaves_the_server_in_the_background_is_done_at_once(tmp_path: Path, run) -> None:
+    """The server it left running held the output pipe, so every start "failed" after the whole timeout and counted
+    towards FAULTED (audit 2026-11, 1.4)."""
+    background = 'start "" /b ping -n 6 127.0.0.1' if os.name == "nt" else "sleep 5 &"
+    body = f'backend = "command"\n[command]\nstart = \'{background}\'\nstop = "echo stopped"\ntimeout = 20\n'
+    settings = load(write_root(tmp_path / "reclaimer", [(ONE, free_port())], body, staff(), backend=None))
+    backend = CommandBackend(settings, EventBus(), {ONE: ServerState(ONE)})
+    started = time.monotonic()
+    run(backend.start(settings.servers[0]))
+    assert time.monotonic() - started < 10
+
+
+def test_a_process_is_ours_with_its_start_time_a_second_or_two_out(monkeypatch) -> None:
+    """Linux works a process's start time out from the boot time, which the clock's corrections move by a second:
+    within 1 s, servers left running weren't picked up again, and a running Huragok's lock could look stale (audit
+    2026-11, 1.9). An hour out is another process with the same number."""
+    from huragok.core import lock
+
+    me = psutil.Process()
+    started = me.create_time()
+    for off_by in (0.0, 1.5, -2.0):
+        assert lifecycle_module._pid_alive(me.pid, started + off_by)
+        assert lock.process_alive(me.pid, started + off_by)
+    assert not lifecycle_module._pid_alive(me.pid, started - 3600)
+    assert not lock.process_alive(me.pid, started - 3600)
+
+
+def test_the_default_docker_service_keeps_its_number_as_folders_come_and_go(tmp_path: Path) -> None:
+    """`server-<n>` was the server's place in the list as it is now: a folder taken away while running moved the ones
+    after it up, so a stop or restart reached another server's container (audit 2026-11, 1.10)."""
+    body = 'backend = "command"\n[command]\nstart = "up {service}"\nstop = "down {service}"\n'
+    ports = free_ports(3)
+    settings = load(write_root(tmp_path / "reclaimer", [("A", ports[0]), ("B", ports[1]), ("C", ports[2])], body,
+                               staff(), backend=None))
+    backend = CommandBackend(settings, EventBus(), {})
+    a, b, c = settings.servers
+    assert [backend.values(s)["service"] for s in (a, b, c)] == ["server-1", "server-2", "server-3"]
+    settings.servers.remove(b)  # its folder taken away while Huragok runs
+    assert backend.values(c)["service"] == "server-3"
+    d = SimpleNamespace(name="D", slug="d", service=None, game_port=1, folder=tmp_path, config_path=tmp_path)
+    settings.servers.append(d)  # a new folder
+    assert backend.values(d)["service"] == "server-4"  # type: ignore[arg-type]

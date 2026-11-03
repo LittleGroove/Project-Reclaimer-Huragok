@@ -19,7 +19,7 @@ from ..servers.state import Player
 from . import cards, consoleclear, features, kept, tidy
 from .client import SaysWhatWentWrong, acting_as, answer, someone_from
 from .config import colour_value
-from .ranks import Someone, as_they_may_see, can_act, game_rank, rank_of, rank_to_run
+from .ranks import Someone, as_they_may_see, can_act, game_rank, rank_of, rank_to_run, times_a_kick
 from .speakers import say
 
 if TYPE_CHECKING:
@@ -137,7 +137,8 @@ def _rank_for_line(part: DiscordPart, someone: Someone, server: str, line: str) 
     """A ! command that reaches every server takes the rank they have on all of them. A console line is the server's own, so it's their rank there."""
     prefix = part.ctx.command_prefix
     if line.startswith(prefix):
-        return rank_to_run(part.file, someone, part.ctx.servers, server, line.removeprefix(prefix).partition(" ")[0].lower())
+        command, _, rest = line.removeprefix(prefix).partition(" ")
+        return rank_to_run(part.file, someone, part.ctx.servers, server, command.lower(), timed=times_a_kick(rest.split()))
     return game_rank(part.file, someone, server)
 
 

@@ -183,16 +183,41 @@ class VergilContext(SuperintendentContext):
         """Why a command would say no, asked before anyone fills in a form."""
         return self._vergil.commands.refuses(name, target, **kwargs)
 
-    def strike_rules(self) -> list[str]:
-        """The word list's rules, which a strike can be given on."""
+    def _automod(self) -> Any:
+        """Vergil's word list part, if it's on: whoever has !strike."""
         registered = self._vergil.commands.commands.get("strike")
-        part = registered.runner.part if registered is not None and registered.runner is not None else None
-        return [str(name) for name in getattr(part, "by_name", {})]
+        return registered.runner.part if registered is not None and registered.runner is not None else None
+
+    def strike_rules(self) -> list[str]:
+        """The word list's rules, which a strike can be given on: not those that only report."""
+        part = self._automod()
+        return [str(name) for name in part.strike_rules()] if part is not None else []
+
+    def word_lists(self) -> list[tuple[str, str]]:
+        """Every line of the word list by its name, with what its strikes do in a few words: for Discord to offer as
+        it's typed."""
+        part = self._automod()
+        return list(part.word_lists()) if part is not None else []
+
+    def listed_words(self) -> list[tuple[str, str]]:
+        """Every word on the word list (`-word` too), with the line it's on."""
+        part = self._automod()
+        return [(word, rule.name) for rule in getattr(part, "rules", []) for word in [*rule.words, *(f"-{w}" for w in rule.allow)]]
+
+    def banned_names(self) -> list[str]:
+        """names.txt's names, the latest first."""
+        part = self._automod()
+        return [name.text for name in reversed(getattr(part, "names", []))]
+
+    def allow_name(self, name: str, by: str, server: str | None = None) -> bool:
+        """The staff's answer to a name Vergil asked them about (a word of a line that only reports): it's fine. Whether
+        it's new: False when it was allowed already, or Vergil's off."""
+        part = self._automod()
+        return bool(part.allow_name(name, by, server)) if part is not None else False
 
     def next_strike(self, player_id: str, rule: str) -> str:
         """What a strike on this rule would do to them now, in words: "" if that can't be said."""
-        registered = self._vergil.commands.commands.get("strike")
-        part = registered.runner.part if registered is not None and registered.runner is not None else None
+        part = self._automod()
         found = getattr(part, "by_name", {}).get(rule)
         if found is None:
             return ""

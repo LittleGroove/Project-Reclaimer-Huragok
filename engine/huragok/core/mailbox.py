@@ -46,7 +46,7 @@ def folder(records: Path) -> Path:
 
 
 def _write_atomic(path: Path, data: dict[str, Any]) -> None:
-    write_atomic(path, json.dumps(data))
+    write_atomic(path, json.dumps(data), durable=False)  # a request or its reply: read within seconds, then gone
 
 
 def post(records: Path, verb: str, server: str = "all", **options: Any) -> str:

@@ -109,7 +109,10 @@ def write_files(home: Path, server_folder: str | None = None, backend: str | Non
         written.append(f"{DISCORD_FILE:<15} the Discord bot, off until you set it up (J in the window)")
     words = home / "automod.txt"
     if not words.exists():
+        from ..updates.hostfiles import word_list_written
+
         words.write_text(template("automod.txt"), encoding="utf-8")
+        word_list_written(home / "records")  # this version's: never turned as a list from before
         written.append("automod.txt     Vergil's word list (automod), empty for now; it starts in dry run")
     names = home / "names.txt"
     if not names.exists():

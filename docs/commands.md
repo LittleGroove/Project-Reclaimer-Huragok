@@ -201,6 +201,11 @@ spamming votes. Any vote they call is cancelled.` when it's given.
   `!bannames` number their entries @1, @2…, so `!unban @2`, `!pardon @1`, `!unmute
   @3` and `!unbanname @1` lift exactly the one you picked. `!unban`, `!pardon` given a
   name look in the same list, and ask with @numbers when it's on more than one entry.
+- **Lifting takes the rank of whoever gave it.** A moderator's `!unmute`, `!allowvote`
+  or `!pardon` of what an admin did is refused, and says who: "Not unmuted: Alice gave
+  that mute, and lifting it takes an admin or above." So is a moderator's `!novote` over
+  an admin's (a new time lifts the old one). Vergil's own, a vote's and the server's
+  have no rank: any moderator lifts them.
 - **Who a command reaches.** Each server's moderation commands are its own: `!warn`,
   `!kick` and `!team` act on players on this server ("Zed is on Other Server, not
   this server."); `!mute` too, and also someone who left (they're muted as they next
@@ -262,6 +267,9 @@ promotes them to moderator once they've shown they're ready.
   mute 1h language`, does that to the same player instead. **`!deny 3 [why]`** turns
   it down. A request's number is the lowest one free; a decided one frees it. With the
   Discord bot, each is a card too, whose Confirm and Deny do the same.
+- **Five at most.** Each probationary moderator has 5 requests waiting at most: a sixth
+  is refused until one is decided. And theirs are dropped once they aren't on probation
+  any more (demoted, banned for good, taken out of `commands.toml`).
 - **Nothing runs out.** A request waits until someone decides it, and what's
   confirmed happens then, its time counting from that moment, even for a player who
   has left: a mute as they next join; a kick keeps them off every server for 10
@@ -318,8 +326,8 @@ same rules:
   is `!kick`, and reaches every server. The game's own `/kick` in game chat stays on its
   server.
 - **Some have another name there,** where the game's would mislead: `/letback` is
-  `!pardon`, `/wordlist` `!rules`, `/clearstrikes` `!pardonplayer`, `/reloadserver`
-  `!reload`. `!calladmin` and `!strikes` aren't there; `/report` and `/tickets` have their
+  `!pardon`, `/bannedwords` `!rules`, `/bannednames` `!bannames`, `/clearstrikes`
+  `!pardonplayer`, `/reloadserver` `!reload`. `!calladmin` and `!strikes` aren't there; `/report` and `/tickets` have their
   own forms, for `!report` and `!reports`.
 - **Someone who's left** can be kept off with the Kick button, or `/kick` with a time and
   picked from the list as you type, which `!kick` in game can't do.
@@ -364,8 +372,8 @@ same rules:
 | `!banall <@number \| player \| ID>` | admin | Put a ban from this server's list (a `/ban`) on every server's: on Huragok's list, with its time left, reason and who gave it; `@number` from `!bans` |
 | `!changebanword <line \| word> \| mutes \| kicks \| ban` | admin | New steps for a line of the word list, its words and name kept: `!changebanword slurs \| 1d 7d \| 2, 1h 1d \| 5` |
 | `!banword <words> <line>` | admin | Add words to a line of the word list (`automod.txt`), with its steps: `!banword word slurs` (`slur` finds `slurs`). A line that isn't there: the answer says how to make it |
-| `!banword <words> \| [mutes] \| [kicks] \| [ban] \| <name>` | admin | Make a new line: `!banword word \| 1d 7d \| 2, 1h 1d \| 5 \| slurs`. Applies at once, in chat and to names with the word in them. See [automod.md](automod.md#changing-the-word-list-from-the-game) |
-| `!unbanword <word>` | admin | Take a word off `automod.txt` (a line left with no words goes too) |
+| `!banword <words> \| [mutes] \| [kicks] \| [ban] \| <name>` | admin | Make a new line: `!banword word \| 1d 7d \| 2, 1h 1d \| 5 \| slurs`. Applies at once, in chat and to names with the word in them. Mutes, kicks and ban all blank: a line that only reports, a ticket for the staff on Discord and nothing in game. See [automod.md](automod.md#changing-the-word-list-from-the-game) |
+| `!unbanword <words> [\| line]` | admin | Take words off `automod.txt` (a line left with no words goes too); `\| <line>` alone takes off the whole line |
 | `!banname <#number \| name>` | admin | Ban a name (`names.txt`): a player on by `#number` or name has theirs banned and is kicked; any other text is banned as the name itself. Whoever uses it is kicked as they join, until they change it. No strike, no ban. A moderator's up to 0.4.4 |
 | `!pardonplayer <player \| ID> [rule \| all] [reason]` | admin | Clear automod strikes and lift what automod did: unban (only Vergil's own bans), unmute |
 | `!unbanname <name>` | admin | Take a name off `names.txt` |

@@ -17,6 +17,7 @@ going (`listen`). The Superintendent never knows Vergil.
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import sqlite3
 from dataclasses import dataclass
@@ -179,6 +180,16 @@ class Superintendent:
                 self.add_server(server)
                 continue
             known = current[server.name]
+            if _where(known) != _where(server):  # its folder was moved or renamed by hand: every path is new
+                manager = self.fleet.managers.get(server.name)
+                if manager is None or (manager.phase in SETTLED and not manager.alive):
+                    log.info("[%s] its folder is now %s: picked up there", server.name, server.folder)
+                    self.remove_server(server.name)
+                    self.add_server(server)
+                else:
+                    manager.note(f"its folder is now {server.folder}, but it's still running from {known.folder}; "
+                                 "it's picked up there once it stops")
+                continue
             known.errors = server.errors  # e.g. RCON switched on since
             known.autostart = server.autostart
             changed = known.auto_update != server.auto_update
@@ -288,6 +299,7 @@ class Superintendent:
         spawn("server folders", self._discover_loop)
 
     async def close(self, *, stop_servers: bool | None) -> None:
+        self.fleet.closing = True  # first: the servers the backend stops now aren't crashes to start again
         for client in self.clients.values():
             client.stop()
         try:
@@ -297,6 +309,14 @@ class Superintendent:
 
     def context(self, **options: Any) -> SuperintendentContext:
         return SuperintendentContext(self.huragok, self, **options)
+
+
+def _where(server: ServerConfig) -> str:
+    """The server's folder and file, as one comparable path (its block may have moved to another folder by hand)."""
+    try:
+        return os.path.normcase(str(server.config_path.resolve()))
+    except OSError:
+        return os.path.normcase(str(server.config_path))
 
 
 class SuperintendentContext(PartContext):
@@ -328,6 +348,19 @@ class SuperintendentContext(PartContext):
         except KeyError:
             return None
 
+    def restart_setting(self, server: str, key: str) -> Any:
+        """A [restarts] value as this server has it (its own [[server]] one, else every server's)."""
+        settings = self._superintendent.settings
+        try:
+            return settings.of(server).restart(key)
+        except KeyError:
+            return getattr(settings.restarts, key, None)
+
+    def run_started(self, server: str) -> float | None:
+        """When the server's current run began (Unix seconds), or None: not running, or not known."""
+        manager = self._superintendent.fleet.managers.get(server)
+        return manager.started if manager is not None else None
+
     def config_path(self, server: str) -> Path | None:
         """The server's dedicated.toml (the server re-reads it by itself when it changes), or None for one Huragok's
         settings don't list."""
@@ -335,6 +368,19 @@ class SuperintendentContext(PartContext):
             return self._superintendent.settings.server(server).config_path
         except KeyError:
             return None
+
+    def check_plays(self, server: str, values: dict[str, Any]) -> Any:
+        """What the server's own program says of playing `values` before they're written (program/plays.check_plays:
+        `dedicated check` on a draft beside its file), as a PlaysCheck. It runs the program: call it in a thread."""
+        from .program.dedicated import DedicatedError, tool_for
+        from .program.plays import PlaysCheck, check_plays
+
+        settings = self._superintendent.settings
+        try:
+            config = settings.server(server)
+            return check_plays(tool_for(settings, config), config, values)
+        except (KeyError, DedicatedError) as error:
+            return PlaysCheck(asked=False, unasked=str(error))
 
     def pid(self, server: str) -> int | None:
         """The server's process: the one the backend started (its game runs under it), or the game's own."""

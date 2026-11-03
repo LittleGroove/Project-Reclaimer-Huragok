@@ -41,6 +41,8 @@ from .base import CommandsBase
 AWAY_KICK_SECONDS = 600.0  # a kick confirmed while they're away: the server's first kick keeps someone out 10 minutes
 NEEDS_THEM_ON = ("kick", "warn")  # the console can only do these to someone who's on: done Huragok's way otherwise
 RECORDED = ("kick", "mute", "unmute", "warn", "pardon", "ban", "unban")  # what the ledger keeps (actions)
+MOST_WAITING = 5  # one probationary moderator's requests waiting at once (the host's call, 2 Nov 2026)
+NO_LONGER = "they aren't a probationary moderator any more"
 
 
 class ProbationRequests(CommandsBase):
@@ -65,7 +67,30 @@ class ProbationRequests(CommandsBase):
     # Asking ---------------------------------------------------------------------------------------------------
 
     def _waiting(self) -> list[Any]:
-        return self.ctx.db.query("SELECT * FROM commands_requests WHERE status = 'open' ORDER BY slot")
+        """The requests waiting for a decision. One whose asker isn't a probationary moderator any more (demoted, a
+        ban for good, taken out of commands.toml) is dropped as it's found: it stayed confirmable (the host's call,
+        2 Nov 2026). Someone who asked from Discord holds their rank there, where the bot judges it."""
+        rows = self.ctx.db.query("SELECT * FROM commands_requests WHERE status = 'open' ORDER BY slot")
+        gone = {row["number"] for row in rows if not self._still_on_probation(str(row["by_id"]))}
+        for row in rows:
+            if row["number"] in gone:
+                self._drop(row)
+        return [row for row in rows if row["number"] not in gone]
+
+    def _still_on_probation(self, player_id: str) -> bool:
+        if player_id.startswith("discord:"):
+            return True
+        pid = player_id.lower()
+        members = {str(member).lower() for member in self.ctx.permissions.members.get("member", set())}
+        return pid in {str(p).lower() for p in self.ctx.probation} and pid in members
+
+    def _drop(self, row: Any) -> None:
+        self.ctx.db.execute("UPDATE commands_requests SET status = 'dropped', decided = ?, decided_by = ?, why = ? "
+                            "WHERE number = ? AND status = 'open'", (time.time(), "Huragok", NO_LONGER, row["number"]))
+        what = self._what(row["command"], row["target_name"] or str(row["target"])[:8], json.loads(row["words"]))
+        self.ctx.log.info("[%s] #%d dropped (%s asked %s): %s", row["server"], row["slot"], row["by_name"], what, NO_LONGER)
+        self.ctx.emit("request_decided", row["server"], number=row["number"], slot=row["slot"], status="dropped",
+                      by="Huragok", by_id=row["by_id"], what=what, why=NO_LONGER)
 
     def _free_slot(self) -> int:
         taken = {row["slot"] for row in self._waiting()}
@@ -78,6 +103,11 @@ class ProbationRequests(CommandsBase):
         return " ".join([f"{self.ctx.permissions.prefix}{command}", name, *words]).replace('"', "")  # a reason comes in quotes from a box in Discord
 
     async def _request(self, call: CommandCall, registered: Registered, target: Player, rest: list[str]) -> None:
+        theirs = [row for row in self._waiting() if str(row["by_id"]).lower() == call.player.id.lower()]
+        if len(theirs) >= MOST_WAITING:  # each one is told to every staff member on every server (the host's call)
+            await call.reply(f"You have {len(theirs)} requests waiting already: a moderator or admin decides one before "
+                             f"you ask again ({self.ctx.permissions.prefix}requests lists them).")
+            return
         slot = self._free_slot()
         name = registered.spec.name
         self.ctx.db.execute(
@@ -112,7 +142,7 @@ class ProbationRequests(CommandsBase):
     async def _picked(self, call: CommandCall) -> Any:
         """The waiting request the line's first word numbers (3 or #3), or None after saying why."""
         word = call.args[0].lstrip("#") if call.args else ""
-        if not word.isdigit():
+        if not (word.isascii() and word.isdecimal()):  # "²" is a digit int() refuses: it crashed the command (5.12)
             await call.reply(f"Use: {call.prefix}{call.name} <number>. {call.prefix}requests lists them.")
             return None
         row = next((r for r in self._waiting() if r["slot"] == int(word)), None)
@@ -134,6 +164,13 @@ class ProbationRequests(CommandsBase):
         await self._reply_text(call, f"{len(rows)} waiting:\n" + "\n".join(lines) + f"\n{call.prefix}confirm <number> "
                                f"[another command instead], {call.prefix}deny <number> [why]")
 
+    def _requests_deciding(self) -> set[int]:
+        """Requests being decided now: one at a time, or two presses of Confirm (or two moderators at once) both
+        acted, a strike climbing the ladder twice (audit 2026-11, 6.10)."""
+        if not hasattr(self, "_being_decided"):
+            self._being_decided: set[int] = set()
+        return self._being_decided
+
     @command("confirm", usage="<number> [command and its words, to do that instead]",
              help="Confirm a probationary moderator's request: it happens now, as yours (e.g. !confirm 3), or do "
                   "something else to that player instead (!confirm 3 strike slurs)", role="moderator")
@@ -144,6 +181,16 @@ class ProbationRequests(CommandsBase):
         if row["by_id"] == call.player.id:
             await call.reply("That's your own request: another moderator or an admin confirms it.")
             return
+        if row["number"] in self._requests_deciding():
+            await call.reply(f"#{row['slot']} is being decided already.")
+            return
+        self._requests_deciding().add(row["number"])
+        try:
+            await self._confirm(call, row)
+        finally:
+            self._requests_deciding().discard(row["number"])
+
+    async def _confirm(self, call: CommandCall, row: Any) -> None:
         prefix = call.prefix
         if call.args[1:]:
             name, words = call.args[1].lower().removeprefix(prefix), call.args[2:]
@@ -194,6 +241,10 @@ class ProbationRequests(CommandsBase):
         evidence = f"requested by {row['by_name']} (#{row['slot']})"
         if name == "kick":
             duration, rest, forever = self._split_time(words)
+            if forever and words[0].lower() == "never":  # the start of a reason, not "for good" (audit 5.6)
+                duration, rest, forever = None, words, False
+            if why := self._no_time(duration):
+                return why
             if forever:  # a kick for good is a ban, and takes the rank a ban does
                 return await self.ctx.run_as("ban", target, rest, server=server, player=call.player, role=call.role, tell=call._tell)
             if duration:
@@ -247,6 +298,9 @@ class ProbationRequests(CommandsBase):
     async def deny(self, call: CommandCall) -> None:
         row = await self._picked(call)
         if row is None:
+            return
+        if row["number"] in self._requests_deciding():  # being confirmed: that decides it
+            await call.reply(f"#{row['slot']} is being decided already.")
             return
         why = unquote(call.args[1:])
         self.ctx.db.execute("UPDATE commands_requests SET status = 'denied', decided = ?, decided_by = ?, why = ? "

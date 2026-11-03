@@ -5,13 +5,16 @@
    "40cdc1e9a0ff8bc21bfaf756f76cf24537624e2ff8427876c0362583ecc13f46",
    "2de14a526d56ea5cf0f80c8a0035fb6cb6a837bbd4b25e66ee310cc6bba51c7b",
    "4a58afaf539c7b98c7584bd0ea125209ebca64c7e12458dfe21bf6a09e07e6d8",
-   "9b4a39d4ebc81b1db693794fa8884d0664224f820b510f8365117bf1e2d70ba5"
+   "9b4a39d4ebc81b1db693794fa8884d0664224f820b510f8365117bf1e2d70ba5",
+   "0c54bf59de435e678fd6938c839e069260d1741d93fd190103304b743363c71b"
   ],
   "automod": [
    "0911cd753edd248bb1d89542b099c801d2079dc6a83b7c8877f844b5e0cd28a9",
    "acad194dcab19aee64580f3b620d70001241a39d2bafbb92a54c742c105dba50",
    "6401d605798bd92ecdf5efc94f9b3315d5164f26a4d9d1faa50ff59e81a9dc17",
-   "ab00c9ab143162ead6c7bc9b2ae18604ff658d59901fad219bcebbe5aac74c21"
+   "ab00c9ab143162ead6c7bc9b2ae18604ff658d59901fad219bcebbe5aac74c21",
+   "28196929413ee5683d4432afe6e343c5183f67cb7924354236a6c00be3911889",
+   "0843fac6cdba993095765fbfaecdd77ed0ab864e3376e611cf5269d0015b30e7"
   ],
   "commands": [
    "6808165601b7c6574ed2740136e4c34fb82e26f132aafcc61e1ea271f7381d5a",
@@ -22,7 +25,8 @@
    "8ae748066fc7309dc773de85294359f4cc448b9bd31265091dd81aed919ca00c",
    "5b4316f86537016d8d76f45789c969f3f1f67e13413f12ac0582ee866c1490ce",
    "b8f1178693d2e96c9431a99c9939ee00bcaab7910d857e8a45945e3ab5a1be05",
-   "4f1b260c66d57f8120ee8dac42b3115e13aa5f8e27defab9d9dfb51489bcfefb"
+   "4f1b260c66d57f8120ee8dac42b3115e13aa5f8e27defab9d9dfb51489bcfefb",
+   "e7a66cf344d587a62aebd5ccc4e48e86bc5e60aca3bfffaadac9c8399e362c81"
   ],
   "discord": [
    "0ff2483b272f9964792be946e25a96f23c4ceb88a1a1fc1ebf24e59b05a054a5",
@@ -63,11 +67,18 @@
    "name"
   ],
   "banword": [
-   "words"
+   "words",
+   "mutes",
+   "kicks",
+   "bans",
+   "listname"
   ],
   "cancelvote": [],
   "changebanword": [
-   "words"
+   "listname",
+   "mutes",
+   "kicks",
+   "bans"
   ],
   "confirm": [
    "number",
@@ -194,7 +205,8 @@
    "name"
   ],
   "unbanword": [
-   "word"
+   "words",
+   "listname"
   ],
   "unmute": [
    "player"

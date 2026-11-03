@@ -26,7 +26,7 @@ ANNOUNCEMENT = 5  # Discord's kind of channel
 POSTS = ("view", "send", "embed")  # what posting cards in a channel needs
 PRIVATE_CHANNELS = {"staff", "alerts", "console", "reports", "appeals", "logs", "huragok-logs"}  # [channels] names for what staff alone should read
 READ_ONLY_CHANNELS = {"status", "info", "games"}  # for everyone to read, and nobody to type in
-CHANNELS = {"status": "the server cards and nothing else", "info": "news: pings people asked for, seeding, restarts planned, updates", "games": "games ending",
+CHANNELS = {"status": "the server cards and nothing else", "info": "news: pings people asked for, seeding, restarts planned, updates", "games": "games ending, and playlists changing with the player count",
             "staff": "tickets: what Vergil did, and who to keep an eye on", "reports": "tickets: people asking staff for something (unset: staff)", "appeals": "tickets: people appealing what's against them (unset: reports)",
             "alerts": "tickets: what's wrong with the servers now (unset: staff)", "logs": "the record of what people did", "huragok-logs": "the record of what Vergil and the Superintendent did (unset: logs)",
             "console": "typing console lines"}
@@ -65,7 +65,7 @@ FEATURES: tuple[Feature, ...] = (
             permissions=("manage_webhooks",)),
     # Stage 2: feeds and status
     _feed("moderation", "Moderation feed"), _feed("vergil", "Vergil's feed"), _feed("votes", "Votes"),
-    _feed("alerts", "Alerts"), _feed("servers", "Server events", staff=False), _feed("games", "Games started and ended", staff=False),
+    _feed("alerts", "Alerts"), _feed("servers", "Server events", staff=False), _feed("games", "Games started and ended, playlists changed", staff=False),
     _feed("joins", "Joins"), _feed("watch", "Watch list", stage=2.3),
     _feed("calls", "Calls for an admin", stage=2.3), _feed("requests", "Probationary moderators' requests", stage=2.7), _feed("content", "Content changes"), _feed("audit", "Audit log"),
     Feature("status.board", "Status board", 2.2, needs_bot=False, channel=True),
@@ -96,8 +96,8 @@ def feature_of_feed(feed: str) -> Feature | None:
 
 # What each does, before it's switched on: titles alone don't say.
 WHAT = {"personas": "Posts come from three names of their own, rather than the bot's", "feed.moderation": "A card for each mute, kick and ban staff give, in logs. Its buttons still work",
-        "feed.vergil": "A ticket for each strike from the word list, to acknowledge or undo", "feed.votes": "A line for each vote, in logs", "feed.alerts": "A ticket when a server crashes, hangs or can't start, which closes itself when it's back",
-        "feed.servers": "A line when a server starts, stops or restarts; news of restarts and updates in info", "feed.games": "A post when a game ends with at least min_players on (2 unless you change it). Starts too, once games-started is switched on in Messages", "feed.joins": "A line for each join and leave, in logs",
+        "feed.vergil": "A ticket for each strike from the word list, to acknowledge or undo, and for each word or name of a list that only reports, to decide", "feed.votes": "A line for each vote, in logs", "feed.alerts": "A ticket when a server crashes, hangs or can't start, which closes itself when it's back",
+        "feed.servers": "A line when a server starts, stops or restarts; news of restarts and updates in info", "feed.games": "A post when a game ends with at least min_players on (2 unless you change it). Starts too, once games-started is switched on in Messages. And a post when playlists by player count (G in the window, then P) put another playlist in rotation", "feed.joins": "A line for each join and leave, in logs",
         "feed.watch": "A ticket when someone flagged, or just kicked, or banned elsewhere joins", "feed.calls": "A ticket when a player types !calladmin", "feed.requests": "A ticket for a probationary moderator's request, to confirm or deny",
         "feed.content": "A line when a Workshop item changes", "feed.audit": "A line for what staff change or run from Discord", "status.board": "A live card per server, for everyone: who's on, what's playing",
         "status.seeding": "A post in info when a server is nearly empty and could use players", "notify": "/notify: anyone can ask to be pinged when a server reaches so many players, or a game type starts", "status.presence": "What the bot's status line says", "status.bio": "What the bot's bio says", "status.nickname": "The bot's nickname shows the player count",
@@ -109,7 +109,7 @@ RECOMMENDED = ("feed.moderation", "feed.vergil", "feed.alerts", "feed.calls", "f
 # Those whose message matters enough to set in one place: (what it's about, its lines in [messages]).
 TOLD = (("A server in trouble", ("alerts-crashed", "alerts-faulted", "alerts-hung", "alerts-start-failed")), ("A player calling for an admin", ("calls-called",)),
         ("A report", ("reports-made", "reports-message")), ("Many reports of one player", ("reports-many",)), ("Someone opening a thread with staff", ("contact-opened",)), ("An appeal", ("appeals-made",)), ("A probationary moderator's request", ("requests-asked",)),
-        ("A strike from Vergil", ("vergil-strike",)), ("A server needing players", ("seeding-wanted",)))
+        ("A strike from Vergil", ("vergil-strike",)), ("A word or a name for staff to decide", ("vergil-heard", "vergil-name-asked")), ("A server needing players", ("seeding-wanted",)))
 
 
 @dataclass(frozen=True)

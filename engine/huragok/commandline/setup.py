@@ -336,6 +336,15 @@ def cmd_playlist(args: argparse.Namespace, load: Callable[[str], Settings], laun
         return 1
     out.ok(f"{server.name} now plays {path}: with auto_reload on, {applies_when(server.plays_kind, 'playlist')} (the "
            "window's events say when it's applied)")
+    from ..games.byplayers import ByPlayersError, setup_of
+
+    try:
+        by_players = setup_of(server.folder, server.name)
+    except ByPlayersError:
+        by_players = None
+    if by_players is not None and by_players.on:
+        out.warn(f"{server.name} picks its playlist by player count (the window's G -> P), so Huragok changes it back "
+                 "as players come and go: turn that off there to keep this one")
     return 0
 
 
@@ -378,7 +387,8 @@ def cmd_workshop(args: argparse.Namespace, load: Callable[[str], Settings], laun
         out.ok(f"{server.name}'s Workshop items: {', '.join(str(i) for i in new) or 'none'}")
         from ..content.workshopmods import switch_workshop_copies
 
-        for line in switch_workshop_copies(server, ids, off=action == "remove", config_name=settings.config_name):
+        for line in switch_workshop_copies(server, ids, off=action == "remove", config_name=settings.config_name,
+                                           servers=list(settings.servers)):
             out.note(line)
         if action == "add":
             out.note("Huragok fetches them within a minute while it runs (a running server with auto_reload fetches "

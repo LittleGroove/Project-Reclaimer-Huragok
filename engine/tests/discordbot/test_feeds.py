@@ -10,7 +10,7 @@ from typing import Any, Iterator
 import pytest
 
 from conftest import ALICE
-from testkit.fake_discord import GUILD, MOD_ROLE, OWNER_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import GUILD, MOD_ROLE, OWNER_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.core.events import Event
@@ -478,6 +478,32 @@ def test_a_game_with_too_few_players_isnt_posted(tmp_path: Path) -> None:
     assert part.posts == []
 
 
+def _playlist_changed(players: int = 34) -> Event:
+    return Event("byplayers.changed", "Alpha", {"players": players, "playlist": "playlists/big.playlist.json", "name": "Big Team Battle",
+                                                "step": 3, "steps": 3, "low": 51, "high": None, "range": "51 players and up",
+                                                "was": "playlists/medium.playlist.json", "was_name": "Medium"})
+
+
+def test_a_playlist_put_in_rotation_by_the_player_count_posts_in_games(tmp_path: Path) -> None:
+    feeds, part, _ = feeds_for(tmp_path, "[feed.games]\nenabled = true\nmin_players = 2\n")
+    part.players = []  # min_players is for games: the count is what this is about, low or high
+    feeds.handle(_playlist_changed(1))
+    post, = part.posts
+    assert post["channel"] == PUBLIC_CHANNEL
+    text = post["embeds"][0]["description"]
+    assert "1 on: **Big Team Battle** is in rotation from the next vote, the playlist for 51 players and up (it was **Medium**)" in text
+    assert post["embeds"][0]["title"].startswith("Playlist")
+
+
+def test_a_playlist_change_follows_the_games_switch_and_its_own_line(tmp_path: Path) -> None:
+    feeds, part, _ = feeds_for(tmp_path, "[feed.games]\nenabled = false\n")
+    feeds.handle(_playlist_changed())
+    assert part.posts == []
+    feeds, part, _ = feeds_for(tmp_path, "[feed.games]\nenabled = true\n[messages]\ngames-playlist = { post = false }\n")
+    feeds.handle(_playlist_changed())
+    assert part.posts == []
+
+
 def _joined(player: str = "b" * 64, name: str = "Bravo") -> Event:
     return Event("rcon.join", "Alpha", {"id": player, "name": name, "ip": "203.0.113.9", "number": 1})
 
@@ -558,6 +584,7 @@ def test_every_source_of_moderation_reaches_the_channel_once(tmp_path: Path, run
         async with running(tmp_path) as (huragok, rcon, _):
             part = part_of(huragok)
             await wait_for(lambda: part.state == "online" and part.facts is not None and part.looking == 0, timeout=20)
+            await wait_for(lambda: huragok_started(fake), timeout=20)  # its own card, out of the way
             await huragok.vergil.moderation.act("kick", SERVER, ALICE, by="Mod", source="commands", reason="spam")
             await wait_for(lambda: len(fake.posted) == 1, timeout=15)
             card = fake.posted[0]
@@ -576,6 +603,9 @@ def test_every_source_of_moderation_reaches_the_channel_once(tmp_path: Path, run
 def test_a_refused_channel_stops_posting_and_comes_back_with_the_file(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         path = bot_file(tmp_path)
+        # Huragok's own "is running" card would make the channel's webhook first: the kick's post must be the first
+        from huragok.core.tomledit import set_table_key
+        set_table_key(path, "messages", "alerts-huragok-started", {"channel": "huragok-logs", "post": False})
         async with running(tmp_path) as (huragok, _, _):
             part = part_of(huragok)
             # Past the reads of the Discord a start makes: one ending now would lift the block (worth one more try).

@@ -180,7 +180,7 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 
 | Module | |
 | --- | --- |
-| `server.py` | **One `ServerManager` per server**: the state machine below, ticked once a second. Timers run on `time.monotonic()`; wall time only for the hourly budget, history, uptime and the daily slot |
+| `server.py` | **One `ServerManager` per server**: the state machine below, ticked once a second. Timers run on `time.monotonic()`; wall time only for the hourly restart count, history, uptime and the daily slot |
 | `fleet.py` | The `Fleet`, which ticks every manager, writes `records/live.json`, answers requests from `records/requests/` and is what the window's keys call; `Lifecycle`, the thin view parts get (`restart`, `cancel`, `planned`, `busy`) |
 | `backends.py`, `ports.py`, `keepalive.py` | The **backends**: `process` (one `dedicated` per server, Windows or Linux), `docker`, `command`, `attach`. A backend only starts, stops and watches processes; it decides nothing. `PortWatch` reads the system's listening sockets (psutil) at most once a second for every stopped server, so no check blocks the loop. `Keepalive` restarts a hung server. `memory_mb` is what a server's process tree uses, for the watchdog and V alike |
 | `state.py`, `logs.py` | The live picture of each server; `server.log`, `status.json` and the console output as events. `logs.py` matches every pattern at the start of the server's own message, and the lines that carry someone's words (console echoes, refusals, kick and ban reasons: `ECHOES`) first, so typed text never passes for a server line |
@@ -246,8 +246,8 @@ idle ──► launch ──► booting ──► running ──► countdown �
   └── external (up, but not started from here) · offline (attach: not reachable)
 ```
 Up means **RCON answers**, not the process existing. A crash backs off
-(`backoff_seconds`); `max_failures` fast failures in a row, or more than
-`restarts_per_hour` automatic restarts, mean `faulted`: a pause, after which it
+(`backoff_seconds`); `max_failures` fast failures in a row mean `faulted` (automatic restarts aren't held to a
+number an hour since 0.6.0: `MANY_RESTARTS` of them are only logged): a pause, after which it
 tries once more (`faulted_retry_minutes`, 30 minutes then hourly; a failed try
 comes straight back with the next cool-down, a run of `good_run_seconds` is back
 to normal), and S starts it at once. A countdown says the `warn_seconds` rungs as absolute deadlines (if a

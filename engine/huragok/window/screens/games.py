@@ -400,7 +400,8 @@ class GameScreens(Screens):
                 from ...program.plays import applies_when, write_plays
 
                 values = await self._play_custom_game(settings, server, info)
-                if values is not None and await self._plays_checked(settings, server, values):
+                if values is not None and await self._plays_checked(settings, server, values) and \
+                        await self._by_players_before_use(server, None):
                     before = server.plays_kind
                     try:
                         write_plays(server.config_path, server.name, values)

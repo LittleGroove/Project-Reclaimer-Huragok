@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .files import replace
 from .priority import PRIORITIES
 from .priority import DEFAULT as DEFAULT_PRIORITY
 from .tomledit import read_toml, remove_table_key, remove_top_key, set_table_key, set_top_key
@@ -121,7 +122,7 @@ SETTINGS: list[HostSetting] = [
       "has ended", "restarts", default=15, low=0, high=3600),
     H("restarts", "daily_restart", "time", "restart every server every day at this time (24-hour clock); empty: "
       "never. One server's own time is in its settings", "restarts", default=""),
-    H("restarts", "min_uptime_seconds", "float", "a daily restart waits until the server has been up this long",
+    H("restarts", "min_uptime_seconds", "float", "a new run settles this long before the watchdog's memory and frame cases count",
       "restarts", default=900, low=0, high=86400),
     H("restarts", "backoff_seconds", "numbers", "a server that died: wait this long before each new start, in "
       "turn (the last repeats)", "restarts", default=[5, 10, 30, 60, 300]),
@@ -129,8 +130,6 @@ SETTINGS: list[HostSetting] = [
       "start", "restarts", default=600, low=0, high=86400),
     H("restarts", "max_failures", "int", "this many failed starts in a row: FAULTED (the Superintendent stops "
       "trying for now)", "restarts", default=5, low=1, high=100),
-    H("restarts", "restarts_per_hour", "int", "more automatic restarts than this in one hour means something is "
-      "looping: FAULTED", "restarts", default=6, low=1, high=100),
     H("restarts", "faulted_retry_minutes", "numbers", "a FAULTED server is tried once more after this many minutes, "
       "in turn (the last repeats); empty leaves it for you to start (S)", "restarts", default=[30, 60], low=1),
     H("restarts", "ready_seconds", "float", "a started server must answer on its console within this long, or it's "
@@ -174,8 +173,8 @@ SETTINGS: list[HostSetting] = [
     H("watchdog", "very_slow_share", "float", "this share of each minute (0 to 1)…", "watchdog", default=0.9, low=0,
       high=1),
     H("watchdog", "very_slow_minutes", "int", "…this many minutes in a row", "watchdog", default=3, low=0, high=1440),
-    H("watchdog", "memory", "choice", "the server program using more memory than memory_mb", "watchdog",
-      choices=WATCHDOG_ACTIONS, default="act"),
+    H("watchdog", "memory", "choice", "the server program grown past memory_mb, once its run has settled; watch only "
+      "says so", "watchdog", choices=WATCHDOG_ACTIONS, default="watch"),
     H("watchdog", "memory_mb", "int", "the most memory a server may use, MB; 0: never checked", "watchdog",
       default=0, low=0, high=1048576),
     # The keepalive
@@ -310,6 +309,9 @@ def current(data: dict[str, Any], setting: HostSetting) -> tuple[Any, str]:
         table = data["windows"]  # 0.1's name for [process]
     if isinstance(table, dict) and setting.key in table:
         return table[setting.key], "the file"
+    if setting.section == "watchdog" and setting.key in ("slow", "very_slow") and isinstance(table, dict) \
+            and table.get("slow_frames") == "act":  # 0.2.1's one switch for both, still read (Watchdog.resolve)
+        return ("act" if setting.key == "slow" else "actnow"), "the file (slow_frames)"
     if setting.optional:
         return None, "left out"
     return setting.default, "default"
@@ -504,7 +506,7 @@ def apply(path: Path, change: Callable[[Path], None], what: str) -> None:
         new = [p for p in problems(copy, shown_as=str(path)) if p not in before]
         if new:
             raise HostSettingsError(f"not changed ({what}): {new[0]}")
-        os.replace(copy, path)
+        replace(copy, path)
     finally:
         copy.unlink(missing_ok=True)
 

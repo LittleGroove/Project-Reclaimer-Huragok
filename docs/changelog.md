@@ -45,12 +45,72 @@ Your servers keep running while it updates.
   with a time leaves someone's role alone: only a ban for good takes it.
 - **The word list can have a line with no words:** `| 1d, 7d | 2, 1h | 3 | voice`, a ladder only
   staff climb, with `!strike Bravo voice`.
+- **A line of the word list with nothing in its mutes, kicks and ban only reports:**
+  `theword | | | | badwords`. Nothing is done or said in game and no strike is counted; each time,
+  the staff get a ticket on Discord with what was said, and decide. A name with one of its words
+  isn't kicked: a ticket asks **Ban the name** or **Allow name**, and moderators in that game are
+  told, to them alone. Up to now such a line was the server's kick every time: the update writes a
+  `0` into the kicks of yours (`kickword | | 0`), so they go on kicking, and the log names them.
+  `!unbanword` takes several words (`a, b`), one line's (`a | slurs`) or a whole line (`| slurs`).
+  See automod.md, "Lists that only report".
 - **The relay** refuses an address or range that someone of the moderator's own role or above is on.
 - **Smaller:** an `!unban` passed around the servers is one line on the record. A confirmed request
   whose action failed stays waiting, and says why. Saving a file while a virus scan has it open is
   tried again. The dashboard says in red when `settings.toml` has changed since Huragok started.
 - **The temporary record** from 0.5.2 (`logs/temp-discord`) stays until the version that brings
-  players' stats, not 0.6.0 as its notes said. It and its stats reports are now pruned after 30 days.
+  players' stats, not 0.6.0 as its notes said. It and its stats reports are now pruned after 30 days, a day that's over is gzipped, and players' totals are read every minute during a game (every 15 s came to about 5 GB a month for a busy server; now about 125 MB).
+- **Playlists by player count** (G, a server, then **P**): a playlist for each range of players,
+  `up to 10`, `11 to 50`, `51 and up`, put in rotation by the Superintendent as players come and go.
+  It writes the server's `playlist =` once a new count has lasted 30 seconds (you can change that),
+  each playlist checked by the server's program first, and the server plays it from its next vote,
+  without a restart. Off until you set it up, and off puts the default back. A playlist `max_players`
+  never reaches is a warning, not a refusal. With Discord, each change posts in `games`
+  (`games-playlist`). It's kept in `playlists-by-players.toml` beside the server's `dedicated.toml`, so
+  an older Huragok put back ignores it. See [setup.md](setup.md#what-a-server-plays-g-in-the-window).
+- **Fixed in the audit before 0.6.0** (84 fixes). The ones you
+  might have met:
+  - `start.cmd stop` never finished if a server was started, restarted or had its countdown cancelled while it ran.
+    While every server is being stopped, those are refused now.
+  - Closing or updating Huragok waited for a SteamCMD download or a `dedicated init` to finish, for hours sometimes.
+    Closing ends them now.
+  - Linux: stopping Huragok's service stopped every server with it. The unit has `KillMode=process`: switch Start at
+    Boot off and on again to rewrite yours.
+  - With the servers on another drive from Huragok, every server program update failed. It copies across drives now,
+    and puts the old ones back across drives if it has to.
+  - A server given its own content folder still changed the shared folder's mod list. Switching a mod off in a
+    folder other servers share now names them and asks first.
+  - Word list: `badword1`, `1badword` and `kys2` got past it. A "kick, then mute" mute ran out during the server's own
+    kick; it starts when they're back now. One line Vergil skipped stopped every `!banword` from working.
+  - Discord: a rank held on one server could reach every server, from the console, a time typed in /kick's player box,
+    or a card's Confirm. Confirm pressed twice acted twice. A form acted on whoever the card was about when it was
+    sent, not when it was opened. The claim code's limit on wrong guesses never ran out. A public answer showed whole
+    player IDs to the channel.
+  - Renaming a server left its console log, FAULTED record and playlist history under the old name, and renamed the
+    folder under any other server running from it.
+- **Your calls on what that audit found.**
+  - **Restarts aren't held to a number an hour any more.** Updates and the watchdog restart a server when it needs
+    it; `[restarts] restarts_per_hour` is gone (the update takes the line out, or makes a number of yours a comment).
+    More than 6 automatic restarts in an hour are said in the log, nothing more. The daily restart is skipped for a
+    server restarted in the 6 hours before it: it's fresh already.
+  - **A FAULTED server stays FAULTED through Huragok's own restart** (a self-update), its next try when it was due.
+  - **Playlists by player count:** during a game, a change waits for the game to end, and is made only if the count
+    still wants it then. Back down to a smaller playlist only 2 players below where the bigger one starts (with a
+    cap of 10: up at 11, down at 9; M on the G -> P page changes it). Nothing changes in a server's first 10
+    minutes, while its players come back.
+  - **The watchdog's memory case only warns unless you turn it on** (`memory = "act"`; the update makes the old
+    "act" a "watch" where `memory_mb` was never set). It counts once a run has settled (`[restarts]
+    min_uptime_seconds`, whose note says so now), and only memory grown past `memory_mb` from what the settled run
+    used. The slow and very slow cases wait for a settled run too.
+  - **Lifting takes the rank of whoever gave it:** a moderator's `!unmute`, `!allowvote` or `!pardon` of an admin's
+    mute, `!novote` or kick is refused, and says who gave it. Vergil's own can be lifted as before.
+  - **Probationary moderators** have 5 requests waiting at most, and theirs are dropped once they aren't on probation
+    (demoted, banned, taken out of `commands.toml`).
+  - **Kicks passed around the servers**, and kicks waiting for someone away, outlast Huragok's restart.
+  - **`!novote`:** a vote called under the name of someone else on is still the caller's, when the server's name
+    suffix picks them out.
+  - **Discord:** a ticket's card that Discord took but answered too late for isn't posted a second time.
+  - **One server's console not answering** holds up only that server's work: Vergil and the rest carry on for the
+    others, and that server's work is paused for 10 minutes if it keeps overrunning (the dashboard says so).
 
 **Off until you set it up:** `discord.toml` starts with `mode = "off"` and every feature off. With
 the mode off nothing goes to Discord, not even the start loop's webhook, and discord.py isn't
@@ -80,8 +140,10 @@ Each host makes their own bot in Discord's developer portal; Huragok runs it. No
   through a countdown), seeding pings, `/notify`, the bot's status line, bio and nickname, channel names
   and topics, voice channel status.
 - **Every in-game command as a slash command,** at your rank, with a box for each thing it takes. In
-  Discord some have the name that doesn't mislead: `/letback`, `/wordlist`, `/clearstrikes`,
-  `/reloadserver`. `/server` shows a server's state and, for those with the rank, its power buttons.
+  Discord some have the name that doesn't mislead: `/letback`, `/bannedwords`, `/bannednames`,
+  `/clearstrikes`, `/reloadserver`. The word list's commands have a box for each part of a line
+  (`/banword words: hello mutes: 1d, 3d kicks: 1h bans: 4 listname: badwords`, in any order), and
+  `/bannedwords` and `/bannednames` show everything, over as many messages as it takes. `/server` shows a server's state and, for those with the rank, its power buttons.
   `/tickets` lists what's waiting, reports first, with what's been done.
 - **The typed console:** lines in a private channel run on a server, as your rank allows. Answers never
   show an address. It clears itself when it's quiet, keeps what was said as a file in the logs, and
@@ -89,7 +151,7 @@ Each host makes their own bot in Discord's developer portal; Huragok runs it. No
 - **Notes and flags** on players, shown on `!whois` and on cards.
 - **Reports:** `!report` in game, `/report`, or a right-click. A report makes a sound, moderators in game
   are told of reports and calls, and whoever reported is told when staff act. A moderator's strike typed
-  in game goes on an open report's card. Quoting a listed word in `!report` or `!calladmin` isn't struck.
+  in game goes on an open report's card. Quoting a listed word in `!report` or `!calladmin` isn't struck, once a minute: a second within the minute is chat like any other.
 - **Who a list offers:** as you type a player, `/unban` lists who's banned, `/mute` leaves out who's muted, and so on, each saying how they stand. A whole player ID works in any of them, and what's posted calls someone by the name they were last seen with.
 - **Several roles on a ping:** any line of `[messages]`, and Contact's `thread_role`, can be a list. **Who gets told** and each line's panel take as many as it's for.
 - **The watchdog's word for a stopped server:** its line in the log, `!health` and `/health` said `healthy · RCON 1 ms` for as long as a server stayed stopped, from what it last saw. They say `stopped` now, or `not answering` when the console's gone and it isn't known why.

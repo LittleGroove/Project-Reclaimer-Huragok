@@ -5,6 +5,7 @@ one dry-run switch, and players always reading who acted ("muted by Alice").
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -119,7 +120,18 @@ class Moderation:
                   reason: str = "", duration: str | None = None, evidence: str | None = None,
                   dry_run: bool = False, pending: bool = False, told: str = "") -> Action:
         """`pending`: for someone who isn't on, nothing goes to the console; it's recorded (and announced) for
-        whoever acts on it as they join (Vergil, for a mute). `told`: what the player reads, if not the reason."""
+        whoever acts on it as they join (Vergil, for a mute). `told`: what the player reads, if not the reason.
+
+        Sent and recorded as one, whatever happens to whoever asked: a handler cancelled at its time limit (a slow
+        server, a ban's save tried again) left a ban standing with no ledger row, no Discord case and a mute not kept
+        across restarts (audit 2026-11). The caller still sees its cancel; the action finishes and is recorded."""
+        return await asyncio.shield(self._act(kind, server, target, by=by, source=source, reason=reason,
+                                              duration=duration, evidence=evidence, dry_run=dry_run, pending=pending,
+                                              told=told))
+
+    async def _act(self, kind: str, server: str, target: Player | str, *, by: str, source: str,
+                   reason: str = "", duration: str | None = None, evidence: str | None = None,
+                   dry_run: bool = False, pending: bool = False, told: str = "") -> Action:
         if kind not in KINDS:
             raise ValueError(f"unknown action {kind}")
         ref, target_id, name = self._target(server, target)

@@ -22,7 +22,7 @@ FROZEN = json.loads((Path(__file__).parent / "frozen.json").read_text(encoding="
 STEPS = {"core": CORE_MIGRATIONS, "automod": AUTOMOD_MIGRATIONS, "commands": COMMANDS_MIGRATIONS, "discord": SCHEMA}
 # Everything a card or a post in Discord can send back. Cards stay up for good, so each of these has to mean something for good.
 PRESSES = ("appealagain", "mute", "unmute", "kick", "letback", "ban", "unban", "banall", "strike", "pardonstrike", "warn", "whois", "said", "note", "thread", "about", "server",
-           "lift", "shorten", "confirm", "deny", "refuse", "acknowledge", "close", "dismiss", "leave")
+           "lift", "shorten", "confirm", "deny", "refuse", "acknowledge", "close", "dismiss", "leave", "banthename", "allowname")
 
 
 def _hash(step: str) -> str:

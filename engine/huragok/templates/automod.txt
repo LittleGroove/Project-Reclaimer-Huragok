@@ -13,7 +13,7 @@
 #          how long each kick keeps them out, in order: 3, 30m, 1h, 1d. The last
 #          one repeats. No times: the server's plain kick. No number: the kicks
 #          start once every mute time is used. Blank: never kicked; with no
-#          mutes either, the server's plain kick every time.
+#          mutes either, the server's plain kick every time up to the ban.
 #          A mute time past the start of the kicks kicks, then mutes once they're back.
 # ban      How many strikes come before the ban for good (0: banned the first time).
 #          Blank: never banned.
@@ -44,8 +44,17 @@
 #     1st: muted 1 day   2nd: out 1 hour, then muted 3 days   3rd and 4th: out 1 day
 #     5th: banned for good
 #
-#   kickword
+#   kickword           |               | 0         |   | kicks
 #     every time: kicked, never muted or banned
+#
+#   askword            |               |           |   | ask
+#     every time: a ticket for the staff on Discord; nothing in game, no strike
+#
+# Mutes, kicks and ban all blank: the line only reports. Nothing is done or said
+# in game, and no strike is counted: each time, a ticket for the staff on Discord,
+# who decide (how a word is said can matter more than the word). A name with one
+# of its words isn't kicked: the staff are asked whether to ban the name or allow
+# it, and staff in that game are told.
 #
 # Mutes last through restarts and follow the player to every server: Vergil mutes
 # them again as they join, until the time is up.

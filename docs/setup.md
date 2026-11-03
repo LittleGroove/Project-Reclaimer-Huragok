@@ -191,6 +191,50 @@ game variants, 1 mods, 0 Workshop items` (Halo 3's own 49 game variants included
   the way its start and reload check it; what it would refuse is named and nothing is
   written. After a change it says when it applies: from the next vote, from the next
   game, or once nobody is on (a change of kind).
+- **P** sets up **playlists by player count**: a playlist for each range of players,
+  which Huragok puts in rotation by itself as players come and go. Maps built for 128
+  players play badly with 20 on, and maps built for 20 play badly with 100. Until it's
+  set up the server plays one playlist as before (its default). The page shows what
+  it's doing now: on or off, the players on and the playlist that's for them, the
+  default, each playlist with its range (`up to 10 players`, `11 to 50 players`,
+  `51 players and up`, the one in use marked), and warnings. Then:
+  - **S** sets it up (again, as a new list): pick the playlist for the fewest players,
+    then the most players it's for (`10`); the next playlist, and a higher number
+    (`50`); and so on. **Enter** instead of a number gives that playlist no cap: it's
+    the last, and plays for every count above the one before. Each playlist is checked
+    by the server's own program as it's picked, as **U** checks one. There's no upper
+    limit on a cap (256 is fine), but each has to be above the one before.
+  - **O** turns it on or off. On writes the playlist for the players on now; off puts
+    the default back. Either applies from the next vote.
+  - **D** picks the default: the playlist it plays while this is off.
+  - **W** is how long a new player count has to last before the playlist changes
+    (30 seconds unless you change it). 0 changes it at once.
+  - **M** is the margin back down: a smaller playlist comes back only once the count is
+    this many players below where the bigger one starts (2 unless you change it: with a
+    cap of 10, up at 11 and back down at 9), so one player at the line doesn't swap it
+    back and forth.
+
+  While it's on, the Superintendent counts each server's players (everyone connected)
+  every few seconds. When the count has stayed in another playlist's range for the
+  wait, it writes that playlist into the server's `dedicated.toml`, and the server
+  takes it from its next vote, without a restart. During a game it waits for the game to
+  end, and changes it then only if the count still wants it: the count has to hold until
+  the next vote. For the first 10 minutes after a server starts it changes nothing: the
+  count starts at 0 while its players come back. Before each change the
+  server's own program checks the playlist; one it refuses isn't written, and the
+  dashboard's events say why. It's set up in `playlists-by-players.toml`, beside the
+  server's `dedicated.toml`, which only Huragok reads.
+
+  **Warnings, never refusals:** a playlist that never plays because `max_players` is at
+  or below the cap before it (`playlist 3 (big) never plays while max_players is 32: it
+  starts at 51 players`), read from the server's file each time, so it follows the
+  setting up and down (**D** says so too when you change `max_players`); a playlist file
+  that's gone or can't be read; `auto_reload` off (the server wouldn't take a change
+  until a reload, so Huragok leaves the playlist alone); and the server playing
+  something that isn't a playlist. **U** or **W** picking a playlist while it's on asks
+  first: make it the default, or turn player count off and play it now. **W** picking
+  anything else (one map, a campaign) turns it off. With Discord set up, each change
+  posts in the `games` channel (`games-playlist` in **Messages**).
 
 1. **browse what it can play**: numbered lists of Halo 3's maps, mod maps, map
    variants, game types, game variants, the mods (what each brings: its maps, its

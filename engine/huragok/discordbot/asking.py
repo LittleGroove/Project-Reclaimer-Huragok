@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 MOST_CHOICES = 25
-MOST_PROOF_BYTES = 25_000_000
+MOST_PROOF_BYTES = 10 * 1024 * 1024  # what any server takes: one with boosts takes more, and says so (Guild.filesize_limit)
 
 
 def _part_of(interaction: discord.Interaction) -> Any:
@@ -77,7 +77,9 @@ async def keep_proof(part: DiscordPart, proof: discord.Attachment, number: int, 
     """What's attached to a command is only there for a while, so it's posted where the ticket is, for good, and the card links to it: cards move, and that message doesn't."""
     ticket = part.tickets.get(number)
     kind = str(proof.content_type or "")
-    if proof.size > MOST_PROOF_BYTES or not kind.startswith(("image/", "video/")):  # it isn't read into memory, or posted under the bot's name: only pointed at, while Discord keeps it
+    guild = part.client.get_guild(int(part.file.guild or 0)) if part.file.guild else None
+    most = max(MOST_PROOF_BYTES, int(getattr(guild, "filesize_limit", 0) or 0))  # over it, the post was refused and the clip lost (audit 2026-11, 6.14)
+    if proof.size > most or not kind.startswith(("image/", "video/")):  # it isn't read into memory, or posted under the bot's name: only pointed at, while Discord keeps it
         part.tickets.add_line(number, say(part.file, "reports.proof_link", who=cards.clean(who), name=cards.clean(proof.filename), link=proof.url))
         part.tickets.show(number)
         return
@@ -87,7 +89,7 @@ async def keep_proof(part: DiscordPart, proof: discord.Attachment, number: int, 
         part.tickets.add_line(number, say(part.file, "reports.proof_line", name=cards.clean(proof.filename), link=sent.jump_url, who=cards.clean(who)))
     except (discord.DiscordException, OSError, aiohttp.ClientError) as error:  # a report's been filed by now, whatever became of this
         log.info("Couldn't keep what came with report %s: %s", number, error)
-        part.tickets.add_line(number, say(part.file, "reports.proof_lost", who=cards.clean(who)))
+        part.tickets.add_line(number, say(part.file, "reports.proof_link", who=cards.clean(who), name=cards.clean(proof.filename), link=proof.url))  # pointed at, while Discord keeps it
     part.tickets.show(number)
 
 

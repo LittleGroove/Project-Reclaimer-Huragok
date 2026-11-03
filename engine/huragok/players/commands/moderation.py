@@ -33,6 +33,9 @@ class ModerationCommands(CommandsBase):
         target = call.target
         assert target is not None
         duration, rest, _ = self._split_time(call.rest)
+        if why := self._no_time(duration):
+            await call.reply(why)
+            return
         reason = unquote(rest)
         if target.number:
             action = await self.ctx.moderation.mute(call.server, target, duration, reason, by=call.player.name)
@@ -72,6 +75,9 @@ class ModerationCommands(CommandsBase):
             if elsewhere:
                 await call.reply(f"{call.target.name} is on {elsewhere}, not this server.")
                 return
+        if why := self.lift_outranked(call, call.target.id, "mute", "mute"):
+            await call.reply(f"Not unmuted: {why}")
+            return
         await self._done(call, await self.ctx.moderation.unmute(call.server, call.target, by=call.player.name))
 
     @command("kick", usage="<player> [time] [reason]",
@@ -81,6 +87,13 @@ class ModerationCommands(CommandsBase):
         target = call.target
         assert target is not None
         duration, rest, forever = self._split_time(call.rest)
+        if forever and call.rest[0].lower() == "never":
+            # "!kick Bravo never camp the spawn": the start of a reason, not "for good" (perm, permanent or forever
+            # are); it banned for good, roles and all (audit 2026-11, 5.6)
+            duration, rest, forever = None, call.rest, False
+        if why := self._no_time(duration):
+            await call.reply(why)
+            return
         if forever:  # a kick for good is a ban, and takes the rank a ban does
             why = await self.ctx.run_as("ban", target, rest, server=call.server, player=call.player, role=call.role, tell=call._tell)
             if why:
@@ -111,6 +124,9 @@ class ModerationCommands(CommandsBase):
         assert target is not None
         role = self.ctx.highest_role(target)
         duration, rest, _ = self._split_time(call.rest)
+        if why := self._no_time(duration):
+            await call.reply(why)
+            return
         action = await self.ctx.moderation.ban(call.server, target, duration, unquote(rest), by=call.player.name)
         await self._done(call, action)
         if action.ok and not action.dry_run and not duration and role in ("member", PROBATION, "moderator", "admin"):  # roles.py takes it

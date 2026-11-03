@@ -64,7 +64,7 @@ KNOWN_KEYS: dict[str, set[str]] = {
          "log_file"},
     "restarts": {"warn_seconds", "after_game_seconds", "daily_restart", "min_uptime_seconds", "backoff_seconds",
                  "faulted_retry_minutes",
-                 "good_run_seconds", "max_failures", "restarts_per_hour", "ready_seconds", "empty_seconds"},
+                 "good_run_seconds", "max_failures", "ready_seconds", "empty_seconds"},
     "keepalive": {"hang_seconds", "check_seconds", "act"},
     "rcon": {"use_host_key", "command_timeout"},
     "updates": {"check", "check_hours", "auto_update", "install_on_server_restart", "beta", "repository"},
@@ -103,6 +103,8 @@ MIN_STOP_TIMEOUT = 1.0
 RETIRED = {
     ("process", "disable_auto_update"): "each server's own auto_update (in its dedicated.toml, D in the window) is the "
                                         "only switch for Project Reclaimer updates now: delete the line",
+    ("restarts", "restarts_per_hour"): "automatic restarts aren't held to a number an hour since 0.6.0 (one that stopped "
+                                       "them stopped updates and the watchdog doing their job): delete the line",
 }
 ANY_VALUE = object()
 # Values earlier versions wrote into settings.toml whose meaning or default has changed since: (section, key, the
@@ -216,11 +218,10 @@ class RestartSettings:
     warn_seconds: list[float] = field(default_factory=lambda: [300.0, 180.0, 60.0, 30.0])
     after_game_seconds: float = 15.0  # notice once a game has ended, for a restart "after this game"
     daily_restart: str = ""  # local "HH:MM"; empty: none
-    min_uptime_seconds: float = 900.0  # a daily restart waits until the server has been up this long
+    min_uptime_seconds: float = 900.0  # a new run settles this long before the watchdog's memory and frame cases count
     backoff_seconds: list[float] = field(default_factory=lambda: [5.0, 10.0, 30.0, 60.0, 300.0])
     good_run_seconds: float = 600.0  # dying sooner than this after a start counts as a failed start
     max_failures: int = 5  # failed starts in a row before FAULTED
-    restarts_per_hour: int = 6  # more automatic restarts than this in an hour: FAULTED
     # FAULTED is a pause, not the end: one more try after each of these many minutes in turn (the last repeats),
     # until a run lasts good_run_seconds. Empty: it waits for a person (S), as before 0.4.0.
     faulted_retry_minutes: list[float] = field(default_factory=lambda: [30.0, 60.0])
@@ -466,9 +467,8 @@ def load(path: str | os.PathLike[str]) -> Settings:
         return [float(v) for v in value]
 
     max_failures = restarts.get("max_failures", int, 5)
-    per_hour = restarts.get("restarts_per_hour", int, 6)
-    if max_failures < 1 or per_hour < 1:
-        raise ConfigError("restarts: max_failures and restarts_per_hour must be 1 or more")
+    if max_failures < 1:
+        raise ConfigError("restarts: max_failures must be 1 or more")
 
     return Settings(
         path=path,
@@ -508,7 +508,6 @@ def load(path: str | os.PathLike[str]) -> Settings:
             backoff_seconds=restarts.numbers("backoff_seconds", [5, 10, 30, 60, 300]) or [5.0],
             good_run_seconds=seconds(restarts, "good_run_seconds", 600.0),
             max_failures=max_failures,
-            restarts_per_hour=per_hour,
             faulted_retry_minutes=retry_minutes(restarts),
             ready_seconds=seconds(restarts, "ready_seconds", 300.0),
             empty_seconds=seconds(restarts, "empty_seconds", 10.0),
@@ -543,7 +542,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
                                                 layouts=workshop_updates.get("layouts", bool, True)),
         parts=parts,
         problems=problems,
-        retired=retired_settings(top) + unknown_settings(top),
+        retired=retired_settings(top) + unknown_settings(top) + repeated_server_blocks(top),
         notes=old_values(top),
     )
 
@@ -729,8 +728,26 @@ def _server_overrides(top: Table) -> dict[str, dict[str, Any]]:
             override["warn_seconds"] = entry.numbers("warn_seconds", [])
         if "min_uptime_seconds" in block:
             override["min_uptime_seconds"] = entry.at_least("min_uptime_seconds", 0.0, 0.0)
-        overrides[name.lower()] = override
+        # Two blocks for one server read as one, the later's keys over the earlier's: before, the earlier was dropped
+        # whole, and the window's changes, written to the first, were ignored (audit 2026-11, 4.3).
+        overrides[name.lower()] = {**overrides.get(name.lower(), {}), **override}
     return overrides
+
+
+def repeated_server_blocks(top: Table) -> list[str]:
+    """A server with more than one [[server]] block in settings.toml: read as one, said so it can be tidied."""
+    raw = top.data.get("server", [])
+    names = [str(b.get("name", "")).strip() for b in raw if isinstance(b, dict)] if isinstance(raw, list) else []
+    seen: dict[str, int] = {}
+    found = []
+    for number, name in enumerate(names, 1):
+        if name.lower() in seen:
+            found.append(f"[[server]] {name} (block {number}) is a second block for {names[seen[name.lower()] - 1]} "
+                         f"(block {seen[name.lower()]}): they're read as one, the later one's settings winning; "
+                         "put them in one block")
+        else:
+            seen[name.lower()] = number
+    return found
 
 
 def _parts(top: Table) -> dict[str, PartSettings]:

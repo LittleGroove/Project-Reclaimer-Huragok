@@ -148,12 +148,17 @@ def cmd_check(args: argparse.Namespace) -> int:
             rows.append(("running", "unknown (no status.json)"))
         else:
             rows.append(("running", f"{'yes' if status_age < 30 else 'no'} (status.json written {status_age:.0f} s ago)"))
+        by_players, by_players_warnings = _by_players(server)
+        if by_players:
+            rows.append(("by players", by_players))
         out.fields(rows)
         for problem in problems:
             out.warn(f"PROBLEM  {problem}")
             ok = False
         if priority_warning:
             out.warn(priority_warning)
+        for warning in by_players_warnings:
+            out.warn(f"warning: playlists by player count: {warning}")
         for line in _label_warnings(settings, server):
             out.warn(line)
     _check_mods(settings)
@@ -261,6 +266,30 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         out.warn("Fix the problems above, then check again.")
     return 0 if ok else 1
+
+
+def _by_players(server: ServerConfig) -> tuple[str, list[str]]:
+    """Playlists by player count (G -> P): a row ("" when it isn't set up) and what the window warns of."""
+    from ..core.tomledit import read_toml
+    from ..games.byplayers import FILE, ByPlayersError, setup_of, warnings
+    from ..games.plays import plays_kind
+    from ..program.settings import effective
+
+    try:
+        setup = setup_of(server.folder, server.name)
+    except ByPlayersError as error:
+        return f"{FILE} can't be read", [str(error)]
+    if setup is None:
+        return "", []
+    try:
+        data = read_toml(server.config_path)
+    except (OSError, ValueError):
+        data = {}
+    blocks = data.get("server", []) if isinstance(data.get("server"), list) else []
+    block = next((b for b in blocks if isinstance(b, dict) and str(b.get("name", "")).lower() == server.name.lower()), {})
+    found = warnings(setup, server.folder, max_players=effective(data, "max_players", server.name) if data else None,
+                     auto_reload=data.get("auto_reload") is not False, kind=plays_kind(block))
+    return f"{'on' if setup.on else 'off'} · {len(setup.steps)} playlists (G -> P)", found
 
 
 def _label_warnings(settings: Settings, server: ServerConfig) -> list[str]:

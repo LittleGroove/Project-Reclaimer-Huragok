@@ -525,6 +525,10 @@ class WorkshopUpdateService:
                 assert new is not None
                 done.append(f"{name} {date_text(before)} -> {date_text(new['updated'])}")
                 self.done[(server.name, item)] = w.newest  # swapped once; Steam saying so again won't loop
+                if self.asked.get((server.name, item)) == "console":
+                    # The console's next "update downloaded" is another version: kept, it was never fresh again, and
+                    # no restart was planned for it (Hidden items, which Steam's check never sees; audit 2026-11, 8.7)
+                    self.asked.pop((server.name, item))
                 self.waiting.get(server.name, {}).pop(item, None)
                 self.failures.pop((server.name, item), None)
                 await asyncio.to_thread(shutil.rmtree, aside, True)

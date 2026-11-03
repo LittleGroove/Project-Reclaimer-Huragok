@@ -9,6 +9,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from .files import read_text
+
 
 
 CLOCK_TIME = re.compile(r"^(\d{1,2}):(\d{2})$")
@@ -92,11 +94,17 @@ class Table:
 
 
 def _read_toml(path: Path, hint: str) -> dict[str, Any]:
+    """A TOML file as Windows editors save it (UTF-8, with or without a BOM, or Notepad's "Unicode"). One that can't
+    be read (ANSI, locked for a moment) is a ConfigError, as a mistake in it is: before, it was a traceback that
+    stopped Huragok for every server (audit 2026-11, 4.1)."""
     try:
-        with path.open("rb") as file:
-            return tomllib.load(file)
+        text = read_text(path, ConfigError)
     except FileNotFoundError:
         raise ConfigError(f"{path} not found{hint}") from None
+    except OSError as error:
+        raise ConfigError(f"{path} can't be read just now ({error.strerror or error})") from None
+    try:
+        return tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         text = str(error)
         hint = f". {BACKSLASH_HINT}" if "Unescaped '\\'" in text or "hex value" in text.lower() else ""

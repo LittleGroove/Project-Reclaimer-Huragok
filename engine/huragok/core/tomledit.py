@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .files import write_atomic
+from .files import read_text, write_atomic
 
 BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 COMMENTED_KEY = re.compile(r"^\s*#\s*([A-Za-z0-9_-]+)\s*=")
@@ -250,10 +250,10 @@ class _Edit:
 
     def __init__(self, path: Path, what: str) -> None:
         self.path, self.what = path, what
-        try:
-            text = path.read_text(encoding="utf-8") if path.exists() else ""
-        except UnicodeDecodeError:
-            raise self.refuse("it isn't UTF-8 text") from None
+        try:  # a BOM or Notepad's "Unicode" read as the text it is (and written back as UTF-8): only ANSI is refused
+            text = read_text(path) if path.exists() else ""
+        except ValueError as error:
+            raise self.refuse(f"it isn't UTF-8 text ({error})") from None
         self.lines = text.split("\n")  # not splitlines(): U+2028 and the like are legal inside TOML strings
         if self.lines[-1] == "":
             self.lines.pop()
@@ -349,12 +349,65 @@ class _Edit:
         return None
 
     def replace(self, number: int, rendered: str) -> None:
-        """Put `rendered` in place of the value starting on line `number`, every line of it."""
+        """Put `rendered` in place of the value starting on line `number`, every line of it. A list written one entry
+        per line keeps its lines and the comment beside each (which mod, whose ID): only the entries that go are taken
+        out and the new ones added (audit 2026-11, 4.2); one written any other way is written on one line."""
         entry = self.layout[number]
+        if entry.end != number and self._entry_lines(number, rendered):
+            return
         line = self.lines[number]
         comment = _comment(line[entry.at:]) if entry.end == number else ""
         self.lines[number:entry.end + 1] = [line[:entry.at] + rendered + comment]
         self.changed()
+
+    def _entry_lines(self, number: int, rendered: str) -> bool:
+        """The multi-line list starting on line `number` made to hold `rendered`'s values, entry line by entry line.
+        False (nothing changed): it isn't a list of that layout, or the new order can't be kept by adding at its end."""
+        try:
+            wanted = tomllib.loads(f"v = {rendered}")["v"]
+        except tomllib.TOMLDecodeError:
+            return False
+        entry = self.layout[number]
+        first, close = self.lines[number], self.lines[entry.end]
+        head = first[entry.at:]
+        if not isinstance(wanted, list) or head[:len(head) - len(_comment(head))].strip() != "["                 or not close.strip().startswith("]"):
+            return False
+        kept: list[str] = []
+        values: list[Any] = []
+        remaining = list(wanted)
+        for line in self.lines[number + 1:entry.end]:
+            _, _, at = _scan(line, 1)
+            value = (line if at is None else line[:at]).strip()
+            if not value:  # a blank line or a comment of its own
+                kept.append(line)
+                continue
+            try:
+                parsed = tomllib.loads(f"v = [{value}]")["v"]
+            except tomllib.TOMLDecodeError:
+                return False
+            if len(parsed) != 1:  # two entries on one line
+                return False
+            if parsed[0] in remaining:
+                remaining.remove(parsed[0])
+                values.append(parsed[0])
+                kept.append(line)
+        if values + remaining != wanted:
+            return False
+        indent = next((line[:len(line) - len(line.lstrip())] for line in self.lines[number + 1:entry.end]
+                       if line.strip() and not line.lstrip().startswith("#")), "    ")
+        if remaining:
+            last = max((n for n, line in enumerate(kept)
+                        if (line if (at := _scan(line, 1)[2]) is None else line[:at]).strip()), default=None)
+            if last is not None:  # the entry before a new one needs its comma
+                line = kept[last]
+                _, _, at = _scan(line, 1)
+                value = line if at is None else line[:at]
+                if not value.rstrip().endswith(","):
+                    kept[last] = value.rstrip() + "," + line[len(value.rstrip()):]
+            kept += [f"{indent}{_toml_value(value)}," for value in remaining]
+        self.lines[number + 1:entry.end] = kept
+        self.changed()
+        return True
 
     def set_in(self, start: int, end: int, key: str, value: object, where: str) -> None:
         """Set `key = …` between start and end: the live line, else the commented `#key = …`, else at the end."""
@@ -401,13 +454,17 @@ class _Edit:
                 return True
         return False
 
-    def server_key(self, server: str, key: str, value: object) -> None:
-        """Set `key` in the [[server]] block named `server`; a missing block is added (never for `name`)."""
+    def server_key(self, server: str, key: str, value: object, *, add: bool = True) -> None:
+        """Set `key` in the [[server]] block named `server`; a missing block is added (never for `name`, nor with
+        `add` False: dedicated.toml, where a block is a server, and one added for a name since changed by hand was a
+        phantom server, audit 2026-11, 4.4)."""
         found = self.block(server)
         rendered = _toml_value(value)
         if found is None:
             if key == "name":
                 raise self.refuse(f"there's no [[server]] block named {server}")
+            if not add:
+                raise self.refuse(f"there's no [[server]] block named {server} now (renamed by hand since?)")
             blocks = self.wanted.setdefault("server", [])
             if not isinstance(blocks, list):
                 raise self.refuse("server isn't a list of [[server]] blocks there")
@@ -459,16 +516,16 @@ def remove_server_setting(path: Path, server: str, key: str) -> bool:
     return True
 
 
-def set_server_setting(path: Path, server: str, key: str, value: object) -> None:
+def set_server_setting(path: Path, server: str, key: str, value: object, *, add: bool = True) -> None:
     """Set `key` in the [[server]] block named `server`, adding the block if needed (but never to rename one:
-    with no block of that name, setting `name` raises TomlEditError)."""
+    with no block of that name, setting `name` raises TomlEditError; nor with `add` False, for dedicated.toml)."""
     edit = _Edit(path, f"{key} for {server}")
-    edit.server_key(server, key, value)
+    edit.server_key(server, key, value, add=add)
     edit.save()
 
 
 def change_server_settings(path: Path, server: str, values: dict[str, Any], remove: Any = (), *,
-                           what: str | None = None) -> None:
+                           what: str | None = None, add: bool = True) -> None:
     """Several keys of one [[server]] block in one write: the `remove` keys taken out, then `values` set. All of
     it is written or, when one part can't be made safely, none of it. `what` names the change in a refusal."""
     edit = _Edit(path, f"{what or ', '.join(values) or ', '.join(remove)} for {server}")
@@ -476,7 +533,7 @@ def change_server_settings(path: Path, server: str, values: dict[str, Any], remo
         if key not in values:
             edit.remove_server_key(server, key)
     for key, value in values.items():
-        edit.server_key(server, key, value)
+        edit.server_key(server, key, value, add=add)
     edit.save()
 
 
@@ -777,7 +834,17 @@ def add_to_list(path: Path, table: str, key: str, item: str, note: str = "", *, 
         else:  # several lines: the new one just before the closing bracket
             close = layout.end
             if not edit.lines[close].strip().startswith("]"):
-                raise edit.refuse(f"[{table}] {key} doesn't end with ] on a line of its own")
+                # `  "b"]` as hand-written lists often end: the bracket put on a line of its own first (audit 4.7)
+                line = edit.lines[close]
+                _, _, at = _scan(line, 1)
+                value = line if at is None else line[:at]
+                bracket = value.rstrip().rfind("]")
+                if bracket <= 0 or not value[:bracket].strip():
+                    raise edit.refuse(f"[{table}] {key} doesn't end with ] on a line of its own")
+                indent = line[:len(line) - len(line.lstrip())]
+                edit.lines[close:close + 1] = [value[:bracket].rstrip() + (line[at:] and "  " + line[at:] if at else ""),
+                                               indent.replace("    ", "", 1) + "]"]
+                close += 1
             last = close - 1  # the last element must end with a comma before another comes after it
             while last > number and (not edit.lines[last].strip() or edit.lines[last].lstrip().startswith("#")):
                 last -= 1
@@ -802,7 +869,8 @@ def remove_from_list(path: Path, table: str, key: str, item: str) -> bool:
         return False
     edit.wanted[table][key] = [v for v in values if not (isinstance(v, str) and v.lower() == item.lower())]
     number, _ = _list_line(edit, table, key)
-    assert number is not None  # the value is there, so its line is
+    if number is None:  # written as an inline table or a dotted key: not a line of its own
+        raise edit.refuse(f"[{table}] {key} isn't written as `{key} = [...]` under [{table}]")
     layout = edit.layout[number]
     quoted = re.compile(r"""^\s*(["'])""" + re.escape(item) + r"""\1\s*,?\s*(#.*)?$""", re.IGNORECASE)
     if layout.end == number:  # one line: written again without it (it had no per-entry comments to keep)
@@ -810,13 +878,35 @@ def remove_from_list(path: Path, table: str, key: str, item: str) -> bool:
         edit.lines[number] = line[:layout.at] + _toml_value(edit.wanted[table][key]) + _comment(line[layout.at:])
     else:
         lines = [n for n in range(number + 1, layout.end) if quoted.match(edit.lines[n])]
-        if not lines:
+        if lines:
+            for n in reversed(lines):
+                del edit.lines[n]
+        elif not _take_out_of_lines(edit, number, layout.end, item):  # two to a line, or by the bracket (audit 4.7)
             raise edit.refuse(f"{item} isn't on a line of its own in [{table}] {key}")
-        for n in reversed(lines):
-            del edit.lines[n]
     edit.changed()
     edit.save()
     return True
+
+
+def _take_out_of_lines(edit: _Edit, first: int, last: int, item: str) -> bool:
+    """`item` taken out of the list on lines first..last wherever it is on them (`"a", "b",  # Alice, Bob`), its
+    comma with it; a line left with nothing goes. The comments stay. False: it wasn't found."""
+    token = re.compile(r"""(["'])""" + re.escape(item) + r"""\1\s*,?\s*""", re.IGNORECASE)
+    for n in range(first, last + 1):
+        line = edit.lines[n]
+        start = edit.layout[n].at if n == first else 0
+        _, _, at = _scan(line[start:], 0 if n == first else 1)
+        end = len(line) if at is None else start + at
+        found = token.search(line, start, end)
+        if found is None:
+            continue
+        line = line[:found.start()] + line[found.end():]
+        if n != first and n != last and not line.strip():
+            del edit.lines[n]
+        else:
+            edit.lines[n] = line
+        return True
+    return False
 
 
 def _array_blocks(edit: _Edit, parts: tuple[str, ...]) -> list[tuple[int, int]]:
@@ -947,8 +1037,9 @@ def replace_server_blocks(path: Path, blocks: list[dict[str, Any]]) -> None:
 
 
 def read_toml(path: Path) -> dict[str, Any]:
-    with path.open("rb") as file:
-        return tomllib.load(file)
+    """A TOML file as Windows editors save it: UTF-8 with or without a BOM, or Notepad's "Unicode". ValueError (TOML's
+    own error is one) for one that isn't valid or isn't UTF-8; OSError passes through."""
+    return tomllib.loads(read_text(path))
 
 
 def server_blocks(path: Path) -> list[dict[str, Any]]:

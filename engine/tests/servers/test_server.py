@@ -379,7 +379,12 @@ def test_a_start_that_exits_sends_its_console_from_that_start(world, run) -> Non
     assert failed[0].get("lines") == console[3:]
 
 
-def test_too_many_automatic_restarts_fault(world, run) -> None:
+def test_many_automatic_restarts_are_counted_and_said_but_never_stopped(world, run, caplog) -> None:
+    """Until 0.6.0, more than restarts_per_hour automatic restarts FAULTED the server, after taking its players off:
+    restarts doing their job (an update, the watchdog) were stopped. Now they're a count the log names (the host,
+    2 Nov 2026)."""
+    from huragok.servers.server import MANY_RESTARTS
+
     clock, settings, backend, fleet, manager, client, state, seen = world
     lifecycle = Lifecycle(fleet)
 
@@ -388,21 +393,44 @@ def test_too_many_automatic_restarts_fault(world, run) -> None:
         await cycle(manager, clock)
         state.connected = True
         await cycle(manager, clock)
-        manager.record.restart_times = [clock.now - 100 * i for i in range(1, 4)]  # three in the last hour
-        await lifecycle.restart(SERVER, reason="the server is struggling", countdown=0, by="Watchdog")
-        assert manager.phase == "stopping" and len(manager.record.restart_times) == 4
-        await cycle(manager, clock, 1)
-        assert manager.phase == "faulted" and "over the budget of 3" in manager.record.fault_reason
-        # The host fixes the cause and starts it (S), then restarts it (R): theirs aren't held to the budget, which is
-        # for automatic restarts, so it doesn't fault again for the next hour.
-        manager.start()
-        await cycle(manager, clock, 1)
-        state.connected = True
-        await cycle(manager, clock, 1)
-        assert manager.phase == "running"
-        manager.restart(immediate=True)
-        await cycle(manager, clock, 1)
+        manager.record.restart_times = [clock.now - 100 * i for i in range(1, MANY_RESTARTS + 1)]
+        with caplog.at_level(logging.WARNING):
+            await lifecycle.restart(SERVER, reason="the server is struggling", countdown=0, by="Watchdog")
+        assert manager.restarts_lately() == MANY_RESTARTS + 1
+        assert f"{MANY_RESTARTS + 1} automatic restarts in the last hour" in caplog.text
+        for _ in range(3):
+            await cycle(manager, clock, 1)
+            state.connected = True
         assert manager.phase in ("booting", "running") and not manager.record.fault_reason
+        assert backend.starts == [SERVER, SERVER]  # the first start and the restart
+
+    run(scenario())
+
+
+def test_a_daily_restart_is_skipped_for_a_server_restarted_lately(world, run) -> None:
+    """Restarted at 02:00 for an update, it's fresh at 04:00: the daily restart would only take its players off again
+    (the host, 2 Nov 2026). A run older than DAILY_FRESH_SECONDS still gets it."""
+    from huragok.servers.server import DAILY_FRESH_SECONDS
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    settings.restarts.daily_restart = "04:00"
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        state.connected = True
+        await cycle(manager, clock)
+        at = datetime.fromtimestamp(clock.now).replace(hour=4, minute=5, second=0)
+        clock.now = at.timestamp()
+        manager.started = clock.now - 2 * 3600  # restarted at 02:05
+        await cycle(manager, clock)
+        assert manager.phase == "running" and backend.stops == []
+        assert manager.record.daily_last_fired == at.strftime("%Y-%m-%d")  # done with for the day: not later
+        assert "daily restart skipped" in manager.record.history[-1][2]
+        manager.record.daily_last_fired = ""
+        manager.started = clock.now - DAILY_FRESH_SECONDS - 60
+        await cycle(manager, clock)
+        assert manager.stop_label == "daily restart" and backend.stops == [SERVER]
 
     run(scenario())
 
@@ -419,6 +447,7 @@ def test_the_daily_restart_fires_once_in_its_window(world, run, monkeypatch) -> 
         await cycle(manager, clock)
         at = datetime.fromtimestamp(clock.now).replace(hour=3, minute=0, second=0)
         clock.now = at.timestamp()
+        manager.started = clock.now - 86400  # up a day: not fresh
         await cycle(manager, clock)
         assert manager.phase == "running"  # before the slot
         clock.now = at.replace(hour=4, minute=10).timestamp()
@@ -429,6 +458,7 @@ def test_the_daily_restart_fires_once_in_its_window(world, run, monkeypatch) -> 
         for _ in range(3):
             state.connected = True
             await cycle(manager, clock, 1)
+        manager.started = clock.now - 86400
         clock.now = at.replace(hour=4, minute=20).timestamp()
         await cycle(manager, clock)
         assert manager.phase == "running"
@@ -456,6 +486,7 @@ def test_a_daily_restart_close_to_midnight_is_still_due_just_after_it(world, run
         await cycle(manager, clock)
         evening = datetime.fromtimestamp(clock.now).replace(hour=23, minute=40, second=0)
         clock.now = evening.timestamp()
+        manager.started = clock.now - 86400  # up a day: not fresh
         await cycle(manager, clock)
         assert manager.phase == "running"  # before the slot
         clock.now = (evening + timedelta(minutes=25)).timestamp()  # 00:05, the next day
@@ -873,6 +904,7 @@ def test_a_planned_restart_goes_with_the_daily_restart_that_did_it(world, run) -
         at = datetime.fromtimestamp(clock.now).replace(hour=3, minute=50, second=0)
         clock.now = at.timestamp()
         await bring_up(fleet, manager, clock, state)
+        manager.started = clock.now - 86400  # up a day: a daily restart isn't skipped as fresh
         state.players[1] = Player(1, "Alice", ALICE)
         state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
         lifecycle.add_job(SERVER, StoppedJob("workshop", "installing new Workshop versions", swap))
@@ -1012,6 +1044,8 @@ def test_a_stop_that_leaves_the_process_running_isnt_called_a_stop(world, run, c
         assert finished and fleet.unstoppable() == [SERVER]  # told, not left waiting for ever
         assert manager.row(1, clock.now)["detail"].startswith("! couldn't stop it")
         assert "server.adopted" not in seen
+        assert not manager.restart(immediate=True).ok  # Huragok is going: nothing restarts (audit 2026-11, 1.1)
+        fleet.stopping_all = False  # as if it had stayed: what follows is about a restart whose stop fails
         assert manager.restart(immediate=True).ok
         for _ in range(3):
             await cycle(manager, clock, 1)
@@ -1127,7 +1161,7 @@ class RestartCommandBackend(FakeBackend):
         await self.gate.wait()
 
 
-def test_a_stop_during_the_restart_command_is_honoured_and_the_budget_applies(tmp_path, monkeypatch, run) -> None:
+def test_a_stop_during_the_restart_command_is_honoured_and_many_restarts_still_restart(tmp_path, monkeypatch, run) -> None:
     clock, settings, backend, fleet, manager, client, state, seen = build_world(
         tmp_path, monkeypatch, backend_type=RestartCommandBackend)
     lifecycle = Lifecycle(fleet)
@@ -1142,14 +1176,16 @@ def test_a_stop_during_the_restart_command_is_honoured_and_the_budget_applies(tm
         for _ in range(2):
             await cycle(manager, clock, 1)
         assert manager.phase == "idle" and manager.record.wanted == "stopped" and backend.stops == [SERVER]
-        # Over the hourly budget: not restarted again (nothing could stop a loop of them otherwise).
+        # Many restarts in the hour: still restarted (there's no budget since 0.6.0)
         assert manager.start().ok
         for _ in range(2):
             await cycle(manager, clock, 1)
         assert manager.phase == "running"
-        manager.record.restart_times = [clock.now - 100 * i for i in range(1, 4)]
+        manager.record.restart_times = [clock.now - 100 * i for i in range(1, 8)]
         await lifecycle.restart(SERVER, reason="the server is struggling", countdown=0, by="Watchdog")
-        assert manager.phase == "running" and backend.restarts == 1
+        assert manager.phase == "restarting"
+        await cycle(manager, clock, 1)
+        assert backend.restarts == 2
 
     run(scenario())
 
@@ -1246,6 +1282,7 @@ def test_a_daily_restart_in_the_hour_the_clocks_skip_still_happens(world, run) -
         async def scenario() -> None:
             clock.now = datetime(2026, 3, 29, 0, 50).timestamp()  # 01:00 GMT is 02:00 BST that night
             await bring_up(fleet, manager, clock, state)
+            manager.started = clock.now - 86400  # up a day: not skipped as fresh
             for _ in range(24):
                 await cycle(manager, clock, 300)
                 if manager.record.daily_last_fired:
@@ -1349,3 +1386,153 @@ def test_a_playlists_labels_are_written_as_the_program_about_to_run_calls_them(w
         run(scenario())
     assert "old.playlist.json: 'Vanilla characters' is now 'Halo 3', as Project Reclaimer 0.9.19 calls them" \
         in caplog.text
+
+
+def test_a_restart_asked_during_a_failed_starts_clean_up_isnt_announced_as_one(world, run) -> None:
+    """R (or S) while a start that never came up was being stopped kept "coming back": the next first start was posted
+    as "It restarted", with an old reason, not "It's up" (audit 2026-11, 1.6)."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        clock.now += 31  # ready_seconds passed with no sign of it: the start failed, and it's being stopped
+        manager.tick(clock.now)
+        assert manager.phase == "stopping" and manager.failing
+        assert manager.restart().ok
+        await asyncio.sleep(0.01)
+        await cycle(manager, clock)
+        assert manager.phase == "backoff" and not manager.coming_back
+        await cycle(manager, clock, 6)
+        state.connected = True
+        await cycle(manager, clock, 1)
+        assert manager.phase == "running"
+        assert "server.ready" in seen and "server.restarted" not in seen
+
+    run(scenario())
+
+
+def test_a_server_whose_players_arent_read_yet_isnt_taken_for_empty(world, run) -> None:
+    """The console sends no list of players as it connects: until the first `players` reply, an empty list isn't an
+    empty server, and a restart then skipped the players' countdown on a full one (audit 2026-11, 1.8)."""
+    from types import SimpleNamespace
+
+    from huragok.servers.state import StateTracker
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players_known = False  # Huragok has just (re)connected to a server full of players
+        assert manager.restart(manual=False, reason="the daily restart").ok
+        assert manager.phase == "countdown" and manager.countdown is not None and manager.countdown.step != "go"
+        assert manager.cancel().ok
+        state.players_known = True  # read, and nobody's on
+        assert manager.restart(manual=False, reason="the daily restart").ok
+        assert manager.countdown is None or manager.countdown.step == "go"
+
+    run(scenario())
+    bus = EventBus()
+    tracker = StateTracker(bus, {})
+    known = tracker.add("Alpha", SimpleNamespace(connected=False))
+    bus.emit("rcon.connected", "Alpha", version="0.9.23")
+    assert known.connected and not known.players_known and not known.empty
+    tracker._apply_players(known, {"players": []})
+    assert known.players_known and known.empty
+    bus.emit("rcon.disconnected", "Alpha")
+    assert not known.players_known and not known.empty
+
+
+def test_a_faulted_server_with_only_a_restart_command_tries_again_by_restarting(world, run) -> None:
+    """A command backend with only `restart` set can't start: its FAULTED server waited "tries again in 0s" for good
+    (audit 2026-11, 1.7). Its try is a restart (Backend.revive)."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    revived: list[str] = []
+
+    async def revive(server: Any) -> None:
+        revived.append(server.name)
+        backend.up.add(server.name)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        backend.can_start, backend.restart_only = False, True
+        backend.revive = revive  # type: ignore[method-assign]
+        backend.up.discard(SERVER)
+        state.connected = False
+        manager._enter_faulted("it kept crashing")
+        manager.record.retry_at = clock.now - 1
+        await cycle(manager, clock, 1)
+        await cycle(manager, clock, 1)
+        assert revived == [SERVER] and manager.phase in ("booting", "running")
+
+    run(scenario())
+
+
+def test_a_cancelled_restart_doesnt_count_towards_the_hourly_budget(world, run) -> None:
+    """Counted as its countdown began, a restart cancelled stayed in the budget: a few cancelled watchdog restarts
+    could FAULT a server that had never restarted (audit 2026-11)."""
+    from huragok.servers.state import Player
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)  # someone on: a countdown, which can be cancelled
+        assert manager.restart(manual=False, reason="the watchdog").ok
+        assert manager.phase == "countdown" and len(manager.record.restart_times) == 1
+        assert manager.cancel().ok
+        assert manager.record.restart_times == []
+
+    run(scenario())
+
+
+def test_a_crash_the_program_restarts_by_itself_doesnt_end_the_planned_game(world, run) -> None:
+    """The server program restarting its server after a game crash isn't an exit Huragok sees: the plan stayed with the
+    crashed game in `playing`, and the new run's first lobby counted as that game's end, restarting it as players came
+    back (audit 2026-11, 8.3). The plan (and its jobs, which that restart didn't run) waits for the next game's end."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lifecycle = Lifecycle(fleet)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Valhalla", "mode": "Slayer"}))
+        await lifecycle.restart(SERVER, when="after_game", reason="a Workshop update")
+        fleet.bus.emit("server.crashed", SERVER, reason="the game crashed", wait="5 s", kind="other")
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "no_game", "map": "Guardian", "mode": "Slayer"}))
+        assert manager.countdown is None and manager.planned is not None  # still planned, not fired now
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Guardian", "mode": "Slayer"}))
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "finished", "map": "Guardian", "mode": "Slayer"}))
+        assert manager.planned is None and manager.phase == "countdown"  # after that game
+
+    run(scenario())
+
+
+def test_faulted_and_its_next_try_outlast_huragoks_own_restart(world, run) -> None:
+    """Reset as Huragok started again (a self-update), an autostart server's FAULTED and its cool-downs were gone, so
+    it was tried at once; one that doesn't autostart lost its try. Both stay as they were now (the host, 2 Nov 2026)."""
+    from huragok.servers.fleet import Fleet
+
+    clock, settings, backend, fleet, manager, client, state, seen = world  # max_failures = 2, retries [30, 60] min
+
+    async def scenario() -> None:
+        backend.fail_start = True
+        fleet.boot()
+        await cycle(manager, clock)
+        await cycle(manager, clock, 5)
+        assert manager.phase == "faulted"
+        retry_at, reason = manager.record.retry_at, manager.record.fault_reason
+        await cycle(manager, clock, 600)  # ten minutes into its half-hour cool-down, Huragok starts again
+        again = Fleet(settings, backend, fleet.bus)
+        second = again.add(settings.servers[0], client, state)  # type: ignore[arg-type]
+        again.boot()
+        await cycle(second, clock)
+        assert second.phase == "faulted" and backend.starts == []  # not tried at once
+        assert second.record.retry_at == retry_at and second.record.fault_reason == reason
+        await cycle(second, clock, retry_at - clock.now - 1)
+        assert backend.starts == []
+        backend.fail_start = False
+        await cycle(second, clock, 1)  # its try, when it was due
+        assert second.record.retries == 1 and backend.starts == [SERVER]
+
+    run(scenario())

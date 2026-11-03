@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from conftest import free_port, staff, write_root
+from conftest import free_port, staff, wait_for, write_root
 from testkit import DATA
 from testkit.fleet import SERVER, cycle, world
 from testkit.manage import StubClient
@@ -207,7 +207,7 @@ def test_an_odst_game_is_picked_from_lists(tmp_path: Path, run, monkeypatch) -> 
     run(menu.screen_settings())
     text = text_of(terminal)
     assert "now plays ODST Firefight Crater (Night), Ff Classic (heroic)" in text
-    assert "max_players is 24 (this server)" in text and "max_players = 16 written for this server" in text
+    assert "max_players is 24 (this server)" in text and "max_players to 16 with it?" in text  # written with the switch (7.4)
     assert "now plays ODST campaign Mombasa Streets, start 3 (legendary)" in text
     assert "Now: ODST Firefight Crater (Night), Ff Classic (heroic)" in text
     block = read_toml(server.config_path)["server"][0]
@@ -316,6 +316,12 @@ def test_the_console_join_event_is_a_join(run) -> None:
         def server(self, name: str) -> ServerState:
             return ServerState(name, max_players=16)
 
+        def run_started(self, name: str) -> float | None:
+            return None  # not known: settled
+
+        def restart_setting(self, name: str, key: str) -> float:
+            return 900.0
+
     watchdog = Watchdog.__new__(Watchdog)
     watchdog.config = Watchdog.resolve(dict(Watchdog.defaults))
     watchdog.ctx = Ctx()  # type: ignore[assignment]
@@ -410,7 +416,8 @@ def test_a_server_starts_with_its_playlists_labels_renamed(world, run, caplog) -
         caplog.set_level(logging.INFO)
         fleet.boot()
         await cycle(manager, clock)
-        assert backend.starts == [SERVER]
+        # The labels are put right in a thread before the start: a busy machine (CI's) takes longer than a cycle
+        await wait_for(lambda: backend.starts == [SERVER], timeout=15)
 
     run(scenario())
     assert '"Halo 3"' in (folder / "old.playlist.json").read_text(encoding="utf-8")

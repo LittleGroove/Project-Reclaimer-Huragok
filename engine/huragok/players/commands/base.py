@@ -16,17 +16,37 @@ from ..router import CommandCall
 from ..targets import FOREVER, TIME
 
 if TYPE_CHECKING:
-    from collections import deque
-
     from ...core.events import Event
     from ..targets import Candidate
-    from .lists import Kick
+    from .lists import KeptKicks, Kick
 
 MAX_REPLY_LINES = 8
 
 
 class CommandsBase(Part):
     defaults = {"max_reply_lines": MAX_REPLY_LINES}
+
+    def lift_outranked(self, call: CommandCall, target_id: str, kind: str, what: str) -> str:
+        """Why the caller can't lift this (their latest `kind` on the ledger), or "": lifting takes the rank of
+        whoever gave it (the host's call, 2 Nov 2026). Vergil's own, a vote's or the server's have no rank, and
+        anyone who can lift can lift them, as can what was given before 0.6.0 kept ranks."""
+        from ..ledger import is_housekeeping
+        from ..roles import a_role
+
+        rows = self.ctx.db.query(
+            "SELECT by, by_role, evidence FROM actions WHERE target_id = ? AND kind = ? AND ok = 1 AND dry_run = 0 "
+            "ORDER BY number DESC LIMIT 20", (target_id.lower(), kind))
+        row = next((r for r in rows if not is_housekeeping(r["evidence"])
+                    and not str(r["evidence"] or "").startswith(("still muted:", "kicked on "))), None)
+        return self.outranked_by(call, row["by_role"] if row is not None else "", row["by"] if row is not None else "",
+                                 what, a_role)
+
+    @staticmethod
+    def outranked_by(call: CommandCall, role: Any, by: Any, what: str, a_role: Any) -> str:
+        role = str(role or "")
+        if role in ROLES and call.role in ROLES and ROLES.index(call.role) < ROLES.index(role):
+            return f"{by or 'Someone'} gave that {what}, and lifting it takes {a_role(role)} or above."
+        return ""
 
     def kick_too_long(self, role: str, duration: str) -> str:
         """Why this kick is longer than someone of this rank can give ([automod] moderators_kick_at_most): a long one is a ban in all but name. "" if it isn't."""
@@ -89,6 +109,14 @@ class CommandsBase(Part):
         if words and words[0].lower() in FOREVER:
             return None, words[1:], True
         return None, words, False
+
+    @staticmethod
+    def _no_time(duration: str | None) -> str:
+        """Why a time given can't be used: 0 lasts no time, and the server may read a ban of 0 as one with no end (a
+        moderator's `!kick X 0m` a ban for good, audit 2026-11, 5.7). "" when it's fine, or none was given."""
+        if duration and seconds_of(duration) <= 0:
+            return f"{duration} lasts no time: give a time like 30m, or none."
+        return ""
 
     # What one group of commands asks of another: declared here, defined by the group named. Commands (__init__.py)
     # is every group, so each call reaches the real one; a group's own methods stay its own.
@@ -173,7 +201,7 @@ class CommandsBase(Part):
         the caller to pick (several entries with that name) or telling them why not."""
         raise NotImplementedError("ListCommands's")
 
-    def _kicks_list(self) -> deque[Kick]:
+    def _kicks_list(self) -> KeptKicks:
         raise NotImplementedError("ListCommands's")
 
     def recent_kicks(self, server: str | None = None) -> list[Kick]:

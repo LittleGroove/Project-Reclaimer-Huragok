@@ -9,7 +9,7 @@ from typing import Any, Iterator
 import pytest
 
 from test_bot_running import OTHER, _components, answer_text
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
 from testkit.running import SERVER, fleet, running, wait_for
 
 from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_mode, set_switch, set_token
@@ -186,6 +186,7 @@ def test_an_alert_has_a_way_to_it(tmp_path: Path, run: Any, fake: FakeDiscord) -
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, _, _):
             await up(huragok, Manager())
+            await wait_for(lambda: huragok_started(fake), timeout=20)  # its own card first, out of the way
             huragok.bus.emit("server.crashed", SERVER, why="exit code 3")
             await wait_for(lambda: fake.posted, timeout=15)
             post = fake.posted[0]

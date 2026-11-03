@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -70,12 +71,12 @@ def open_log_window(home: Path, arguments: list[str], title: str) -> str:
         except OSError as error:
             return f"couldn't open a window ({error}); run in another terminal: start.cmd {' '.join(arguments)}"
     launcher = home / "start.sh"
-    line = f"{launcher} {' '.join(arguments)}"
+    line = f"{shlex.quote(str(launcher))} {' '.join(arguments)}"  # a home folder with a space in it (audit 2026-11, 7.9)
     for program, flags in (("x-terminal-emulator", ["-e"]), ("gnome-terminal", ["--"]), ("konsole", ["-e"]),
                            ("xfce4-terminal", ["-e"]), ("xterm", ["-e"])):
         if shutil.which(program) and os.environ.get("DISPLAY"):
             try:
-                args = [program, *flags, "sh", "-c", line] if flags != ["-e"] else [program, "-e", f"sh -c '{line}'"]
+                args = [program, *flags, "sh", "-c", line] if flags != ["-e"] else [program, "-e", f"sh -c {shlex.quote(line)}"]
                 subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return f"opened a {program} window: {title}"
             except OSError:
@@ -175,6 +176,10 @@ def linux_startup_unit(home: Path) -> str:
         "[Unit]\nDescription=Huragok\nAfter=network-online.target\n\n"
         f"[Service]\nWorkingDirectory={str(home).replace('%', '%%')}\n"
         f"ExecStart={systemd_quote(str(home / 'start.sh'))} start --no-menu\n"
+        # Only Huragok's start loop is told to stop (it passes that on; Huragok closes and leaves the servers running).
+        # With systemd's default, every server in the unit's control group was killed with it, mid-game, as the
+        # service stopped or its user logged out (audit 2026-11, 1.3).
+        "KillMode=process\n"
         "Restart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n")
 
 

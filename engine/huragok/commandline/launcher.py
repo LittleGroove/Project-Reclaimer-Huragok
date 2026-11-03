@@ -129,7 +129,9 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
         out.fail(f"Huragok is already running from this folder (process {error.pid}). To stop it: {LAUNCHER} stop")
         return ALREADY_RUNNING
     crashes = 0
-    updated_from: str | None = None  # the version an update replaced, while the new one proves it starts
+    # The version an update replaced, while the new one proves it starts: also one installed before this loop began
+    # (offline, or by a Huragok closed during its relaunch's wait) that hasn't yet run long enough (audit 2026-11, 3.2).
+    updated_from: str | None = _unproven(home)
     code = 0
     try:
         while True:
@@ -143,13 +145,13 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
                 code = FAILED
             ran = _clock() - started
             child = None
+            now_on_disk = _version_on_disk(home)
+            # Installed while it ran (start.cmd update, then a crash or a close during the relaunch's wait): the next
+            # start is the new version's first, as after a relaunch.
+            installed_meanwhile = code != RELAUNCH and bool(version) and bool(now_on_disk) and now_on_disk != version
             if stopping or code in DELIBERATE:
                 return code
-            try:
-                lock.take(settings, launcher=True)  # hold the folder while Huragok starts again
-            except AlreadyRunning as error:
-                _say(settings, "WARNING", f"Another Huragok (process {error.pid}) runs from this folder now; this "
-                                          "one leaves it to that.")
+            if not _hold(settings):  # the folder held while Huragok starts again
                 return code
             if code == RELAUNCH:
                 updated_from = version or __version__
@@ -163,6 +165,8 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
                     continue
             else:
                 updated_from = None
+            if installed_meanwhile:
+                updated_from = version
             if code == SETTINGS_PROBLEM:
                 if not args.no_menu:
                     return code  # the window shows the problem (and --hold keeps it open)
@@ -173,15 +177,11 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
                 before = mtime(settings.path)
                 # Nothing here could answer start.cmd stop or status meanwhile, so the folder is let go: they see
                 # Huragok isn't running and act by themselves (stop stops the servers itself).
-                lock.release(held)
+                _let_go(settings, held)
                 if not _pause(SETTINGS_RETRY_SECONDS, stopped=lambda: stopping,
                               wake=lambda: mtime(settings.path) != before):
                     return code
-                try:
-                    lock.take(settings, launcher=True)
-                except AlreadyRunning as error:
-                    _say(settings, "WARNING", f"Another Huragok (process {error.pid}) runs from this folder now; "
-                                              "this one leaves it to that.")
+                if not _hold(settings):
                     return code
                 continue
             else:
@@ -197,7 +197,32 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
             if not _pause(wait, stopped=lambda: stopping, wake=wake):
                 return code
     finally:
+        _let_go(settings, held)
+
+
+def _hold(settings: Settings) -> bool:
+    """The folder's lock taken back for the next start. False: another Huragok runs from this folder now. A lock
+    that can't be written (a full disk, the likely reason Huragok stopped) is said, and Huragok is started anyway:
+    it fails and is tried again after the wait, rather than this loop ending for good (audit 2026-11, 3.4)."""
+    try:
+        lock.take(settings, launcher=True)
+    except AlreadyRunning as error:
+        _say(settings, "WARNING", f"Another Huragok (process {error.pid}) runs from this folder now; this one leaves it "
+                                  "to that.")
+        return False
+    except OSError as error:
+        _say(settings, "ERROR", f"Couldn't hold this folder's lock ({error.strerror or error}): is the disk full? "
+                                "Starting Huragok again anyway.")
+    return True
+
+
+def _let_go(settings: Settings, held: Path) -> None:
+    """The lock given up; one that can't be (held open elsewhere for long) is said, never a traceback."""
+    try:
         lock.release(held)
+    except OSError as error:
+        _say(settings, "WARNING", f"Couldn't let go of this folder's lock ({error.strerror or error}); the next start "
+                                  "clears it")
 
 
 def _put_back(settings: Settings, previous: str, failed: str | None, code: int, ran: float) -> bool:
@@ -302,6 +327,16 @@ def _tell_discord(settings: Settings, why: str, wait: float) -> None:
         discord_rest.execute_webhook(address, payload, timeout=LAUNCHER_POST_SECONDS)
     except (discord_rest.DiscordError, OSError) as error:
         _launcher_log(settings, settings.home, "WARNING", f"Couldn't tell Discord: {error}")
+
+
+def _unproven(home: Path) -> str | None:
+    """The version to put back if the one on disk fails at once: its install's record says it hasn't proven itself."""
+    from ..updates import engine
+
+    try:
+        return engine.unproven(home, _version_on_disk(home))
+    except Exception:  # noqa: BLE001 - never a reason for the start loop not to start
+        return None
 
 
 def _version_on_disk(home: Path) -> str | None:

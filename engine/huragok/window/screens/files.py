@@ -59,6 +59,7 @@ LADDERS: list[tuple[str, list[str], int | None, int | None, list[str], int | Non
     ("muted: 1 day, then 3 days, then 7 days each time", ["1d", "3d", "7d"], None, None, [], None),
     ("muted 1 day, then 7 days, then out 1 day, then banned for good", ["1d", "7d"], None, 2, ["1d"], 3),
     ("banned for good the first time", [], None, 0, [], 0),
+    ("only reports: nothing in game, a ticket for the staff on Discord each time", [], None, None, [], None),
 ]
 
 
@@ -768,10 +769,16 @@ class FileScreens(Screens):
             except (RuleError, OSError):
                 rules = []
             mode = options.get("name_match", "anywhere")
-            hit = next(iter(Matcher(rules, names=mode if mode in NAME_MATCHES else "anywhere").find(text)), None)
-            self.note(f"Kicked as they join: it has '{hit.found}' in it, the word list's {hit.word} "
-                      f"({hit.rule.label or hit.rule.name} line)." if hit else "That name is fine.",
-                      "yellow" if hit else "green")
+            hits = Matcher(rules, names=mode if mode in NAME_MATCHES else "anywhere").find(text)
+            hit = next((h for h in hits if not h.rule.reports), None) or next(iter(hits), None)  # a kick before a question
+            if hit is not None and hit.rule.reports:
+                line_name = hit.rule.label or hit.rule.name
+                self.note(f"Not kicked: it has '{hit.found}' in it, the word list's {hit.word} ({line_name} line), a "
+                          "line that only reports, so the staff are asked whether to ban the name or allow it.", "yellow")
+            else:
+                self.note(f"Kicked as they join: it has '{hit.found}' in it, the word list's {hit.word} "
+                          f"({hit.rule.label or hit.rule.name} line)." if hit else "That name is fine.",
+                          "yellow" if hit else "green")
         else:
             self.note("That name is fine.", "green")
         await self.wait_any_key(8)
@@ -871,6 +878,15 @@ class FileScreens(Screens):
                 return
             package = packages[int(answer) - 1]
             switch_off = not is_disabled(off, package)
+            # A content folder other servers share has one mod list: what's switched here is switched for them too,
+            # and one whose playlist uses the mod may not start (audit 2026-11, 7.2)
+            sharing = self._sharing_content(settings, server, root)
+            if sharing:
+                self.note(f"{', '.join(sharing)} share{'s' if len(sharing) == 1 else ''} this content folder: the mod is "
+                          f"switched {'off' if switch_off else 'on'} for them too. O on the server's page gives it a "
+                          "folder of its own.", "yellow")
+                if switch_off and not await self.prompt_yes_no(f"  Switch it off for {', '.join(sharing)} too?", False):
+                    continue
             try:
                 set_mod_disabled(root, package, switch_off)
             except (DisabledModsError, OSError) as error:
@@ -879,6 +895,19 @@ class FileScreens(Screens):
                 continue
             self.note(f"{mods[int(answer) - 1].title} switched {'off' if switch_off else 'on'}.", "green")
             await self._offer_restart(row, server.name, _Change("mods", "restart"))
+
+    def _sharing_content(self, settings: Any, server: Any, root: Path) -> list[str]:
+        """The other servers whose content folder is this one."""
+        found = []
+        for other in settings.servers:
+            if other is server or other.name == server.name:
+                continue
+            try:
+                if content_root_of(other.folder, settings.config_name).resolve() == root.resolve():
+                    found.append(other.name)
+            except OSError:
+                continue
+        return found
 
     async def _server_page_extra(self, settings: Any, server: Any, row: Row, key: str) -> None:
         """D's letters for what a server has besides its dedicated.toml settings."""

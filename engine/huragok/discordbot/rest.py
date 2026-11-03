@@ -131,7 +131,11 @@ def send(method: str, url: str, *, token: str = "", body: Any = None, timeout: f
             return Reply(json.loads(raw) if raw else None, int(remaining) if remaining is not None else None,
                          _number(answer.headers.get("X-RateLimit-Reset-After")))
     except urllib.error.HTTPError as error:
-        raw = error.read(MAX_ANSWER)
+        try:
+            raw = error.read(MAX_ANSWER)
+        except (OSError, ValueError) as unread:  # the answer's body cut off (a timeout, a reset): tried again later,
+            # not dropped as an error nobody expected (audit 2026-11, 6.5)
+            raise Unreachable(f"couldn't read Discord's answer ({error.code}): {type(unread).__name__}") from None
         text, code = _problem(error.code, raw)
         if error.code == 401 and token:  # without one, it's a webhook's address that's wrong, which says nothing about the bot's token
             raise BadToken(f"Discord refused the token: {text}", status=401, code=code) from None

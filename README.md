@@ -291,8 +291,8 @@ on anything else:
   then 10, 30, 60, 300). Dying within `good_run_seconds` of starting counts as a
   failed start; `max_failures` (5) of those in a row mean **FAULTED**: the
   window says so, `logs/faulted-<server>.txt` holds the reason and the last
-  console lines. More than `restarts_per_hour` (6) automatic restarts in an hour
-  mean FAULTED too: something is looping. FAULTED is a pause, not the end: the
+  console lines. Restarts that do their job (an update, the watchdog) aren't
+  limited: many in an hour are only said in the log. FAULTED is a pause, not the end: the
   Superintendent tries once more after 30 minutes, then every hour
   (`faulted_retry_minutes`), until a run lasts; the server's line shows when.
   **S** starts it at once.

@@ -36,8 +36,11 @@ class AlreadyRunning(Exception):
 
 
 def process_alive(pid: int, create_time: float) -> bool:
+    """That process (its start time matches, so a reused number doesn't count) is still running. Within 3 s, not 1:
+    on Linux psutil works the start time out from the boot time, which the clock's corrections move by a second, and
+    a running Huragok taken for gone would let a second one take its lock (audit 2026-11, 1.9)."""
     try:
-        return abs(psutil.Process(pid).create_time() - create_time) < 1
+        return abs(psutil.Process(pid).create_time() - create_time) < 3
     except psutil.Error:
         return False
 
@@ -220,4 +223,11 @@ def release(path: Path) -> None:
     lent = lock.get("launched_by")
     if isinstance(lent, dict) and live_pid(lent) is not None and _replace(path, json.dumps(lent)):
         return
-    path.unlink(missing_ok=True)
+    for tries_left in reversed(range(40)):  # Windows: `status`, or a second window, reading it this moment
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if not tries_left:
+                raise
+            time.sleep(0.05)

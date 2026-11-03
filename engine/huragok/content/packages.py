@@ -122,7 +122,7 @@ def load_package(folder: Path) -> Package:
             data = tomllib.load(file)
     except FileNotFoundError:
         raise PackageError(f"{folder} has no {PACKAGE_FILE}") from None
-    except (OSError, tomllib.TOMLDecodeError) as error:
+    except (OSError, ValueError) as error:  # TOML's own, and a file that isn't UTF-8
         raise PackageError(f"{path}: {error}") from None
     version = data.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool):
@@ -301,7 +301,7 @@ def save_package(server_folder: Path, server_name: str, dest: Path, *, config_na
     config = server_folder / config_name
     try:
         data = read_toml(config)
-    except (OSError, tomllib.TOMLDecodeError) as error:
+    except (OSError, ValueError) as error:  # TOML's own, and a file that isn't UTF-8
         raise PackageError(f"{config}: {error}") from None
     block = next((b for b in data.get("server", []) if str(b.get("name", "")).lower() == server_name.lower()), None)
     if block is None:
@@ -329,10 +329,13 @@ def save_package(server_folder: Path, server_name: str, dest: Path, *, config_na
         for item in referenced:
             if item not in package.workshop_items:
                 package.workshop_items.append(item)
+        inside, into = content_root.resolve(), (dest / "content").resolve()
         for relative in files:
-            path = content_root / relative
-            if path.is_file():
-                copy = dest / "content" / relative
+            path = (content_root / relative).resolve()
+            copy = (dest / "content" / relative).resolve()
+            # A playlist naming "../../x.json" was read from outside its content folder, and copied outside the
+            # package, out of PACKAGES/ even (audit 2026-11, 7.9): only what's inside both
+            if path.is_file() and path.is_relative_to(inside) and copy.is_relative_to(into):
                 copy.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, copy)
     for key in ("variant", "game", "map"):

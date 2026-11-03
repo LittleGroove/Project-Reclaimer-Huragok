@@ -22,14 +22,21 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from ..core.files import write_atomic
 from ..core.serverfolders import slug_taken, slugify
 from ..core.tomledit import read_toml, server_blocks, set_server_setting, set_top_key
+from ..games.byplayers import FILE as BY_PLAYERS
+from ..games.byplayers import ByPlayersError
+from ..games.byplayers import rename as rename_by_players
 
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
     from ..core.settings import Settings
 
 Say = Callable[[str], None]
+# Copied, never hard-linked, into a server's own content folder: small files written in place (disabled-mods.json),
+# which through a link went on changing the shared folder's (audit 2026-11, 7.1)
+OWN_COPIES = {".json", ".toml", ".txt"}
 STOPPED = ("idle", "faulted", "offline")  # phases where nothing starts the server by itself
 _NOT_STOPPED = {"backoff": "the Superintendent is about to restart it (backoff)", "launch": "it's starting",
                 "preparing": "it's starting (jobs before the start)", "booting": "it's starting",
@@ -85,6 +92,7 @@ def rename_server(settings: Settings, server: ServerConfig, new_name: str, say: 
         raise ServerOpError(f"{server.config_path.name} has no [[server]] block named {old} now (changed since the "
                             "window read it?): nothing was changed; go back and pick it again")
     folder, config, data_dir = server.folder, server.config_path, server.data_dir
+    old_folder = folder
     undo: list[tuple[str, Callable[[], object]]] = []
     try:
         if (settings.servers_folder is not None and folder.parent == settings.servers_folder.resolve()
@@ -113,14 +121,30 @@ def rename_server(settings: Settings, server: ServerConfig, new_name: str, say: 
             undo.append((f"its block in {settings.path.name}",
                          lambda: set_server_setting(settings.path, new_name, "name", old)))
             say(f"{settings.path.name}: its [[server]] block renamed")
-        for source, target in ((data_dir, data_dir.with_name(new_slug)),
-                               (settings.record_file(old_slug), settings.record_file(new_slug)),
-                               (settings.console_log(old_slug), settings.console_log(new_slug))):
-            if source.name.startswith(old_slug) and source.exists() and not target.exists() and old_slug != new_slug:
+        try:
+            by_players = rename_by_players(folder, old, new_name)
+        except ByPlayersError as error:
+            say(f"its playlists by player count stay under {old}: {error}")
+            by_players = False
+        if by_players:
+            undo.append((f"its block in {BY_PLAYERS}", lambda: rename_by_players(folder, new_name, old)))
+            say(f"{BY_PLAYERS}: its [[server]] block renamed")
+        # Everything of Huragok's under its slug. Only its data folder is checked for being named after it: the
+        # console log (console-<slug>.log) never moved, and the FAULTED record and playlist history were left
+        # under the old name (audit 2026-11, 7.6)
+        moves = [(data_dir, data_dir.with_name(new_slug))] if data_dir.name.startswith(old_slug) else []
+        moves += [(settings.record_file(old_slug), settings.record_file(new_slug)),
+                  (settings.console_log(old_slug), settings.console_log(new_slug)),
+                  (settings.faulted_file(old_slug), settings.faulted_file(new_slug)),
+                  (settings.records / "playlists" / old_slug, settings.records / "playlists" / new_slug)]
+        for source, target in moves:
+            if source.exists() and not target.exists() and old_slug != new_slug:
                 os.replace(source, target)
                 undo.append((f"{target.name} back to {source.name}",
                              lambda source=source, target=target: os.replace(target, source)))
                 say(f"moved {source.name} -> {target.name}")
+        if server.content_dir is not None and old_slug != new_slug:
+            _rename_markers(_moved(server.content_dir, old_folder, folder), old_folder, folder, old_slug, new_slug, say)
     except (OSError, ServerOpError) as error:  # a TomlEditError is an OSError
         if not undo:
             raise ServerOpError(str(error)) from None
@@ -138,6 +162,28 @@ def rename_server(settings: Settings, server: ServerConfig, new_name: str, say: 
         say("every step put back as it was")
         raise ServerOpError(f"{error}. Every step was put back: it's still {old}") from None
     return folder
+
+
+def _rename_markers(content_dir: Path, old_folder: Path, folder: Path, old_slug: str, new_slug: str, say: Say) -> None:
+    """A Workshop update's marker for copies it set aside and never put back (Huragok closed mid-fetch) is found by the
+    server's slug, and names where they are: under the new name, with the folder's new place, or they'd never be put
+    back. Not undone with the rest: a marker that can't be moved is said, and the copies stay in the aside folder."""
+    import json
+
+    from ..updates.workshop import MARKER, aside_folders
+
+    for marker in sorted(aside_folders(content_dir).glob(f"{old_slug}-*{MARKER}")):
+        target = marker.with_name(new_slug + marker.name[len(old_slug):])
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            data["moves"] = [[str(_moved(Path(live), old_folder, folder)), str(_moved(Path(aside), old_folder, folder))]
+                             for live, aside in data.get("moves", [])]
+            write_atomic(target, json.dumps(data))
+            marker.unlink()
+        except (OSError, ValueError, AttributeError, TypeError) as error:
+            say(f"{marker.name} (Workshop copies set aside) stays under the old name ({error}): they're in {marker.parent}")
+            continue
+        say(f"moved {marker.name} -> {target.name}")
 
 
 def _is_link(path: Path) -> bool:
@@ -171,6 +217,10 @@ def own_content(settings: Settings, server: ServerConfig, say: Say = print) -> P
             destination.mkdir(parents=True, exist_ok=True)
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.suffix.lower() in OWN_COPIES:  # a list or a setting written in place: a link would still share it
+            shutil.copy2(source, destination)
+            copied += 1
+            continue
         try:
             os.link(source, destination)
             linked += 1

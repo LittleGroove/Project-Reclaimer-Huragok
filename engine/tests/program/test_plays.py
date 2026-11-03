@@ -117,7 +117,7 @@ def test_the_draft_checked_has_no_console_port_or_workshop_items_of_its_own(tmp_
 
     from huragok.core.settings import load
     from huragok.core.tomledit import read_toml, set_server_setting, set_table_key
-    from huragok.program.plays import CHECK_FILE, check_plays
+    from huragok.program.plays import check_plays
 
     server = load(setup_root(tmp_path)).servers[0]
     set_server_setting(server.config_path, server.name, "rcon_port", 49171)
@@ -127,7 +127,7 @@ def test_the_draft_checked_has_no_console_port_or_workshop_items_of_its_own(tmp_
     real = tool.run_sync
 
     def run_sync(folder, *args, **options):
-        drafts.append(read_toml(folder / CHECK_FILE))
+        drafts.append(read_toml(folder / options["config"]))  # each check's own draft (audit 2026-11, 8.4)
         return real(folder, *args, **options)
 
     tool.run_sync = run_sync

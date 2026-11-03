@@ -1024,3 +1024,72 @@ def test_a_stopped_servers_program_older_than_the_release_is_offered_on_u(tmp_pa
     assert ok and message.startswith("server program 0.9.20 installed in 1 place(s); restarting Beta after game")
     assert (root / "SERVERS" / "Beta" / "project-reclaimer.exe").read_bytes() == b"program 0.9.20"
     assert (root / "SERVERS" / "Alpha" / "project-reclaimer.exe").read_bytes() == b"Alpha"
+
+
+def test_a_program_update_works_with_the_servers_on_another_drive(tmp_path: Path, monkeypatch) -> None:
+    """The old program was moved into records/ by a rename, which can't cross drives: with SERVERS on D: and Huragok on
+    C: every program update of those servers failed (audit 2026-11, 3.3). It's renamed beside itself (a running
+    program can be), copied to records/, and the renamed one removed."""
+    import errno
+    import os
+
+    from conftest import free_ports, write_root
+
+    from huragok.program import releases as serverupdates
+    from huragok.program.releases import install_program
+
+    root = tmp_path / "reclaimer"
+    write_root(root, list(zip(("Alpha",), free_ports(1))), 'backend = "attach"\n', staff(), exe=True)
+    program = root / "SERVERS" / "Alpha" / "project-reclaimer.exe"
+    program.write_bytes(b"Alpha old")
+    settings = load(root / "settings.toml")
+    new = tmp_path / "project-reclaimer-dedicated-v0.9.19.exe"
+    new.write_bytes(b"new program")
+    real_replace = os.replace
+
+    def replace(source: Any, target: Any) -> None:
+        if Path(source) == program and settings.records in Path(target).parents:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")  # Windows: WinError 17
+        real_replace(source, target)
+
+    monkeypatch.setattr(serverupdates.os, "replace", replace)
+    install_program(settings, new, "0.9.19")
+    assert program.read_bytes() == b"new program"
+    kept = list((settings.records / "previous-program").rglob("*.exe"))
+    assert [k.read_bytes() for k in kept] == [b"Alpha old"]
+    assert not list(program.parent.glob(".project-reclaimer.exe.previous-*"))  # nothing ran it: removed
+
+
+def test_a_failed_program_update_rolls_back_across_drives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """All or nothing, with the old files on another drive (records/ on C:, SERVERS on D:): the copies already replaced
+    were put back by a rename, which can't cross drives, so they were left on the new program (audit 2026-11, 7.8)."""
+    import errno
+    import os
+
+    from conftest import free_ports, write_root
+
+    from huragok.program import releases as serverupdates
+    from huragok.program.releases import install_program
+
+    root = tmp_path / "reclaimer"
+    names = ("Alpha", "Beta")
+    write_root(root, list(zip(names, free_ports(2))), 'backend = "attach"\n', staff(), exe=True)
+    for name in names:
+        (root / "SERVERS" / name / "project-reclaimer.exe").write_bytes(f"{name} old".encode())
+    settings = load(root / "settings.toml")
+    new = tmp_path / "project-reclaimer-dedicated-v0.9.19.exe"
+    new.write_bytes(b"new program")
+    real_replace = os.replace
+
+    def replace(source: Any, target: Any) -> None:
+        crossing = (settings.records in Path(target).parents) != (settings.records in Path(source).parents)
+        if crossing:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")  # Windows: WinError 17
+        if str(source).endswith(".new") and Path(target).parent.name == "Beta":
+            raise PermissionError(13, "Access is denied", str(target))
+        real_replace(source, target)
+
+    monkeypatch.setattr(serverupdates.os, "replace", replace)
+    with pytest.raises(UpdateError, match=r"couldn't put the new program at .*Beta.*nothing was changed"):
+        install_program(settings, new, "0.9.19")
+    assert [(root / "SERVERS" / n / "project-reclaimer.exe").read_bytes() for n in names] == [b"Alpha old", b"Beta old"]

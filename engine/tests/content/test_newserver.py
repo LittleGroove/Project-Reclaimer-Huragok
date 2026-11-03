@@ -732,3 +732,79 @@ def test_applying_a_package_keeps_the_shared_contents_own_files(tmp_path: Path) 
     copied = apply_package(load_package(package_folder), tmp_path / "Server", shared, kept)
     assert copied == ["content/Maps/new.mvar"] and kept == ["content/Maps/differs.mvar"]
     assert (shared / "Maps" / "differs.mvar").read_bytes() == b"another server's"
+
+
+def test_a_server_sharing_its_folder_with_a_running_one_is_not_renamed(tmp_path: Path, run) -> None:
+    """One dedicated.toml can have several servers: renaming moves the folder under all of them, and own content
+    changes `content` for them all, but only the one picked was checked (audit 2026-11, 7.5)."""
+    settings_path, _ = _rename_root(tmp_path)
+    config = settings_path.parent / "SERVERS" / ALPHA / "dedicated.toml"
+    blocks = server_blocks(config)
+    replace_server_blocks(config, [*blocks, {"name": "Second Server", "port": free_port()}])
+    assert len(load(settings_path).servers) == 2
+
+    class OneRunning(SetupController):
+        def rows(self) -> list[dict[str, Any]]:
+            return [{**row, "phase": "running" if row["name"] == "Second Server" else "idle"} for row in super().rows()]
+
+    controller = OneRunning(settings_path)
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, StrictKeyboard(["1", "ENTER", "N", "ENTER", "x", "ESC", "ESC"]), RecentLog())
+    run(menu.screen_settings())
+    text = "".join(terminal.output)
+    assert "Second Server run from it: stop them first" in text
+    assert config.is_file() and [b["name"] for b in server_blocks(config)] == [ALPHA, "Second Server"]
+
+
+def test_a_rename_takes_everything_under_its_name_along(tmp_path: Path) -> None:
+    """Its console log (whose name doesn't start with the slug), its FAULTED record, its playlist history and a
+    Workshop update's marker for copies set aside were left under the old name (audit 2026-11, 7.6)."""
+    import json
+
+    from huragok.content.serverops import rename_server
+    from huragok.updates.workshop import MARKER, aside_folders
+
+    settings_path, settings = _rename_root(tmp_path)
+    server = settings.servers[0]
+    old = server.slug
+    for path in (settings.console_log(old), settings.faulted_file(old), settings.records / "playlists" / old / "x" / "1.json"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+    server.content_dir.mkdir(parents=True, exist_ok=True)
+    aside = aside_folders(server.content_dir)
+    aside.mkdir(parents=True, exist_ok=True)
+    live, kept = server.content_dir / "Mods" / "Workshop" / "42", aside / f"{old}-42-20261102-010101"
+    (aside / f"{old}-20261102-010101{MARKER}").write_text(json.dumps({"server": server.name, "moves": [[str(live), str(kept)]]}), encoding="utf-8")
+    rename_server(settings, server, "Gamma Server", say=lambda _text: None, phase="idle")
+    renamed = load(settings_path)
+    new = next(s for s in renamed.servers if s.name == "Gamma Server")
+    assert new.slug != old
+    for path in (renamed.console_log(new.slug), renamed.faulted_file(new.slug), renamed.records / "playlists" / new.slug / "x" / "1.json"):
+        assert path.is_file(), path
+    assert not renamed.console_log(old).exists() and not renamed.faulted_file(old).exists()
+    markers = list(aside_folders(new.content_dir).glob(f"*{MARKER}"))
+    assert [m.name for m in markers] == [f"{new.slug}-20261102-010101{MARKER}"]
+    moves = json.loads(markers[0].read_text(encoding="utf-8"))["moves"]
+    folder_moved = new.folder != server.folder
+    assert moves == [[str(new.content_dir / "Mods" / "Workshop" / "42") if folder_moved and server.content_dir.is_relative_to(server.folder) else str(live),
+                      str(aside_folders(new.content_dir) / f"{old}-42-20261102-010101") if folder_moved and aside.is_relative_to(server.folder) else str(kept)]]
+
+
+def test_a_saved_package_never_copies_from_or_to_outside_its_folders(tmp_path: Path) -> None:
+    """A playlist naming "../../x.json" was copied from outside the content folder to outside the package, out of
+    PACKAGES/ even (audit 2026-11, 7.9)."""
+    root = tmp_path / "reclaimer"
+    server = root / "SERVERS" / "Snipers"
+    make_server_folder(server, "Snipers", free_port())
+    config = server / "dedicated.toml"
+    set_top_key(config, "content", "../../content")
+    (root / "content" / "Game Modes").mkdir(parents=True)
+    (root / "content" / "Game Modes" / "snipers.json").write_text("{}", encoding="utf-8")
+    (root / "secret.json").write_text('{"not": "content"}', encoding="utf-8")
+    (server / "playlists").mkdir(exist_ok=True)
+    (server / "playlists" / "odd.playlist.json").write_text(json.dumps({"games": [
+        {"map": "Guardian", "game": "Game Modes/snipers.json"}, {"map": "Guardian", "game": "../secret.json"}]}), encoding="utf-8")
+    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "playlist": "playlists/odd.playlist.json"}])
+    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "odd")
+    assert (package.folder / "content" / "Game Modes" / "snipers.json").is_file()
+    assert not (package.folder / "secret.json").exists() and not list((tmp_path / "PACKAGES").rglob("secret.json"))

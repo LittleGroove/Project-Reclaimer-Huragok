@@ -102,7 +102,7 @@ class StaffCommands(app_commands.Group):
 
     async def _player(self, interaction: discord.Interaction, text: str) -> PlayerRecord | None:
         """Who they meant: picked from the list, or typed, if only one player has gone by that."""
-        found = self.part.ctx.players.find(text)
+        found = self.part.ctx.players.find(self.part.meant(text))  # a stand-in for who's picked, for whoever may not see IDs (audit 6.11)
         if len(found) == 1:
             return found[0]
         await answer(interaction, f"Nobody here has gone by {clean(text)}. Pick from the list as you type." if not found else
@@ -292,7 +292,7 @@ async def open_ticket(interaction: discord.Interaction, player: str) -> None:
     if not part.tickets.can_close(rank_here(interaction)):
         await answer(interaction, f"This is for {part.file.section('tickets').get('close_rank') or 'moderator'}s and up.")
         return
-    found = part.ctx.players.find(player)
+    found = part.ctx.players.find(part.meant(player))
     if len(found) != 1:
         await answer(interaction, f"Nobody here has gone by {clean(player)}. Pick from the list as you type." if not found else
                      f"{len(found)} players have gone by {clean(player)}. Pick the one you mean from the list as you type.")

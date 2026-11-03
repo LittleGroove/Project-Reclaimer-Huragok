@@ -78,9 +78,10 @@ NEVER_POSTED_SECONDS = 600.0
 SWEEP_MOVES = 10  # cards moved in one sweep, a minute apart: posting a card and deleting one
 REPOST_AT_MOST = 21600.0  # a card that won't post is tried again this often, once it's been failing a while
 EXPECT_SECONDS = 30.0
-BUTTON_STYLES = {"appealagain": 1, "lift": 3, "shorten": 1, "dismiss": 2, "mute": 1, "unmute": 3, "kick": 4, "letback": 3, "ban": 4, "unban": 3, "banall": 4, "acknowledge": 3, "close": 3, "confirm": 3, "deny": 4, "strike": 1, "warn": 1, "pardonstrike": 3}  # 1 blurple, 2 grey, 3 green, 4 red
+BUTTON_STYLES = {"appealagain": 1, "lift": 3, "shorten": 1, "dismiss": 2, "mute": 1, "unmute": 3, "kick": 4, "letback": 3, "ban": 4, "unban": 3, "banall": 4, "acknowledge": 3, "close": 3, "confirm": 3, "deny": 4, "strike": 1, "warn": 1, "pardonstrike": 3, "banthename": 4, "allowname": 3}  # 1 blurple, 2 grey, 3 green, 4 red
 # What must be answered, whatever channel someone's sent it to: it's a question, so it can't be just a post.
-QUESTIONS = ("reports-", "appeals-", "requests-", "contact-", "tickets-", "calls-")
+QUESTIONS = ("reports-", "appeals-", "requests-", "contact-", "tickets-", "calls-", "vergil-name-asked")
+NAME_ASKED = "vergil-name-asked"  # a name with a word of a list that only reports: its two answers are its only buttons
 BUTTONS_PER_ROW = 5
 
 
@@ -262,7 +263,8 @@ class Tickets:
             if then is not None:
                 then(new)
 
-        self.part.poster.post(str(ticket["persona"]), form, channel=str(ticket["channel"]), priority=priority, key=f"post:{number}:{channel}", what=f"ticket {number}", tag=f"channel:{ticket['channel']}", on_done=posted)
+        self.part.poster.post(str(ticket["persona"]), form, channel=str(ticket["channel"]), priority=priority, key=f"post:{number}:{channel}", what=f"ticket {number}", tag=f"channel:{ticket['channel']}", on_done=posted,
+                              adopt=f"huragok:t:{number}:")  # its buttons': one Discord took but answered too late for is found, not posted twice
 
     def _delete(self, channel: str, message_id: str) -> None:
         delivery = self.part.poster.delivery
@@ -580,6 +582,9 @@ class Tickets:
         asking = str(ticket["problem"]).startswith("request:") and live and self._undecided_request(ticket)  # decided already, and brought back: an ordinary card
         appealing = str(ticket["problem"]).startswith("appeal:") and live and self._undecided_appeal(number)
         contact = str(ticket["problem"]).startswith("contact:")
+        if str(ticket["kind"]) == NAME_ASKED:  # either answer closes it, and that's all there is to it
+            buttons = [{"type": 2, "style": BUTTON_STYLES[name], "label": say(config, f"button.{name}")[:80], "custom_id": f"huragok:t:{number}:{name}"} for name in ("banthename", "allowname")]
+            return [{"type": 1, "components": buttons}] if live else []
         if asking:
             names += ["confirm", "deny"]
         if appealing:
@@ -609,7 +614,7 @@ class Tickets:
                 elif wanted == "strike" or wanted in ("whois", "said") or (wanted == "note" and features.BY_KEY["notes"].is_on(config)):
                     names.append(wanted)
             names += after
-            if str(ticket["kind"]) == "vergil-strike" and not asking and not appealing:
+            if not asking and not appealing and (str(ticket["kind"]) == "vergil-strike" or (str(ticket["kind"]) == "vergil-heard" and self._struck(player_id))):
                 names.append("pardonstrike")  # a strike Vergil got wrong. Unmuting alone leaves it counting
             if str(ticket["kind"]) == "watch-banned-elsewhere":
                 names.append("banall")  # usually what this card is for
@@ -643,6 +648,13 @@ class Tickets:
     def _undecided_appeal(self, number: int) -> bool:
         rows = self.db.query("SELECT outcome FROM discord_appeals WHERE ticket = ? ORDER BY number DESC LIMIT 1", (number,))
         return not rows or not rows[0]["outcome"]
+
+    def _struck(self, player_id: str) -> bool:
+        """Whether they've a strike to pardon: a card that only heard a word has nothing to take off, until a strike joins it."""
+        try:
+            return bool(self.db.query("SELECT 1 FROM automod_strikes WHERE player_id = ? AND pardoned IS NULL LIMIT 1", (player_id.lower(),)))
+        except sqlite3.Error:  # Vergil's never run
+            return False
 
     def _acted_on_report(self, number: int) -> bool:
         return bool(self.db.query("SELECT 1 FROM discord_reports WHERE ticket = ? AND upheld = 1 LIMIT 1", (number,)))

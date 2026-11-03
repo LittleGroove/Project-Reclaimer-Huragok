@@ -77,6 +77,10 @@ class ServerConfig:
     workshop_updates: str | None = None  # settings.toml's [[server]] workshop_updates; None: [workshop_updates]
     priority: str | None = None  # settings.toml's [[server]] priority; None: [process] priority
     automod: str | None = None  # settings.toml's [[server]] automod (on, dry_run, off); None: [automod] dry_run
+    # settings.toml's [[server]] rcon_host / rcon_port: where Huragok reaches the console from (Docker, another PC),
+    # which wins over the address the server writes in its instance.json (audit 2026-11, 4.5)
+    rcon_host_set: bool = False
+    rcon_port_set: bool = False
 
     @property
     def host_key_path(self) -> Path:
@@ -95,8 +99,8 @@ class ServerConfig:
         host, port, password = self.rcon_host, self.rcon_port, self.rcon_password
         try:
             rcon = json.loads((self.data_dir / "instance.json").read_text(encoding="utf-8")).get("rcon") or {}
-            host = rcon.get("address") or host
-            port = int(rcon.get("port") or port)
+            host = host if self.rcon_host_set else rcon.get("address") or host
+            port = port if self.rcon_port_set else int(rcon.get("port") or port)
             password = rcon.get("password") or password
         except (OSError, ValueError):
             pass
@@ -121,17 +125,22 @@ def _player_ids(values: list[str], where: str) -> set[str]:
 
 
 def _instances(data_dir: Path) -> dict[str, Path]:
-    """Server name (lowercase) -> its data folder, from instance.json files."""
-    found: dict[str, Path] = {}
+    """Server name (lowercase) -> its data folder, from instance.json files. Two folders naming one server (a copy:
+    Explorer's "slayer - Copy" sorts after "slayer" and took over, its stale log and status read for the real ones,
+    audit 2026-11, 4.6): the one named as the server's own (its slug) wins, else the one written last."""
+    found: dict[str, tuple[bool, float, Path]] = {}
     if data_dir.is_dir():
         for instance in data_dir.glob("*/instance.json"):
             try:
                 name = json.loads(instance.read_text(encoding="utf-8")).get("name")
+                written = instance.stat().st_mtime
             except (OSError, ValueError):
                 continue
             if isinstance(name, str):
-                found[name.lower()] = instance.parent
-    return found
+                rank = (instance.parent.name.lower() == slugify(name), written, instance.parent)
+                if name.lower() not in found or rank[:2] > found[name.lower()][:2]:
+                    found[name.lower()] = rank
+    return {name: folder for name, (_, _, folder) in found.items()}
 
 
 def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[ServerConfig]:
@@ -156,6 +165,9 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
         raise ConfigError(f"{path} has no [[server]] blocks")
     servers = []
     for number, block in enumerate(blocks, 1):
+        if not isinstance(block, dict):
+            raise ConfigError(f"{path.name}: server {number} isn't a [[server]] block (two brackets on each side, "
+                              "then name = \"...\" under it)")
         entry = Table(block, f"{path.name} [[server]] {number}")
         name = entry.get("name", str, "")
         if not name:
@@ -194,6 +206,8 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
             workshop_updates=workshop_updates,
             priority=priority,
             automod=automod,
+            rcon_host_set="rcon_host" in extra.data,
+            rcon_port_set="rcon_port" in extra.data,
         )
         if not server.rcon_password:
             server.errors.append(f"RCON is off in {path.name}: set [rcon] password. The Superintendent needs it to "
@@ -239,7 +253,7 @@ def read_servers(folders: list[Path], config_name: str, overrides: dict[str, dic
     for folder in folders:
         try:
             servers.extend(read_dedicated(folder / config_name, overrides))
-        except ConfigError as error:
+        except (ConfigError, OSError, ValueError, TypeError, AttributeError) as error:  # one folder, not every server
             text = str(error) if str(folder) in str(error) else f"{folder / config_name}: {error}"
             left_out(folder, text, ". Its servers are left out until that's fixed")
     if only:

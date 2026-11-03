@@ -34,6 +34,7 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,6 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterator
 
 from . import __version__
+from .core import closing
 from .core.files import clean_path
 from .core.web import UpdateError, fetch
 
@@ -419,9 +421,23 @@ def install(target: Path, say: Callable[[str], None] = print, timeout: float = 9
 
 
 def run(executable: Path, words: list[str], timeout: float = 600.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(executable), *words], cwd=str(executable.parent), stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, encoding="utf-8",
-                          errors="replace", check=False)
+    """SteamCMD with `words`, waited on at most `timeout` (subprocess.TimeoutExpired after it). Ended, with what it
+    said so far, as Huragok closes: a download of hours mustn't hold the process open (core/closing.py)."""
+    process = subprocess.Popen([str(executable), *words], cwd=str(executable.parent), stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8", errors="replace")
+    deadline, started = time.monotonic() + timeout, closing.mark()
+    while True:
+        try:
+            out, _ = process.communicate(timeout=min(max(deadline - time.monotonic(), 0.01), 0.5))
+            return subprocess.CompletedProcess(process.args, process.returncode, out, None)
+        except subprocess.TimeoutExpired:
+            if closing.closed_since(started) or time.monotonic() >= deadline:
+                break
+    process.kill()
+    out, _ = process.communicate()
+    if closing.closed_since(started):
+        return subprocess.CompletedProcess(process.args, -1, (out or "") + "\nStopped: Huragok is closing", None)
+    raise subprocess.TimeoutExpired(process.args, timeout, output=out)
 
 
 def signed_in(executable: Path, username: str, timeout: float = 120.0) -> tuple[bool, str]:

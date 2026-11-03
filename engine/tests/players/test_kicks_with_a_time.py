@@ -255,3 +255,109 @@ def test_the_pardon_after_a_passed_on_kick_doesnt_lift_the_kick(tmp_path: Path, 
             assert commands.recent_kicks(SERVER)
 
     run(scenario())
+
+
+def test_a_moderators_pardon_of_a_kick_never_lifts_an_admins_ban_beneath_it(tmp_path: Path, run: Any) -> None:
+    """The newest ledger row (a strike's 1 h kick on someone an admin had banned for good) made !pardon take it for a
+    kick, and the server's unban lifted every ban on the ID, the admin's too, everywhere (audit 2026-11, 5.1)."""
+    from conftest import ADMIN, BRAVO
+    from testkit.running import everyone_joins
+
+    words = "# words | mutes | kicks | ban | name\nbadword | | 1h, 1d, 7d | 3 | slurs\n"
+
+    async def scenario() -> None:
+        (tmp_path / "automod.txt").write_text(words, encoding="utf-8")
+        async with running(tmp_path, "[automod]\nenabled = true\ncooldown_seconds = 0\n") as (huragok, rcon, _):
+            await everyone_joins(rcon)
+            await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 5)
+            await rcon.chat(ADMIN, "Admin", "!ban Bravo cheating")
+            await wait_for(lambda: rcon.named("ban"))
+            await rcon.leave(4)
+            await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 4)
+            await rcon.chat(MOD, "Mod", f"!strike {BRAVO} slurs voice")
+            await wait_for(lambda: len(rcon.named("ban")) == 2)
+            await rcon.chat(MOD, "Mod", f"!pardon {BRAVO}")
+            await wait_for(lambda: any("Not pardoned" in line for line in tells_to(rcon, MOD)))
+            assert rcon.named("unban") == []
+            assert any(entry["reason"] == "cheating" for entry in rcon.ban_list)
+
+    run(scenario())
+
+
+def test_an_unban_passed_on_leaves_the_other_servers_own_ban(tmp_path: Path, run: Any) -> None:
+    """The server's unban lifts every ban on an ID: passed on to a server where its own admin had /banned them, the
+    pardon of a kick given here lifted that ban too, against the host's rule that a server's own ban stays (audit
+    2026-11, 5.2)."""
+    import time as clock
+
+    from conftest import BRAVO
+    from testkit.running import everyone_joins
+
+    from huragok.rcon import Reply
+    from huragok.servers.state import ServerState
+
+    class Other:
+        """A second server: one entry per ban, and an unban that lifts every one on the ID."""
+
+        connected = True
+
+        def __init__(self) -> None:
+            self.entries: list[dict[str, Any]] = [{"id": BRAVO, "name": "Bravo", "banned_by": "LilGremlin",
+                                                   "reason": "cheating", "banned_at": int(clock.time()) - 600}]
+            self.sent: list[str] = []
+
+        async def command(self, command: str, *args: str, by: str | None = None, timeout: float | None = None) -> Reply:
+            self.sent.append(command)
+            if command == "bans":
+                return Reply(True, "bans", {"players": [dict(e) for e in self.entries], "ips": []}, {})
+            if command == "ban" and args:
+                self.entries.append({"id": args[0].lower(), "banned_by": f"{by} (RCON)" if by else "RCON",
+                                     "banned_at": int(clock.time()), "reason": args[-1]})
+            elif command == "unban" and args:
+                self.entries = [e for e in self.entries if e["id"] != args[0].lower()]
+            return Reply(True, f"Done: {command}", None, {})
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (huragok, rcon, _):
+            await everyone_joins(rcon)
+            await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 5)
+            other = Other()
+            huragok.superintendent.clients["Other"] = other  # type: ignore[assignment]
+            huragok.superintendent.states["Other"] = ServerState("Other", connected=True, admins=set())
+            try:
+                await rcon.chat(MOD, "Mod", "!kick Bravo 30m spam")
+                await wait_for(lambda: "ban" in other.sent, timeout=15)  # passed on there
+                read = other.sent.count("bans")
+                await rcon.chat(MOD, "Mod", "!pardon Bravo")
+                await wait_for(lambda: rcon.named("unban"))  # lifted here
+                await wait_for(lambda: other.sent.count("bans") > read, timeout=15)  # its list read before an unban
+                await asyncio.sleep(0.3)
+                assert "unban" not in other.sent
+                assert any(entry["banned_by"] == "LilGremlin" for entry in other.entries)
+            finally:
+                huragok.superintendent.states.pop("Other", None)
+                huragok.superintendent.clients.pop("Other", None)
+
+    run(scenario())
+
+
+def test_a_kick_whose_reason_starts_with_never_is_a_kick_and_no_time_is_refused(tmp_path: Path, run: Any) -> None:
+    """`!kick Bravo never camp the spawn` banned for good, roles and all (audit 2026-11, 5.6); `!kick Bravo 0m` was sent
+    as `ban <id> 0m`, which the server may read as no end (5.7)."""
+    from conftest import ADMIN
+    from testkit.running import everyone_joins
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (huragok, rcon, _):
+            await everyone_joins(rcon)
+            await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 5)
+            await rcon.chat(MOD, "Mod", "!kick Bravo 0m spam")
+            await wait_for(lambda: any("lasts no time" in line for line in tells_to(rcon, MOD)))
+            await rcon.chat(MOD, "Mod", "!mute Bravo 0s spam")
+            await wait_for(lambda: sum("lasts no time" in line for line in tells_to(rcon, MOD)) == 2)
+            assert not rcon.named("ban") and not rcon.named("mute")
+            await rcon.chat(ADMIN, "Admin", "!kick Bravo never camp the spawn")
+            await wait_for(lambda: rcon.named("kick"))
+            assert not rcon.named("ban") and "never camp the spawn" in str(rcon.named("kick")[0]["args"])
+
+    run(scenario())

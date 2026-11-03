@@ -23,15 +23,22 @@ def _casefold(text: Any) -> Any:
 
 # Who's acting: a player's ID, or discord:<id>. Set around a command, so that nothing between it and what it writes down has to carry it. A display name isn't an identity: it can change, or be someone else's.
 ACTING_ID: ContextVar[str] = ContextVar("huragok_acting_id", default="")
+# Their rank as they acted (players.roles' names): what lifting it takes later (the host's call, 2 Nov 2026). "" for
+# Vergil's own, a vote's, the server's: anyone who can lift can lift those.
+ACTING_ROLE: ContextVar[str] = ContextVar("huragok_acting_role", default="")
 
 
 @contextmanager
-def acting(who: str) -> Iterator[None]:
+def acting(who: str, role: str | None = None) -> Iterator[None]:
+    """Who's acting, and (when given) their rank: kept with what they do. A rank not given stays what it was."""
     token = ACTING_ID.set(who)
+    role_token = ACTING_ROLE.set(role) if role is not None else None
     try:
         yield
     finally:
         ACTING_ID.reset(token)
+        if role_token is not None:
+            ACTING_ROLE.reset(role_token)
 
 
 CORE_MIGRATIONS = [
@@ -74,6 +81,11 @@ CORE_MIGRATIONS = [
     ALTER TABLE player_names ADD COLUMN folded TEXT;
     UPDATE player_names SET folded = casefold(name);
     CREATE INDEX player_names_folded ON player_names (folded);
+    """,
+    # 6 (0.6.0): the rank of whoever gave an action, as they gave it: lifting it takes that rank (the host's call,
+    # 2 Nov 2026). NULL: before this version, or Vergil's own, a vote's, the server's.
+    """
+    ALTER TABLE actions ADD COLUMN by_role TEXT;
     """,
 ]
 
@@ -251,9 +263,9 @@ class Storage:
                       reply: str = "", when: float | None = None) -> int:
         cursor = self.db.execute(
             "INSERT INTO actions (time, server, kind, target_id, target_name, by, source, reason, duration, "
-            "evidence, dry_run, ok, reply, by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "evidence, dry_run, ok, reply, by_id, by_role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (when or time.time(), server, kind, target_id, target_name, by, source, reason, duration,
-             evidence, int(dry_run), int(ok), reply, ACTING_ID.get() or None))
+             evidence, int(dry_run), int(ok), reply, ACTING_ID.get() or None, ACTING_ROLE.get() or None))
         return int(cursor.lastrowid or 0)
 
     def actions_for(self, player_id: str, limit: int = 20) -> list[sqlite3.Row]:

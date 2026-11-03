@@ -29,7 +29,8 @@ def test_the_first_start_writes_the_files_and_stops(tmp_path: Path, capsys) -> N
     write_server_folder(root / "SERVERS" / "Second", second, name="Second", exe=True)
     assert cli.main(["-c", str(root / "settings.toml"), "start"]) == common.SET_UP
     assert {p.name for p in root.iterdir()} == {"settings.toml", "commands.toml", "discord.toml", "automod.txt",
-                                              "names.txt", "intervalmessages.txt", "SERVERS", "PACKAGES"}
+                                              "names.txt", "intervalmessages.txt", "SERVERS", "PACKAGES", "records"}
+    assert [p.name for p in (root / "records").iterdir()] == ["files.json"]  # the word list's steps done: it's this version's
     assert (root / "PACKAGES" / "team-slayer" / "playlists" / "team-slayer.playlist.json").is_file()
     out = capsys.readouterr().out
     assert "Put your player ID under [owner]" in out and "start again" in out and "2 server folder(s) found" in out
@@ -902,3 +903,88 @@ def test_typed_text_is_read_in_the_consoles_code_page(monkeypatch) -> None:
         assert console.decode("café".encode("cp850")) == "café"
         monkeypatch.setattr(ctypes.windll.kernel32, "GetConsoleCP", lambda: 65001)
         assert console.decode("café".encode("utf-8")) == "café"
+
+
+def test_check_names_playlists_by_player_count_and_what_it_warns_of(tmp_path: Path, capsys) -> None:
+    from huragok.games import byplayers as bp
+
+    path = _checkable(tmp_path / "reclaimer")
+    server = load(path).servers[0]
+    (server.folder / "playlists").mkdir(exist_ok=True)
+    (server.folder / "playlists" / "small.playlist.json").write_text(
+        json.dumps({"name": "Small", "games": [{"map": "Guardian", "game": "Slayer"}] * 3}), encoding="utf-8")
+    bp.save(server.folder, bp.Setup(server.name, True, "", 30, [bp.Step("playlists/small.playlist.json", 200),
+                                                                  bp.Step("playlists/gone.playlist.json")]))
+    assert cli.main(["-c", str(path), "check"]) == 0  # warnings, not problems
+    out = capsys.readouterr().out
+    assert "on · 2 playlists (G -> P)" in out
+    assert "playlist 2 (gone) never plays while max_players is" in out and "playlist 2 (gone) can't be played" in out
+
+
+def test_the_start_loop_goes_on_when_its_lock_cant_be_written(loop, monkeypatch) -> None:
+    """A full disk, the likely reason Huragok stopped, made re-taking the lock raise out of the start loop: Huragok was
+    never started again, even once space was freed (audit 2026-11, 3.4)."""
+    import errno
+
+    from huragok.core import lock as lock_module
+
+    full = [False]
+    real_write = Path.write_text
+
+    def write_text(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if full[0] and self.name.startswith(lock_module.LOCK_FILE):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+
+    def disk_fills(launches: Any) -> None:
+        full[0] = True
+
+    def space_freed(launches: Any) -> None:
+        full[0] = False
+
+    code, launches = loop([(1, 30, disk_fills), (0, 60, space_freed)])
+    assert code == 0 and len(launches.commands) == 2
+    assert "Couldn't hold this folder's lock" in _launcher_lines(loop.settings)
+
+
+def _restorer(disk: list[str], restored: list[tuple]) -> Any:
+    def restore(home: Path, version: str, failed: str) -> str:
+        restored.append((version, failed))
+        disk[0] = version
+        return version
+    return restore
+
+
+def test_a_new_version_installed_while_huragok_ran_is_put_back_if_it_fails_at_once(loop) -> None:
+    """Only a relaunch (exit 10) counted as an update: Huragok crashing (or closed) during the relaunch's wait, with the
+    new files on disk, left a new version that failed at once restarted for good, never put back (audit 2026-11,
+    3.2)."""
+    disk, restored = ["0.2.2"], []
+    code, launches = loop([(1, 600, lambda launched: disk.__setitem__(0, "0.2.3")),  # installed, then a crash
+                           (common.SETTINGS_PROBLEM, 3),
+                           (0, 900)], disk=disk, restore=_restorer(disk, restored))
+    assert code == 0 and restored == [("0.2.2", "0.2.3")]
+
+
+def test_a_start_loop_begun_after_an_update_puts_it_back_until_it_has_proven_itself(loop) -> None:
+    """An update made offline (start.cmd update with Huragok stopped), or a Q during the relaunch's wait: the next
+    start loop is a new one, which didn't know the version on disk was new (audit 2026-11, 3.2)."""
+    from huragok.updates import engine
+
+    record = loop.settings.records / engine.LAST_UPDATE
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"version": "0.2.3", "replaced": "0.2.2", "backup": "backup-0.2.2", "added": []}),
+                      encoding="utf-8")
+    disk, restored = ["0.2.3"], []
+    code, launches = loop([(common.SETTINGS_PROBLEM, 3), (0, 900)], disk=disk, restore=_restorer(disk, restored))
+    assert code == 0 and restored == [("0.2.2", "0.2.3")]
+
+    engine.mark_proven(loop.settings.home, "0.2.4")  # another version's mark: not this one's
+    assert "proven" not in json.loads(record.read_text(encoding="utf-8"))
+    engine.mark_proven(loop.settings.home, "0.2.3")  # it ran long enough
+    assert json.loads(record.read_text(encoding="utf-8"))["proven"]
+    disk, restored = ["0.2.3"], []
+    code, launches = loop([(1, 3), (0, 900)], disk=disk, restore=_restorer(disk, restored))
+    assert code == 0 and restored == []  # a crash now is a crash, not a failed update

@@ -48,8 +48,8 @@ def test_a_player_respawns_themselves_by_a_move_away_and_back(tmp_path: Path, ru
             await fake.chat(ALICE, "Alice", "!respawn stuck in a wall")
             await answered(fake, 1, "Alice was moved to Blue team.")
             await answered(fake, 2, "Alice was moved to Red team.")
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice respawned on Red team: stuck in a wall."
-                           in says(fake))
+            # Their own words aren't said to everyone: a [Server] line in Huragok's voice, past the word list (audit 5.11)
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice respawned on Red team." in says(fake))
             assert moves(fake) == [[ALICE, "blue"], [ALICE, "red"]]
             assert fake.named("team")[0]["by"] == "Alice"
 
@@ -62,8 +62,7 @@ def test_a_player_respawns_themselves_by_a_move_away_and_back(tmp_path: Path, ru
             await fake.chat(BRAVO, "Bravo", "!respawn Alice")
             await answered(fake, 3)
             await answered(fake, 4)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Blue team: Alice."
-                           in says(fake))
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Blue team." in says(fake))
             assert moves(fake)[2:] == [[BRAVO, "red"], [BRAVO, "blue"]]
 
     run(scenario())

@@ -112,6 +112,61 @@ def test_a_broken_part_is_switched_off_alone(tmp_path: Path, run, monkeypatch) -
     run(scenario())
 
 
+class Listener(Part):
+    """Hears Huragok's own events, as Discord's part does."""
+
+    name = "listener"
+    always_on = True
+    heard: list[str] = []
+
+    @on("supervisor.*")
+    async def hear(self, event: Event) -> None:
+        Listener.heard.append(event.name)
+
+
+def test_every_part_hears_that_huragok_has_started(tmp_path: Path, run, monkeypatch) -> None:
+    """supervisor.started went out before any part listened, so none heard it: Discord's "Huragok is running" never
+    posted, and an update-failed ticket never closed (audit 2026-11, 2.3)."""
+    monkeypatch.setitem(PARTS, "listener", Listener)
+    Listener.heard = []
+
+    async def scenario() -> None:
+        async with running(tmp_path, "") as (sup, fake, seen):
+            await wait_for(lambda: "supervisor.started" in Listener.heard)
+            assert [e.name for e in seen].count("supervisor.started") == 1
+
+    run(scenario())
+
+
+class WrongKind(Part):
+    """Takes a list, as [automod] exempt_roles does, and is given a number."""
+
+    name = "wrongkind"
+    defaults = {"roles": 5}
+
+    def check_config(self) -> None:
+        self.roles = set(self.config["roles"])  # TypeError: 'int' object is not iterable
+
+
+def test_a_setting_of_the_wrong_kind_keeps_its_part_off_not_huragok(tmp_path: Path, run, monkeypatch) -> None:
+    """Only a ValueError was caught as a part was made, so `exempt_roles = 5` stopped Huragok at every start, the
+    servers unwatched, while `check` said nothing was wrong (audit 2026-11, 2.4)."""
+    from huragok.parts import config_problem
+
+    monkeypatch.setitem(PARTS, "wrongkind", WrongKind)
+
+    async def scenario() -> None:
+        async with running(tmp_path, "[wrongkind]\nenabled = true") as (sup, fake, seen):
+            assert "wrongkind" not in sup.runners and "commands" in sup.runners
+            assert "a setting it can't use (TypeError" in sup.part_problems["wrongkind"]
+            await everyone_joins(fake)
+            await fake.chat(OWNER, "Owner", "!players")
+            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, OWNER)))
+            assert "a setting it can't use (TypeError" in config_problem(sup.settings, "wrongkind", WrongKind)
+
+    run(scenario())
+
+
 async def through_rcon(fake: FakeRcon, seen: list[Event]) -> None:
     """Everything the fake server sent before now has been dealt with: a marker sent after it has come through."""
     marker = f"marker {len(seen)} {time.monotonic()}"
@@ -120,14 +175,18 @@ async def through_rcon(fake: FakeRcon, seen: list[Event]) -> None:
 
 
 async def handled(runner: Any) -> None:
-    """Everything queued for this part before now has been handled (its queue runs one job at a time, in order)."""
-    done = asyncio.Event()
+    """Everything queued for this part before now has been handled: a marker at the end of each lane (the shared one,
+    each server's), each running one job at a time, in order."""
+    marks: list[asyncio.Event] = []
+    for server in [None, *runner.lanes]:
+        done = asyncio.Event()
 
-    async def mark() -> None:
-        done.set()
+        async def mark(done: asyncio.Event = done) -> None:
+            done.set()
 
-    runner.submit("marker", mark)
-    await asyncio.wait_for(done.wait(), 5)
+        runner.submit("marker", mark, server=server)
+        marks.append(done)
+    await asyncio.wait_for(asyncio.gather(*(done.wait() for done in marks)), 5)
 
 
 def _marker_backend(tmp_path: Path) -> str:
@@ -215,6 +274,10 @@ def test_watchdog_cases_follow_their_own_settings(tmp_path: Path, run) -> None:
             await wait_for(lambda: watchdog.level[SERVER] == "critical")
             await handled(sup.runners["watchdog"])
             assert not any(e.name in ("server.restart_planned", "server.restarting") for e in seen)
+            manager = sup.superintendent.fleet.managers[SERVER]
+            if manager.started is not None:
+                manager.started -= 1000  # past min_uptime_seconds: settled, so memory counts
+            watchdog.memory_base[SERVER] = 800.0  # what it used settled: under memory_mb, and it grew past it
             watchdog.memory[SERVER] = 4096.0  # as measured; act: after the game, and nobody is playing
             await watchdog._update(SERVER)
             planned = await wait_for(lambda: next((e for e in seen if e.name == "server.restart_planned"), None))
@@ -371,6 +434,35 @@ def test_a_server_folder_added_while_running_is_picked_up(tmp_path: Path, run) -
             finally:
                 supervisor.stop()
                 await asyncio.wait_for(task, 10)
+
+    run(scenario())
+
+
+def test_a_stopped_servers_folder_renamed_by_hand_is_picked_up_where_it_is_now(tmp_path: Path, run) -> None:
+    """Found again by its name, it kept its old folder, dedicated.toml and data paths until Huragok restarted: starts
+    failed until it was FAULTED (audit 2026-11, 2.6)."""
+    from huragok.core.serverfolders import read_dedicated
+
+    async def scenario() -> None:
+        root = tmp_path / "reclaimer"
+        write_server_folder(root / "SERVERS" / "Old Folder", 46399, name="Mover")  # nothing answers: not running
+        settings = load(write_settings(root, None, commands=staff()))
+        supervisor = Huragok(settings)
+        task = asyncio.ensure_future(supervisor.run())
+        try:
+            sup = supervisor.superintendent
+            await wait_for(lambda: "Mover" in sup.fleet.managers)
+            os.rename(root / "SERVERS" / "Old Folder", root / "SERVERS" / "New Folder")
+            sup.discover()
+            moved = settings.server("Mover")
+            assert moved.folder.name == "New Folder" and moved.config_path.parent.name == "New Folder"
+            assert sup.fleet.managers["Mover"].server.folder.name == "New Folder"
+            assert sup.watchers["Mover"].server.folder.name == "New Folder"
+            assert [r["name"] for r in sup.fleet.rows()] == ["Mover"]
+            assert read_dedicated(moved.config_path, {})[0].name == "Mover"
+        finally:
+            supervisor.stop()
+            await asyncio.wait_for(task, 10)
 
     run(scenario())
 

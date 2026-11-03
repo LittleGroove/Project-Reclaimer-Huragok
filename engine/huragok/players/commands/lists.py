@@ -21,7 +21,7 @@ from ...core.part import command, on
 from ...core.text import TIME, seconds_of
 from ...rcon import ban_list
 from ...servers.state import Player
-from ..ledger import KICK_LIFTED, plain_reason
+from ..ledger import KICK_LIFTED, is_housekeeping, plain_reason
 from ..router import CommandCall
 from ..targets import FULL_ID, PICK, Candidate, ago, ask, offer, plain
 from ..who import from_console, who
@@ -29,6 +29,7 @@ from .base import CommandsBase
 
 KICKS_KEPT = 7200  # seconds: the server's longest kick block
 LISTED = 10  # entries in one !bans or !kicks answer
+KICK_MATCH_SECONDS = 120  # how far a ban's end in the server's list may be from its kick's in the ledger, to be that kick
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,58 @@ class Kick:
                                                                                  else "")
         note += f"; out {ago(left)} more" if left > 0 else "; can come back"
         return Candidate(self.id, self.name, note=note)
+
+
+class KeptKicks:
+    """The kicks list, as a deque is used (append, remove, in, reversed), kept in commands_kicks too: a plain kick
+    passed around the servers, or one waiting for someone away (a confirmed request), outlasts Huragok's restart as a
+    kick with a time does (the host's call, 2 Nov 2026). What's older than KICKS_KEPT isn't read back, and goes."""
+
+    MOST = 500
+
+    def __init__(self, db: Any) -> None:
+        self.db = db
+        self.kicks: deque[Kick] = deque(maxlen=self.MOST)
+        try:
+            rows = db.query("SELECT * FROM commands_kicks WHERE time > ? ORDER BY time, number",
+                            (time.time() - KICKS_KEPT,))
+        except Exception:  # noqa: BLE001 - a database that can't be read: the list starts empty, as it did before 0.6.0
+            rows = []
+        for row in rows[-self.MOST:]:
+            self.kicks.append(Kick(float(row["time"]), str(row["server"]), str(row["target"]), str(row["name"] or ""),
+                                   str(row["by"] or ""), str(row["reason"] or ""), float(row["seconds"]),
+                                   bool(row["console"]), bool(row["everywhere"])))
+
+    def append(self, kick: Kick) -> None:
+        self.kicks.append(kick)
+        try:
+            self.db.execute("DELETE FROM commands_kicks WHERE time <= ?", (time.time() - KICKS_KEPT,))
+            self.db.execute("INSERT INTO commands_kicks (time, server, target, name, by, reason, seconds, console, "
+                            "everywhere) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (kick.time, kick.server, kick.id, kick.name, kick.by, kick.reason, kick.seconds,
+                             int(kick.through_console), int(kick.everywhere)))
+        except Exception:  # noqa: BLE001 - kept in memory all the same: only a restart would forget it
+            pass
+
+    def remove(self, kick: Kick) -> None:
+        self.kicks.remove(kick)
+        try:
+            self.db.execute("DELETE FROM commands_kicks WHERE time = ? AND server = ? AND target = ?",
+                            (kick.time, kick.server, kick.id))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def __iter__(self) -> Any:
+        return iter(self.kicks)
+
+    def __reversed__(self) -> Any:
+        return reversed(self.kicks)
+
+    def __contains__(self, kick: object) -> bool:
+        return kick in self.kicks
+
+    def __len__(self) -> int:
+        return len(self.kicks)
 
 
 def ban_note(entry: dict[str, Any], now: float) -> str:
@@ -185,9 +238,9 @@ class ListCommands(CommandsBase):
 
     # The kicks -----------------------------------------------------------------------------------------------------
 
-    def _kicks_list(self) -> deque[Kick]:
+    def _kicks_list(self) -> KeptKicks:
         if not hasattr(self, "_kicks_seen"):
-            self._kicks_seen: deque[Kick] = deque(maxlen=500)
+            self._kicks_seen = KeptKicks(self.ctx.db)
         return self._kicks_seen
 
     @on("rcon.kick")
@@ -210,6 +263,8 @@ class ListCommands(CommandsBase):
         """A pardon lets them back: off the list (Vergil's name kicks are pardoned at once, so they never stay)."""
         if event.get("kind") != "pardon" or event.get("dry_run") or not event.get("ok"):
             return
+        if is_housekeeping(event.get("evidence")):
+            return  # Huragok letting them straight back after a kick passed on from elsewhere: that kick still stands
         target = str(event.get("target_id") or "").lower()
         kicks = self._kicks_list()
         for kick in [k for k in kicks if k.server == event.server and target and k.id == target]:
@@ -233,10 +288,45 @@ class ListCommands(CommandsBase):
 
     def _kick_running(self, target: str) -> str:
         """How long a kick with a time was given for, if that's the last word on them and it's still running; "" if not. It's the ledger's, which holds with across_servers off too."""
+        duration, _ = self._kick_ends(target)
+        return duration
+
+    def _kick_ends(self, target: str) -> tuple[str, float]:
+        """(how long, when it ends) of the kick with a time that's the last word on them, still running; ("", 0)."""
         rows = self.ctx.db.query("SELECT kind, duration, time FROM actions WHERE target_id = ? AND kind IN ('ban', 'unban') AND ok = 1 AND dry_run = 0 ORDER BY number DESC LIMIT 1",
                                  (target.lower(),))
         duration = str(rows[0]["duration"] or "") if rows and rows[0]["kind"] == "ban" else ""
-        return duration if TIME.fullmatch(duration) and time.time() < rows[0]["time"] + seconds_of(duration) else ""
+        if not TIME.fullmatch(duration) or time.time() >= rows[0]["time"] + seconds_of(duration):
+            return "", 0.0
+        return duration, rows[0]["time"] + seconds_of(duration)
+
+    async def _bans_besides(self, server: str, target: str, kick_ends: float) -> str:
+        """Why the server's unban can't lift this kick alone: it lifts every ban on the ID, and the list holds another
+        still in force (a ban for good, a longer one, someone else's). "" when it's the kick's alone. Before, a
+        moderator's !pardon of a strike's 1 h kick lifted the admin's ban for good beneath it (audit 2026-11, 5.1)."""
+        if server not in self.ctx.servers or not self.ctx.servers[server].connected:
+            return f"{server} isn't connected, so its ban list can't be read to see the kick is all that's lifted"
+        data, why = await ban_list(self.ctx.rcon(server), strict=True)
+        if data is None:
+            return f"the ban list couldn't be read ({why}) to see the kick is all that's lifted"
+        now = time.time()
+        others = []
+        for entry in data["players"]:
+            if str(entry.get("id") or "").lower() != target.lower():
+                continue
+            expires = entry.get("expires")
+            timed = isinstance(expires, (int, float)) and not isinstance(expires, bool)
+            if timed and expires <= now:
+                continue  # run out
+            if timed and abs(expires - kick_ends) <= KICK_MATCH_SECONDS:
+                continue  # the kick itself
+            who = str(entry.get("banned_by") or "someone").removesuffix(" (RCON)")
+            others.append(f"{who}'s {'ban for good' if not timed else 'longer ban' if expires > kick_ends else 'ban'}"
+                          + (f" ({entry['reason']})" if entry.get("reason") else ""))
+        if others:
+            return (f"they're also under {', '.join(others)}, and the server's unban would lift that too: an admin's "
+                    f"!unban lifts both")
+        return ""
 
     async def _kick_entries(self, call: CommandCall) -> list[Candidate]:
         """This server's kicks, and the ones through Huragok on another server keeping them off this one too."""
@@ -269,9 +359,15 @@ class ListCommands(CommandsBase):
         target = await self._listed(call, text, self._kick_entries)
         if not target:
             return
+        if why := self.lift_outranked(call, target, "kick", "kick"):  # a player ID; a name or an address: no row
+            await call.reply(f"Not pardoned: {why}")
+            return
         if running := self._kick_running(target):  # the server's timed ban underneath, so its unban, at a pardon's rank: it's still a kick. What a moderator could have given, they can lift
             if too_long := self.kick_too_long(call.role, running):
                 await call.reply(too_long.replace("an admin can make it longer", "an admin can lift a longer one"))
+                return
+            if besides := await self._bans_besides(call.server, target, self._kick_ends(target)[1]):
+                await call.reply(f"Not pardoned: {besides}.")
                 return
             await self._done(call, await self.ctx.moderation.unban(call.server, target, reason=KICK_LIFTED, by=call.player.name))
             return

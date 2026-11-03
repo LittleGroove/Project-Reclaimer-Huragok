@@ -305,6 +305,14 @@ class AcrossServers(CommandsBase):
         mine = [e for e in entries if self._names(e, target) and through_console(e.get("banned_by"))]
         if not mine:
             return False  # not banned there, or a /ban there (that server's)
+        now = time.time()
+        theirs = [e for e in entries if self._names(e, target) and not through_console(e.get("banned_by"))
+                  and not (isinstance(e.get("expires"), (int, float)) and e["expires"] <= now)]
+        if theirs:  # the server's unban lifts every ban on them, its own /ban too, which stays (audit 2026-11, 5.2)
+            who = ", ".join(sorted({str(e.get("banned_by") or "someone") for e in theirs}))
+            self.ctx.log.info("[%s] unban of %s on %s by %s not passed on here: %s banned them on this server too, "
+                              "and that ban stays (its unban would lift both)", server, target, origin, by, who)
+            return False
         self._across_mark(server, "unban", target)
         try:
             reply = await self.ctx.rcon(server).command("unban", target, by=by)

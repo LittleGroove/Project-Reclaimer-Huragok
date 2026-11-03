@@ -12,7 +12,8 @@ badword, otherword      | 1d, 7d           | 2, 1h        | 3   | slurs
 rudeword                | 1d, 3d, 7d       |              |     | rude
 meanword                | 1d, 3d, 7d, 8    | 5            |     | mean
 worstword               |                  |              | 0   | threats
-kickword
+kickword                |                  | 0            |     | kicks
+askword                 |                  |              |     | ask
 ```
 
 What a player gets each time:
@@ -23,7 +24,8 @@ What a player gets each time:
 | `rude` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | muted 7 days: never kicked or banned |
 | `mean` | muted 1 day | muted 3 days | muted 7 days | muted 7 days | 5th: muted 7 days; 6th to 8th: kicked; 9th on: kicked, then muted for good; never banned |
 | `threats` | banned for good | | | | |
-| `kickword` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
+| `kicks` | kicked | kicked | kicked | kicked | kicked: never muted or banned |
+| `ask` | a ticket for the staff | a ticket | a ticket | a ticket | nothing in game, ever: see [Lists that only report](#lists-that-only-report) |
 
 "Out 1 hour" further down is the same as "kicked for 1 hour" here: a kick with a time, which
 keeps them off every server that long (see [What players read](#what-players-read)).
@@ -40,7 +42,9 @@ come before them (the mutes'), so `| 1d, 3d | 2, 1h |` mutes twice, then kicks f
 an hour each time; with that number left out they start once every mute time is used
 (`| 1d, 3d | 1h |` is the same line), and with no times after it, it's the server's
 own kick from then on (`| 1d | 2 |`). A line with no mutes kicks from the first strike
-(`| | 1h, 1d |`); a line with mutes and the kicks left blank never kicks. The ban's
+(`| | 1h, 1d |`, or `| | 0 |` for the server's own kick every time); a line with mutes and
+the kicks left blank never kicks, and one with nothing in its mutes, kicks and ban only
+reports ([below](#lists-that-only-report)). The ban's
 number counts the strikes before it too, so `0` is the first offence: `| | | 0 |` bans
 the first time. The counts can be as large as you like; the only check is that every
 mute and kick time you list comes before the ban.
@@ -61,8 +65,9 @@ long as the ban comes later.
 strikes before the kicks, and the ones past the start of the kicks go with them:
 that strike removes the player, then mutes them once they're back (after a timed
 kick the mute's time starts when the kick's ends, so a short mute isn't used up while
-they're out; after the server's own kick, from the strike). Once the mute times run
-out, the kicks go on alone:
+they're out; after the server's own kick, which keeps them out 10 to 120 minutes, when
+they join again, and the same for a mute given while they're on no server). Once the
+mute times run out, the kicks go on alone:
 
 ```text
 badword | 1d, 2d, 3d, 4d, 5d, 6d, 7d | 5, 1d | 10 | slurs
@@ -72,6 +77,40 @@ is 1st to 5th: muted 1 to 5 days; 6th: out 1 day, then muted 6 days; 7th: out 1 
 then muted 7 days; 8th to 10th: out 1 day; 11th: banned for good. Before the kicks,
 the last mute time repeats (`1d | 3, 1h` is muted a day three times, then out an hour
 each time); past their start, a mute time is used once.
+
+## Lists that only report
+A line with nothing in its mutes, kicks and ban does nothing in the game:
+
+```text
+theword, otherword | | | | badwords
+```
+
+Each time someone says one of its words, the staff get a ticket on Discord, like a
+strike's, with what was said, and nothing else happens: no strike is counted, nobody is
+muted or kicked, and nothing is said in the game, to them or anyone. It's for words where
+how they're said matters more than the word: gamers talk a lot of trash, and it's the
+staff who decide whether a line was trash talk or hate. The ticket has the usual buttons
+(Mute, Kick, Ban, Whois…), and it's the same card as that player's strikes, so an
+evening's worth is one card. Without the Discord bot, a list like this only writes a line
+in the log.
+
+A name with one of its words isn't kicked either. A ticket asks the staff whether to **Ban
+the name** (into `names.txt`, as `/banname` does: they're kicked, and so is anyone else
+who joins with it) or **Allow name**, and either closes it. It takes whoever may use
+`/banname` (admins, unless `commands.toml` says otherwise). An allowed name isn't asked
+about again; the player isn't told anything either way. Moderators and admins in that
+game are told, to them alone, that someone joined with a name like that, with
+`!banname #number` to ban it there. One ticket a name, however often they come and go,
+and a name banned some other way (`!banname`, `/banname`) closes its ticket.
+
+A strike on one of these lists does nothing, so `!strike` refuses it, and the Strike
+button doesn't offer it.
+
+**Up to 0.6.0 a line with nothing in it was the server's kick every time** (the template's
+`kickword` example). The update to 0.6.0 writes a `0` into the kicks of every such line in
+your list (`kickword | | 0`), so they go on kicking, and the log says which. Lines you
+write after that with nothing in them only report. A line in the 0.2 layout
+(`words | timers | chances | name`) reads as it always did.
 
 **Word lists from before 0.5.1.** Up to 0.5.0 the kicks came first: `words | kicks |
 mutes | ban | name`, the mutes starting with how many strikes came before them.
@@ -95,9 +134,9 @@ Your own notes and lines stay where they are, and the file as it was is kept in
 
 | Part | |
 | --- | --- |
-| **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated letters, lookalike letters (Greek and Cyrillic ones, capitals too, small capitals like `ʙᴀᴅᴡᴏʀᴅ`, fullwidth, styled, circled and boxed letters from "fancy text" makers), invisible characters, and plurals are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
+| **words** | Separated by commas. List each word once in plain letters: capitals, accents, digits and symbols for letters (`b4dw0rd`, `b@dw()rd`), spacing and punctuation (`b a d w o r d`, `b?a!d+w%o&r.d`: up to four of anything that isn't a letter or digit between two letters), repeated letters, lookalike letters (Greek and Cyrillic ones, capitals too, small capitals like `ʙᴀᴅᴡᴏʀᴅ`, fullwidth, styled, circled and boxed letters from "fancy text" makers), invisible characters, plurals, and digits glued on (`badword1`, `1badword`) are caught for you. Keep doubled letters doubled. `word*` also catches it at the start of longer words, `*word*` anywhere inside one (use that for long words only). `-word` is never caught by that line. |
 | **mutes** | How long each mute lasts, in order from the first strike: `1d, 3d, 7d`. The last one repeats until the kicks; `perm` (last only) is muted for good. A number alone at the end is how many strikes come before muted for good: `1d, 3d, 7d, 8` (above). Blank: never muted. At most one time per mute before the ban, or before muted for good. |
-| **kicks** | How many strikes come before the kicks (`0`: kicked the first time; left out: once every mute time is used), then how long each kick keeps them out, in order: `3, 30m, 1h, 1d`. The last one repeats until the ban. No times: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Blank: never kicked, or with no mutes either, the server's own kick every time. Mute times past the start of the kicks kick, then mute (above). At most one time per strike before the ban. |
+| **kicks** | How many strikes come before the kicks (`0`: kicked the first time; left out: once every mute time is used), then how long each kick keeps them out, in order: `3, 30m, 1h, 1d`. The last one repeats until the ban. No times: the server's own kick, which keeps them out 10, 30, 60, then 120 minutes. Blank: never kicked, or with no mutes either, the server's own kick every time up to the ban (with no ban either, the line only reports: `0` here kicks every time). Mute times past the start of the kicks kick, then mute (above). At most one time per strike before the ban. |
 | **ban** | How many strikes come before the ban for good (`0`: banned the first time). Blank: never banned. |
 | **name** | One word that players read and moderators type in `!strike`, so nobody has to type the word itself. Optional, but name every line whose strikes add up (what its strikes do changes: more than one time, mutes then kicks, a ban): a line without one is `rule1`, `rule2`… by its place in the list, its strikes are kept under that, and they move to another line if you add a line above it. `check`, the start and each reload point such lines out. It can't be `name`, which `!strike` keeps for names. |
 
@@ -273,20 +312,51 @@ line's name (one word: `racist slurs` is written `racist-slurs`).
   So does the whole line with that name and the same ladder (or the ladder left
   out); another ladder under a name already used is refused, with what that line
   does now (`!changebanword` changes a line's steps).
-- A line that kicks every time and nothing more: `!banword newword | | | | kicks`.
+- A line that kicks every time and nothing more: `!banword newword | | 0 | | kicks`.
+- A line that only reports (a ticket for the staff, nothing in game): `!banword newword | | | | watch`.
 - A word the list catches already, disguised or not (`b4dw0rd` when `badword` is
   listed), isn't written twice: the answer says which line has it.
 - A mistake (a time like `1x`, more kick times than strikes before the ban, a line
   called `name`, a count first in the mutes as the layout up to 0.5.0 had it) is
   answered with what's wrong, and nothing is written.
 
-`!unbanword <word>` takes a word off, as the file lists it; a line left with no
-words goes too. If the word isn't listed itself but is caught by another entry
+`!unbanword <word>` takes a word off, as the file lists it (several with commas:
+`!unbanword word1, word2`; `-word` takes an exception off); a line left with no
+words goes too. `!unbanword word | slurs` takes it off that line only, and
+`!unbanword | slurs`, with nothing before the bar, takes off the whole line. If the word isn't listed itself but is caught by another entry
 (`b4dw0rd`, caught by `badword`), it says which entry, and that `-b4dw0rd` on that
 line lets it through. Strikes already given stay; `!pardonplayer` clears them.
 
 Everyone in the chat sees the command line, the word included, as with every
-command. The window's D → A changes the list without that.
+command. The window's D → A changes the list without that, and so does Discord.
+
+## Changing the word list from Discord
+With the Discord bot's commands on, the same commands are slash commands, for the same
+ranks (`commands.toml`), and their answers are yours alone. Each part of a line has a box
+of its own, so it doesn't matter what order you fill them in:
+
+```text
+/banword words: hello, friend mutes: 1d, 3d, 2 kicks: 3d, 4d bans: 4 listname: badwords
+```
+
+- `/banword`: `words`, `mutes`, `kicks`, `bans`, `listname`. A list that's there takes
+  the words with its own steps (leave `mutes`, `kicks` and `bans` empty, or give the same
+  ones); a new name makes a new list with the steps given, and with all three empty it's a
+  list that only reports. Without `listname` it asks which list, and writes nothing.
+- `/changebanword`: `listname` (its name, or a word on it), then the new `mutes`,
+  `kicks` and `bans`. Empty boxes are none, so all three empty makes it a list that only
+  reports.
+- `/unbanword`: `words` takes them off wherever they're listed; with `listname`, off
+  that list only; `listname` alone takes off the whole list, after asking.
+- `/banname` and `/unbanname`: as in game; `/unbanname` suggests the banned names as you
+  type, and `listname` boxes suggest the lists.
+- `/bannedwords` (`!rules`): every list, every word on it and what each strike does,
+  and any line Vergil is running without, with why. `search` shows the lists with that in
+  their name or a word.
+- `/bannednames` (`!bannames`): every banned name in `names.txt`, numbered for
+  `/unbanname @number`, then the names the staff allowed.
+
+The two lists come whole, however long: as many messages as it takes, never a file.
 
 ## What players read
 The reason they see, without ever repeating the word:
@@ -354,12 +424,12 @@ and so does the status card (V → Safety → Vergil).
 | `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
 | `!banword <words> \| [mutes] \| [kicks] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
-| `!unbanword <word>` | admin | Takes a word off `automod.txt` (a line left with no words goes too) |
+| `!unbanword <words> [\| line]` | admin | Takes words off `automod.txt` (a line left with no words goes too); `!unbanword \| <line>` takes off the whole line |
 | `!banname <#number \| name>` | admin | Bans a player's name (kicking them), or a name itself, in `names.txt`. No strike, no ban. A moderator's command up to 0.4.4 |
 | `!pardonplayer <player \| player ID> [rule \| all] [reason]` | admin | Clears their strikes (all, or one named line's) and lifts what automod did: unbans, unmutes, and lets a kicked player back in |
 | `!unbanname <name \| @number>` | admin | Takes a name off `names.txt`; `@number` from `!bannames` |
-| `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do (the answer is yours alone); `!rules slurs` shows one line in full |
-| `!bannames [text]` | moderator | The banned names in `names.txt`, newest first, numbered for `!unbanname` |
+| `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do (the answer is yours alone); `!rules slurs` shows one line in full. `/bannedwords` in Discord, every word of every list |
+| `!bannames [text]` | moderator | The banned names in `names.txt`, newest first, numbered for `!unbanname`. `/bannednames` in Discord, all of them and the names the staff allowed |
 | `!changebanword <line \| word> \| mutes \| kicks \| ban` | admin | New steps for a line, its words and name kept (its strikes count toward the new steps): `!changebanword slurs \| 30m 2h \| 1, 1d 3d \| 5`. A part left blank is none: `!changebanword rude \| perm` mutes for good from the first strike |
 | `!mutes` | moderator | Everyone muted now: Vergil's list and the server's own, numbered for `!unmute` |
 

@@ -166,6 +166,7 @@ class DiscordPart(Part):
     def opaque(self, player_id: str, name: str = "") -> str:
         """What goes in a choice's value in place of someone's whole ID, which is theirs to know: anyone can read what an autocomplete sends. It means them for as long as Huragok's up."""
         value = "p:" + hashlib.sha256(f"{self.choice_salt}:{player_id.lower()}".encode("utf-8")).hexdigest()[:16]
+        self.chosen.pop(value, None)  # to the end, as it's just been offered: set again in place, the oldest went first though shown a moment ago (audit 2026-11, 6.17)
         self.chosen[value] = player_id.lower()
         while len(self.chosen) > MOST_CHOICES_KEPT:
             self.chosen.pop(next(iter(self.chosen)))
@@ -232,7 +233,7 @@ class DiscordPart(Part):
 
     def record_of(self, player_id: str, case: str = "") -> str:
         """What's on their record, or before this case: "2 mutes, 1 kick"."""
-        before = int(case) if str(case).isdigit() else 2**62
+        before = int(case) if str(case).isascii() and str(case).isdecimal() else 2**62
         rows = self.ctx.db.query("SELECT kind, duration FROM actions WHERE target_id = ? AND dry_run = 0 AND ok = 1 AND number < ? AND kind IN "
                                  "('mute', 'kick', 'ban', 'warn') AND (evidence IS NULL OR (evidence NOT LIKE 'still muted:%' AND evidence NOT LIKE 'kicked on %'))", (player_id.lower(), before))
         counts = Counter(shown_kind(row["kind"], row["duration"]) for row in rows)

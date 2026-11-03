@@ -373,3 +373,65 @@ def test_a_server_is_found_by_name_slug_or_number(tmp_path: Path) -> None:
     assert settings.server("3").name == "Zulu" and settings.server("#2").name == "LG Test Server"
     with pytest.raises(KeyError):
         settings.server("4")
+
+
+def test_two_server_blocks_for_one_server_are_read_as_one_and_said(tmp_path: Path) -> None:
+    """The last block won silently: the first's daily restart was ignored, and the window's changes (written to the
+    first block) were lost at the next start (audit 2026-11, 4.3)."""
+    from conftest import free_port, write_root
+
+    path = write_root(tmp_path / "reclaimer", [("Slayer", free_port())],
+                      '[[server]]\nname = "Slayer"\ndaily_restart = "04:00"\n\n[[server]]\nname = "slayer"\n'
+                      'priority = "high"\n')
+    settings = load(path)
+    own = settings.server_overrides["slayer"]
+    assert own["daily_restart"] == "04:00" and own["priority"] == "high"
+    assert any("second block for Slayer" in line for line in settings.retired)
+
+
+def test_a_servers_own_rcon_address_in_settings_toml_wins_over_its_instance_json(tmp_path: Path) -> None:
+    """Huragok reaching the console from Docker or another PC: once the server wrote instance.json, its own address
+    and port were used instead of settings.toml's (audit 2026-11, 4.5). Without them set, instance.json's are."""
+    import json as json_module
+
+    from conftest import free_ports, write_root
+
+    path = write_root(tmp_path / "reclaimer", list(zip(("Alpha", "Beta"), free_ports(2))),
+                      '[[server]]\nname = "Alpha"\nrcon_host = "10.0.0.5"\nrcon_port = 50176\n')
+    for server in load(path).servers:
+        server.data_dir.mkdir(parents=True, exist_ok=True)
+        (server.data_dir / "instance.json").write_text(json_module.dumps(
+            {"rcon": {"address": "127.0.0.1", "port": 49176, "password": "fromtheserver"}}), encoding="utf-8")
+    alpha, beta = load(path).servers
+    assert (alpha.rcon_endpoint().host, alpha.rcon_endpoint().port) == ("10.0.0.5", 50176)
+    assert (beta.rcon_endpoint().host, beta.rcon_endpoint().port) == ("127.0.0.1", 49176)
+    assert alpha.rcon_endpoint().password == "fromtheserver"
+
+
+def test_a_copy_of_a_servers_data_folder_doesnt_take_its_place(tmp_path: Path) -> None:
+    """Explorer's backup copy ("lg-test-server - Copy") sorted after the server's own data folder and took over: its
+    stale server.log, status.json and host key were read for the live ones (audit 2026-11, 4.6)."""
+    import json as json_module
+    import os
+
+    from conftest import free_port, write_root
+
+    path = write_root(tmp_path / "reclaimer", [("LG Test Server", free_port())], "")
+    own = load(path).servers[0].data_dir
+    copy = own.with_name(own.name + " - Copy")
+    for folder, when in ((own, 1_000_000_000), (copy, 1_500_000_000)):  # the copy written later, even
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "instance.json").write_text(json_module.dumps({"name": "LG Test Server"}), encoding="utf-8")
+        os.utime(folder / "instance.json", (when, when))
+    assert load(path).servers[0].data_dir == own
+
+
+def test_d_shows_the_watchdogs_frame_cases_as_an_old_slow_frames_sets_them(tmp_path: Path) -> None:
+    """0.2.1's `slow_frames = "act"` still makes slow act and very_slow actnow; D showed both as "watch (default)"
+    (audit 2026-11, 4.10)."""
+    from huragok.core.hostsettings import current, find
+
+    data = {"watchdog": {"slow_frames": "act"}}
+    assert current(data, find("watchdog", "slow")) == ("act", "the file (slow_frames)")
+    assert current(data, find("watchdog", "very_slow")) == ("actnow", "the file (slow_frames)")
+    assert current({"watchdog": {}}, find("watchdog", "slow")) == ("watch", "default")

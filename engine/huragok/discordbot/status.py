@@ -192,7 +192,7 @@ class Status:
         if self.on("status.presence") and self.time_for("presence", float(self.config.section("status", "presence")["rotate_seconds"])):
             await self.presence()
         if self.on("status.bio") and self.time_for("bio", float(self.config.section("status", "bio")["update_minutes"]) * 60):
-            self.profile("bio", fill(str(self.config.section("status", "bio")["text"]), self.values()))
+            self.profile("bio", fill(str(self.config.section("status", "bio")["text"]), self.values())[:190])  # Discord's most (6.6)
         if self.on("status.nickname") and self.time_for("nickname", float(self.config.section("status", "nickname")["update_minutes"]) * 60):
             self.profile("nick", fill(str(self.config.section("status", "nickname")["template"]), self.values())[:32])
         if self.on("status.voice_status") and self.time_for("voice", float(self.config.section("status", "voice_status")["update_minutes"]) * 60):
@@ -282,19 +282,24 @@ class Status:
         listed = self.stored(BOARD_LIST)[1]
         have = [row for row in self.part.ctx.db.query("SELECT key, message FROM discord_posts WHERE key LIKE 'board:%'") if row["key"] != BOARD_LIST]
         if listed == wanted and not self.rebuild:
+            self._board_webhook = webhook
             return
         if not listed and not self.rebuild and {row["key"] for row in have} <= set(keys) and len(have) in (0, len(keys)):  # the cards from before it was kept: as they are, if they're the right ones
             self.store(BOARD_LIST, value=wanted)
             return
         self.rebuild = False
         old = json.loads(listed).get("where", where) if listed else where
+        # The webhook the old cards were posted through, while Huragok has run since: only it can delete them (the
+        # new one's deletes were refused, and the old board stayed, audit 2026-11, 6.4). Its address isn't stored.
+        before = getattr(self, "_board_webhook", None)
         for row in have:
             if row["message"]:
-                self._delete_card(str(row["message"]), old, webhook)
+                self._delete_card(str(row["message"]), old, before if before is not None else webhook)
             self.forget(row["key"])
         self.shown.clear()
         self.seen_at.clear()
         self.store(BOARD_LIST, value=wanted)
+        self._board_webhook = webhook
 
     def _delete_card(self, message_id: str, where: str, webhook: str) -> None:
         delivery = self.part.poster.delivery
@@ -375,8 +380,9 @@ class Status:
                 if webhook:
                     return await to_thread(rest.execute_webhook, webhook, {**form, **self._who()})
                 return await to_thread(delivery.to_channel, config, channel, "superintendent", form)
+        # Tagged as feeds' posts are, so a board that's refused shows on the dashboard's refused channels (6.7)
         self.part.outbox.put(send, priority=STATUS, bucket=f"board:{webhook[-12:] or channel}", key=f"status:{key}", what=f"the status board ({key})",
-                             on_done=stored, on_fail=failed)
+                             tag=f"webhook:{webhook}" if webhook else f"channel:{channel}", on_done=stored, on_fail=failed)
 
     def _who(self) -> dict[str, str]:
         from .speakers import speaker
@@ -461,7 +467,8 @@ class Status:
         changes: dict[str, dict[str, str]] = {}
         if names:
             for channel, text in self._templated(self.config.section("status", "channel_names").get("channels") or {}).items():
-                changes.setdefault(channel, {})["name"] = text[:100]
+                if text.strip():  # one that comes out empty is refused at every rename (6.6)
+                    changes.setdefault(channel, {})["name"] = text[:100]
         if topics:
             for channel, text in self._templated(self.config.section("status", "topics").get("channels") or {}).items():
                 changes.setdefault(channel, {})["topic"] = text[:1024]

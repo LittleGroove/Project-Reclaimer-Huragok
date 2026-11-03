@@ -11,7 +11,8 @@
   "0.5.2",
   "0.5.3",
   "0.6.0-beta.1",
-  "0.6.0-beta.2"
+  "0.6.0-beta.2",
+  "0.6.0"
  ],
  "files": {
   "settings.toml": {
@@ -87,7 +88,9 @@
      "# Empty: never. One server's own time goes in its [[server]] block below."
     ],
     "restarts|min_uptime_seconds": [
-     "# A daily restart waits until the server has been up this long."
+     "# A daily restart waits until the server has been up this long.",
+     "# A new run settles this long before the watchdog's memory and frame cases count. A",
+     "# daily restart is skipped for a server restarted in the 6 hours before it: it's fresh."
     ],
     "restarts|backoff_seconds": [
      "# A server that died: wait this long before each new start, in turn (the last repeats)."
@@ -145,7 +148,10 @@
      "# restarted it mid-game hundreds of times."
     ],
     "watchdog|memory": [
-     "# Memory: the server program using more than this many MB."
+     "# Memory: the server program using more than this many MB.",
+     "# Memory: the server program using more than this many MB, having grown past it (what",
+     "# the run used once settled, min_uptime_seconds, was under it). \"watch\" says so; \"act\"",
+     "# restarts it after the game."
     ],
     "keepalive|hang_seconds": [
      "# A server that has stopped responding: status.json not rewritten (normally every",
@@ -571,7 +577,16 @@
      "#     1st: muted 1 day   2nd: out 1 hour, then muted 3 days   3rd and 4th: out 1 day",
      "# !banword word | 1d 7d | 2, 1h 1d | 5 | slurs; and take one off: !unbanword word.",
      "# No words, with a name: a ladder for what the word list can't hear, that only staff climb, with !strike",
-     "# or the Strike button on a report. Voice, say:  | 1d, 7d | 2, 1h | 3 | voice"
+     "# or the Strike button on a report. Voice, say:  | 1d, 7d | 2, 1h | 3 | voice",
+     "#          mutes either, the server's plain kick every time up to the ban.",
+     "#   kickword           |               | 0         |   | kicks",
+     "#   askword            |               |           |   | ask",
+     "#     every time: a ticket for the staff on Discord; nothing in game, no strike",
+     "# Mutes, kicks and ban all blank: the line only reports. Nothing is done or said",
+     "# in game, and no strike is counted: each time, a ticket for the staff on Discord,",
+     "# who decide (how a word is said can matter more than the word). A name with one",
+     "# of its words isn't kicked: the staff are asked whether to ban the name or allow",
+     "# it, and staff in that game are told."
     ]
    },
    "inline": {}
@@ -822,7 +837,8 @@
      "All voice chat off on this server for 10 minutes, then back on by itself; typed again, back on now"
     ],
     "unbanword": [
-     "Take a word off automod.txt (a line left with no words goes too)"
+     "Take a word off automod.txt (a line left with no words goes too)",
+     "Take words off automod.txt (a line left with no words goes too), or with | <line> before nothing, the whole line"
     ],
     "allowvote": [
      "Give a player their votes back after !novote"
@@ -1276,7 +1292,8 @@
     ],
     "channels|games": [
      "# match summaries",
-     "# games ending"
+     "# games ending",
+     "# games ending, and playlists changing with the player count"
     ],
     "channels|stats": [
      "# leaderboards, achievements",
@@ -1496,7 +1513,8 @@
     "commands|names": [
      "# rename any: { whois = \"lookup\", leaderboard = \"top\" }",
      "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /requests (!reports), /wordlist (!rules), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)",
-     "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /wordlist (!rules), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)"
+     "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /wordlist (!rules), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)",
+     "# rename any: { whois = \"lookup\" }. Already different from the game, where its name there would mislead: /bannedwords (!rules), /bannednames (!bannames), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)"
     ],
     "commands|hidden": [
      "# never registered"

@@ -159,6 +159,21 @@ def strike(config: DiscordConfig, event: Event) -> Card:
                 subject="" if dry else str(event.get("player_id") or ""), subject_name=str(event.get("player_name") or ""), rule=str(event.get("rule") or ""))
 
 
+def heard(config: DiscordConfig, event: Event) -> Card:
+    """A word of a list that only reports: nothing was done in game, and it's the staff's to decide, as how it was said matters more than the word. It joins the player's live Vergil card, as a strike does."""
+    evidence = str(event.get("evidence") or "")
+    fields = [(say(config, "vergil.said"), clean(evidence)[:MAX_FIELD])] if evidence else []
+    return Card("vergil", "heard", say(config, "vergil.heard", player=player(event, "player_id", "player_name"), rule=clean(event.get("rule"))),
+                heading(config, "hero", "For the staff"), fields, server=event.server, subject=str(event.get("player_id") or ""), subject_name=str(event.get("player_name") or ""))
+
+
+def name_asked(config: DiscordConfig, event: Event) -> Card:
+    """A name with a word of a list that only reports in it: nobody was kicked. Ban the name, or allow it: either closes it, and one card a name however often they join."""
+    return Card("vergil", "name-asked", say(config, "vergil.name_asked", player=player(event, "player_id", "player_name"), rule=clean(event.get("rule"))),
+                heading(config, "citizens", "A name to decide"), server=event.server, subject=str(event.get("player_id") or ""), subject_name=str(event.get("player_name") or ""),
+                owner=PEOPLE, problem=str(event.get("key") or ""))
+
+
 def vergil_line(kind: str, key: str, **names: str) -> Callable[[DiscordConfig, Event], Card]:
     def build(config: DiscordConfig, event: Event) -> Card:
         values = {name: clean(event.get(source)) for name, source in names.items()}
@@ -288,6 +303,15 @@ def game_started(config: DiscordConfig, event: Event, players: int) -> Card:
 def game_ended(config: DiscordConfig, event: Event, players: int, minutes: float) -> Card:
     return Card("games", "ended", say(config, "game.ended", what=_game_what(event), players=players, minutes=minutes_words(minutes * 60)),
                 heading(config, "come again", "Game over"), server=event.server)
+
+
+def playlist_changed(config: DiscordConfig, event: Event) -> Card:
+    """Playlists by player count (servers/byplayers.py) put another playlist in rotation: from the next vote."""
+    was = clean(event.get("was_name") or "")
+    return Card("games", "playlist", say(config, "game.playlist", players=int(event.get("players") or 0),
+                                         playlist=f"**{clean(event.get('name') or '') or 'another playlist'}**",
+                                         range=clean(event.get("range") or ""), was=f" (it was **{was}**)" if was else ""),
+                heading(config, "detour", "Playlist"), server=event.server)
 
 
 # Joins --------------------------------------------------------------------------------------------------------------

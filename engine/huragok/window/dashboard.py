@@ -24,6 +24,7 @@ from ..core.logs import RecentLog
 from ..lore import HURAGOK, SUPERINTENDENT, VERGIL
 from .controllers import Controller, Row
 from .screens.base import WIDE
+from .screens.byplayers import ByPlayersScreens
 from .screens.discordsetup import DiscordScreens
 from .screens.files import FileScreens
 from .screens.games import GameScreens
@@ -127,7 +128,7 @@ def render(view: dict[str, Any], width: int, height: int) -> list[tuple[str, str
 # The menu ----------------------------------------------------------------------------------------
 
 
-class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens):
+class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens, ByPlayersScreens):
     """Every screen is written the same way: a title, then sections headed by where you are (a path like
     `LG Test Server › What it plays › Playlists`), numbered or lettered lists in aligned columns, a menu
     block of [key] options, and one question. Log lines and server events that arrive while a question
@@ -371,6 +372,20 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
             self.note("No server is running.", "yellow")
         await self.wait_any_key(20)
 
+    @staticmethod
+    async def _read_card(card: Any, name: str) -> list[Any]:
+        """The card, read off the event loop while the servers are looked after: what it reads of the live picture can
+        change as it's read ("dictionary changed size during iteration"), which took V back to the dashboard (audit
+        2026-11, 7.9). Read again; a file that can't be read is said on the card's own lines, not here."""
+        for attempt in range(3):
+            try:
+                return list(await asyncio.to_thread(card, name))
+            except RuntimeError:
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0.05)
+        return []
+
     async def screen_view(self) -> None:
         self.title("SERVER STATUS", "everything the Superintendent keeps an eye on for one server")
         picked = await self.select_servers("Look at", single=True)
@@ -383,7 +398,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
                 # Off the event loop: it walks each Workshop item's folders and reads the server's files, slow on a
                 # big or busy disk, and the servers are looked after meanwhile. What it reads of the live picture is
                 # only read.
-                sections = await asyncio.to_thread(card, name) if card else []
+                sections = await self._read_card(card, name) if card else []
             except KeyError:
                 self.note(f"{name} isn't in the settings any more.", "yellow")
                 await self.wait_any_key(5)
@@ -475,7 +490,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
                       ("B", "bans, admins and the VPN block")]),
             (HURAGOK, [("N", "a new server: a folder in SERVERS/, from a package in PACKAGES/, checked and started"),
                        ("G", "what a server plays: maps, variants, game types, playlists built from numbered lists, "
-                             "Workshop items and mods"),
+                             "playlists picked by player count, Workshop items and mods"),
                        ("I", "SteamCMD: finds or installs it, signs in once, tells every server; gets Halo 3's files "
                              "(copied from MCC here, or downloaded), the campaign missions and ODST's"),
                        ("D", "settings, a step at a time, no file formats to know: Huragok's own (how it runs, "

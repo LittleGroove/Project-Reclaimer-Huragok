@@ -103,6 +103,7 @@ class FakeDiscord:
         self.private_threads: dict[str, dict[str, Any]] = {}
         self.dms_closed: set[str] = set()
         self.attachments: dict[str, str] = {}
+        self.upload_limit = 10 * 1024 * 1024  # what an unboosted server takes, in all of a message's files
         self.deleted: list[str] = []
         self.followups: list[dict[str, Any]] = []
         self.identifies: list[dict[str, Any]] = []
@@ -214,6 +215,8 @@ class FakeDiscord:
             form = await request.post()
             body = json.loads(str(form["payload_json"]))
             body["files"] = [part.file.read().decode("utf-8") for key, part in form.items() if key != "payload_json"]
+            if sum(len(text.encode("utf-8")) for text in body["files"]) > self.upload_limit:  # as Discord does: the server's own limit, 10 MiB unboosted
+                return self._refuse(413, 40005, "Request entity too large", f"files over the {self.upload_limit}-byte upload limit")
         webhook_path = path.startswith("/webhooks/") or path.startswith("/interactions/")
         if not webhook_path and request.headers.get("Authorization") != f"Bot {self.token}":
             return _json({"message": "401: Unauthorized", "code": 0}, status=401)
@@ -609,6 +612,16 @@ class FakeDiscord:
                    "interaction_metadata": {"id": opened, "type": 2, "user": _user(user, f"user{user}"),
                                             "authorizing_integration_owners": {"0": GUILD}}}
         return self._interaction(3, data, user, roles, GUILD, channel, message=message)
+
+
+def huragok_started(fake: FakeDiscord) -> bool:
+    """Huragok's own "Huragok X is running" card has been posted (once every part has started): a test about another
+    card waits for it and takes it out of `posted` first."""
+    for post in list(fake.posted):
+        if "is running" in json.dumps(post.get("embeds") or post.get("content") or ""):
+            fake.posted.remove(post)
+            return True
+    return False
 
 
 def use_fake_discord(fake: FakeDiscord, monkeypatch: Any) -> None:

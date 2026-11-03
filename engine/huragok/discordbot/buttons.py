@@ -138,6 +138,15 @@ def _strikes(part: DiscordPart, sql: str, values: tuple[Any, ...]) -> list[Any]:
         return []
 
 
+def _someone_else_now(part: DiscordPart, number: int, player_id: str) -> str:
+    """Why a form can't go ahead: the card was set to another player while it was open (Who is this?), and what was
+    typed was about who it showed. Sent as it was, it acted on whoever the card names now (audit 2026-11, 6.9)."""
+    ticket = part.tickets.get(number)
+    if ticket is None or str(ticket["player_id"]).lower() == player_id.lower():
+        return ""
+    return f"This card is about {cards.clean(part.name_of(str(ticket['player_id']), str(ticket['player_name'] or '')))} now, not who the form was for. Nothing was done: press again if it's still meant."
+
+
 def _got_there_first(part: DiscordPart, interaction: discord.Interaction, number: int) -> str:
     """Someone else just acted on this player, so this press may be about something that's no longer so: say who, once. Pressed again, it's meant."""
     ticket = part.tickets.get(number)
@@ -289,7 +298,7 @@ class ActionForm(SaysWhatWentWrong, discord.ui.Modal):
     def __init__(self, part: DiscordPart, ticket: Any, action: str) -> None:
         name = part.name_of(str(ticket["player_id"]), str(ticket["player_name"] or ""))
         super().__init__(title=f"{say(part.file, f'button.{action}')}: {name}"[:45], timeout=600)
-        self.part, self.number, self.action = part, int(ticket["number"]), action
+        self.part, self.number, self.action, self.player_id = part, int(ticket["number"]), action, str(ticket["player_id"])
         self.length: discord.ui.TextInput[Any] | None = None
         if action in HOW_LONG:
             placeholder, required = HOW_LONG[action]
@@ -305,7 +314,7 @@ class ActionForm(SaysWhatWentWrong, discord.ui.Modal):
         if length is None:
             await answer(interaction, f"Couldn't read \"{cards.clean(self.length.value)}\" as how long: try 30m, 12h, 7d, or perm for good. Nothing was done.")
             return
-        if why := _got_there_first(self.part, interaction, self.number):
+        if why := _someone_else_now(self.part, self.number, self.player_id) or _got_there_first(self.part, interaction, self.number):
             await answer(interaction, why)
             return
         await interaction.response.defer()
@@ -339,14 +348,14 @@ class StrikeForm(SaysWhatWentWrong, discord.ui.Modal):
     def __init__(self, part: DiscordPart, ticket: Any, rules: list[str]) -> None:
         super().__init__(title=f"Strike: {part.name_of(str(ticket['player_id']), str(ticket['player_name'] or ''))}"[:45], timeout=600)
         self.part, self.number = part, int(ticket["number"])
-        target = str(ticket["player_id"])
+        self.player_id = target = str(ticket["player_id"])
         self.rule: discord.ui.Select[Any] = discord.ui.Select(options=[discord.SelectOption(label=name[:100], value=name[:100], description=part.ctx.next_strike(target, name)[:100] or None) for name in rules[:25]])  # so it's known before it's done: it can reach a ban
         self.add_item(discord.ui.Label(text="Which rule", component=self.rule))
         self.note = discord.ui.TextInput(required=False, max_length=300)
         self.add_item(discord.ui.Label(text="Why (they'll read this)", component=self.note))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if why := _got_there_first(self.part, interaction, self.number):
+        if why := _someone_else_now(self.part, self.number, self.player_id) or _got_there_first(self.part, interaction, self.number):
             await answer(interaction, why)
             return
         await interaction.response.defer()
@@ -357,11 +366,14 @@ class PardonStrikeForm(SaysWhatWentWrong, discord.ui.Modal):
     def __init__(self, part: DiscordPart, ticket: Any) -> None:
         rule = part.tickets.rule_of(ticket)
         super().__init__(title="Pardon the strike", timeout=600)
-        self.part, self.number = part, int(ticket["number"])
+        self.part, self.number, self.player_id = part, int(ticket["number"]), str(ticket["player_id"])
         self.why = discord.ui.TextInput(required=False, max_length=300)
         self.add_item(discord.ui.Label(text="Why", description=(f"It clears every strike on {rule}, and lifts what they did" if rule else "It clears their strikes, and lifts what they did")[:100], component=self.why))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        if why := _someone_else_now(self.part, self.number, self.player_id):
+            await answer(interaction, why)
+            return
         await interaction.response.defer()
         await _pardon_strike(self.part, interaction, self.number, str(self.why.value).strip())
 
@@ -391,7 +403,9 @@ async def _decide(part: DiscordPart, interaction: discord.Interaction, number: i
     where = part.where_to_run(preferred=str(rows[0]["server"]))
     if command == "confirm":  # what's confirmed is theirs, and this card's. A denial does nothing to anyone
         part.tickets.expect(str(ticket["player_id"]), by.id, number)
-    refused = await part.ctx.run_line(command, " ".join(word for word in (str(rows[0]["slot"]), why) if word), server=where, player=by, role=game_rank(part.file, someone_from(interaction.user), where or None), tell=tell)
+    # The rank held on every server, as /confirm and /deny take it: what's confirmed may reach them all (audit 6.8)
+    rank = rank_to_run(part.file, someone_from(interaction.user), part.ctx.servers, where or None, command)
+    refused = await part.ctx.run_line(command, " ".join(word for word in (str(rows[0]["slot"]), why) if word), server=where, player=by, role=rank, tell=tell)
     undecided = part.ctx.db.query("SELECT status FROM commands_requests WHERE number = ?", (str(ticket["problem"]).removeprefix("request:"),))[0]["status"] == "open"
     if refused or undecided:  # their own request, say, or the server said no: it's still there to decide, and the card can't say why
         part.tickets.not_expected(str(ticket["player_id"]), by.id)
@@ -444,7 +458,11 @@ class ShortenForm(SaysWhatWentWrong, discord.ui.Modal):
             await answer(interaction, "That's been decided already.")
             return
         about = str(appeal["about"])
-        rank = highest_rank(part.file, someone_from(interaction.user), part.ctx.servers)
+        # The rank the new kick (or mute) will be given at: a kick with a time takes the one held on every server, so
+        # judged at their highest, Let back went through, the new kick was refused, and the player was let back with
+        # nothing against them (audit 2026-11, 6.12)
+        rank = rank_to_run(part.file, someone_from(interaction.user), part.ctx.servers,
+                           part.where_to_run(str(appeal["player_id"])) or None, "mute" if about == "mute" else "kick", timed=True)
         if why_not := _cant_shorten(part, rank, str(appeal["player_id"]), about, length):  # before anything's lifted: it can't be half done
             await answer(interaction, why_not)
             return
@@ -461,6 +479,11 @@ class ShortenForm(SaysWhatWentWrong, discord.ui.Modal):
 def _cant_shorten(part: DiscordPart, rank: str, player_id: str, about: str, length: str) -> str:
     """Why this time won't do, while nothing's been touched. A moderator's kick has a limit, and shortening is never making it longer."""
     wanted = seconds_of(length)
+    command = "mute" if about == "mute" else "kick"
+    needed = next((role for known, role in part.ctx.game_commands() if known.name == command), "moderator")
+    if rank == PROBATION or ROLES.index(rank) < ROLES.index(needed):  # what's lifted would stay lifted (audit 6.12)
+        return (f"Shortening it puts a {command} with a time on every server, and that takes {needed} on all of them. Nothing was done."
+                if command == "kick" else f"A mute takes {needed} or up. Nothing was done.")
     if about != "mute" and ROLES.index(rank) < ROLES.index("admin"):
         most = str(part.ctx.part_option("automod", "moderators_kick_at_most", "1d")).strip().lower()
         most = most if TIME.fullmatch(most) else "1d"
@@ -609,6 +632,36 @@ async def _ban_everywhere(part: DiscordPart, interaction: discord.Interaction, n
     await _refresh(part, interaction, number)
 
 
+async def _name_answer(part: DiscordPart, interaction: discord.Interaction, ticket: Any, action: str) -> None:
+    """A name Vergil asked about: banned (names.txt, as /banname does, kicking whoever has it), or allowed, and not asked about again. Either closes the card. It takes whoever may use /banname."""
+    number, name = int(ticket["number"]), str(ticket["player_name"] or "")
+    if ticket["state"] not in ("open", "active"):
+        await answer(interaction, "That's been answered already.")
+        return
+    where = part.where_to_run(preferred=str(ticket["server"]))
+    if not where or not name:
+        await answer(interaction, "There's no server to run that on just now." if name else "This card has no name on it to answer for.")
+        return
+    by = who_pressed(part, interaction)
+    rank = rank_to_run(part.file, someone_from(interaction.user), part.ctx.servers, where, "banname")
+    if why := part.ctx.refuses("banname", None, server=where, player=by, role=rank):
+        await answer(interaction, cards.clean(why, for_a_channel=False)[:MOST_SHOWN])
+        return
+    await interaction.response.defer()
+    who = named(interaction.user)
+    if action == "allowname":
+        part.ctx.allow_name(name, who, where)
+        part.tickets.close(number, who, key="ticket.name_allowed")
+        return
+    heard, tell = _hear()
+    refused = await part.ctx.run_line("banname", name, server=where, player=by, role=rank, tell=tell, prefix="/")
+    banned = any(listed.strip().casefold() == name.strip().strip("*").lstrip("#").strip().casefold() for listed in part.ctx.banned_names())
+    if refused or not banned:
+        await answer(interaction, cards.clean(refused or " ".join(heard) or "The name wasn't banned.", for_a_channel=False)[:MOST_SHOWN])
+        return
+    part.tickets.close(number, who, key="ticket.name_banned")
+
+
 def _no_longer(part: DiscordPart, ticket: Any, action: str) -> str:
     """What the button said was true when the card last changed. Pressed now, would it still make sense?"""
     now = part.tickets.standing(str(ticket["player_id"]))
@@ -731,6 +784,8 @@ async def pressed(part: DiscordPart, interaction: discord.Interaction, custom_id
         if action == "dismiss":
             part.reports.dismissed(number)
         part.tickets.close(number, who, key="ticket.dismissed" if action == "dismiss" else "")
+    elif action in ("banthename", "allowname"):
+        await _name_answer(part, interaction, ticket, action)
     elif action == "strike" and player_id:
         rules = part.ctx.strike_rules()
         if not rules:

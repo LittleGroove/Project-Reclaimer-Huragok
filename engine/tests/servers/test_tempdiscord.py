@@ -148,20 +148,38 @@ def test_two_huragoks_reach_for_different_ports(tmp_path: Path) -> None:
     assert one.first_port != two.first_port
 
 
-def test_old_days_go(tmp_path: Path, run) -> None:
+def test_old_days_go_and_finished_ones_are_gzipped(tmp_path: Path, run) -> None:
+    """A busy server's day came to 200 MB: one that's over is gzipped (still read with any gzip tool), and one older
+    than KEEP_DAYS goes, gzipped or not (the host's call, 2 Nov 2026)."""
+    import gzip
+
     folder = tmp_path / "logs" / "temp-discord"
-    folder.mkdir(parents=True)
+    (folder / "stats-reports").mkdir(parents=True)
     old = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 40 * 86400))
     recent = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 2 * 86400))
     for day in (old, recent):
-        (folder / f"temp-discord-{day}.jsonl").write_text("{}\n", encoding="utf-8")
+        (folder / f"temp-discord-{day}.jsonl").write_bytes(b'{"kind": "start"}\n')
+    (folder / f"temp-discord-{old}.jsonl.gz").write_bytes(gzip.compress(b"{}\n"))
+    (folder / "stats-reports" / f"stats-reports-{recent}.jsonl").write_text('{"report": 1}\n', encoding="utf-8")
 
     async def scenario() -> None:
         async with running(tmp_path):
-            await wait_for(lambda: not (folder / f"temp-discord-{old}.jsonl").exists())
-        assert (folder / f"temp-discord-{recent}.jsonl").exists()
+            await wait_for(lambda: (folder / f"temp-discord-{recent}.jsonl.gz").exists()
+                           and (folder / "stats-reports" / f"stats-reports-{recent}.jsonl.gz").exists())
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            assert (folder / f"temp-discord-{today}.jsonl").exists()  # still being written: as it is
 
     run(scenario())
+    assert not list(folder.glob(f"temp-discord-{old}.*"))
+    assert not (folder / f"temp-discord-{recent}.jsonl").exists()
+    assert gzip.decompress((folder / f"temp-discord-{recent}.jsonl.gz").read_bytes()) == b'{"kind": "start"}\n'
+    assert not list(folder.rglob("*.part"))
+
+
+def test_players_are_polled_every_minute_while_a_game_is_on() -> None:
+    from huragok.servers import tempdiscord
+
+    assert tempdiscord.POLL_SECONDS == 60.0
 
 
 # ── statsrelay ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -293,3 +311,32 @@ def test_readable_bodies() -> None:
     assert readable(b'{"a": 1}', []) == {"json": {"a": 1}}
     assert readable(b"hello", []) == {"text": "hello"}
     assert readable(b"\xff\xfe", []) == {"base64": "//4="}
+
+
+def test_the_relay_forwards_on_threads_of_its_own(tmp_path: Path, run, monkeypatch) -> None:
+    """On Huragok's shared threads, a stats service that hangs (30 s a report) held them through a burst of games
+    ending: server stops, playlist checks and the window waited behind it (audit 2026-11, 8.8)."""
+    import threading
+
+    from huragok.servers import statsrelay
+
+    threads: list[str] = []
+    real = statsrelay.forward
+
+    def forward(*args: Any, **kwargs: Any) -> Any:
+        threads.append(threading.current_thread().name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(statsrelay, "forward", forward)
+
+    async def scenario() -> None:
+        async with FakeService() as service:
+            config = dedicated(tmp_path / "one", service.url)
+            capture = StatsCapture(tmp_path / "records", lambda s, d: None, Scrubber(b"k" * 32))
+            await capture.apply(["one"], {"One": (config, None)})
+            _, url = configured(config)
+            status, _ = await post(url, b'{"players": []}')
+            assert status == 201
+
+    run(scenario())
+    assert threads and all(name.startswith("stats relay") for name in threads)

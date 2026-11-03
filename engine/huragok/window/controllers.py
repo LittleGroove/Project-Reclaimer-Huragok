@@ -135,7 +135,12 @@ class LocalController:
         return [f"{persona.tag} " + " · ".join(said) for persona, said in bits.items() if said]
 
     def watch(self, server: str, listener: Callable[[Any], None]) -> Callable[[], None]:
-        return self.supervisor.bus.subscribe("rcon.*", lambda event: listener(event) if event.server == server else None)
+        def mine(event: Any) -> None:
+            if event.server == server:
+                listener(event)
+
+        stops = [self.supervisor.bus.subscribe(pattern, mine) for pattern in ("rcon.*", "byplayers.*")]
+        return lambda: [stop() for stop in stops] and None
 
     def rows(self) -> list[Row]:
         return self.supervisor.superintendent.fleet.rows()
@@ -297,16 +302,30 @@ class RemoteController:
         a download or a Steam check can take minutes."""
         wait = remote_wait(verb)
         request_id = await asyncio.to_thread(mailbox.post, self.records, verb, server, **options)
-        deadline = time.monotonic() + wait
+        request = mailbox.folder(self.records) / f"{request_id}.json"
+        started = time.monotonic()
+        deadline = started + wait
+        looked = started
         while time.monotonic() < deadline:
             reply = await asyncio.to_thread(mailbox.take_reply, self.records, request_id)
             if reply is not None:
                 return [(server, Result(reply.ok, reply.message, reply.text))]
+            # The supervising window gone, or not taking requests: said now, not after the whole wait (up to 15
+            # minutes for a program update), while this window couldn't take over (audit 2026-11, 7.3)
+            now = time.monotonic()
+            if now - looked >= 1.0:
+                looked = now
+                if not await asyncio.to_thread(self.is_running):
+                    taken_back = request.exists()
+                    request.unlink(missing_ok=True)
+                    return [(server, Result(False, "the supervising window closed before it answered"
+                                            + ("; nothing was done" if taken_back else ": it may have done it, or part of it")))]
+                if now - started >= PICKED_UP_WITHIN and request.exists():
+                    break
             await asyncio.sleep(0.25)
-        request = mailbox.folder(self.records) / f"{request_id}.json"
         if request.exists():  # never picked up: taken back, so it doesn't happen later by surprise
             request.unlink(missing_ok=True)
-            return [(server, Result(False, f"the supervising window didn't take the request in {wait:.0f} s "
+            return [(server, Result(False, f"the supervising window didn't take the request in {min(wait, PICKED_UP_WITHIN):.0f} s "
                                            "(is it still running?); nothing was done"))]
         return [(server, Result(False, f"no answer yet after {wait:.0f} s: it may still be doing it (the "
                                        "supervising window's events will say)"))]
@@ -319,6 +338,9 @@ class RemoteController:
 REMOTE_WAITS = {"update": 600.0, "update_program": 900.0, "update_workshop": 600.0, "check_update": 180.0,
                 "check_program_update": 180.0, "check_workshop": 300.0, "rcon": 30.0, "say": 30.0,
                 "game_files": 60.0, "game_files_retry": 30.0, "banall": 60.0}
+
+
+PICKED_UP_WITHIN = 20.0  # a request still in the mailbox this long isn't being taken: the supervising window is stuck or gone
 
 
 def remote_wait(verb: str) -> float:

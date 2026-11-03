@@ -91,6 +91,13 @@ AFTER_GAME_LIMIT = 1800.0  # a restart "after this game" waits at most this long
 
 
 DAILY_WINDOW = 1800.0  # the daily restart only fires within this long after its time
+# A daily restart is skipped for a server whose run is younger than this: it was refreshed already (an update, the
+# watchdog, a crash, a person), and a restart now would only take its players off again (the host, 2 Nov 2026).
+DAILY_FRESH_SECONDS = 6 * 3600.0
+# More automatic restarts than this in an hour are said in the log: something may be restarting it again and again.
+# Only said. Until 0.6.0 it was a budget that stopped the restarts and FAULTED the server, which stopped restarts that
+# were doing their job (an update, the watchdog) and took the players off a working server (the host, 2 Nov 2026).
+MANY_RESTARTS = 6
 
 
 JOB_LIMIT = 1200.0  # a job before a start (a Workshop swap) gets this long; then the server starts anyway
@@ -180,7 +187,7 @@ class PlannedRestart:
     requested: float = field(default_factory=time.time)  # when it was asked for (Unix seconds)
     countdown: float | None = None  # seconds of notice once it's due; None: the after_game setting
     since: float = field(default_factory=time.monotonic)  # the same, monotonic: how long it has waited
-    manual: bool = False  # a person asked (!restartserver gameover): not counted against restarts_per_hour
+    manual: bool = False  # a person asked (!restartserver gameover): not counted among the automatic restarts
 
 
 def since_start(lines: list[str]) -> list[str]:
@@ -258,7 +265,7 @@ class ServerManager:
         self.coming_back = False  # a stop in progress leads to a start
         self.stop_label = ""
         self.stop_by = ""
-        self.stop_manual = False  # a person asked for the stop or restart in progress: not held to restarts_per_hour
+        self.stop_manual = False  # a person asked for the stop or restart in progress: not an automatic restart
         self.save_failed = False  # the last write of the record failed (said once until one gets through)
         self.failing = False  # the stop in progress is a failed start being cleaned up
         self.task: asyncio.Task[None] | None = None  # the backend operation in flight
@@ -338,8 +345,12 @@ class ServerManager:
     # Booting the manager ----------------------------------------------------------------
 
     def boot(self) -> None:
-        """Once, when the supervisor starts: this is what makes a reboot come back by itself."""
-        if self.server.autostart:
+        """Once, when the supervisor starts: this is what makes a reboot come back by itself. A FAULTED server stays
+        FAULTED, with its next try and its cool-downs as they were: reset by Huragok's own restart (a self-update), an
+        autostart server was tried at once and one that doesn't autostart lost its try (the host, 2 Nov 2026)."""
+        if self.record.faulted and self.record.wanted == "running":
+            pass
+        elif self.server.autostart:
             self.record.wanted, self.record.faulted, self.record.fault_reason, self.record.fail_count = \
                 "running", False, "", 0
             self.record.retry_at, self.record.retries = None, 0
@@ -412,6 +423,11 @@ class ServerManager:
         if alive:
             self._seen_up()
             return
+        if self.record.faulted and self.record.wanted == "running":
+            log.info("[%s] still FAULTED from before Huragok started%s", self.name,
+                     f": it tries again {self._retry_text()}" if self.record.retry_at is not None else "")
+            self._set_phase("faulted")  # its try comes when it was due (_step_faulted)
+            return
         if not self.backend.can_start:
             self._set_phase("offline")
             return
@@ -438,6 +454,8 @@ class ServerManager:
         if self.record.wanted == "running" and not self.record.faulted and not self.server.errors:
             if self.waiting_kind == "files" and time.monotonic() - self.waiting_checked < WAIT_RECHECK:
                 return
+            if self.fleet.stopping_all:
+                return  # everything is being stopped: nothing starts meanwhile, or it'd be left running
             self._set_phase("launch")
 
     def _status_is_ours(self) -> bool:
@@ -657,11 +675,16 @@ class ServerManager:
                      self.name, format_duration(AFTER_GAME_LIMIT))
             self._trigger_plan(use_ladder=True)
             return
-        if self.planned is not None and self.planned.when == "when_empty" and not self.players and self.state.connected:
+        if self.planned is not None and self.planned.when == "when_empty" and self.state.empty:
             self._trigger_plan()
             return
-        if uptime >= float(self.setting("min_uptime_seconds")) and self._daily_due(now):
-            self._begin_countdown("daily restart", coming_back=True, manual=False, by=self.settings.name)
+        if self._daily_due(now):
+            if self.started is not None and uptime < DAILY_FRESH_SECONDS:  # not known: not taken for fresh
+                log.info("[%s] daily restart skipped: it was restarted %s ago", self.name, format_duration(uptime))
+                self.record.remember("restart", f"daily restart skipped: up {format_duration(uptime)}, refreshed already")
+                self._save()
+            else:
+                self._begin_countdown("daily restart", coming_back=True, manual=False, by=self.settings.name)
 
     def _daily_due(self, now: float) -> bool:
         spec = self.settings.of(self.server).daily_restart
@@ -716,7 +739,7 @@ class ServerManager:
                 countdown.warned = True
             if remaining <= 0:
                 countdown.step = "go"
-            elif self.state.connected and not self.players:
+            elif self.state.empty:
                 countdown.empty_since = countdown.empty_since if countdown.empty_since is not None else mono
                 if mono - countdown.empty_since >= float(self.setting("empty_seconds")):
                     log.info("[%s] everyone left during the countdown; %s now", self.name,
@@ -791,7 +814,7 @@ class ServerManager:
         if self.record.wanted != "running":
             self._set_phase("idle")
             return
-        if time.monotonic() >= self.backoff_until:
+        if time.monotonic() >= self.backoff_until and not self.fleet.stopping_all:
             self._set_phase("launch")
 
     def _step_external(self, alive: bool) -> None:
@@ -996,8 +1019,11 @@ class ServerManager:
         at = self.record.retry_at
         if at is None or time.time() < at:
             return
-        if self.record.wanted != "running" or not self.backend.can_start or self.server.errors:
+        if self.record.wanted != "running" or self.server.errors or not (self.backend.can_start
+                                                                         or self.backend.restart_only):
             return  # stopped by a person since, or it can't be started from here: it waits, as it is
+        if self.fleet.stopping_all:
+            return  # everything is being stopped: its try waits, or it'd be left running
         self.record.retries += 1
         self.record.retry_at = None
         reason = self.record.fault_reason
@@ -1008,6 +1034,8 @@ class ServerManager:
         self._save()
         log.warning("[%s] trying again after FAULTED (try %s): %s", self.name, self.record.retries, reason)
         self.fleet.bus.emit("server.fault_retry", self.name, attempt=self.record.retries, reason=reason)
+        if not self.backend.can_start:
+            self.revive = True  # only a restart command: the try is a restart (CommandBackend.revive), not a start
         self._set_phase("launch")
 
     def _begin_countdown(self, reason: str, *, coming_back: bool, manual: bool, by: str, immediate: bool = False,
@@ -1033,9 +1061,12 @@ class ServerManager:
             cutoff = time.time() - 3600
             self.record.restart_times = [t for t in self.record.restart_times if t > cutoff] + [time.time()]
             self._save()
+            if len(self.record.restart_times) > MANY_RESTARTS:
+                log.warning("[%s] %d automatic restarts in the last hour: something may be restarting it again and "
+                            "again (V shows why each one happened)", self.name, len(self.record.restart_times))
         if immediate:
             countdown.step = "go"
-        elif self.state.connected and not self.players:
+        elif self.state.empty:  # its players read since the console connected: not just not yet known
             log.info("[%s] skipping the countdown: nobody is connected", self.name)
             countdown.step = "go"
         elif not rungs:
@@ -1063,17 +1094,6 @@ class ServerManager:
         self.stop_manual = bool(countdown and countdown.manual)
         self.stop_failed = ""
         self.flags.pop("stop", None)
-        if coming_back and self.backend.restart_only and not self.stop_manual:
-            over = self._over_budget()
-            if over and self.record.wanted == "running":
-                # The restart command can't be stopped half way, and with no stop command there's no stopping it
-                # either: the one thing to do is not restart it again this hour.
-                log.error("[%s] %s Not restarting it: it keeps running as it is", self.name, over)
-                self.coming_back = False
-                self.record.remember("restart", "not restarted: over the hourly budget")
-                self._save()
-                self._set_phase("running")
-                return
         if self.state.connected and self.players:
             self._say(callout("now", "Server is restarting now: join again in a minute or two." if coming_back
                               else "Server is shutting down now."))
@@ -1087,16 +1107,10 @@ class ServerManager:
         self._run_task("stop", self.backend.stop(self.server))
         self._set_phase("stopping")
 
-    def _over_budget(self) -> str:
-        """Why one more restart would be too many this hour ("" when it wouldn't). Only automatic restarts count, and
-        only they are held to it: a person's restart (R, S, !restartserver) after a fault is how it gets going again."""
+    def restarts_lately(self) -> int:
+        """Automatic restarts in the last hour: a count, shown and logged, that holds nothing up."""
         cutoff = time.time() - 3600
-        recent = [t for t in self.record.restart_times if t > cutoff]
-        budget = int(self.setting("restarts_per_hour"))
-        if len(recent) <= budget:
-            return ""
-        return (f"{len(recent)} automatic restarts in one hour is over the budget of {budget}. Something is "
-                "triggering in a loop; stopping here rather than thrashing.")
+        return sum(1 for t in self.record.restart_times if t > cutoff)
 
     def _complete_stop(self, *, died: bool = False) -> None:
         self.started = None
@@ -1108,13 +1122,12 @@ class ServerManager:
         if self.failing:
             self.failing = False
             self.revive = not self.backend.sees_processes
+            # An S or R pressed during this clean-up is a start, which the failure's backoff makes anyway: kept,
+            # it called the next first start a restart, with an old reason.
+            self.coming_back, self.stop_manual = False, False
             self._register_failure()
             return
         if self.coming_back and self.record.wanted == "running":
-            over = "" if self.stop_manual else self._over_budget()
-            if over:
-                self._enter_faulted(over)
-                return
             self._set_phase("launch")
             return
         self.coming_back = False
@@ -1139,7 +1152,7 @@ class ServerManager:
             self.playing = (self.state.map, self.state.mode)
         log.info("[%s] restart planned (%s): %s", self.name, when.replace("_", " "), reason or "no reason given")
         self.fleet.bus.emit("server.restart_planned", self.name, when=when, reason=reason, by=by)
-        if not self.players and self.state.connected:
+        if self.state.empty:
             log.info("[%s] nobody is on, so it restarts now%s", self.name, f": {reason}" if reason else "")
             self._trigger_plan()
         elif when == "after_game" and self.state.phase == "finished":
@@ -1164,6 +1177,12 @@ class ServerManager:
         if self.planned is not None and self.planned.when == "after_game" and self.phase == "running":
             self._trigger_plan()
 
+    def on_crash(self, event: Event) -> None:
+        """The game ended by a crash (the server program restarting its server by itself, or one seen here): the game
+        being played is over, so the next run's first lobby isn't its end. A restart planned for after the game, and
+        its jobs, wait for the end of the next game: the program's own restart ran none of them (audit 2026-11, 8.3)."""
+        self.playing = None
+
     def on_leave(self, event: Event) -> None:
         if self.planned is None or self.phase != "running":
             return
@@ -1187,8 +1206,19 @@ class ServerManager:
         if self.phase in ("idle", "backoff", "faulted", "offline") and self.alive:
             self._seen_up()
 
+    def _stopping_everything(self) -> Result | None:
+        """While every server is being stopped (start.cmd stop, the console's stop), none is started, restarted or kept
+        running: Huragok waits for each to stop before it goes, so one brought back would keep it waiting for good."""
+        if self.fleet.closing:
+            return Result(False, "Huragok is closing; start it again once Huragok is back")
+        if self.fleet.stopping_all:
+            return Result(False, "every server is being stopped, Huragok too; start it again once Huragok is back")
+        return None
+
     def start(self) -> Result:
         self._notice()
+        if refused := self._stopping_everything():
+            return refused
         if not self.backend.can_start:
             return Result(False, f"backend = {self.backend.name} can't start servers")
         if self.server.errors:
@@ -1268,6 +1298,8 @@ class ServerManager:
     def restart(self, *, immediate: bool = False, reason: str = "", manual: bool = True, by: str = "",
                 when: str = "now", countdown: float | None = None, tell: str = "") -> Result:
         self._notice()
+        if refused := self._stopping_everything():
+            return refused
         if self.phase == "external" and self.backend.sees_processes:
             return Result(False, "it wasn't started from here, so the Superintendent can't restart it; stop it the way "
                                  "it was started, then start it from here")
@@ -1308,11 +1340,15 @@ class ServerManager:
         return self.start()
 
     def cancel(self) -> Result:
+        if refused := self._stopping_everything():
+            return refused
         if self.phase == "countdown" and self.countdown and self.countdown.step == "ladder":
             countdown, self.countdown = self.countdown, None
             if countdown.warned:
                 self._say(callout("cancelled", ("The server restart has been cancelled." if countdown.coming_back
                                                 else "The server shutdown has been cancelled.") + f" {SIGN_OFF}"))
+            if countdown.coming_back and not countdown.manual and self.record.restart_times:
+                self.record.restart_times.pop()  # counted as it began: a restart that didn't happen isn't one
             self.record.wanted = "running"
             self._save()
             log.info("[%s] countdown cancelled (%s)", self.name, countdown.label)

@@ -193,7 +193,9 @@ class RespawnCommands(CommandsBase):
         self.log.info("[%s] %s respawned (%s)", server, respawn.player.name,
                       "their own !respawn" if respawn.own else f"by {respawn.by}")
         team = respawn.home.capitalize()
-        why = f": {respawn.reason}" if respawn.reason else ""
+        # A player's own words aren't said to everyone as a [Server] line: unfiltered, it was a way round the word
+        # list (audit 2026-11, 5.11). A reason staff give respawning someone else is said.
+        why = f": {respawn.reason}" if respawn.reason and not respawn.own else ""
         line = callout("respawn", f"{respawn.player.name} respawned on {team} team{why}." if respawn.own else
                        f"{respawn.by} respawned {respawn.player.name} on {team} team{why}.")
         try:

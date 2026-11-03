@@ -494,3 +494,45 @@ def test_v_says_what_is_playing_what_comes_next_and_what_players_pick(tmp_path: 
     row.update(next="Valhalla Slayer", reload=[True, "applied", 0.0])
     plays = {label: text for label, text, _ in dict(statuscard.build(settings, server, row, {}))["What it plays"]}
     assert plays["Up next"].startswith("Valhalla Slayer (set from the console") and "Last change" not in plays
+
+
+def test_a_servers_own_content_has_its_own_mod_list(tmp_path: Path) -> None:
+    """D -> O hard-linked every file of the shared content/, disabled-mods.json too, which was then written through
+    the link: a mod switched off on one server was switched off for every other, and back (audit 2026-11, 7.1)."""
+    import json
+    from types import SimpleNamespace
+
+    from huragok.content.catalogue import disabled_mods, set_mod_disabled
+    from huragok.content.serverops import own_content
+
+    shared = tmp_path / "content"
+    (shared / "Mods" / "canyon").mkdir(parents=True)
+    (shared / "Mods" / "other").mkdir(parents=True)
+    (shared / "disabled-mods.json").write_text(json.dumps({"packages": ["Mods/other"]}), encoding="utf-8")
+    folder = tmp_path / "SERVERS" / "Alpha"
+    folder.mkdir(parents=True)
+    config = folder / "dedicated.toml"
+    config.write_text('content = "../../content"\n[[server]]\nname = "Alpha"\nport = 1\n', encoding="utf-8")
+    server = SimpleNamespace(content_dir=shared, folder=folder, config_path=config, name="Alpha")
+    own = own_content(SimpleNamespace(), server, lambda text: None)
+    set_mod_disabled(own, "Mods/canyon", True)
+    assert disabled_mods(shared) == ["Mods/other"]  # every other server's, as it was
+    set_mod_disabled(shared, "Mods/other", False)
+    assert disabled_mods(own) == ["Mods/other", "Mods/canyon"]  # Alpha's, as it was
+
+
+def test_c_never_copies_an_engine_file_into_mccs_own_folder(tmp_path: Path) -> None:
+    """With no MCC found, C downloads Halo 3's files and copies their engine file in: into a server whose `game` is
+    MCC's own install, that renamed MCC's halo3.dll and put another there (audit 2026-11, 7.7). I refuses MCC already."""
+    from huragok.content import upkeep
+
+    mcc = tmp_path / "Halo The Master Chief Collection"
+    (mcc / "halo3").mkdir(parents=True)
+    (mcc / "mcclauncher.exe").write_bytes(b"")
+    (mcc / "halo3" / "halo3.dll").write_bytes(b"mcc's own")
+    depot = tmp_path / "depot"
+    (depot / "halo3").mkdir(parents=True)
+    (depot / "halo3" / "halo3.dll").write_bytes(b"downloaded")
+    said = upkeep.copy_engine(mcc, depot)
+    assert "never writes into MCC" in said
+    assert (mcc / "halo3" / "halo3.dll").read_bytes() == b"mcc's own" and not list(mcc.rglob("*.before-*"))

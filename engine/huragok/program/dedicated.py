@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import psutil
 
+from ..core import closing
+
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
     from ..core.settings import Settings
@@ -264,17 +266,19 @@ def _pump(stream: Any, collected: list[str], on_line: Callable[[str], None] | No
 
 
 def _wait(process: subprocess.Popen[Any], timeout: float, stop: threading.Event | None) -> str:
-    """'' once it has ended by itself, 'timeout' or 'stopped' (stop was set) while it still runs."""
+    """'' once it has ended by itself, 'timeout' or 'stopped' (stop was set, or Huragok is closing) while it still
+    runs."""
     deadline = time.monotonic() + timeout
+    started = closing.mark()
     while True:
         left = deadline - time.monotonic()
         if left <= 0:
             return "timeout"
         try:
-            process.wait(min(left, 0.2) if stop is not None else left)
+            process.wait(min(left, 0.2))
             return ""
         except subprocess.TimeoutExpired:
-            if stop is not None and stop.is_set():
+            if (stop is not None and stop.is_set()) or closing.closed_since(started):
                 return "stopped"
 
 

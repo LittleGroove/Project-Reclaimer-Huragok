@@ -385,3 +385,29 @@ def test_players_are_told_which_mod_and_discord_hears_it_by_name(tmp_path: Path,
     service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="updated")
     assert heard[-1].name == "server.workshop_updated"
     assert heard[-1].get("names") == ["HugeGrass Rebalance, installed by the server itself once nobody was on"]
+
+
+def test_a_second_update_the_console_reports_is_restarted_for_too(tmp_path: Path, run) -> None:
+    """The first console-reported update's mark was never cleared, so the next "update downloaded" wasn't fresh: no
+    restart was planned, and the host's Hidden uploads (which Steam's check never sees) waited until the server
+    emptied (audit 2026-11, 8.7)."""
+    import json as json_module
+
+    from testkit.workshop import ALPHA, ITEM, NEW, FakeLifecycle, service_for, workshop_root
+
+    settings_path, folder = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle, {})
+
+    async def scenario() -> None:
+        import asyncio
+
+        for newest in (NEW, NEW + 86400):  # days apart, each only from the console
+            (folder / "fake-steam.json").write_text(json_module.dumps({str(ITEM): newest}), encoding="utf-8")
+            service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="update downloaded; it installs once nobody's on")
+            await asyncio.sleep(0.05)
+            for job in lifecycle.jobs.pop(ALPHA, []):  # after the game, the server stopped
+                await job.run()
+
+    run(scenario())
+    assert len(lifecycle.restarts) == 2

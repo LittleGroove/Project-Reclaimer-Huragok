@@ -509,7 +509,11 @@ class WorkshopKeeper:
                                                                              for m in mods), why)
                 continue
             if item in found.managed or installed_version(server.content_dir, item) is not None:
-                # The program's own copy is there (or was fetched since): only the hand copies go.
+                # The program's own copy is there (or was fetched since): only the hand copies go. Not again and again:
+                # a hand copy that can't be set aside (a file in it held open) planned a restart after every game,
+                # all night (audit 2026-11, 8.1).
+                if not self._may_try(server, item):
+                    continue
                 waiting[item] = HandCopy(item, answer.title or mods[0].title, [m.folder for m in mods])
                 new.append(item)
                 continue
@@ -737,13 +741,25 @@ class WorkshopKeeper:
 
 
 def switch_workshop_copies(server: ServerConfig, items: list[int], *, off: bool,
-                           config_name: str = "dedicated.toml") -> list[str]:
+                           config_name: str = "dedicated.toml", servers: list[ServerConfig] | None = None) -> list[str]:
     """Removed items' copies switched off in disabled-mods.json (R): the server loads a folder in content/Mods/Workshop
     whether it's listed or not, and Huragok lists one it finds there again; an item added again (A) switched back on.
-    What was done, as lines for the host."""
+    `servers`: every server, so an item another one sharing this content folder still lists stays on: switched off,
+    it was off for them too (audit 2026-11, 7.2). What was done, as lines for the host."""
     from .mccimport import content_root_of
 
     root = server.content_dir or content_root_of(server.folder, config_name)
+    still_listed: dict[int, list[str]] = {}
+    for other in servers or []:
+        if other is server or other.name == server.name:
+            continue
+        theirs = other.content_dir or content_root_of(other.folder, config_name)
+        try:
+            same = theirs.resolve() == root.resolve()
+        except OSError:
+            same = False
+        for item in other.workshop_items if same else []:
+            still_listed.setdefault(item, []).append(other.name)
     try:
         packages = disabled_mods(root)
     except DisabledModsError as error:
@@ -752,6 +768,11 @@ def switch_workshop_copies(server: ServerConfig, items: list[int], *, off: bool,
     for item in items:
         package = f"Mods/Workshop/{item}"
         if not (root / package).is_dir() or is_disabled(packages, package) == off:
+            continue
+        if off and item in still_listed:
+            lines.append(f"{package} stays on: {', '.join(still_listed[item])} still list{'s' if len(still_listed[item]) == 1 else ''} "
+                         f"it, from the same content folder, so {server.name} loads it too (and Huragok lists it again). "
+                         "Its own content folder (D, O) lets it go without it")
             continue
         try:
             packages = set_mod_disabled(root, package, off)

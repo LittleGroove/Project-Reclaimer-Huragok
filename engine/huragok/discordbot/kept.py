@@ -72,7 +72,11 @@ def keep(part: DiscordPart, key: str, channel: str, form: dict[str, Any], *, pin
     async def send_new() -> Any:
         return await to_thread(delivery.to_channel, config, channel, "superintendent", form)
 
-    part.outbox.put(send_new, priority=ANSWER, bucket=f"channel:{channel}", what=f"the post {key}", on_done=stored)
+    # Keyed, so a later post of it replaces one still waiting: while Discord's API was down, one more copy queued every
+    # RETRY_SECONDS, and every one was posted (and pinned) once it was back (audit 2026-11, 6.3)
+    form = dict(form)  # this job's own: its nonce stays for each of its tries
+    part.outbox.put(send_new, priority=ANSWER, bucket=f"channel:{channel}", key=f"kept:{key}", what=f"the post {key}",
+                    on_done=stored)
 
 
 def _still_there(part: DiscordPart, key: str, channel: str, message: str) -> None:

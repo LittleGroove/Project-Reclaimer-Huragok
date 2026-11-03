@@ -55,6 +55,8 @@ def dog(state: ServerState, lifecycle: Any = None, **config: Any) -> Watchdog:
         return (managers[name].pid if name in managers else None) or state.pid
 
     ctx = SimpleNamespace(name="watchdog", servers={state.name: state}, server=lambda name: state, pid=pid,
+                          run_started=lambda name: state.__dict__.get("run_started"),
+                          restart_setting=lambda name, key: 900.0,
                           lifecycle=lifecycle or Recorder(), log=logging.getLogger("part.watchdog"),
                           emit=lambda *args, **data: None, config={**Watchdog.defaults, **config})
     watchdog = Watchdog(ctx)  # type: ignore[arg-type]
@@ -169,6 +171,11 @@ def test_stuck_after_a_game_from_the_servers_state() -> None:
     on_server(state, *range(1, 17))
     state.connected = False
     assert "stuck" not in watchdog.findings(SERVER, NOW)
+    # Back, but nothing read since: the old scoreboard and players restarted it at once (audit 2026-11, 8.2).
+    state.connected, state.players_known = True, False
+    assert "stuck" not in watchdog.findings(SERVER, NOW)
+    state.players_known = True  # read: it is stuck
+    assert watchdog.findings(SERVER, NOW)["stuck"] == "stuck after a game for 4 minutes"
 
 
 def test_a_full_roster_frozen_with_the_console_away_doesnt_explain_no_joins() -> None:
@@ -185,11 +192,14 @@ def test_a_full_roster_frozen_with_the_console_away_doesnt_explain_no_joins() ->
 # The minute timer, and how it acts ---------------------------------------------------------------------------------
 
 def test_the_minute_timer_measures_memory_and_acts(run, monkeypatch) -> None:
+    """Turned on (memory = "act"): growth past memory_mb from what the settled run used restarts it after the game."""
     monkeypatch.setitem(Watchdog.evaluate.__dict__, "_part_every", 0.02)
-    monkeypatch.setattr(Watchdog, "_memory_mb", staticmethod(lambda process: 4096.0 if process == 4242 else None))
+    readings = iter([800.0, 900.0])
+    monkeypatch.setattr(Watchdog, "_memory_mb", staticmethod(
+        lambda process: next(readings, 4096.0) if process == 4242 else None))
     state = ServerState(SERVER, connected=True, pid=4242)
     lifecycle = Recorder()
-    watchdog = dog(state, lifecycle, memory_mb=1000)
+    watchdog = dog(state, lifecycle, memory_mb=1000, memory="act")
 
     async def scenario() -> None:
         runner = PartRunner(watchdog, EventBus())
@@ -201,7 +211,8 @@ def test_the_minute_timer_measures_memory_and_acts(run, monkeypatch) -> None:
             task.cancel()
 
     run(scenario())
-    assert watchdog.memory[SERVER] == 4096.0 and watchdog.level[SERVER] == "degraded"
+    assert watchdog.memory[SERVER] == 4096.0 and watchdog.memory_base[SERVER] == 800.0
+    assert watchdog.level[SERVER] == "degraded"
     assert lifecycle.restarts[0] == (SERVER, "after_game", None, "the server is using too much memory")
 
 
@@ -266,8 +277,10 @@ def test_a_death_seen_during_a_countdown_that_ended_in_a_stop_doesnt_start_it_ag
     run(scenario())
 
 
-def test_four_dead_servers_in_an_hour_fault_it_with_three_restarts(world, run) -> None:  # noqa: F811
-    clock, settings, backend, fleet, manager, client, state, seen = world  # restarts_per_hour = 3
+def test_four_dead_servers_in_an_hour_are_four_restarts(world, run) -> None:  # noqa: F811
+    """Until 0.6.0 the fourth went over restarts_per_hour (3 here) and FAULTED the server instead: a dead server
+    left dead. Each one is restarted now (the host, 2 Nov 2026)."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
     watchdog = dog(state, ManagerLifecycle(fleet))
 
     async def scenario() -> None:
@@ -283,10 +296,10 @@ def test_four_dead_servers_in_an_hour_fault_it_with_three_restarts(world, run) -
                 if manager.phase in ("running", "faulted"):
                     break
             await watchdog.fresh_start(Event("server.restarted", MANAGED))
-        assert manager.phase == "faulted" and "over the budget of 3" in manager.record.fault_reason
+        assert manager.phase != "faulted" and not manager.record.fault_reason
 
     run(scenario())
-    assert backend.starts == [MANAGED] * 4  # the first start and three restarts, not a fourth
+    assert backend.starts == [MANAGED] * 5  # the first start and four restarts
 
 
 # From the server's log file to a restart -------------------------------------------------------------------------
@@ -359,3 +372,55 @@ def test_a_player_connecting_reaches_the_bus_and_the_lines_after_them_too(tmp_pa
     watcher.poll_log()
     assert seen == [("log.connected", server.name, "Bravo"), ("log.joined", server.name, "Bravo"),
                     ("log.roster_lost", server.name, None)]
+
+
+# The memory and frame cases on a fresh run (the host's calls, 2 Nov 2026) --------------------------------------------
+
+
+def test_a_fresh_runs_frames_and_memory_dont_count_till_it_settles(run, caplog) -> None:
+    """A fresh server loads its maps: until it has been up [restarts] min_uptime_seconds, being slow or big isn't a case."""
+    import time
+    from collections import deque
+
+    from huragok.servers.watchdog import Sample
+
+    state = ServerState(SERVER, connected=True)
+    watchdog = dog(state, memory_mb=1000, memory="act")
+    now = time.time()
+    watchdog.samples[SERVER] = deque(Sample(now - 60 * n, 0.95, 400, 12) for n in range(3, -1, -1))
+    watchdog.memory[SERVER] = watchdog.memory_base[SERVER] = 500.0
+    state.run_started = now - 60  # up a minute, of the 900 s it takes to settle
+    assert watchdog.findings(SERVER, now) == {}
+    state.run_started = now - 901
+    assert {"very_slow", "slow"} <= set(watchdog.findings(SERVER, now))
+    watchdog.memory[SERVER] = 1500.0  # grown past memory_mb from 500 settled
+    assert "memory" in watchdog.findings(SERVER, now)
+
+
+def test_memory_over_the_limit_from_the_start_is_said_not_restarted(run, monkeypatch, caplog) -> None:
+    """A memory_mb below what a fresh server uses restarted it after every game, till the hourly budget faulted it:
+    memory counts only as growth past the limit from what the run used settled."""
+    monkeypatch.setitem(Watchdog.evaluate.__dict__, "_part_every", 0.02)
+    monkeypatch.setattr(Watchdog, "_memory_mb", staticmethod(lambda process: 4096.0 if process == 4242 else None))
+    state = ServerState(SERVER, connected=True, pid=4242)
+    lifecycle = Recorder()
+    watchdog = dog(state, lifecycle, memory_mb=1000, memory="act")
+
+    async def scenario() -> None:
+        runner = PartRunner(watchdog, EventBus())
+        task = asyncio.ensure_future(runner.run())
+        try:
+            await wait_for(lambda: watchdog.memory_base.get(SERVER))
+            await asyncio.sleep(0.2)
+        finally:
+            await runner.stop()
+            task.cancel()
+
+    with caplog.at_level(logging.WARNING):
+        run(scenario())
+    assert lifecycle.restarts == [] and "memory" not in watchdog.findings(SERVER)
+    assert caplog.text.count("uses 4096 MB once settled, over [watchdog] memory_mb (1000)") == 1
+
+
+def test_memory_only_warns_unless_turned_on() -> None:
+    assert Watchdog.defaults["memory"] == "watch" and Watchdog.defaults["memory_mb"] == 0

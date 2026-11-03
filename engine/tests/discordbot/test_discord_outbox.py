@@ -280,3 +280,47 @@ def test_stopping_sends_what_it_can_in_the_time_it_has(run: Any) -> None:
         assert sent == ["a1", "b"] and outbox.waiting == 1  # a2's channel isn't free: it isn't pushed through
 
     run(scenario())
+
+
+def test_a_post_tried_again_after_a_timeout_carries_the_same_nonce(run, monkeypatch) -> None:
+    """The nonce went on a copy of the payload, so a post Discord had taken (its answer timing out) went again under a
+    new one: two cards, the second with working buttons nothing ever updates (audit 2026-11, 6.1)."""
+    from huragok.discordbot import outbox as out
+    from huragok.discordbot import rest, speakers
+    from huragok.discordbot.config import DiscordConfig, defaults
+
+    sent: list[dict] = []
+
+    def post(token: str, channel: str, payload: dict) -> rest.Reply:
+        sent.append(dict(payload))
+        if len(sent) == 1:
+            raise rest.Unreachable("couldn't reach Discord: timed out")  # it took it, the answer never came
+        return rest.Reply({"id": "999"})
+
+    monkeypatch.setattr(rest, "post_message", post)
+    data = defaults()
+    data["voice"] = "plain"  # no persona: the bot posts as itself
+    config = DiscordConfig(path=None, data=data, token="x")
+    box = out.Outbox()
+    speakers.Poster(lambda: config, box).post("superintendent", speakers.message("hello"), channel="123")
+
+    async def twice() -> None:
+        await box.send_one(box.jobs[0])
+        await box.send_one(box.jobs[0])
+
+    run(twice())
+    assert len(sent) == 2 and sent[0]["nonce"] == sent[1]["nonce"] and sent[0]["enforce_nonce"] is True
+
+
+def test_a_persona_discord_would_refuse_speaks_under_its_own_name() -> None:
+    """A persona name over 80 characters, or with "discord" in it, or a picture that isn't a web address: Discord
+    refused every post in that voice (audit 2026-11, 6.6)."""
+    from huragok.discordbot.config import DiscordConfig, defaults
+    from huragok.discordbot.speakers import speaker
+
+    data = defaults()
+    data["personas"]["vergil"] = {"name": "V" * 90, "picture": r"C:\pictures\vergil.png"}
+    data["personas"]["superintendent"] = {"name": "The Discord Superintendent", "picture": "https://example.com/s.png"}
+    config = DiscordConfig(path=None, data=data, token="x")
+    assert speaker(config, "vergil") == {"username": "V" * 80}
+    assert speaker(config, "superintendent") == {"username": "Superintendent", "avatar_url": "https://example.com/s.png"}

@@ -1433,3 +1433,22 @@ def test_an_admin_restarts_the_server_with_the_usual_countdown(tmp_path: Path, r
             assert len(lifecycle.asked) == 8
 
     run(scenario())
+
+
+def test_a_bare_number_that_is_also_a_players_name_is_asked_about(tmp_path: Path, run) -> None:
+    """With a player named "4" on, `!mute 4 spam` muted #4 without asking: a troll names themselves a number to have
+    moderators hit someone else (audit 2026-11, 5.9). `#4` is still #4."""
+    from testkit.running import SERVER, everyone_joins, running, tells_to
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (huragok, rcon, _):
+            await everyone_joins(rcon)
+            await rcon.join(9, "4", "e" * 64)
+            await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 6)
+            await rcon.chat(MOD, "Mod", "!mute 4 spam")
+            await wait_for(lambda: any("'4'" in line for line in tells_to(rcon, MOD)))
+            assert not rcon.named("mute")
+            await rcon.chat(MOD, "Mod", "!mute #4 spam")
+            await wait_for(lambda: rcon.named("mute"))
+
+    run(scenario())

@@ -281,16 +281,16 @@ class CommandRouter:
             if registered.runner is None:
                 background(self._safe(work()), f"a request for {self.prefix}{call.name} on {call.server}", log)
             else:
-                registered.runner.submit(f"!{call.name} (a request)", work)
+                registered.runner.submit(f"!{call.name} (a request)", work, server=call.server)
             return
         if registered.runner is None:
             background(self._safe(self._run(registered, call)), f"{self.prefix}{call.name} on {call.server}", log)
         else:
-            registered.runner.submit(f"!{call.name}", lambda: self._run(registered, call))
+            registered.runner.submit(f"!{call.name}", lambda: self._run(registered, call), server=call.server)
 
     async def _run(self, registered: Registered, call: CommandCall) -> bool:
         """Whether it ran: False if its guards stopped it, having said why."""
-        with acting(call.player.id):
+        with acting(call.player.id, call.role):
             return await self._running(registered, call)
 
     async def _running(self, registered: Registered, call: CommandCall) -> bool:
@@ -408,7 +408,7 @@ class CommandRouter:
             return why
         if registered.spec.player and target is not None:
             call.target, call.rest = target, list(words)
-        with acting(player.id):
+        with acting(player.id, role):
             await registered.method(call)
         return None
 

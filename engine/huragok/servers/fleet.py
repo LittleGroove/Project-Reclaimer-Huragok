@@ -45,6 +45,8 @@ class Fleet:
         self.on_request = on_request  # verbs the supervisor itself answers: stop_all, update...
         self.stopping_all = False
         self._awaiting: set[str] = set()  # servers a `stop everything` is waiting on
+        self.all_stopped = False  # a `stop everything` is done and Huragok is going: stopping_all stays set till then
+        self.closing = False  # Huragok is closing: its servers are left as they are, or stopped by the backend's close
         self.live_path = settings.live_file
         self._live_written = float("-inf")  # monotonic
         self._requests_tasks: set[asyncio.Task[None]] = set()
@@ -56,6 +58,7 @@ class Fleet:
         self.booted = False  # boot() has run: once per Fleet, however often run() is restarted
         bus.subscribe("rcon.phase", self._on_phase)
         bus.subscribe("rcon.leave", self._on_leave)
+        bus.subscribe("server.crashed", self._on_crash)
         bus.subscribe("watchdog.health", self._on_health)
 
     # Servers -------------------------------------------------------------------------------
@@ -122,6 +125,8 @@ class Fleet:
             self.tick()
 
     def tick(self, now: float | None = None) -> None:
+        if self.closing:
+            return  # a server the backend stops as Huragok closes mustn't be taken for a crash and started again
         now = now or time.time()
         for manager in list(self.managers.values()):
             manager.tick(now)
@@ -133,12 +138,15 @@ class Fleet:
             self._read_requests()
         except Exception:  # noqa: BLE001 - a request must never stop the servers being looked after
             log.exception("reading the requests from outside failed")
-        if self.stopping_all and all(self.managers[n].phase in SETTLED or self.managers[n].stop_failed
-                                     for n in self._awaiting if n in self.managers):
-            self.stopping_all = False
+        if self.stopping_all and not self.all_stopped and all(
+                self.managers[n].phase in SETTLED or self.managers[n].stop_failed
+                for n in self._awaiting if n in self.managers):
             self._awaiting.clear()
             if self.on_all_stopped:
+                self.all_stopped = True  # Huragok goes now: nothing may start in its last moments
                 self.on_all_stopped()
+            else:
+                self.stopping_all = False
 
     def unstoppable(self) -> list[str]:
         """Servers whose last stop left their process running."""
@@ -148,6 +156,11 @@ class Fleet:
         manager = self.managers.get(event.server or "")
         if manager:
             manager.on_phase(event)
+
+    def _on_crash(self, event: Event) -> None:
+        manager = self.managers.get(event.server or "")
+        if manager:
+            manager.on_crash(event)
 
     def _on_leave(self, event: Event) -> None:
         manager = self.managers.get(event.server or "")
@@ -179,14 +192,14 @@ class Fleet:
                 log.debug("couldn't add the extras to %s", self.live_path, exc_info=True)
         try:
             self.live_path.parent.mkdir(parents=True, exist_ok=True)
-            write_atomic(self.live_path, json.dumps(data))
+            write_atomic(self.live_path, json.dumps(data), durable=False)  # every 2 s: not worth a disk flush
         except OSError as error:
             log.debug("couldn't write %s: %s", self.live_path, error)
 
     # Requests -----------------------------------------------------------------------------------
 
     def stop_all(self, *, immediate: bool = False, reason: str = "Huragok is stopping") -> list[tuple[str, Result]]:
-        self.stopping_all = True
+        self.stopping_all, self.all_stopped = True, False
         results = []
         for manager in self.managers.values():
             if manager.phase in SETTLED:
@@ -317,8 +330,8 @@ class Lifecycle:
 
     async def restart(self, server: str, *, when: str = "now", reason: str = "", by: str | None = None,
                       countdown: float | None = None, manual: bool = False, tell: str = "") -> PlannedRestart:
-        """`manual`: a person asked (an admin's !restartserver), as the window's R: it isn't counted against
-        [restarts] restarts_per_hour, the budget that stops automatic restarts looping. `tell`: what players read
+        """`manual`: a person asked (an admin's !restartserver), as the window's R: it isn't counted among the
+        automatic restarts (a count the log names when there are many). `tell`: what players read
         while it waits for the game to end, in place of the usual line."""
         if not self.can_control:
             raise LifecycleUnavailable(f"backend = {self.fleet.backend.name} can't restart servers")

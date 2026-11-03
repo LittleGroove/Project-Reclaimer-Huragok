@@ -75,14 +75,14 @@ def use_code(records: Path, typed: str, who: str = "") -> bool:
     if time.time() > float(data.get("expires") or 0):
         path.unlink(missing_ok=True)
         return False
+    tries = {str(key): int(value) for key, value in dict(data.get("by") or {}).items()}
+    if tries.get(who, 0) >= CLAIM_TRIES:  # before it's compared: theirs have run out, the right one too, and it's still good for whoever it's for.
+        return False  # Compared first, and the count not kept past the limit, guessing never ran out (audit 2026-11, 6.15)
     if hmac.compare_digest(typed.replace("-", "").replace(" ", "").upper().encode("utf-8"), code.encode("utf-8")):
         path.unlink(missing_ok=True)
         return True
-    tries = {str(key): int(value) for key, value in dict(data.get("by") or {}).items()}
     tries[who] = tries.get(who, 0) + 1
     log.warning("A wrong claim code from %s (%s of %s)", who or "someone", tries[who], CLAIM_TRIES)
-    if tries[who] > CLAIM_TRIES:
-        return False  # theirs have run out, and it's still good for whoever it's for
     data["by"] = tries
     _write(path, data)
     return False

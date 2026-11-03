@@ -361,3 +361,50 @@ def test_a_swap_that_cant_move_the_hand_copy_leaves_it_and_waits(tmp_path: Path,
     keeper._stage = lambda *a, **k: stages.append(1)  # type: ignore[assignment,method-assign]
     run(keeper.look_at(server))  # not fetched again at the next look
     assert stages == []
+
+
+def test_a_hand_copy_that_cant_be_set_aside_isnt_tried_after_every_game(tmp_path: Path, run, monkeypatch) -> None:
+    """With the Workshop's own copy installed, a hand copy whose folder can't be moved (a file in it held open) was
+    taken up again at the next look after each restart: a restart after every game, all night, until the hourly budget
+    FAULTED the server (audit 2026-11, 8.1). Tried again after FETCH_AGAIN, MAX_TRIES at most."""
+    from huragok.content import workshopmods
+
+    settings_path = setup_root(tmp_path)
+    server_dir = tmp_path / "reclaimer" / "SERVERS" / ALPHA
+    (server_dir / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
+    set_table_key(server_dir / "dedicated.toml", "workshop", "items", [ITEM], before="master")
+    a_mod(server_dir / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
+    a_mod(server_dir / "content" / "Mods" / "HugeGrass", {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
+    lifecycle = FakeLifecycle()
+    updates = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, TITLE, NEW, "n", MCC_APP)})
+    keeper = WorkshopKeeper(updates.settings, updates.bus, lifecycle, updates)  # type: ignore[arg-type]
+    server = keeper.settings.server(ALPHA)
+    monkeypatch.setattr(workshopmods, "set_aside", lambda root, paths: ([], [f"{p.name} (Access is denied)" for p in paths]))
+
+    async def games() -> None:
+        for _ in range(5):
+            await keeper.look_at(server)
+            await asyncio.sleep(0)
+            for job in lifecycle.jobs.pop(ALPHA, []):  # the game ends: the server stops and the job runs
+                await job.run()
+
+    run(games())
+    assert len(lifecycle.restarts) == 1
+
+
+def test_an_item_another_server_sharing_the_folder_lists_stays_on(tmp_path: Path) -> None:
+    """R on one server switched the copy off in the content folder's one mod list: off for every server sharing it,
+    including one that still lists it (audit 2026-11, 7.2)."""
+    from dataclasses import replace
+
+    settings_path = setup_root(tmp_path)
+    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
+    a_mod(folder / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
+    server = load(settings_path).server(ALPHA)
+    server.workshop_items = []
+    other = replace(server, name="Second Server", workshop_items=[ITEM])  # the same folder's content
+    lines = switch_workshop_copies(server, [ITEM], off=True, servers=[server, other])
+    assert len(lines) == 1 and lines[0].startswith(f"Mods/Workshop/{ITEM} stays on: Second Server still lists it")
+    assert not (folder / "content" / "disabled-mods.json").exists()
+    other.workshop_items = []
+    assert switch_workshop_copies(server, [ITEM], off=True, servers=[server, other])[0].startswith(f"Mods/Workshop/{ITEM} switched off")

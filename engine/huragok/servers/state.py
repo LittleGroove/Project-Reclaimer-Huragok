@@ -35,6 +35,7 @@ class Player:
     muted: bool = False
     team: str | None = None
     joined: float = field(default_factory=time.time)
+    service_tag: str = ""  # as the players reply has it: what tells two players of one name apart in a vote
 
     @property
     def short_id(self) -> str:
@@ -57,6 +58,9 @@ class ServerState:
     next_game: str | None = None  # a `nextmap` override, from `status`'s `next`: "Valhalla Slayer"
     playlist_vote: Any = None  # the playlist ballot under way, as `status` gives it, or None
     players: dict[int, Player] = field(default_factory=dict)
+    # False from the console connecting until its first `players` reply: nothing says who's on yet (the console sends
+    # no list as it connects), so an empty `players` then isn't an empty server.
+    players_known: bool = True
     last_rcon_ok: float | None = None  # monotonic time of the last good reply
     rcon_latency_ms: float | None = None
     status_updated: float | None = None  # status.json's own `updated` (Unix seconds)
@@ -68,6 +72,11 @@ class ServerState:
     ballot_playlist: str | None = None  # the playlist the last ballot was for, by the name its lobby shows
     picked: str | None = None  # the game that ballot picked: "BR Fiesta CTF on HugeGrass Rebalance"
     picked_overrides: int | None = None  # how many of its own rules and options the server applied to it
+
+    @property
+    def empty(self) -> bool:
+        """Known to have nobody on: connected, its players read, and none."""
+        return self.connected and self.players_known and not self.players
 
     @property
     def status_age(self) -> float | None:
@@ -151,10 +160,11 @@ class StateTracker:
         if name in ("rcon.join", "rcon.leave", "rcon.phase") and state.name in self._meanwhile:
             self._meanwhile[state.name].append(event)
         if name == "rcon.connected":
-            state.connected, state.version = True, data.get("version")
+            state.connected, state.version, state.players_known = True, data.get("version"), False
             self._refresh_now[state.name].set()
         elif name == "rcon.disconnected":
             state.connected, state.rcon_latency_ms = False, None  # the last answer's time says nothing about now
+            state.players_known = False
         elif name == "rcon.lagged":
             self._refresh_now[state.name].set()
         elif name in ("rcon.join", "rcon.leave"):
@@ -275,9 +285,11 @@ class StateTracker:
                 admin=bool(entry.get("admin")),
                 muted=bool(entry.get("muted")),
                 team=entry.get("team"),
+                service_tag=str(entry.get("service_tag") or ""),
                 joined=old.joined if old and old.id == str(entry.get("id", "")).lower() else time.time(),
             )
         state.players = fresh
+        state.players_known = True
         state.max_players = data.get("max_players", state.max_players)
 
 

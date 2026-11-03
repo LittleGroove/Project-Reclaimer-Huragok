@@ -49,6 +49,8 @@ SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
     "commands.request": cards.request,
     "automod.strike": cards.strike,
     "automod.name": cards.vergil_line("name-kick", "vergil.name_kick", player="player_name", caught="caught_by"),
+    "automod.heard": cards.heard,
+    "automod.name_asked": cards.name_asked,
     "automod.name_banned": cards.vergil_line("name-ban", "vergil.name_banned", name="text"),
     "automod.name_allowed": cards.vergil_line("name-allowed", "vergil.name_allowed", name="text"),
     "automod.words_banned": cards.words_banned,
@@ -76,6 +78,7 @@ SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
     "server.workshop_updated": cards.workshop_updated,
     "server.repaired": cards.server_card("repaired", "server.repaired", text="text"),
     "server.workshop_update": cards.workshop_waiting,
+    "byplayers.changed": cards.playlist_changed,
     "supervisor.commands_reloaded": lambda config, event: cards.audit("settings", say(config, "audit.commands"), config),
 }
 BACK_UP = {"server.ready", "server.adopted", "server.restarted", "server.recovered"}  # a server's problem is over
@@ -166,8 +169,10 @@ class Feeds:
                     self.problems.pop(event.server or "", None)
         if name in SIMPLE:
             card = SIMPLE[name](config, event)
-            if card is not None and name == "automod.strike" and not event.get("dry_run"):
+            if card is not None and (name == "automod.heard" or (name == "automod.strike" and not event.get("dry_run"))):
                 return self._strike(card, event)
+            if name in ("automod.name_banned", "automod.name_allowed") and event.get("key"):
+                self._name_answered(event)
             return card
         if name in ("moderation.action", "moderation.seen"):
             return self._case(event)
@@ -225,6 +230,13 @@ class Feeds:
         tickets.show(number)
         self.part.reports.upheld(number)
         return None
+
+    def _name_answered(self, event: Event) -> None:
+        """A name Vergil asked about, banned or allowed however it was (its card's buttons, /banname, in game): its card is done."""
+        tickets = self.part.tickets
+        if number := tickets.ongoing(str(event["key"])):
+            who = self.part.real_names.get(str(event.get("by_id") or "")) or str(event.get("by") or "someone")
+            tickets.close(number, who, key="ticket.name_banned" if event.name == "automod.name_banned" else "ticket.name_allowed")
 
     def _case(self, event: Event) -> Card | None:
         """A person's moderation, as a card of its own with what the player said before it. Not for what's no one's decision; not for Vergil's, whose strike is the card; and not for
@@ -585,6 +597,8 @@ def sample_cards(config: DiscordConfig) -> list[Card]:
     made.append(cards.strike(config, Event("automod.strike", "Server 1", {**strike, "dry_run": True})))
     vergil = {"player_name": "Alice", "player_id": "a" * 64, "caught_by": "a banned word", "text": "BadName", "by": "Admin", "word": "word", "words": ["word"],
               "rule": "insults", "line": "word | 10m | 1 | 7d", "strikes": 2, "reason": "a second chance"}
+    made.append(cards.heard(config, Event("automod.heard", "Server 1", {**strike, "dry_run": False})))
+    made.append(cards.name_asked(config, Event("automod.name_asked", "Server 1", {"player_id": "b" * 64, "player_name": "Bravo", "rule": "insults", "key": "name:bravo"})))
     made += [SIMPLE[name](config, Event(name, "Server 1", vergil)) for name in ("automod.name", "automod.name_banned", "automod.name_allowed", "automod.words_banned",
                                                                                  "automod.word_allowed", "automod.rule_changed", "automod.pardon")]
     made += [cards.vote(config, Event("rcon.vote", "Server 1", {"state": state, "subject": "kick Bravo", "caller": "Alice"})) for state in cards.VOTE_STATES]
@@ -604,6 +618,8 @@ def sample_cards(config: DiscordConfig) -> list[Card]:
     made.append(cards.server_card("stopped", "server.stopped")(config, Event("server.stopped", "Server 1", {})))
     game = Event("rcon.phase", "Server 1", {"map": "Guardian", "mode": "Slayer"})
     made += [cards.game_started(config, game, 12), cards.game_ended(config, game, 12, 15.0)]
+    made.append(cards.playlist_changed(config, Event("byplayers.changed", "Server 1", {
+        "players": 34, "name": "Big Team Battle", "range": "11 to 50 players", "was_name": "Small Slayer"})))
     person = Event("rcon.join", "Server 1", {"id": "a" * 64, "name": "Alice", "reason": "banned"})
     made += [cards.join(config, person, kind, name="OldName") for kind in cards.JOIN_TEXTS]
     made += [cards.flagged(config, person, "watch", "seen spawn killing"),

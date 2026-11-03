@@ -26,14 +26,16 @@ that answers but is broken, or runs badly. Each minute it looks for these cases:
   slow       falling behind (the server's own "under N frames a second" lines, 54 on
              0.9.18-0.9.20) for a good share of several minutes
   very_slow  falling behind nearly all the time, minutes on end
-  memory     the server program using more than memory_mb
+  memory     the server program using more than memory_mb, having grown past it: what the run used
+             once settled was under it (a limit below what a fresh server uses restarted it after every game)
 
 Each case is watch (log it and show it in the window), act (restart after the game;
 right away when no game is on or nobody is playing) or actnow (restart right away,
 warning the players NOW_WARNING seconds first when they can be warned). mode =
-"watch" makes every case watch. By default dead, no_joins and stuck are actnow,
-memory act (off until memory_mb is set), slow and very_slow watch: a full server is
-slow anyway, and a restart doesn't make it faster. Replayed against the live
+"watch" makes every case watch. By default dead, no_joins and stuck are actnow;
+memory (off until memory_mb is set), slow and very_slow watch: a full server is
+slow anyway, and a restart doesn't make it faster. The memory and frame cases count only
+once a run has settled ([restarts] min_uptime_seconds): a fresh server loads its maps. Replayed against the live
 server's log (27 starts, 100+ players on a 2 GB map), the frame rules would have
 restarted it mid-game 372 times and faulted it in 22 different hours. With the
 next export added (46 starts), the dead rule fired exactly on its 13 post-game
@@ -132,7 +134,7 @@ class Watchdog(Part):
         "very_slow": None,            # watch, unless slow_frames (0.2.1) says act: then actnow
         "very_slow_share": 0.9,       # this share of each minute falling behind…
         "very_slow_minutes": 3,       # …this many minutes in a row
-        "memory": "act",              # the server program using more than memory_mb
+        "memory": "watch",            # the server program using more than memory_mb (the host, 2 Nov 2026: warn unless turned on)
         "memory_mb": 0,               # 0: never checked
     }
 
@@ -189,6 +191,9 @@ class Watchdog(Part):
         self.joins: dict[str, deque[float]] = {}  # the log's roster lines (and ODST's)
         self.admitted: dict[str, deque[Admission]] = {}  # the console's join events
         self.memory: dict[str, float] = {}
+        # What each run used once settled: the memory case is growth past memory_mb from there, not a limit below what
+        # a fresh server uses (that restarted it after every game, the host's call 2 Nov 2026)
+        self.memory_base: dict[str, float] = {}
         self.found: dict[str, dict[str, str]] = {}  # the cases that apply now: case -> what was seen
         self.held: dict[str, set[str]] = {}  # cases that came up while the server was busy: looked at again
         self.level: dict[str, str] = {name: "healthy" for name in self.ctx.servers}
@@ -252,8 +257,16 @@ class Watchdog(Part):
         """A new run of the server: what the old one did says nothing about it."""
         server = event.server or ""
         for history in (self.drops, self.samples, self.connects, self.joins, self.admitted, self.memory, self.found,
-                        self.held):
+                        self.held, self.memory_base):
             history.pop(server, None)
+
+    def _settled(self, server: str) -> bool:
+        """Whether the server's run has been up [restarts] min_uptime_seconds: before that its memory and frames are
+        a fresh server's, loading its maps. A run whose start isn't known counts as settled."""
+        started = self.ctx.run_started(server)
+        if started is None:
+            return True
+        return time.time() - started >= float(self.ctx.restart_setting(server, "min_uptime_seconds") or 0)
 
     # Deciding ------------------------------------------------------------------------------
 
@@ -272,14 +285,18 @@ class Watchdog(Part):
             got_in = (any(t >= start for t in self.joins.get(server, ()))
                       or self._stayed(server, state, start, now))
             # A full server turns players away, so a full roster explains it; one frozen with the console away doesn't.
-            room = not state.connected or state.max_players is None or len(state.players) < state.max_players
+            room = not state.connected or not state.players_known or state.max_players is None                 or len(state.players) < state.max_players
             if len(tried) >= cfg["no_joins_connections"] and not got_in and room:
                 found["no_joins"] = (f"{len(tried)} players connected in {cfg['no_joins_minutes']:g} minutes and "
                                      "none got in")
-        if (cfg["stuck_minutes"] and state.connected and state.phase == "finished" and state.phase_since
-                and state.players and now - state.phase_since > cfg["stuck_minutes"] * 60):
+        # Judged on a picture read since the console connected: back after it dropped, its old "finished" and old
+        # players restarted a server at once, with no warning (audit 2026-11, 8.2). Its players are read after its
+        # status, in the same refresh, so known players mean a fresh phase too.
+        if (cfg["stuck_minutes"] and state.connected and state.players_known and state.phase == "finished"
+                and state.phase_since and state.players and now - state.phase_since > cfg["stuck_minutes"] * 60):
             found["stuck"] = f"stuck after a game for {(now - state.phase_since) / 60:.0f} minutes"
-        samples = list(self.samples.get(server, ()))
+        settled = self._settled(server)
+        samples = list(self.samples.get(server, ())) if settled else []  # a fresh run's frames don't count
         last = samples[-int(cfg["very_slow_minutes"]):] if cfg["very_slow_minutes"] else []
         if (last and len(last) >= cfg["very_slow_minutes"] and all(s.share >= cfg["very_slow_share"] for s in last)
                 and now - last[0].time <= cfg["very_slow_minutes"] * 60 + 60):
@@ -289,9 +306,10 @@ class Watchdog(Part):
         if cfg["slow_minutes"] and len(slow) >= cfg["slow_minutes"]:
             found["slow"] = (f"slow in {len(slow)} of the last {cfg['slow_window_minutes']:g} minutes "
                              f"(longest frame {max(s.longest_ms for s in slow)} ms)")
-        memory = self.memory.get(server)
-        if cfg["memory_mb"] and memory and memory > cfg["memory_mb"]:
-            found["memory"] = f"using {memory:.0f} MB, over {cfg['memory_mb']:g} MB"
+        memory, settled_at = self.memory.get(server), self.memory_base.get(server)
+        if (cfg["memory_mb"] and settled and memory and settled_at is not None
+                and settled_at <= cfg["memory_mb"] < memory):
+            found["memory"] = f"using {memory:.0f} MB, over {cfg['memory_mb']:g} MB (it used {settled_at:.0f} MB settled)"
         return found
 
     def _stayed(self, server: str, state: Any, start: float, now: float) -> bool:
@@ -347,6 +365,12 @@ class Watchdog(Part):
                 memory = self._memory_mb(self._pid(server))
                 if memory:
                     self.memory[server] = memory
+                    if server not in self.memory_base and self._settled(server):
+                        self.memory_base[server] = memory
+                        if memory > self.config["memory_mb"]:
+                            self.log.warning("[%s] uses %.0f MB once settled, over [watchdog] memory_mb (%g): the "
+                                             "memory case doesn't count for this run. Set memory_mb above what a "
+                                             "fresh server uses", server, memory, self.config["memory_mb"])
             await self._update(server)
         minutes = float(self.config["report_minutes"])
         if minutes and time.monotonic() - self.last_report >= minutes * 60:

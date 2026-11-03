@@ -548,3 +548,51 @@ def test_lines_are_coloured_by_what_they_say_everywhere(tmp_path: Path, monkeypa
     text = buffer.getvalue()
     assert "Following console.log" in text and "first line" in text and "Bob joined" in text
     assert text.index("first line") < text.index("Bob joined")
+
+
+def test_a_second_window_stops_waiting_when_the_supervising_window_goes(tmp_path: Path, run, monkeypatch) -> None:
+    """A second window waited out the whole request (15 minutes for a program update) though the supervising window
+    had closed, or wasn't taking requests: it couldn't take over until then (audit 2026-11, 7.3)."""
+    import time
+
+    from huragok.window import controllers
+    from huragok.window.controllers import RemoteController
+
+    settings = type("S", (), {"home": tmp_path, "records": tmp_path, "log_file": None, "backend": "process"})()
+    running = [True]
+    remote = RemoteController(settings, lambda: 1 if running[0] else None)  # type: ignore[arg-type]
+
+    async def closes() -> Any:
+        async def close_soon() -> None:
+            await asyncio.sleep(0.5)
+            running[0] = False
+
+        closing = asyncio.create_task(close_soon())
+        started = time.monotonic()
+        answer = await remote.verb("update_program")  # a 900 s wait
+        await closing
+        return answer, time.monotonic() - started
+
+    [(_, result)], took = run(closes())
+    assert took < 5 and not result.ok and "closed before it answered" in result.message and "nothing was done" in result.message
+    assert not [f for f in (tmp_path / "requests").glob("*.json") if not f.name.endswith(".reply.json")]
+    running[0] = True
+    monkeypatch.setattr(controllers, "PICKED_UP_WITHIN", 1.0)
+    started = time.monotonic()
+    [(_, result)] = run(remote.verb("update_program"))  # running, but nobody takes it
+    assert time.monotonic() - started < 5 and "didn't take the request" in result.message
+
+
+def test_v_reads_the_card_again_when_the_live_picture_changes_under_it(run) -> None:
+    """Read in a thread, the card can meet a dictionary changing size: V went back to the dashboard (audit 2026-11, 7.9)."""
+    from huragok.window.dashboard import Menu
+
+    tries: list[str] = []
+
+    def card(name: str) -> list[Any]:
+        tries.append(name)
+        if len(tries) == 1:
+            raise RuntimeError("dictionary changed size during iteration")
+        return [("Running", [])]
+
+    assert run(Menu._read_card(card, "Alpha")) == [("Running", [])] and tries == ["Alpha", "Alpha"]

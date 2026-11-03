@@ -62,12 +62,19 @@ class NoVotes(CommandsBase):
             return
         reason = unquote(rest)
         was = self._no_vote_row(target.id, call.server)
+        if was is not None:
+            from ..roles import a_role
+
+            if why := self.outranked_by(call, was["by_role"], was["by"], "!novote", a_role):  # a new time lifts it
+                await call.reply(f"{target.name}'s votes are away already. {why.replace('lifting it', 'changing it')}")
+                return
         self._lift_no_votes(target.id, call.server, by=call.player.name)  # a new time replaces the old one
         now = time.time()
-        self.ctx.db.execute("INSERT INTO commands_no_votes (time, target, name, reason, by, server, until, length) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        self.ctx.db.execute("INSERT INTO commands_no_votes (time, target, name, reason, by, server, until, length, "
+                            "by_role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (now, target.id, target.name, reason, call.player.name, call.server,
-                             now + seconds_of(length) if length else None, describe_time(length) if length else None))
+                             now + seconds_of(length) if length else None, describe_time(length) if length else None,
+                             call.role))
         spoken = f"for {describe_time(length)}" if length else FOR_GOOD
         self.log.info("[%s] %s took %s's votes away %s%s (%snovote)", call.server, call.player.name, target.name,
                       spoken, f": {reason}" if reason else "", call.prefix)
@@ -95,8 +102,14 @@ class NoVotes(CommandsBase):
     async def allowvote(self, call: CommandCall) -> None:
         target = call.target
         assert target is not None
-        if self._no_vote_row(target.id, call.server) is None:
+        row = self._no_vote_row(target.id, call.server)
+        if row is None:
             await call.reply(f"{target.name} can call votes already.")
+            return
+        from ..roles import a_role
+
+        if why := self.outranked_by(call, row["by_role"], row["by"], "!novote", a_role):  # the host's call, 2 Nov 2026
+            await call.reply(f"Not given back: {why}")
             return
         self._lift_no_votes(target.id, call.server, by=call.player.name)
         self.log.info("[%s] %s gave %s's votes back (%sallowvote)", call.server, call.player.name, target.name,

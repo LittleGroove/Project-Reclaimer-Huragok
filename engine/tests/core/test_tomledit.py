@@ -322,10 +322,47 @@ def test_lists_written_any_way_take_one_more(tmp_path: Path, start: str, then: l
     assert read_toml(path)["member"]["players"] == then[:-1]
 
 
-def test_an_entry_sharing_its_line_is_left_for_the_host(tmp_path: Path) -> None:
+def test_an_entry_sharing_its_line_is_taken_out_of_it(tmp_path: Path) -> None:
+    """Refused before ("edit it by hand"), so !demote couldn't take a role off (audit 2026-11, 4.7)."""
     path = tmp_path / "commands.toml"
-    original = f'[member]\nplayers = [\n    "{A_ID}", "{B_ID}",\n]\n'
-    path.write_text(original, encoding="utf-8")
-    with pytest.raises(TomlEditError, match="isn't on a line of its own"):
-        tomledit.remove_from_list(path, "member", "players", A_ID)
-    assert path.read_text(encoding="utf-8") == original  # untouched
+    path.write_text(f'[member]\nplayers = [\n    "{A_ID}", "{B_ID}",  # two friends\n]\n', encoding="utf-8")
+    assert tomledit.remove_from_list(path, "member", "players", A_ID)
+    assert path.read_text(encoding="utf-8") == f'[member]\nplayers = [\n    "{B_ID}",  # two friends\n]\n'
+
+
+def test_a_list_written_one_entry_per_line_keeps_each_entrys_comment(tmp_path: Path) -> None:
+    """Huragok's own edits (a Workshop item added, an admin taken off) wrote the whole list on one line: every note
+    beside an entry (which mod, whose ID) was gone (audit 2026-11, 4.2)."""
+    from huragok.core.tomledit import read_toml, set_server_setting, set_table_key
+
+    path = tmp_path / "dedicated.toml"
+    path.write_text('[workshop]\nitems = [\n    3832239928,  # HugeGrass SPR\n    # the winter map:\n'
+                    '    3663541185   # Snowfort\n]\n\n[[server]]\nname = "A"\nadmins = [\n  "aaaa",   # Alice\n'
+                    '  "bbbb",   # Bob\n]\n', encoding="utf-8")
+    set_table_key(path, "workshop", "items", [3832239928, 3663541185, 1234567])
+    set_server_setting(path, "A", "admins", ["bbbb"])
+    text = path.read_text(encoding="utf-8")
+    assert "3832239928,  # HugeGrass SPR" in text and "# the winter map:" in text
+    assert "3663541185,   # Snowfort" in text and "    1234567,\n]" in text
+    assert '"bbbb",   # Bob' in text and "Alice" not in text
+    assert read_toml(path) == {"workshop": {"items": [3832239928, 3663541185, 1234567]},
+                               "server": [{"name": "A", "admins": ["bbbb"]}]}
+
+
+def test_role_lists_written_by_hand_take_a_promote_and_a_demote(tmp_path: Path) -> None:
+    """`players = ["a",\n "b"]` (the bracket on the last line) and two IDs on one line made !promote and !demote
+    refuse, and an inline table hit an assert (audit 2026-11, 4.7)."""
+    from huragok.core.tomledit import TomlEditError, add_to_list, read_toml, remove_from_list
+
+    path = tmp_path / "commands.toml"
+    path.write_text('[moderator]\nplayers = ["aaaa",  # Alice\n    "bbbb", "cccc"]  # Bob, Carol\n', encoding="utf-8")
+    assert add_to_list(path, "moderator", "players", "dddd", "Dave")
+    assert read_toml(path)["moderator"]["players"] == ["aaaa", "bbbb", "cccc", "dddd"]
+    assert remove_from_list(path, "moderator", "players", "cccc")
+    text = path.read_text(encoding="utf-8")
+    assert read_toml(path)["moderator"]["players"] == ["aaaa", "bbbb", "dddd"]
+    assert "# Alice" in text and "# Bob, Carol" in text and "# Dave" in text
+    inline = tmp_path / "inline.toml"
+    inline.write_text('moderator = { players = ["aaaa"] }\n', encoding="utf-8")
+    with pytest.raises(TomlEditError):
+        remove_from_list(inline, "moderator", "players", "aaaa")

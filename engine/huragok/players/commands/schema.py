@@ -72,4 +72,15 @@ MIGRATIONS = [
         number INTEGER PRIMARY KEY, time REAL NOT NULL, target TEXT NOT NULL, text TEXT NOT NULL, delivered REAL);
     CREATE INDEX commands_notices_target ON commands_notices (target);
     """,
+    # 10 (0.6.0, the host's calls 2 Nov 2026): a !novote's giver's rank, which giving the votes back takes; and the
+    # kicks list (lists.py), kept here so a plain kick passed around the servers, or one waiting for someone away (a
+    # confirmed request), outlasts Huragok's restart as a kick with a time does. `console` and `everywhere` are
+    # Kick's own.
+    """
+    ALTER TABLE commands_no_votes ADD COLUMN by_role TEXT;
+    CREATE TABLE commands_kicks (
+        number INTEGER PRIMARY KEY, time REAL NOT NULL, server TEXT NOT NULL, target TEXT NOT NULL, name TEXT,
+        by TEXT, reason TEXT, seconds REAL NOT NULL, console INTEGER NOT NULL, everywhere INTEGER NOT NULL);
+    CREATE INDEX commands_kicks_time ON commands_kicks (time);
+    """,
 ]

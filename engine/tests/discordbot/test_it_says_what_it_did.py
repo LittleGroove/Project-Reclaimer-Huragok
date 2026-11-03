@@ -678,7 +678,7 @@ def test_answers_name_commands_as_they_are_here(tmp_path: Path, run: Any, fake: 
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
             said = _as_named_here(part, "/pardon @number lets one back in now. /rules <line> shows one. https://example.com/pardon stays")
-            assert "/letback @number" in said and "/wordlist <line>" in said and "example.com/pardon" in said
+            assert "/letback @number" in said and "/bannedwords <line>" in said and "example.com/pardon" in said
 
     run(scenario())
 
@@ -697,12 +697,12 @@ def test_restartserver_has_no_for_good(tmp_path: Path, run: Any, fake: FakeDisco
 def test_public_and_hidden_take_either_name(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         path = audit_file(tmp_path, ("commands",))
-        set_switch(path, ("commands",), "hidden", ["wordlist"])
+        set_switch(path, ("commands",), "hidden", ["bannedwords"])
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
             from huragok.discordbot.slash import commands_for
 
-            assert "wordlist" not in {command.name for command in commands_for(part)}
+            assert "bannedwords" not in {command.name for command in commands_for(part)}
 
     run(scenario())
 

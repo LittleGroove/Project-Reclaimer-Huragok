@@ -384,3 +384,14 @@ def test_a_custom_game_a_server_plays_by_name_isnt_deleted(tmp_path: Path) -> No
     # custom_game_reference writes it: counted too, so it isn't deleted from under the server.
     write_plays(server.config_path, server.name, {"map": "Valhalla", "game": "br-slayer"})
     assert servers_playing(settings, info) == [server.name]
+
+
+def test_a_playlist_weight_that_isnt_a_whole_number_is_shown_as_written() -> None:
+    """int() of "two" (or 1.5 cut to 1) broke every playlist screen (audit 2026-11, 7.9)."""
+    from huragok.games.halo3 import Playlist
+
+    playlist = Playlist(Path("x.playlist.json"), "x", games=[
+        {"game": "Slayer", "map": "Guardian", "weight": "two"}, {"game": "CTF", "map": "Valhalla", "weight": 1.5},
+        {"game": "KOTH", "map": "Narrows"}, {"game": "Oddball", "map": "Pit", "weight": 3}])
+    labels = playlist.labels()
+    assert "weight two" in labels[0] and "weight 1.5" in labels[1] and "weight" not in labels[2] and "weight 3" in labels[3]

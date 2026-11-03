@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import codecs
 import logging
 import math
 import os
@@ -461,6 +462,9 @@ class Keyboard:
 
         fd = sys.stdin.fileno()
         pending = ""
+        # One read can end partway through a character (a pasted "é" across 64 bytes): decoded on their own, both halves
+        # were dropped (audit 2026-11, 7.9). The decoder keeps the start for the next read.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         while not self._stop.is_set():
             try:
                 ready, _, _ = select.select([fd], [], [], 0.1)
@@ -469,11 +473,14 @@ class Keyboard:
                         self._push("ESC")
                         pending = ""
                     continue
-                data = os.read(fd, 64).decode("utf-8", errors="ignore")
+                raw = os.read(fd, 64)
             except (OSError, ValueError):
                 return
-            if not data:
+            if not raw:
                 return
+            data = decoder.decode(raw)
+            if not data:
+                continue  # the start of a character: the rest comes with the next read
             text = pending + data
             pending = ""
             i = 0

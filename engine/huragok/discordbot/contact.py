@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from . import cards, features, kept, rest
 from .config import colour_value, pings_of
 from .speakers import say
+from .tickets import LIVE
 from .workers import to_thread
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ class Contact:
         self.part = part
         self.clock = clock
         self.swept = clock()
+        self.closing: set[int] = set()  # being closed now: Close pressed twice kept two transcripts (audit 2026-11, 6.13)
 
     @property
     def config(self) -> Any:
@@ -148,19 +150,23 @@ class Contact:
     async def close(self, number: int, who: str) -> None:
         """They're done: a transcript for the record, a word in the thread, and it's locked. The card's finished as any other."""
         ticket = self.part.tickets.get(number)
-        if ticket is None:
+        if ticket is None or number in self.closing or ticket["state"] not in LIVE:  # before the first wait: a second press finds it taken
             return
-        thread, token = str(ticket["thread"]), self.config.token
-        tickets = self.part.tickets
-        if thread:
-            if self.options.get("transcript", True):
-                await self._keep_transcript(number, ticket, thread)
-            try:
-                await to_thread(rest.post_message, token, thread, {"content": say(self.config, "contact.closed", who=cards.clean(who)), "allowed_mentions": {"parse": []}})
-                await to_thread(rest.close_thread, token, thread, True)
-            except rest.DiscordError as error:
-                log.info("Couldn't close a Contact staff thread: %s", error)
-        tickets.close(number, who)
+        self.closing.add(number)
+        try:
+            thread, token = str(ticket["thread"]), self.config.token
+            tickets = self.part.tickets
+            if thread:
+                if self.options.get("transcript", True):
+                    await self._keep_transcript(number, ticket, thread)
+                try:
+                    await to_thread(rest.post_message, token, thread, {"content": say(self.config, "contact.closed", who=cards.clean(who)), "allowed_mentions": {"parse": []}})
+                    await to_thread(rest.close_thread, token, thread, True)
+                except rest.DiscordError as error:
+                    log.info("Couldn't close a Contact staff thread: %s", error)
+            tickets.close(number, who)
+        finally:
+            self.closing.discard(number)
 
     async def _keep_transcript(self, number: int, ticket: Any, thread: str) -> None:
         client = self.part.client

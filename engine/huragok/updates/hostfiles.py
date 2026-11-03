@@ -500,6 +500,54 @@ def moderators_kick_at_most(ctx: Context) -> list[str]:
     return said
 
 
+RESTART_BUDGET_NOTE = ("Not read since 0.6.0: automatic restarts aren't held to a number an hour any more\n"
+                       "(a budget that stopped them stopped updates and the watchdog doing their job).\n"
+                       "Many in an hour are only said in the log. Huragok made this a comment.")
+RESTART_BUDGET_OLD_NOTE = "# More automatic restarts than this in one hour means something is looping: FAULTED."
+
+
+def restart_budget(ctx: Context) -> list[str]:
+    """[restarts] restarts_per_hour does nothing from 0.6.0 (the host's call). Left at Huragok's own 6, under Huragok's
+    own note, both go: the file is then a new host's. A number of the host's own becomes a comment saying why, so they
+    still see what they'd set. A version before reads either: it takes its default (6)."""
+    from ..core.tomledit import comment_out_table_key, remove_table_key
+
+    restarts = _read(ctx.settings_path).get("restarts")
+    if not isinstance(restarts, dict) or "restarts_per_hour" not in restarts:
+        return []
+    theirs = restarts.get("restarts_per_hour") != 6
+    said = [f"{ctx.settings_path.name}: [restarts] restarts_per_hour " + ("made a comment" if theirs else "taken out")
+            + ": automatic restarts aren't held to a number an hour since 0.6.0"]
+    if ctx.dry:
+        return said
+    ctx.backup(ctx.settings_path)
+    done = (comment_out_table_key(ctx.settings_path, "restarts", "restarts_per_hour", RESTART_BUDGET_NOTE) if theirs
+            else remove_table_key(ctx.settings_path, "restarts", "restarts_per_hour"))
+    if not done:
+        return []
+    lines = ctx.settings_path.read_bytes().decode("utf-8").splitlines(keepends=True)  # its own line endings kept
+    kept = [line for line in lines if line.rstrip("\r\n") != RESTART_BUDGET_OLD_NOTE]
+    if len(kept) != len(lines):
+        write_atomic(ctx.settings_path, "".join(kept), newline="")
+    return said
+
+
+def watchdog_memory(ctx: Context) -> list[str]:
+    """[watchdog] memory only warns unless turned on, from 0.6.0 (the host's call): the "act" every earlier version
+    wrote becomes "watch" where memory_mb is still 0 (the case was never on). A host who set memory_mb keeps theirs."""
+    from ..core.tomledit import set_table_key
+
+    watchdog = _read(ctx.settings_path).get("watchdog")
+    if not isinstance(watchdog, dict) or watchdog.get("memory") != "act" or watchdog.get("memory_mb", 0) not in (0, 0.0):
+        return []
+    said = [f"{ctx.settings_path.name}: [watchdog] memory = \"watch\": it only warns unless you turn it on (\"act\"), "
+            "and counts growth past memory_mb once a run has settled (new in 0.6.0)"]
+    if not ctx.dry:
+        ctx.backup(ctx.settings_path)
+        set_table_key(ctx.settings_path, "watchdog", "memory", "watch")
+    return said
+
+
 def own_ban_lists(ctx: Context) -> list[str]:
     """Every server keeps a ban list of its own from 0.5.0 (the host's call: a /ban in game is that server's; Huragok
     keeps its own bans on every one), so [setup] share loses "bans" (new servers got one shared bans.json). The
@@ -699,6 +747,59 @@ def automod_layout_note(ctx: Context) -> list[str]:
             "its lines are read as they were written until they're rewritten with the mutes first"]
 
 
+def _kicking(line: str) -> str:
+    """A word list's line with nothing in its mutes, kicks and ban, with the 0 in its kicks that keeps it the server's
+    kick every time: the rest of it as the host wrote it."""
+    parts = line.rstrip().split("|")
+    if len(parts) < 3:  # "kickword", or "kickword |": its mutes are empty, and so are its kicks but for the 0
+        return parts[0].rstrip() + " | | 0"
+    parts[2] = " 0".ljust(max(len(parts[2]), 3)) if len(parts) > 3 else " 0"  # in its column, if it has one
+    return "|".join(parts).rstrip()
+
+
+def automod_reports(ctx: Context) -> list[str]:
+    """Since 0.6.0 a line of the word list with nothing in its mutes, kicks and ban only reports (a ticket for the staff
+    on Discord, nothing in game); up to then it was the server's kick every time. The host's lines like that get the
+    0 in their kicks that says so (`kickword | | 0`), so they go on kicking: the version before reads that the same.
+    The 0.2 layout's are left, read as they always were; a list still in the layout up to 0.5.0 gets its 0s as
+    automod_order() turns it (rules.from_kicks_first())."""
+    from ..core.files import read_text
+    from ..players.automod.rules import RuleError, kicks_first, lines_of, parse_line, parse_lenient
+
+    path, label = _words(ctx)
+    if not path.is_file():
+        return []
+    text = read_text(path, RuntimeError)  # one that can't be read: tried again at the next start
+    if kicks_first(text):
+        return []
+    lines = lines_of(text)
+    changed: list[int] = []
+    for number, line in enumerate(lines, 1):
+        try:
+            rule = parse_line(line, number)
+        except RuleError:
+            continue  # left out as it is, and said at the start: the host's to fix
+        if rule is not None and rule.reports:
+            lines[number - 1] = _kicking(line)
+            changed.append(number)
+    if not changed:
+        return []
+    new = "\n".join(lines) + "\n"
+    if any(rule.reports for rule in parse_lenient(new)[0] if rule.line in changed):  # never: _kicking() writes the 0
+        raise RuntimeError(f"{label} would still only report on line {changed[0]}")
+    if not ctx.dry:
+        ctx.backup(path)
+        write_atomic(path, new)
+    return [_kicking_said(label, lines, changed)]
+
+
+def _kicking_said(label: str, lines: list[str], numbers: list[int]) -> str:
+    many = len(numbers) > 1
+    return (f"{label}: {_rules_called(lines, numbers)} had nothing in {'their' if many else 'its'} mutes, kicks and ban, "
+            f"the server's kick every time: a 0 in {'their' if many else 'its'} kicks keeps {'them' if many else 'it'} "
+            "kicking, as a line with nothing in them only reports now (a ticket for the staff on Discord)")
+
+
 def automod_order(ctx: Context) -> list[str]:
     """The word list in this version's layout, the mutes before the kicks (words | mutes | kicks | ban | name), the
     host's call (27 October): each line's mute times first, the strikes that came before the mutes now before the
@@ -728,6 +829,8 @@ def automod_order(ctx: Context) -> list[str]:
             if turned.turned else f"{label}: Huragok's notes as this version writes them, the mutes first ({PARTS})"]
     said.extend(f"{label}: {_rules_called(lines, [number])}: kick time{'s' if len(cut) > 1 else ''} {', '.join(cut)} "
                 "left out, the ban coming before them now" for number, cut in turned.cut.items())
+    if turned.kicking:
+        said.append(_kicking_said(label, lines, turned.kicking))
     if not ctx.dry:
         ctx.backup(path)
         write_atomic(path, new)
@@ -1350,6 +1453,8 @@ def new_starters(ctx: Context) -> list[str]:
     return said
 
 
+# The steps that turn a word list from before into this version's: done already for one Huragok writes itself.
+WORD_LIST_STEPS = ("0.5.1/automod-layout-note", "0.5.1/automod-order", "0.6.0/automod-reports")
 # A step's key is never changed once a release has it: hosts' records/files.json list the steps done by key, and a
 # renamed key would run its step again.
 STEPS: list[Step] = [
@@ -1379,6 +1484,9 @@ STEPS: list[Step] = [
     Step("0.6.0/discord-unbuilt", "settings for what isn't built out of discord.toml", discord_unbuilt),
     Step("0.6.0/discord-appeals-channel", "appeals get a channel of their own to set", discord_appeals_channel),
     Step("0.6.0/workshop-adopt", "[workshop_updates] adopt and layouts", workshop_adopt),
+    Step("0.6.0/automod-reports", "the word list's lines with nothing in them go on kicking", automod_reports),
+    Step("0.6.0/restart-budget", "[restarts] restarts_per_hour does nothing any more", restart_budget),
+    Step("0.6.0/watchdog-memory", "[watchdog] memory only warns unless turned on", watchdog_memory),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.
@@ -1404,6 +1512,26 @@ def _save_record(records: Path, record: dict[str, Any]) -> None:
     records.mkdir(parents=True, exist_ok=True)
     path = records / FILES_RECORD
     write_atomic(path, json.dumps(record, indent=1))
+
+
+def word_list_written(records: Path) -> None:
+    """Huragok has just written the word list from this version's template (a first start, `init`, or a list that was
+    deleted): its steps are done, so the next start doesn't take it, or the list the host puts in its place before
+    then, for one from before. A first start runs no steps (it only writes the files), so the second ran them all: a
+    new host's own list in today's layout, with no note naming its parts, got the old layout's note, then had its mutes
+    and kicks swapped for good once the version had settled, and a line that only reports would have been made a kick
+    (the playlists thread's audit, 2 November). Only the word list's: the other steps add what a first start doesn't
+    write (each server's own interval messages, say)."""
+    record = _load_record(records)
+    steps = set(record.get("steps") or [])
+    if steps >= set(WORD_LIST_STEPS):
+        return
+    record["steps"] = sorted(steps | set(WORD_LIST_STEPS))
+    try:
+        _save_record(records, record)
+    except OSError as error:
+        log.warning("Couldn't write %s (%s): the next start may take the word list for one from before",
+                    records / FILES_RECORD, error)
 
 
 def context_for(settings_path: Path, records: Path, packages: Path, *, dry: bool = False) -> Context:

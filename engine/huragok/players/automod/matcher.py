@@ -14,7 +14,9 @@ List each word once: these are caught too.
 Doubled letters must stay doubled: a word listed with "gg" needs at least two g's,
 so a different word that only has one isn't caught. A listed word only matches
 whole words (and their plurals) unless it has a *: "word*" also matches the start
-of longer words, "*word*" anywhere. A line's -word entries are never caught.
+of longer words, "*word*" anywhere. Digits glued to it don't make it a longer word
+(badword1, 1badword, kys2), unless more letters follow them. A line's -word
+entries are never caught.
 
 A number is never taken for a word: with "ass" listed, "455 kills", "4:55 left"
 and "respawn in 45s" aren't caught. A match of a listed word that has letters
@@ -90,6 +92,13 @@ def pattern(word: str, *, anywhere: bool = False) -> str:
     body = _letter(letters[0]) + "".join(_separator(a, b) + _letter(b) for a, b in zip(letters, letters[1:]))
     if anywhere and all(c.isdigit() for c in letters):
         return rf"(?<!\d){body}(?!\d)"  # 88 is in Sniper88 and xX88Xx, not in 1988
+    if _wordy(word):
+        # A digit glued to a word that's mostly letters doesn't make it a longer word: badword1, 1badword and kys2 are
+        # caught (they weren't: audit 2026-11, 5.5). Digits joined to more letters still do (4ss4ss1n isn't ass), and
+        # _number_like keeps "455 kills" from being a word.
+        start = "" if open_start else r"(?<![a-z])(?<![a-z]\d)(?<![a-z]\d\d)"
+        end = "" if open_end else rf"{PLURAL}(?![a-z])(?!\d+[a-z])"
+        return start + body + end
     start = "" if open_start else rf"(?<![{WORD_CHAR}])"
     end = "" if open_end else rf"{PLURAL}(?![{WORD_CHAR}])"
     return start + body + end

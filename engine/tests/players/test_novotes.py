@@ -188,3 +188,35 @@ def test_with_across_servers_off_it_is_the_servers_it_was_given_on(tmp_path: Pat
             assert cancels(fake) == 0
 
     run(scenario())
+
+
+def test_a_vote_called_under_someone_elses_name_is_still_theirs(tmp_path: Path, run) -> None:
+    """Votes come by name: Bravo, his votes away, took Alice's name and called one, and with two Alices it was left
+    alone. The server's suffix for two of one name picks the one whose player ID starts with it, or whose service tag
+    it is (the host's call, 2 Nov 2026: tied to the player ID, not the name)."""
+    from huragok.players.commands.votekicks import _named
+    from huragok.servers.state import Player, ServerState
+
+    state = ServerState(SERVER)
+    state.players = {3: Player(3, "Alice", ALICE, service_tag="ACE"), 4: Player(4, "Alice", BRAVO, service_tag="BRV")}
+    assert [p.id for p in _named(state, f"Alice ({BRAVO[:3].upper()})")] == [BRAVO]  # the ID's start
+    assert [p.id for p in _named(state, "Alice (ACE)")] == [ALICE]  # the service tag
+    assert len(_named(state, "Alice (ZZZ)")) == 2  # neither: both, and a vote that could be Alice's is left alone
+
+    async def scenario() -> None:
+        async with running(tmp_path) as (sup, fake, _):
+            await on_and_ready(sup, fake)
+            await fake.chat(MOD, "Mod", "!novote Bravo 10m spamming votes")
+            await wait_for(lambda: rows(sup))
+            await fake.leave(4)
+            await fake.join(4, "Alice", BRAVO)  # Bravo, back as a second Alice
+            await wait_for(lambda: [p.name for p in sup.superintendent.states[SERVER].players.values()].count("Alice") == 2)
+            await fake.event("vote", state="called", subject="end the game", caller=f"Alice ({ALICE[:3].upper()})")
+            await fake.event("vote", state="called", subject="end the game", caller=f"Alice ({BRAVO[:3].upper()})")
+            await wait_for(lambda: cancels(fake) == 1)
+            import asyncio
+
+            await asyncio.sleep(0.5)
+            assert cancels(fake) == 1  # Bravo's, not the real Alice's
+
+    run(scenario())

@@ -42,9 +42,11 @@ def _higher(one: str, other: str) -> str:
     return one if ROLES.index(one) >= ROLES.index(other) else other
 
 
-def as_they_may_see(config: DiscordConfig, rank: str, text: str) -> str:
-    """An answer for someone of this rank: below admin, unless `moderators_see_ids` says otherwise, a player's whole ID is cut to its start, which is enough to tell two apart. Names and #numbers are how moderators work."""
-    if rank in ("admin", "owner") or config.section("ranks").get("moderators_see_ids"):
+def as_they_may_see(config: DiscordConfig, rank: str, text: str, *, everyone: bool = False) -> str:
+    """An answer for someone of this rank: below admin, unless `moderators_see_ids` says otherwise, a player's whole ID is cut to its start, which is enough to tell two apart. Names and #numbers are how moderators work.
+    `everyone`: an answer the whole channel reads (`[commands] public`), cut whoever asked: an admin's public answer
+    showed whole IDs to everyone there (audit 2026-11, 6.16)."""
+    if not everyone and (rank in ("admin", "owner") or config.section("ranks").get("moderators_see_ids")):
         return text
     return WHOLE_ID.sub(lambda found: found[0][:8], text)
 
@@ -97,6 +99,20 @@ def highest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]
 
 # What reaches further than the server it's run on, so it takes the rank someone has on all of them. A kick with a time does too.
 REACHES_EVERY_SERVER = {"ban", "banall", "unban", "promote", "demote", "admin", "banname", "unbanname", "banword", "unbanword", "changebanword", "pardonplayer", "confirm", "deny"}
+
+
+FOREVER_WORDS = {"perm", "permanent", "forever"}  # what makes a kick a ban for good ("never" starts a reason)
+
+
+def times_a_kick(words: Iterable[str]) -> bool:
+    """Whether a kick's words could give it a time, or make it a ban for good: then it reaches every server, and takes
+    the rank held on all of them. Any word that reads as one counts (a name can have spaces in it, so which word is
+    the time isn't known before the router reads the line): refusing a one-server moderator a plain kick whose reason
+    says "30m" is the safe way to be wrong. Read from the time box alone, a time typed in the player box, or in the
+    console, reached every server on a one-server rank (audit 2026-11, 6.8)."""
+    from ..core.text import TIME
+
+    return any(TIME.fullmatch(word.lower()) or word.lower() in FOREVER_WORDS for word in words)
 
 
 def rank_to_run(config: DiscordConfig, someone: Someone, servers: Iterable[Any], server: str | None, command: str, *, timed: bool = False) -> str:

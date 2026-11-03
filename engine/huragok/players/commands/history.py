@@ -20,7 +20,7 @@ from typing import Any
 
 from ...core.events import Event
 from ...core.part import command, on
-from ...core.text import is_player_id
+from ...core.text import is_player_id, seconds_of
 from ...servers.state import Player
 from ..ledger import is_housekeeping, plain_reason, shown_kind
 from ..router import CommandCall
@@ -230,14 +230,28 @@ class HistoryCommands(CommandsBase):
     async def _whois_now(self, player_id: str, now: float) -> str:
         """What's on them now, on every server: a mute on Vergil's list, a kick keeping them out, their bans."""
         bits: list[str] = []
+        # A strike's mute waiting for them to be back (after the server's own kick, or given while they were away)
+        # starts its time when they are: shown as that, however long they've been gone (audit 2026-11, 5.10)
         mutes = self._query(
-            "SELECT expires, by, reason FROM automod_mutes WHERE player_id = ? AND lifted IS NULL AND (expires IS NULL "
-            "OR expires > ?) UNION ALL SELECT expires, by, rule FROM automod_strikes WHERE player_id = ? AND action = "
-            "'mute' AND pardoned IS NULL AND lifted IS NULL AND dry_run = 0 AND (expires IS NULL OR expires > ?)",
-            (player_id, now, player_id, now))
+            "SELECT expires, by, reason, 0 AS waiting, NULL AS duration FROM automod_mutes WHERE player_id = ? AND lifted IS NULL "
+            "AND (expires IS NULL OR expires > ?) UNION ALL SELECT expires, by, rule, waiting, duration FROM automod_strikes "
+            "WHERE player_id = ? AND action = 'mute' AND pardoned IS NULL AND lifted IS NULL AND dry_run = 0 AND (expires IS NULL "
+            "OR expires > ? OR waiting = 1)", (player_id, now, player_id, now)) or self._query(
+            "SELECT expires, by, reason, 0 AS waiting, NULL AS duration FROM automod_mutes WHERE player_id = ? AND lifted IS NULL "
+            "AND (expires IS NULL OR expires > ?) UNION ALL SELECT expires, by, rule, 0, NULL FROM automod_strikes WHERE "
+            "player_id = ? AND action = 'mute' AND pardoned IS NULL AND lifted IS NULL AND dry_run = 0 AND (expires IS NULL OR "
+            "expires > ?)", (player_id, now, player_id, now))  # a list from before the waiting column, with Vergil off
         if mutes:
-            mute = max(mutes, key=lambda r: float("inf") if r["expires"] is None else r["expires"])
-            left = "for good" if mute["expires"] is None else f"{ago(mute['expires'] - now)} left"
+            def ends(row: Any) -> float:
+                if row["waiting"]:
+                    return float("inf") if not row["duration"] else now + seconds_of(str(row["duration"]))
+                return float("inf") if row["expires"] is None else float(row["expires"])
+
+            mute = max(mutes, key=ends)
+            if mute["waiting"]:
+                left = "for good once they're back" if not mute["duration"] else f"{ago(seconds_of(str(mute['duration'])))} once they're back"
+            else:
+                left = "for good" if mute["expires"] is None else f"{ago(mute['expires'] - now)} left"
             bits.append(f"muted {left} (by {mute['by']}" + (f": {mute[2]}" if mute[2] else "") + ")")
         kicked: set[str] = set()
         for kick in self.recent_kicks():  # newest first: the one keeping them out of each server

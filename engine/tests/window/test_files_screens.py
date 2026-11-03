@@ -183,7 +183,8 @@ def test_who_is_who_and_who_may_use_which_command(tmp_path: Path) -> None:
 def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> None:
     assert rule_line(["badword", "-badwordy"], ["1d", "7d"], None, 2, ["1h"], 3, "slurs") == \
         "badword, -badwordy | 1d, 7d | 2, 1h | 3 | slurs"
-    assert rule_line(["kickword"], [], None, 0, [], None, "") == "kickword"
+    assert rule_line(["kickword"], [], None, 0, [], None, "") == "kickword | | 0"  # with nothing, it would only report
+    assert rule_line(["askword"], [], None, None, [], None, "ask") == "askword | | | | ask"  # it only reports
     assert rule_line(["word"], [], None, 0, [], 0, "") == "word | | | 0"  # four parts ending in a number: not 0.2's
     assert rule_line(["meanword"], ["1d", "3d", "7d"], 8, 5, [], None, "mean") == "meanword | 1d, 3d, 7d, 8 | 5 | | mean"
     assert rule_line(["w"], ["1d"], None, None, [], None, "") == "w | 1d"  # never kicked
@@ -196,7 +197,8 @@ def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> 
                             "4th: banned for good"]
     assert line_of(parse_line("w | 1d | 1h", 1)) == "w | 1d | 1, 1h"  # when the kicks start, written out
     assert ladder(parse_line("w | 1d, 3d", 1)) == ["1st: muted for 1 day", "2nd and after: muted for 3 days"]
-    assert ladder(parse_line("w", 1)) == ["every time: kicked"]
+    assert ladder(parse_line("w | | 0", 1)) == ["every time: kicked"]
+    assert ladder(parse_line("w", 1)) == ["every time: a ticket for the staff, nothing in game"]  # nothing in it: it only reports
     assert ladder(parse_line("w | 1d | 2 | 9", 1)) == ["1st and 2nd: muted for 1 day", "3rd to 9th: kicked",
                                                        "10th: banned for good"]  # strikes that do the same, as one
     path = template_root(tmp_path).parent / "automod.txt"
@@ -206,7 +208,7 @@ def test_rules_are_written_in_their_five_parts_and_read_back(tmp_path: Path) -> 
     assert [r.name for r in rules] == ["rude", "threats"]
     line = rules[0].line
     change_rule(path, line, "badword, rudeword | 1h | | | rude")
-    with pytest.raises(RuleError, match="two lines are named threats"):
+    with pytest.raises(RuleError, match="is named threats already"):
         change_rule(path, line, "badword | | | | threats")
     with pytest.raises(RuleError, match="isn't a time"):
         change_rule(path, None, "w | soon")
@@ -319,7 +321,7 @@ def test_d_adds_vergils_rules_and_banned_names(tmp_path: Path, run) -> None:
             "A", "ENTER", *"badword, worseword", "ENTER", "3", *"slurs", "ENTER", "Y",  # mutes, 1 day out, the ban
             "T", "ENTER", *"what a b4dw0rd", "ENTER", "x",  # caught, disguised
             "1", "ENTER", "S", "1", "Y",  # kicked every time instead
-            "A", "ENTER", *"rudeword", "ENTER", "5", "Y", *"1d, perm", "ENTER", "Y", *"3", "ENTER", *"30m", "ENTER",
+            "A", "ENTER", *"rudeword", "ENTER", "6", "Y", *"1d, perm", "ENTER", "Y", *"3", "ENTER", *"30m", "ENTER",
             "N", "ENTER", "Y",  # its own: muted 1 day, then for good, out 30 min from the 4th; unnamed
             "ESC",
             "N", "ENTER",
@@ -332,7 +334,7 @@ def test_d_adds_vergils_rules_and_banned_names(tmp_path: Path, run) -> None:
     run(menu.screen_settings())
     text = text_of(terminal)
     rules = read_rules(path.parent / "automod.txt")
-    assert [line_of(r) for r in rules] == ["badword, worseword | | | | slurs", "rudeword | 1d, perm | 3, 30m"]
+    assert [line_of(r) for r in rules] == ["badword, worseword | | 0 | | slurs", "rudeword | 1d, perm | 3, 30m"]  # 0: kicked every time
     assert "1st: muted for 1 day" in text and "3rd: kicked for 1 day" in text and "4th: banned for good" in text
     assert "Added." in text and "'b4dw0rd' is caught by slurs" in text and "Saved." in text
     assert "2nd and 3rd: muted for good" in text and "4th and after: kicked for 30 minutes" in text
@@ -441,7 +443,7 @@ def test_d_word_list_changes_and_refusals(tmp_path: Path, run) -> None:
             "1", "ENTER", "N", "BACKSPACE", "BACKSPACE", "BACKSPACE", "BACKSPACE", *"insults", "ENTER", "Y",  # its name
             "2", "ENTER", "X", "Y",  # threats taken out
             "A", "ENTER", *"slur", "ENTER", "1", *"insults", "ENTER", "ESC",  # a name taken already: asked again
-            "A", "ENTER", *"spam", "ENTER", "5", "Y", *"soon", "ENTER", *"1d, 3d", "ENTER", "N", "Y", *"x", "ENTER",
+            "A", "ENTER", *"spam", "ENTER", "6", "Y", *"soon", "ENTER", *"1d, 3d", "ENTER", "N", "Y", *"x", "ENTER",
             *"1", "ENTER", *"2h", "ENTER", "Y", "1", "ENTER", "ENTER",  # not a time, not a number, too few for the
             # ban; Enter: enough
             *"name", "ENTER", "ENTER", "N",  # a name !strike keeps; then none, and it isn't added
@@ -466,15 +468,15 @@ def test_d_word_list_mutes_for_good_after_a_number_of_strikes(tmp_path: Path, ru
     path = template_root(tmp_path)
     words = path.parent / "automod.txt"
     keys = ["A", "ENTER",
-            "A", "ENTER", *"meanword", "ENTER", "5",  # your own
+            "A", "ENTER", *"meanword", "ENTER", "6",  # your own
             "Y", *"1d, 3d, 7d", "ENTER",  # muted 1 day, 3 days, 7 days
             "Y", *"2", "ENTER", *"8", "ENTER",  # for good: too few for the times; then after 8
             "Y", *"5", "ENTER", "ENTER",  # kicked after 5 strikes: the server's plain kick
             "N", *"mean", "ENTER", "Y",  # never banned
-            "A", "ENTER", *"rudeword", "ENTER", "5",
+            "A", "ENTER", *"rudeword", "ENTER", "6",
             "Y", *"1d", "ENTER", "Y", "ENTER",  # muted 1 day, then for good after 1 (Enter: the least)
             "N", "Y", "ENTER", *"rude", "ENTER", "Y",  # never kicked; the ban: Enter, the least, after muted for good
-            "A", "ENTER", *"spam", "ENTER", "5",
+            "A", "ENTER", *"spam", "ENTER", "6",
             "Y", *"1d, perm", "ENTER",  # perm last: for good already, so not asked
             "N", "N", *"spam", "ENTER", "Y",
             "ESC", "ESC"]
@@ -509,3 +511,25 @@ def test_d_a_servers_playlists_custom_games_and_bans(tmp_path: Path, run) -> Non
     menu, terminal = screen(path, ["1", "ENTER", "P", "ENTER", "x", "ESC", "ESC"])
     run(menu.screen_settings())
     assert "project-reclaimer" in text_of(terminal).lower() or "program" in text_of(terminal)
+
+
+def test_d_asks_before_switching_off_a_mod_other_servers_share(tmp_path: Path, run) -> None:
+    """A content folder shared by several servers has one mod list: switching a mod off for one switched it off for
+    them all, with no word of it (audit 2026-11, 7.2)."""
+    from conftest import free_port
+
+    from huragok.core.tomledit import replace_server_blocks, server_blocks
+
+    path = template_root(tmp_path)
+    folder = path.parent / "SERVERS" / ALPHA
+    replace_server_blocks(folder / "dedicated.toml", [*server_blocks(folder / "dedicated.toml"), {"name": "Second Server", "port": free_port()}])
+    mod = folder / "content" / "Mods" / "canyon"
+    mod.mkdir(parents=True)
+    (mod / "ModInfo.json").write_text(json.dumps({"Title": {"Neutral": "Canyon"}}), encoding="utf-8")
+    menu, terminal = screen(path, ["1", "ENTER", "M", "ENTER", "1", "ENTER", "N", "ESC", "ESC", "ESC"])
+    run(menu.screen_settings())
+    assert "Second Server shares this content folder: the mod is switched off for them too" in text_of(terminal)
+    assert not (folder / "content" / "disabled-mods.json").exists()
+    menu, terminal = screen(path, ["1", "ENTER", "M", "ENTER", "1", "ENTER", "Y", "ESC", "ESC", "ESC"])
+    run(menu.screen_settings())
+    assert json.loads((folder / "content" / "disabled-mods.json").read_text(encoding="utf-8")) == {"packages": ["Mods/canyon"]}

@@ -46,6 +46,7 @@ hours, then left with a line on the dashboard until someone presses U.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
@@ -238,18 +239,66 @@ def _put_in_place(source: Path, target: Path, keep: Path | None, *, link_from: P
     except OSError:
         staged.unlink(missing_ok=True)
         raise
-    moved = False
+    _clear_old_asides(target)
+    old: Path | None = None  # where the old file is now, to put it back on an error
     try:
         if keep is not None and target.exists():
-            keep.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(target, keep)
-            moved = True
+            old = _move_aside(target, keep)
         os.replace(staged, target)
     except OSError:
         staged.unlink(missing_ok=True)
-        if moved and keep is not None and not target.exists():
-            os.replace(keep, target)
+        if old is not None and not target.exists():
+            _move_back(old, target)
         raise
+
+
+def _other_drive(error: OSError) -> bool:
+    """A rename refused because it would cross drives (Windows) or file systems (Linux)."""
+    return error.errno == errno.EXDEV or getattr(error, "winerror", None) == 17  # ERROR_NOT_SAME_DEVICE
+
+
+def _move_aside(target: Path, keep: Path) -> Path:
+    """The old program moved to `keep`. With the servers on another drive than Huragok (SERVERS on D:, Huragok on C:)
+    a rename can't get there, and a running program can only be renamed, never copied away and deleted: it's renamed
+    beside itself, copied to `keep`, and that renamed file removed when nothing runs it any more (now, or at the next
+    update). Before, every program update of those servers failed (audit 2026-11, 3.3). Returns where it is now."""
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.replace(target, keep)
+        return keep
+    except OSError as error:
+        if not _other_drive(error):
+            raise
+    aside = target.with_name(f".{target.name}.previous-{time.time_ns()}")
+    os.replace(target, aside)
+    try:
+        shutil.copy2(aside, keep)
+    except OSError:
+        os.replace(aside, target)
+        raise
+    try:
+        aside.unlink()
+    except OSError:
+        return aside  # a running server's program: it goes at the next update (_clear_old_asides)
+    return keep
+
+
+def _move_back(old: Path, target: Path) -> None:
+    try:
+        os.replace(old, target)
+    except OSError as error:
+        if not _other_drive(error):
+            raise
+        shutil.copy2(old, target)
+
+
+def _clear_old_asides(target: Path) -> None:
+    """Old programs left beside a server's by _move_aside, which a server was running then."""
+    for leftover in target.parent.glob(f".{target.name}.previous-*"):
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
 
 
 def install_program(settings: Settings, downloaded: Path, version: str) -> list[Path]:
@@ -283,7 +332,7 @@ def install_program(settings: Settings, downloaded: Path, version: str) -> list[
                 shutil.rmtree(backup, ignore_errors=True)  # nothing was set aside: no empty set for Clean up
             for done, old in reversed(replaced):  # all or nothing: the copies already replaced go back
                 try:
-                    os.replace(old, done)
+                    _move_back(old, done)  # copied back when it's on another drive: a rename can't get there (audit 2026-11, 7.8)
                 except OSError as undo:
                     left.append(f"{done} (its old file is in {old}: {undo})")
             if left:

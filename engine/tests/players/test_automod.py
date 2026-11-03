@@ -20,7 +20,8 @@ from huragok.core.text import describe_seconds
 from huragok.parts import PARTS
 from huragok.players.automod.automod import MIGRATIONS, AutoMod, check_messages
 from huragok.players.automod.matcher import Matcher, apart, normalise
-from huragok.players.automod.rules import Rule, RuleError, Step, parse_line, parse_text, read_names, read_rules
+from huragok.players.automod.rules import (Rule, RuleError, Step, line_of, parse_line, parse_text, read_names, read_rules,
+                                          unnamed_ladders)
 from huragok.players.automod.rules import ladder as described
 from huragok.rcon import Reply
 from huragok.servers.state import Player, ServerState
@@ -31,7 +32,7 @@ WORDS = """\
 # words           | mutes        | kicks        | ban | name
 badword           |              | 1h, 1d, 7d   | 3   | slurs
 rudeword          | 1d, 3d       |              |     | rude
-kickword
+kickword          |              | 0
 """
 ZED = "9" * 64
 
@@ -111,10 +112,26 @@ def test_a_number_last_in_the_mutes_is_the_strikes_before_muted_for_good() -> No
     assert rule("w | 1d, 3d, 7d, 8").mute_forever_after == 8
 
 
-def test_a_word_alone_is_a_plain_kick_forever() -> None:
-    r = rule("kickword")
+def test_a_0_in_the_kicks_alone_is_a_plain_kick_forever() -> None:
+    r = rule("kickword | | 0")
     assert {r.step_for(n) for n in range(50)} == {Step("kick")} and r.step_for(0).describe() == "kicked"
-    assert r.ban_after is None and r.mutes == [] and r.kick_after == 0 and r.name == ""
+    assert r.ban_after is None and r.mutes == [] and r.kick_after == 0 and r.name == "" and not r.reports
+    assert line_of(r) == "kickword | | 0" and line_of(rule("w | | 0 | | kicks")) == "w | | 0 | | kicks"  # written back so
+    assert line_of(rule("w | | | 3 | x")) == "w | | | 3 | x" and ladder("w | | | 2 | x", 3) == ["kick", "kick", "ban"]  # kicks up to a ban, as ever
+
+
+def test_a_line_with_nothing_in_it_only_reports() -> None:
+    """The host's design (2 November): `theword | | | | badwords` has nothing for Vergil to do in game. Each time, a
+    ticket for the staff on Discord, who decide: how a word's said matters more than the word."""
+    for line in ("theword | | | | badwords", "theword", "theword |", "theword | | |", "| | | | voice"):
+        r = rule(line)
+        assert r.reports and {r.step_for(n) for n in range(20)} == {Step("report")}, line
+    r = rule("theword | | | | badwords")
+    assert described(r) == ["every time: a ticket for the staff, nothing in game"]
+    assert Step("report").severity < Step("mute", "10m").severity and not Step("report").removes
+    assert line_of(r) == "theword | | | | badwords" and line_of(rule("theword")) == "theword"
+    assert not unnamed_ladders([rule("theword")])  # nothing adds up, so no name's needed
+    assert not rule("w | | | oldname").reports and ladder("w | | | oldname", 2) == ["kick", "kick"]  # the 0.2 layout: as ever
 
 
 def test_the_0_2_layout_reads_as_it_always_did() -> None:
@@ -249,7 +266,8 @@ def test_each_line_of_the_layout_up_to_0_5_0_in_the_new_one() -> None:
         "rude | 1d, 3d | | | rude",  # only muted: still only muted, never kicked
         "spam | 1d | 2, 1h | 3 | spam",  # 1d and 2d would come after the ban
         "mean | 1d, 3d, 7d, 8 | 5 | | mean", "first | 1d | 0, 10m | | first",
-        "threat | | | 0 | threats", "old | 1h, 1d | 3 | oldstyle", "kickword",  # read the same in both
+        "threat | | | 0 | threats", "old | 1h, 1d | 3 | oldstyle",  # read the same in both
+        "kickword | | 0",  # nothing in it: the server's kick, as it was, says so with the 0 (it would only report now)
         "broken | | 1x", "lost | 1d, 3d | 2 | 3 | lost"]  # didn't read: turned all the same
     assert from_kicks_first("w | 1h") == "w | | 1h" and from_kicks_first("  ") == "  "
 
@@ -272,7 +290,7 @@ def test_a_list_in_the_layout_up_to_0_5_0_is_read_in_the_new_one() -> None:
     # Rewritten as the update writes it, it reads the same, and says it's in the new layout.
     turned = in_this_layout(KICKS_FIRST)
     assert not kicks_first(turned.text) and in_this_layout(turned.text).text == turned.text
-    assert turned.turned == [3, 4, 5, 6, 7, 8, 12, 13] and turned.cut == {6: ["1d", "2d"]}
+    assert turned.turned == [3, 4, 5, 6, 7, 8, 12, 13] and turned.cut == {6: ["1d", "2d"]} and turned.kicking == [11]
     lines = turned.text.splitlines()
     assert lines[:3] == ["# Vergil's word list", "#   words | mutes | kicks | ban | name",
                          "word | 4d, 5d, 6d, 6 | 3, 1d, 2d, 3d | 10 | hate"]
@@ -318,7 +336,7 @@ def test_vergil_starts_with_the_lines_that_read_and_keeps_watching(tmp_path: Pat
     the other lines applies though that one is still out; an edit that brings a new mistake keeps what's in force;
     the fix brings the left-out line in."""
     words = tmp_path / "automod.txt"
-    words.write_text("badword | | | | slurs\nrudeword | | | | slurs\nkickword\n", encoding="utf-8")
+    words.write_text("badword | | 0 | | slurs\nrudeword | | 0 | | slurs\nkickword | | 0\n", encoding="utf-8")
 
     def edit(text: str) -> None:
         words.write_text(text, encoding="utf-8")
@@ -336,12 +354,12 @@ def test_vergil_starts_with_the_lines_that_read_and_keeps_watching(tmp_path: Pat
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.chat(BRAVO, "Bravo", "badword")
             await wait_for(lambda: any(k["args"][0] == BRAVO for k in fake.named("kick")))
-            edit("badword | | | | slurs\nrudeword | | | | slurs\nkickword, newword\n")  # line 2 still out
+            edit("badword | | 0 | | slurs\nrudeword | | 0 | | slurs\nkickword, newword | | 0\n")  # line 2 still out
             await wait_for(lambda: any("newword" in r.words for r in vergil.rules), 15)
-            edit("badword | | | | slurs\nrudeword | | | | slurs\nkickword, newword | 0x\n")  # a new mistake
+            edit("badword | | 0 | | slurs\nrudeword | | 0 | | slurs\nkickword, newword | 0x\n")  # a new mistake
             await wait_for(lambda: any("keeping the old ones" in r.message for r in caplog.records), 15)
             assert any("newword" in r.words for r in vergil.rules)  # what was in force stays
-            edit("badword | | | | slurs\nrudeword | | | | rude\nkickword, newword\n")  # line 2 put right
+            edit("badword | | 0 | | slurs\nrudeword | | 0 | | rude\nkickword, newword | | 0\n")  # line 2 put right
             await wait_for(lambda: [r.name for r in vergil.rules] == ["slurs", "rude", "rule3"], 15)
             assert vergil.left_out == []
 
@@ -571,7 +589,10 @@ def test_a_strike_while_away_mutes_them_when_they_join(tmp_path: Path, run) -> N
             assert not fake.named("mute")
             await fake.join(6, "Zed", ZED)
             mute = await wait_for(lambda: mutes_of(fake, ZED))
-            assert mute[0][2].startswith("[-_-] KEEP IT CLEAN! You're still muted (rude): 23 hours 59 minutes left")
+            # The whole day from their join (audit 2026-11, 5.10): "1 day left", or a minute under it once a moment
+            # has passed; counted from the strike, as before, it was always the latter
+            assert mute[0][2].startswith(("[-_-] KEEP IT CLEAN! You're still muted (rude): 1 day left",
+                                          "[-_-] KEEP IT CLEAN! You're still muted (rude): 23 hours 59 minutes left"))
 
             # !pardonplayer lifts it, and Vergil doesn't put it back.
             await fake.chat(OWNER, "Owner", f"!pardonplayer {ZED}")
@@ -887,7 +908,8 @@ def test_banword_adds_a_line_from_the_game(tmp_path: Path, run) -> None:
                                         "!banword spamword slurs adds it to one. Or make the line with its steps: "
                                         "!banword spamword | 1d 7d | 2, 1h 1d | 5 | annoying (mute times | strikes "
                                         "before the kicks, then each kick's time | strikes before the ban | its name; "
-                                        "a part left blank is none).")
+                                        "a part left blank is none, and all three blank only reports, a ticket for the "
+                                        "staff).")
             await fake.chat(ADMIN, "Admin", "!banword spamword | 10m | 1, 1h | | annoying")  # made, as it said
             await answered(fake, ADMIN, "Added to automod.txt line 6 (annoying): spamword.")
             # The whole line with that name: the same ladder (or none) adds to it; another is refused.
@@ -1073,7 +1095,7 @@ def test_edits_apply_while_running(tmp_path: Path, run) -> None:
         async with running(tmp_path, setup_words(tmp_path)) as (sup, fake, _):
             await everyone_joins(fake)
             words = tmp_path / "automod.txt"
-            words.write_text(WORDS + "newword\n", encoding="utf-8")
+            words.write_text(WORDS + "newword | | 0\n", encoding="utf-8")
             await sup.runners["automod"].part.reload_if_changed()
             await fake.chat(ALICE, "Alice", "newword")
             await wait_for(lambda: fake.named("kick"))
@@ -1703,7 +1725,7 @@ def test_a_message_that_fails_at_run_time_falls_back_to_the_default(tmp_path: Pa
     run(scenario())
 
 
-UNNAMED = "kickword\nbadword | | 1h, 1d | 3\nrudeword | 1d | | | rude\nother | | 10m\nquiet | 1d\n"
+UNNAMED = "kickword | | 0\nbadword | | 1h, 1d | 3\nrudeword | 1d | | | rude\nother | | 10m\nquiet | 1d\n"
 UNNAMED_WARNING = ("automod.txt line 2 has no name, so its strikes are kept under rule2, and they move to another line "
                    "if a line is added above it: name it (the 5th part, words | mutes | kicks | ban | name)")
 

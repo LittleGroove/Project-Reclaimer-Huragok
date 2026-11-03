@@ -28,7 +28,7 @@ from . import __version__
 from .content.gamefiles import GameFiles, shared_target, sources
 from .content.mods import ModWatch
 from .content.workshopmods import WorkshopKeeper
-from .core import background
+from .core import background, closing
 from .core.context import PartContext
 from .core.events import EventBus
 from .core.logs import RecentLog
@@ -43,7 +43,7 @@ from .parts import PARTS
 from .program.dedicated import tool_for
 from .superintendent import Superintendent
 from .updates import hostfiles
-from .updates.engine import UpdateService, summary
+from .updates.engine import UpdateService, mark_proven, summary
 from .updates.program import ProgramUpdateService
 from .updates.workshop import WorkshopUpdateService
 from .vergil import Vergil
@@ -54,6 +54,7 @@ SETTINGS_LOOK_SECONDS = 30.0
 RELAUNCH_WAIT = 1800.0  # a new version waits at most this long for servers part way through a restart
 RELAUNCH_POLL = 2.0
 RESTART_SECONDS = 5.0  # a background task that failed runs again after this long
+STARTED_WAIT = 45.0  # supervisor.started waits this long at most for the parts to set up (each has 30 s)
 
 
 class Huragok:
@@ -96,7 +97,7 @@ class Huragok:
 
         for server in list(settings.servers):
             self.superintendent.add_server(server, listed=True)
-        for said in ("supervisor.part_disabled", "supervisor.part_enabled"):
+        for said in ("supervisor.part_disabled", "supervisor.part_enabled", "supervisor.part_paused"):
             self.bus.subscribe(said, lambda _event: self.refresh_problems())
         self.refresh_problems()
 
@@ -109,6 +110,10 @@ class Huragok:
         part says of itself (the Discord bot's)."""
         parts = [line for runner in self.runners.values() for line in getattr(runner.part, "problems", list)()]
         off = [f"{runner.name} is switched off{'' if runner.for_good else ' for now'}: {runner.disabled_reason}" for runner in self.runners.values() if not runner.enabled and runner.disabled_reason]
+        now = time.monotonic()
+        off += [f"{runner.name} is paused on {server} until {time.strftime('%H:%M', time.localtime(time.time() + until - now))}: "
+                "its jobs there kept overrunning (its console not answering?); the other servers carry on"
+                for runner in self.runners.values() for server, until in runner.paused.items() if until > now]
         self.problems = [*self.superintendent.problems(), *self.vergil.problems(), *self.settings.retired, *parts, *off, *self._settings_waiting()]
 
     def _settings_changed_at(self) -> float:
@@ -141,6 +146,11 @@ class Huragok:
             except ValueError as error:
                 self.part_problems[name] = str(error)
                 log.error("%s not started: [%s] %s", name, name, error)
+            except Exception as error:  # noqa: BLE001 - a setting of the wrong kind (a number for a list…): that part
+                # stays off, alone, and says why; raised from here it stopped Huragok at every start, the servers
+                # unwatched meanwhile
+                self.part_problems[name] = f"a setting it can't use ({type(error).__name__}: {error})"
+                log.exception("%s not started: [%s] has a setting it can't use", name, name)
 
     def _make_runner(self, cls: type[Part]) -> PartRunner:
         """The part made with the context of the named part it belongs to, behind its own queue; its commands go to
@@ -170,6 +180,7 @@ class Huragok:
         version has been up long enough that the start loop won't put the old one back."""
         await asyncio.sleep(hostfiles.SETTLED_SECONDS)
         settings = self.settings
+        await asyncio.to_thread(mark_proven, settings.home, __version__)  # no start loop puts this version back now
         try:
             changed = hostfiles.bring_up_to_date(settings.path, settings.records, settings.packages_folder,
                                                      settled=True)
@@ -303,14 +314,19 @@ class Huragok:
 
     async def _relaunch_when_idle(self) -> None:
         deadline = time.monotonic() + RELAUNCH_WAIT
-        waiting = self.superintendent.busy()
+        waiting = self._busy()
         while waiting and time.monotonic() < deadline:
             await asyncio.sleep(RELAUNCH_POLL)
-            waiting = self.superintendent.busy()
+            waiting = self._busy()
         if waiting:
             log.warning("Huragok restarts on its new version now, after waiting %s: %s %s still busy",
                         f"{RELAUNCH_WAIT / 60:.0f} minutes", ", ".join(waiting), "is" if len(waiting) == 1 else "are")
         self._relaunch()
+
+    def _busy(self) -> list[str]:
+        """What a restart of Huragok would disturb now: the servers part way through something, and game files being
+        fetched (closing ends that fetch: it would start over)."""
+        return self.superintendent.busy() + [f"getting {what}" for what in self.game_files.getting]
 
     def _relaunch(self) -> None:
         self.relaunch = True
@@ -376,11 +392,21 @@ class Huragok:
         for name, runner in self.runners.items():
             self.spawn(name, runner.run, restart=False)
         self.spawn("settings.toml's date", self._watch_settings)
-        self.bus.emit("supervisor.started", None, version=__version__, parts=list(self.runners))
+        self.spawn("started", self._announce_started, restart=False)
         try:
             await self._stop.wait()
         finally:
             await self.shutdown()
+
+    async def _announce_started(self) -> None:
+        """supervisor.started, once every part has set up and listens (or given up): emitted any sooner, no part
+        heard it, so Discord's "Huragok is running" never posted and an update-failed ticket never closed."""
+        try:
+            await asyncio.wait_for(asyncio.gather(*(runner.ready.wait() for runner in self.runners.values())),
+                                   STARTED_WAIT)
+        except TimeoutError:
+            log.debug("a part is still setting up after %s s: Huragok's start is announced without it", STARTED_WAIT)
+        self.bus.emit("supervisor.started", None, version=__version__, parts=list(self.runners))
 
     def stop(self, *, servers: bool | None = None) -> None:
         """Stop Huragok; `servers` False leaves every server running (an update, `close`), True stops them too."""
@@ -391,6 +417,7 @@ class Huragok:
 
     async def shutdown(self) -> None:
         log.info("Stopping")
+        closing.close()  # SteamCMD downloads, `dedicated init`, Workshop fetches in threads: ended, not waited for
         self.bus.emit("supervisor.stopping", None)
         for runner in self.runners.values():
             await runner.stop()

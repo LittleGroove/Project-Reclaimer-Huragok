@@ -23,6 +23,8 @@ from ..core.files import folder_size
 from ..core.storage import read_picks
 from ..core.text import size_text
 from ..core.tomledit import read_toml
+from ..games.byplayers import FILE as BY_PLAYERS
+from ..games.byplayers import ByPlayersError, describe_range, same_playlist, setup_of
 from ..games.halo3 import PlaylistError, load_playlist
 from ..games.plays import is_co_op, plays_of
 from ..program.settings import current, find, path_setting, show
@@ -120,6 +122,7 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
                           "gray"))
         except PlaylistError as error:
             plays.append(("", f"the playlist can't be read: {error}", "red"))
+    plays += _by_players(server, block)
     if row.get("game"):
         plays.append(("Now", str(row["game"]), "gray"))
     if row.get("picked"):
@@ -244,6 +247,24 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
     lines += [("", note, "yellow") for note in notes]
     sections.append(("Problems and notes", lines or [("", "none", "green")]))
     return sections
+
+
+def _by_players(server: ServerConfig, block: dict[str, Any]) -> list[Line]:
+    """Playlists by player count (G -> P), when it's set up: on or off, how many playlists, which one plays now."""
+    try:
+        setup = setup_of(server.folder, server.name)
+    except ByPlayersError as error:
+        return [("By players", f"its {BY_PLAYERS} can't be read: {error}", "red")]
+    if setup is None:
+        return []
+    if not setup.on:
+        return [("By players", f"off: {len(setup.steps)} playlists set up; it plays the default (G -> P)", "gray")]
+    ranges = setup.ranges()
+    now = next((f"playlist {number} for {describe_range(*ranges[number - 1])}"
+                for number, step in enumerate(setup.steps, 1)
+                if same_playlist(server.folder, block.get("playlist"), step.playlist)), "")
+    return [("By players", f"on: {len(setup.steps)} playlists, picked by how many are on"
+             + (f"; now {now}" if now else "") + " (G -> P)", "green")]
 
 
 def _vergil(settings: Settings, server: ServerConfig) -> str:

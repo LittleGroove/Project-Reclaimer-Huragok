@@ -22,6 +22,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,11 +57,17 @@ def _on_windows() -> bool:
     return os.name == "nt"
 
 
+SAME_START = 3.0  # seconds two readings of one process's start time may differ by
+
+
 def _pid_alive(pid: int, create_time: float) -> bool:
-    """That process (the same one: its start time matches, so a reused number doesn't count) is still running."""
+    """That process (the same one: its start time matches, so a reused number doesn't count) is still running. On
+    Linux psutil works the start time out from the boot time, a whole second that the clock's corrections move
+    between two Huragoks: within a second, a server it left running wasn't picked up again (audit 2026-11, 1.9). A
+    number reused within SAME_START of the first process's start would need it to have ended at once."""
     try:
         process = psutil.Process(pid)
-        return abs(process.create_time() - create_time) < 1 and process.status() != psutil.STATUS_ZOMBIE
+        return abs(process.create_time() - create_time) < SAME_START and process.status() != psutil.STATUS_ZOMBIE
     except psutil.Error:
         return False
 
@@ -203,9 +210,20 @@ class CommandBackend(Backend):
         self.can_stop = bool(self.commands["stop"])
         self.can_restart = bool(self.commands["restart"] or (self.commands["start"] and self.commands["stop"]))
         self.restart_only = bool(self.commands["restart"]) and not (self.can_start and self.can_stop)
+        self._numbers: dict[str, int] = {}
+
+    def _number(self, server: ServerConfig) -> int:
+        """The n of the default service `server-<n>`: its place in the list as Huragok started, kept while it runs. A
+        folder taken away moved every server after it up one, and a stop or restart then reached another server's
+        container (audit 2026-11, 1.10); one added later gets the next number."""
+        if not self._numbers:
+            self._numbers = {s.name: n for n, s in enumerate(self.settings.servers, 1)}
+        if server.name not in self._numbers:
+            self._numbers[server.name] = max(self._numbers.values(), default=0) + 1
+        return self._numbers[server.name]
 
     def values(self, server: ServerConfig) -> dict[str, str]:
-        index = next((i for i, s in enumerate(self.settings.servers, 1) if s.name == server.name), 1)
+        index = self._number(server)
         return {"name": server.name, "slug": server.slug, "service": server.service or f"server-{index}",
                 "port": str(server.game_port), "folder": str(server.folder), "config": str(server.config_path)}
 
@@ -221,11 +239,19 @@ class CommandBackend(Backend):
     async def _run(self, action: str, server: ServerConfig) -> None:
         command = self.render(action, server)
         log.info("[%s] %s: %s", server.name, action, command)
-        process = await asyncio.create_subprocess_shell(
-            command, cwd=server.folder,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        # Its output goes to a file, not a pipe: a start command that leaves the server running in the background
+        # (`start "" /b …`, `… &`) hands it the pipe, which then never ends, and every start "failed" after the
+        # whole timeout (audit 2026-11, 1.4). The command's own exit is what's waited for.
+        with tempfile.TemporaryFile() as said:
+            await self._run_into(action, server, command, said)
+
+    async def _run_into(self, action: str, server: ServerConfig, command: str, said: Any) -> None:
+        process = await asyncio.create_subprocess_shell(command, cwd=server.folder, stdout=said,
+                                                        stderr=asyncio.subprocess.STDOUT)
         try:
-            output, _ = await asyncio.wait_for(process.communicate(), self.timeout)
+            await asyncio.wait_for(process.wait(), self.timeout)
+            said.seek(0)
+            output = said.read()
         except TimeoutError:
             await asyncio.to_thread(kill_tree, process.pid)
             raise LifecycleError(f"{action} took longer than {self.timeout:.0f} s: {command}") from None
@@ -686,9 +712,15 @@ class ProcessBackend(Backend):
     async def stop_all(self) -> list[str]:
         if not self.managed:
             self.adopt()  # no supervisor running: the servers a previous one left running
-        stopped = list(self.managed)
-        for name in stopped:
-            await self.stop(self.managed[name].server)
+        stopped, failed = [], []
+        for name in list(self.managed):
+            try:  # one whose process won't end mustn't leave the ones after it running
+                await self.stop(self.managed[name].server)
+                stopped.append(name)
+            except LifecycleError as error:
+                failed.append(f"{name}: {error}")
+        if failed:
+            raise LifecycleError(f"stopped {', '.join(stopped) or 'none'}; not stopped: {'; '.join(failed)}")
         return stopped
 
     async def close(self, stop_servers: bool | None = None) -> None:

@@ -274,7 +274,8 @@ def test_only_what_the_setting_says_can_be_appealed(tmp_path: Path, run: Any, fa
             await part.reload(force=True)
             post = await appeal(fake)
             assert "appeals the mute on **Alice**" in post["embeds"][0]["description"]
-            fake.press(buttons_of(post)["Lift it"], post, user=MOD_USER, roles=(ADMIN_ROLE,))
+            # The owner muted her in game: lifting takes their rank (the host's call, 2 Nov 2026), so it's the owner's
+            fake.press(buttons_of(post)["Lift it"], post, user=OWNER_USER)
             await wait_for(lambda: rcon.named("unmute"), timeout=15)
 
     run(scenario())

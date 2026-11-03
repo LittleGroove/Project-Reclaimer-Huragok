@@ -372,6 +372,37 @@ def last_update(home: Path) -> Installed | None:
         return None
 
 
+def unproven(home: Path, version: str | None) -> str | None:
+    """The version an install replaced, when records/last-update.json is about `version` (the one on disk) and that
+    version hasn't yet run long enough to prove it starts (mark_proven): a start loop begun since the install (an
+    update made offline, a Q during the relaunch's wait) puts it back if it fails at once, as one that relaunched into
+    it does (audit 2026-11, 3.2)."""
+    try:
+        data = json.loads((home / "records" / LAST_UPDATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not version or data.get("version") != version or data.get("proven"):
+        return None
+    replaced = data.get("replaced")
+    return str(replaced) if replaced else None
+
+
+def mark_proven(home: Path, version: str) -> None:
+    """This version has run long enough: no start loop puts it back now. Another key in the same file, which 0.4.x's
+    readers ignore."""
+    path = home / "records" / LAST_UPDATE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(data, dict) and data.get("version") == version and not data.get("proven"):
+        data["proven"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            write_atomic(path, json.dumps(data, indent=2) + "\n")
+        except OSError as error:
+            log.debug("couldn't mark %s proven in records/%s: %s", version, LAST_UPDATE, error)
+
+
 def put_back(home: Path, installed: Installed) -> str:
     """The files an install replaced (its backup folder) back in place of what it put there; what it added is
     removed. For a new version that can't install its packages, or doesn't start. Returns the version back."""
@@ -571,7 +602,17 @@ class UpdateService:
         if not self.can_install:
             log.error("This copy can't update itself: it doesn't run from %s", self.settings.home / "engine")
             return False
-        release = self.pending or await self.check(quiet=False)
+        # Asked again now: what was found hours ago may be pulled or overtaken since (start.cmd update had just found
+        # the newest, and waited for a version this then didn't install, audit 2026-11, 3.5). GitHub not answering:
+        # what was found before.
+        pending = self.pending
+        self.installing = True  # check() starts no install of its own meanwhile (auto_update)
+        try:
+            release = await self.check(quiet=False)
+        finally:
+            self.installing = False
+        if release is None and self.last_error:
+            release = pending
         if release is None or (automatic and self.failed_before(release)):
             return False
         self.installing = True

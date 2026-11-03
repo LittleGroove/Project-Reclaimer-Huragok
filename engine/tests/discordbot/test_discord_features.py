@@ -268,6 +268,6 @@ def test_every_message_off_says_so_rather_than_naming_no_channel(tmp_path: Path,
     feed = BY_KEY["feed.games"]
     body = f'[channels]\ngames = "{PUBLIC_CHANNEL}"\n[feed.games]\nenabled = true\n'
     assert state_of(feed, bot(tmp_path, body), facts)[0] == ON  # switching it on is the choice: it posts
-    off = body + "[messages]\ngames-ended = { post = false }\ngames-started = { post = false }\n"
+    off = body + "[messages]\ngames-ended = { post = false }\ngames-started = { post = false }\ngames-playlist = { post = false }\n"
     state, why = state_of(feed, bot(tmp_path, off), facts)
     assert state == WAITING and "messages are switched off" in why and "Messages" in why

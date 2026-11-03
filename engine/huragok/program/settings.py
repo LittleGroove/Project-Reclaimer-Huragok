@@ -518,7 +518,7 @@ def write(config: Path, server_name: str, setting: Setting, value: Any) -> None:
     if setting.scope in ("huragok", "plays"):
         raise ValueError(f"{setting.key} isn't written to {config.name}")
     if setting.scope == "server":
-        set_server_setting(config, server_name, setting.key, value)
+        set_server_setting(config, server_name, setting.key, value, add=False)  # a block is a server
     elif setting.scope == "folder":
         set_top_key(config, setting.key, value)
     else:

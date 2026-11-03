@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .files import mtime
+from .files import mtime, read_text, replace
 from .part import CommandSpec
 from .text import STORED_ID
 
@@ -137,9 +137,8 @@ def load_permissions(path: Path, known: dict[str, CommandSpec] | None = None) ->
     if not path.exists():
         return result
     name = path.name
-    try:
-        with path.open("rb") as file:
-            data: dict[str, Any] = tomllib.load(file)
+    try:  # as Windows editors save it: ANSI says to save it as UTF-8, rather than a traceback (audit 2026-11, 4.1)
+        data: dict[str, Any] = tomllib.loads(read_text(path, PermissionsError))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise PermissionsError(f"{name}: {error}") from None
 
@@ -355,7 +354,7 @@ def _checked(path: Path, change: Any, what: str) -> None:
             load_permissions(copy)
         except PermissionsError as error:
             raise PermissionsError(f"not changed ({what}): {str(error).replace(copy.name, path.name)}") from None
-        os.replace(copy, path)
+        replace(copy, path)
     finally:
         copy.unlink(missing_ok=True)
 

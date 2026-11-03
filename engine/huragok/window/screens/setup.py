@@ -260,6 +260,7 @@ class SetupScreens(Screens):
             self.note(catalogue.counts())
             choice = await self.choose("Which?", [
                 ("W", "What it plays: set it (a playlist, one map and game type, a custom game, campaign, ODST)"),
+                ("P", "Playlists by player count: a playlist for each range of players, picked as they come and go"),
                 ("1", "Browse: maps, variants, game types, mods"), ("2", "Playlists: list, build, edit, use, copy"),
                 ("3", "Workshop items and mods"), ("4", "Check it (dedicated check)"),
                 ("5", "Save it as a package"), ("6", "Open its folder"),
@@ -271,6 +272,9 @@ class SetupScreens(Screens):
                 await self._edit_plays(settings, server, fresh_row)
                 settings = self._settings()
                 server = self._server(settings, fresh_row) or server
+                continue
+            if choice == "P":
+                await self._by_players(settings, tool, server, fresh_row)
                 continue
             if choice == "1":
                 await self._browse(server, catalogue)
@@ -406,7 +410,8 @@ class SetupScreens(Screens):
                 self.heading(server.name, "Playlists", path.name)
                 await self._dedicated(tool, server.folder, "playlist", "show", f"playlists/{path.name}", timeout=60)
             elif choice == "U":
-                if await self._playable(tool, server, path):
+                if await self._playable(tool, server, path) and await self._by_players_before_use(
+                        server, f"playlists/{path.name}"):
                     self._use_playlist(server, path)
             elif choice == "H":
                 await self._playlist_history(settings, tool, server, path)
@@ -657,7 +662,8 @@ class SetupScreens(Screens):
                               "yellow")
                 if not self._write_playlist(server, playlist, how, source):
                     return False
-                if await self.prompt_yes_no(f"  Use it for {server.name} now?", True):
+                if await self.prompt_yes_no(f"  Use it for {server.name} now?", True) and \
+                        await self._by_players_before_use(server, playlist.relative):
                     self._use_playlist(server, playlist.path)
                 return True
             self.terminal.print()
@@ -804,7 +810,8 @@ class SetupScreens(Screens):
                 set_workshop_items(server, new)
                 catalogue.workshop_items = new
                 self.note(f"items = {new}", "green")
-                for line in switch_workshop_copies(server, ids, off=choice == "R", config_name=settings.config_name):
+                for line in switch_workshop_copies(server, ids, off=choice == "R", config_name=settings.config_name,
+                                                   servers=list(settings.servers)):
                     self.note(line, "cyan")
                 if choice == "A" and not status.ready:
                     self.note("SteamCMD isn't set up with a signed-in account, so nothing can download yet: [S] first.",

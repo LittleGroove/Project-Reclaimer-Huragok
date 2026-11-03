@@ -116,7 +116,7 @@ class FakeClient:
 
 
 RESTARTS = ("[restarts]\nwarn_seconds = [10, 5, 2]\nbackoff_seconds = [5, 60]\nmax_failures = 2\n"
-            "good_run_seconds = 600\nrestarts_per_hour = 3\nready_seconds = 30\nempty_seconds = 4\n"
+            "good_run_seconds = 600\nready_seconds = 30\nempty_seconds = 4\n"
             "after_game_seconds = 3\n")
 
 

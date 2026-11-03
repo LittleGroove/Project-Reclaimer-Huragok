@@ -36,19 +36,25 @@ TIMEOUT = 3.0  # seconds for each console command, so a struggling server can't 
 BUDGET = 6.0  # seconds one pass may take, within the part's 10 s per job; what's left waits for the next
 TELL_GAP = 30.0  # seconds between explanations to the same caller
 IMMUNE = re.compile(r"(?P<name>.+) can't be vote-kicked on this server\.?")
-SUFFIX = re.compile(r"(?P<name>.+) \([0-9A-Za-z]{2,6}\)")  # "Player (A7B)": how votes tell same-named players apart
+SUFFIX = re.compile(r"(?P<name>.+) \((?P<tag>[0-9A-Za-z]{2,6})\)")  # "Player (A7B)": how votes tell same-named players apart
 ARTICLE = {"member": "a member", "probationary-moderator": "a probationary moderator", "moderator": "a moderator",
            "admin": "an admin", "owner": "an owner"}
 
 
 def _named(state: ServerState, name: str) -> list[Player]:
-    """The connected players a vote's name could mean: the exact name, else the name without its suffix."""
+    """The connected players a vote's name could mean: the exact name, else the name without its suffix. A vote names
+    its caller by name alone: with two of one name, the server's suffix ("Bravo (A7B)") picks the one whose player ID
+    starts with it, or whose service tag it is, when only one does. So a player whose votes are away can't call one
+    under the name of someone else on (the host's call, 2 Nov 2026: tied to the player ID, not the name)."""
     folded = name.strip().casefold()
     exact = [p for p in state.players.values() if p.name.casefold() == folded]
     if exact or not (match := SUFFIX.fullmatch(name.strip())):
         return exact
     base = match["name"].casefold()
-    return [p for p in state.players.values() if p.name.casefold() == base]
+    named = [p for p in state.players.values() if p.name.casefold() == base]
+    tag = match["tag"].casefold()
+    picked = [p for p in named if p.id.casefold().startswith(tag) or (p.service_tag and p.service_tag.casefold() == tag)]
+    return picked if len(picked) == 1 else named
 
 
 def _entries(data: object) -> tuple[dict[str, str], set[str]]:

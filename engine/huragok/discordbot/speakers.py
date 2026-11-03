@@ -50,6 +50,8 @@ for _key, _words in {
     "moderation.case": "case", "moderation.when": "When", "moderation.pending": "As they next join: they aren't on now",
     "vergil.strike": "{player} got strike {number} for {rule}: {action}", "vergil.strike_by": "{by} gave {player} strike {number} for {rule}: {action}", "vergil.would": "Vergil's only watching: {player} would get strike {number} for {rule}: {action}",
     "vergil.said": "What they said", "vergil.why": "Why", "vergil.name_kick": "Kicked {player} for their name ({caught})",
+    "vergil.heard": "{player} said a word on {rule}, a list that only reports: nothing was done in game, it's yours to decide",
+    "vergil.name_asked": "{player} joined with a name that has a word on {rule} in it, a list that only reports: nobody was kicked. Ban the name, or allow it?",
     "vergil.name_banned": "{by} banned the name {name}", "vergil.name_allowed": "{by} allowed the name {name}",
     "vergil.words_banned": "{by} added {words} to {rule}", "vergil.word_allowed": "{by} allowed the word {word}",
     "vergil.rule_changed": "{by} changed {rule}: {line}", "vergil.pardon": "{by} took {strikes} off {player}{reason}",
@@ -67,6 +69,7 @@ for _key, _words in {
     "server.countdown": "{reason}: {when}", "server.now": "now", "server.program_updated": "The server program is now {version}",
     "server.workshop_updated": "Mod update installed: {items}", "server.repaired": "{text}",
     "game.started": "{what} · {players} playing", "game.ended": "{what}: over after {minutes} · {players} played",
+    "game.playlist": "{players} on: {playlist} is in rotation from the next vote, the playlist for {range}{was}",
     "join.first": "{player} joined for the first time", "join.joined": "{player} joined", "join.left": "{player} left",
     "join.refused": "{player} was turned away: {reason}", "join.new_name": "{player} was last seen as {old}",
     "join.back": "{player} is back after a long time", "content.workshop": "A new version of {item} is out, and waits for the next update",
@@ -103,6 +106,7 @@ for _key, _words in {
     "reports.form_title": "Report this message", "reports.form_why": "Why",
     "reports.proof": "What {who} sent with {ticket}", "reports.proof_line": "{who} sent [{name}]({link})", "reports.proof_lost": "{who} sent a file that couldn't be kept",
     "ticket.dismissed": "{who} dismissed it", "button.dismiss": "Dismiss",
+    "ticket.name_banned": "{who} banned the name", "ticket.name_allowed": "{who} allowed the name", "button.banthename": "Ban the name", "button.allowname": "Allow name",
     "console.public": "This channel can be read by everyone, so the console doesn't run here: make it private, or allow it in `/huragok setup` → Console.",
     "console.one_line": "One line at a time: nothing was sent.",
     "console.which": "Which server? It's remembered after this. Or start a line with its name: `server1: players`.",
@@ -177,9 +181,15 @@ def speaker(config: DiscordConfig, persona: str) -> dict[str, str]:
     entry = personas.get(persona)
     if not isinstance(entry, dict):
         return {}
-    shown = {"username": str(entry.get("name") or persona.title())}
-    if str(entry.get("picture") or "").strip():
-        shown["avatar_url"] = str(entry["picture"]).strip()
+    # As Discord takes them, or every post in this voice was refused (audit 2026-11, 6.6): a name of 1 to 80 characters
+    # without "discord" or "clyde" in it, else the persona's own; a picture by its web address, else none.
+    name = str(entry.get("name") or "").strip()[:80]
+    if not name or any(word in name.lower() for word in ("discord", "clyde")):
+        name = persona.title()
+    shown = {"username": name}
+    picture = str(entry.get("picture") or "").strip()
+    if picture.lower().startswith(("https://", "http://")):
+        shown["avatar_url"] = picture
     return shown
 
 
@@ -214,19 +224,47 @@ class Delivery:
         self.webhooks.clear()
         self.no_webhook.clear()
 
-    def to_channel(self, config: DiscordConfig, channel: str, persona: str, payload: dict[str, Any]) -> Reply:
+    def to_channel(self, config: DiscordConfig, channel: str, persona: str, payload: dict[str, Any], *,
+                   adopt: str = "") -> Reply:
+        """`adopt`: a custom_id start only this post's buttons have (a ticket's, "huragok:t:12:"). A webhook's post
+        takes no nonce, so one Discord took but answered too late for (a timeout, a 5xx) was posted again: a second
+        card nothing updates. Tried again, the channel's last messages are read first, and one already there with
+        these buttons is the post (the host's call, 2 Nov 2026: for tickets)."""
         shown = speaker(config, persona)
         if shown and (address := self._webhook_of(channel, config.token)):
-            try:
-                return rest.execute_webhook(address, {**payload, **shown})
+            if adopt and payload.get(TRIED):
+                if (there := self._already_there(config, channel, adopt)) is not None:
+                    return there
+            try:  # a webhook's post takes no nonce
+                hooked = {k: v for k, v in payload.items() if k not in ("nonce", "enforce_nonce", TRIED)}
+                if adopt:
+                    payload[TRIED] = True  # on the job's own payload, so its next try knows it's one
+                return rest.execute_webhook(address, {**hooked, **shown})
             except Refused as error:
                 if error.status != 404:
                     raise
                 self.webhooks.pop(channel, None)  # someone deleted it: the bot speaks for itself this once
-        plain = dict(payload)
+        # The nonce on the job's own payload, not a copy's: each try of it says the same, so Discord takes it once. On a
+        # copy, a post whose answer timed out (or came back 5xx) went again under a new one: two cards (audit 6.1).
+        plain = {k: v for k, v in _once(payload).items() if k != TRIED}
         if shown and plain.get("content"):
             plain["content"] = f"**{shown['username']}**: {plain['content']}"[:2000]
-        return rest.post_message(config.token, channel, _once(plain))
+        return rest.post_message(config.token, channel, plain)
+
+    @staticmethod
+    def _already_there(config: DiscordConfig, channel: str, adopt: str) -> Reply | None:
+        """The channel's newest message with a button whose custom_id starts `adopt`, or None (none, or the channel
+        can't be read: then it's posted, as before)."""
+        try:
+            found = rest.call("GET", f"/channels/{channel}/messages?limit={ADOPT_LOOK}", config.token)
+        except rest.DiscordError:
+            return None
+        for message in found if isinstance(found, list) else []:
+            ids = [str(item.get("custom_id") or "") for row in message.get("components") or []
+                   for item in (row.get("components") or []) if isinstance(item, dict)]
+            if any(custom.startswith(adopt) for custom in ids):
+                return Reply(message, None, None)
+        return None
 
     def edit(self, config: DiscordConfig, channel: str, message_id: str, payload: dict[str, Any]) -> Reply:
         """A message this bot posted in this channel. Only whoever posted it can edit it, and that may have been its webhook or itself, whatever voice it speaks in now. Neither (the webhook that posted it
@@ -284,6 +322,10 @@ class Delivery:
         return address
 
 
+TRIED = "_huragok_tried"  # on a job's own payload, never sent: this post has been tried once already
+ADOPT_LOOK = 10  # messages read back, before trying a ticket's webhook post again
+
+
 def _once(payload: dict[str, Any]) -> dict[str, Any]:
     """With Discord asked to take it once: a post it answers too late for is tried again, and this stops a second copy. It's kept on what's being sent, so each try says the same."""
     if "nonce" not in payload:
@@ -310,7 +352,7 @@ class Poster:
 
     def post(self, persona: str, payload: dict[str, Any], *, channel: str = "", webhook: str = "",
              priority: int = out.STATUS, key: str | None = None, what: str = "", tag: str = "",
-             on_done: Callable[[Any], None] | None = None, lasts: float = 0.0) -> None:
+             on_done: Callable[[Any], None] | None = None, lasts: float = 0.0, adopt: str = "") -> None:
         if webhook:
             bucket = f"webhook:{webhook[-12:]}"
 
@@ -319,9 +361,10 @@ class Poster:
                 return await to_thread(rest.execute_webhook, webhook, {**payload, **shown})
         else:
             bucket = f"channel:{channel}"
+            payload = dict(payload)  # this job's own: the nonce to_channel puts on it stays for each of its tries
 
             async def send() -> Reply:
-                return await to_thread(self.delivery.to_channel, self.config(), channel, persona, payload)
+                return await to_thread(self.delivery.to_channel, self.config(), channel, persona, payload, adopt=adopt)
 
         self.outbox.put(send, priority=priority, bucket=bucket, key=key, what=what or f"a post to a {bucket.split(':')[0]}",
                         tag=tag, on_done=on_done, expires=self.outbox.clock() + lasts if lasts else None)

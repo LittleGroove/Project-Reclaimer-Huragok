@@ -297,6 +297,12 @@ def _check_the_rest(data: dict[str, Any], warnings: list[str], made: dict[str, A
     for name, value in colours.items():
         if colour_value_of({}, value) is None:
             warnings.append(f"{FILE}: [colours] {name}: \"{value}\" isn't a colour: it should look like \"#RRGGBB\"")
+    # `servers = "Server 1"`, written as the template's own "*" is: one server, as a list. Left a string, the board
+    # sorted it letter by letter and crashed every tick (switching the bot off, again and again), and a feed matched
+    # it as a part of a name (audit 2026-11, 6.2).
+    for table in [data.get("feeds"), data["status"].get("board"), *(data.get("feed") or {}).values()]:
+        if isinstance(table, dict) and isinstance(table.get("servers"), str) and table["servers"].strip() != "*":
+            table["servers"] = [table["servers"].strip()] if table["servers"].strip() else "*"
     feeds = data.get("feed") or {}
     for name, feed in feeds.items():
         persona = feed.get("persona") if isinstance(feed, dict) else ""

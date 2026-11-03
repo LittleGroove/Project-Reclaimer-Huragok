@@ -2,8 +2,8 @@
 
 Stats (kill streaks, medals, wins, leaderboards) will be built on what the servers send; some of that nobody has seen yet: a real `kill` event, what its `report` byte means, how the end of a game looks
 in the players' totals, what a server tells the stats service after each game. This writes it down while people play,
-into logs/temp-discord/temp-discord-YYYY-MM-DD.jsonl (UTC days, kept KEEP_DAYS), one JSON object a line, each with
-its `kind`:
+into logs/temp-discord/temp-discord-YYYY-MM-DD.jsonl (UTC days, kept KEEP_DAYS; a day that's over is gzipped, to
+.jsonl.gz, as a busy server's day came to 200 MB), one JSON object a line, each with its `kind`:
 
   start         Huragok starting: its version, each server's program version and what it is playing
   event         every event: the console's (kills, phases, joins, votes, chat…), the server.log lines Huragok knows
@@ -28,6 +28,7 @@ players. Always on, with nothing to set. Gone in the version that brings stats.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -47,7 +48,8 @@ FOLDER = "logs/temp-discord"
 REPORTS = "stats-reports"  # in FOLDER: the stats reports, kept
 KEEP_DAYS = 30  # the daily record files, and the reports
 KEY_FILE = "temp-discord.key"  # in records/: makes the stand-ins; stays on this machine
-POLL_SECONDS = 15.0  # `players` while a game is on (Huragok's own look is every 30 s)
+POLL_SECONDS = 60.0  # `players` while a game is on: 15 s was 89% of a busy server's 59 MB in 8 hours, and every phase
+# change asks too, so each game's last look (its result) is still there (the host's call, 2 Nov 2026)
 UNKNOWN_POLL_SECONDS = 5.0  # at most this often for a kill naming an engine number not seen yet
 GAME_ON = {"playing", "round_over", "between_rounds"}
 DROP_KEYS = {"ip", "ips", "device", "devices", "fingerprint", "fingerprints"}
@@ -56,6 +58,7 @@ HIDDEN = "(hidden)"
 IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?(?::\d{1,5})?(?![\w.])")
 IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?:/\d{1,3})?(?![\w:])")
 HEX64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{64}(?![0-9A-Fa-f])")
+DAY_FILE = re.compile(r"(?:temp-discord|stats-reports)-(?P<day>\d{4}-\d\d-\d\d)\.jsonl(?:\.gz)?")
 
 
 class Scrubber:
@@ -146,6 +149,7 @@ class TempDiscord(Part):
         self._engines: dict[str, set[str]] = {}
         self._polling: dict[str, asyncio.Lock] = {}
         self.prune()
+        background(asyncio.to_thread(self.compress), what="tempdiscord gzip")  # what's waiting from before
         from .. import __version__  # here: the package imports the parts
 
         self.write("start", None, huragok=__version__, servers=[self._describe(name) for name in self.ctx.servers])
@@ -183,20 +187,47 @@ class TempDiscord(Part):
         line = {"at": round(now, 3), "kind": kind, "server": server, **({"time": at} if at is not None else {}), **data}
         self._file.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
 
+    def _day_files(self) -> list[tuple[str, Path]]:
+        """(its UTC day, the file) for every daily file, the stats reports' too, gzipped or not."""
+        found = []
+        for path in [*self.folder.glob("temp-discord-*.jsonl*"), *(self.folder / REPORTS).glob("stats-reports-*.jsonl*")]:
+            if match := DAY_FILE.fullmatch(path.name):
+                found.append((match["day"], path))
+        return found
+
     def prune(self) -> None:
         """Daily files older than KEEP_DAYS go, the stats reports' too: it's a record for building something, and shouldn't fill a disk."""
         cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - self.days * 86400))
-        for path in [*self.folder.glob("temp-discord-*.jsonl"), *(self.folder / "stats-reports").glob("stats-reports-*.jsonl")]:
-            day = path.stem.removeprefix("temp-discord-").removeprefix("stats-reports-")
-            if re.fullmatch(r"\d{4}-\d\d-\d\d", day) and day < cutoff:
+        for day, path in self._day_files():
+            if day < cutoff:
                 try:
                     path.unlink()
                 except OSError as error:
                     self.log.debug("couldn't remove %s: %s", path.name, error)
 
+    def compress(self) -> None:
+        """A day that's over, gzipped: about a tenth of the size, still read with any gzip tool (the host's call,
+        2 Nov 2026). Today's is still being written. Written whole beside it first, so a stop halfway loses nothing."""
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for day, path in self._day_files():
+            if day >= today or path.suffix == ".gz":
+                continue
+            packed = path.with_name(path.name + ".gz")
+            part = path.with_name(path.name + ".gz.part")
+            try:
+                with path.open("rb") as source, gzip.open(part, "wb") as target:
+                    while chunk := source.read(1 << 20):
+                        target.write(chunk)
+                part.replace(packed)
+                path.unlink()
+            except OSError as error:
+                part.unlink(missing_ok=True)
+                self.log.debug("couldn't gzip %s: %s", path.name, error)
+
     @every(hours=6)
     async def tidy(self) -> None:
         self.prune()
+        await asyncio.to_thread(self.compress)
 
     def record_report(self, server: str, data: dict[str, Any]) -> None:
         """A report and the service's answer: the whole of it in stats-reports/, a line in the day's record."""

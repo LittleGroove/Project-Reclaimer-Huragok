@@ -118,6 +118,18 @@ def test_servers_can_be_every_server_or_a_list(tmp_path: Path) -> None:
     assert config.warnings == ["discord.toml: [feed.games] servers should be text; its default is used"]
 
 
+def test_one_server_written_as_text_is_that_server(tmp_path: Path) -> None:
+    """`servers = "Server 1"`, as the template's "*" is written: the board sorted it letter by letter and crashed on
+    every tick, switching the bot off again and again; a feed matched it as part of a name (audit 2026-11, 6.2)."""
+    path = tmp_path / "discord.toml"
+    path.write_text('[status.board]\nservers = "Server 1"\n[feeds]\nservers = "Server 1"\n[feed.alerts]\nservers = "Ser"\n',
+                    encoding="utf-8")
+    config = load(path)
+    assert config.section("status", "board")["servers"] == ["Server 1"]
+    assert config.feed("votes")["servers"] == ["Server 1"] and config.feed("alerts")["servers"] == ["Ser"]
+    assert config.warnings == []
+
+
 def test_a_channel_means_the_shared_name_or_itself(tmp_path: Path) -> None:
     path = tmp_path / "discord.toml"
     path.write_text('[channels]\nstaff = "123"\n', encoding="utf-8")
