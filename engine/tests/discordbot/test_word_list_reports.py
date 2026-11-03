@@ -97,7 +97,8 @@ def test_a_name_with_a_word_that_only_reports_asks_the_staff(tmp_path: Path, run
             await rcon.join(2, "Mod", MOD)
             await rcon.join(4, "xXRudewordXx", BRAVO)
             await wait_for(lambda: huragok.storage.query("SELECT 1 FROM discord_tickets WHERE kind = 'vergil-name-asked'"), timeout=15)
-            await wait_for(lambda: "takes no action" in " ".join(tells_to(rcon, MOD)), timeout=15)  # in lines game chat takes
+            # In lines game chat takes: the last of them too, which a slow runner (CI's Windows) hadn't had yet
+            await wait_for(lambda: "bans the name" in " ".join(tells_to(rcon, MOD)), timeout=15)
             told = " ".join(tells_to(rcon, MOD))
             assert "xXRudewordXx joined with a name" in told and "!banname #4 bans the name" in told
             assert not rcon.named("kick") and not tells_to(rcon, BRAVO) and not rcon.named("say")

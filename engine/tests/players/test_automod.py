@@ -839,7 +839,8 @@ def test_a_name_with_a_listed_word_run_into_it_is_kicked(tmp_path: Path, run) ->
             kick = await wait_for(lambda: fake.named("kick"))
             assert kick[0]["args"] == [ZED, "[o_O] KEEP IT CLEAN! Change your name, it isn't allowed here (banned name). "
                                             "Join again with another one."]
-            assert [e["caught_by"] for e in seen if e.name == "automod.name"] == ["automod.txt slurs"]
+            # Said once the kick has gone: a slow runner (CI's Windows) read the events before it was
+            assert await wait_for(lambda: [e["caught_by"] for e in seen if e.name == "automod.name"]) == ["automod.txt slurs"]
             assert sup.runners["automod"].part.active_strikes(ZED, sup.runners["automod"].part.by_name["slurs"]) == 0
 
     run(scenario())
