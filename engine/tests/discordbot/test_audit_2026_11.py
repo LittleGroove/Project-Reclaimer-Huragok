@@ -208,8 +208,8 @@ def test_a_public_answer_never_shows_a_whole_id() -> None:
             return {"moderators_see_ids": True}
 
     text = f"Alice is {ALICE}"
-    assert as_they_may_see(File(), "owner", text) == text  # theirs alone
-    assert ALICE not in as_they_may_see(File(), "owner", text, everyone=True) and ALICE[:8] in as_they_may_see(File(), "owner", text, everyone=True)
+    assert as_they_may_see(File(), "faculty", text) == text  # theirs alone
+    assert ALICE not in as_they_may_see(File(), "faculty", text, everyone=True) and ALICE[:8] in as_they_may_see(File(), "faculty", text, everyone=True)
 
 
 def test_a_pick_just_offered_is_the_last_forgotten(tmp_path: Path) -> None:
@@ -305,7 +305,7 @@ def test_a_clip_that_cant_be_posted_keeps_its_link(tmp_path: Path, run: Any, fak
 def test_shortening_by_someone_admin_on_one_server_lifts_nothing(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     """Judged at their highest rank, Let back went through, the new kick (which reaches every server) was refused, and
     the player was let back with nothing against them. It's refused before anything's lifted now."""
-    from conftest import OWNER
+    from conftest import FACULTY
     from test_appeals import appeal
     from test_appeals import bot_file as appeals_file
     from test_tickets import LOGS, fill
@@ -318,9 +318,9 @@ def test_shortening_by_someone_admin_on_one_server_lifts_nothing(tmp_path: Path,
             await up(huragok)
             rcon = consoles[FIRST]
             await rcon.join(3, "Alice", ALICE)
-            await rcon.join(1, "Owner", OWNER)
+            await rcon.join(1, "Faculty", FACULTY)
             await wait_for(lambda: len(huragok.superintendent.states[FIRST].players) == 2, timeout=10)
-            await rcon.chat(OWNER, "Owner", "!kick Alice 3d spawn killing")  # a kick with a time: its Let back stays on the one server
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice 3d spawn killing")  # a kick with a time: its Let back stays on the one server
             await wait_for(lambda: rcon.named("ban"), timeout=15)
             await wait_for(lambda: posts_in(fake, LOGS), timeout=15)
             post = await appeal(fake)

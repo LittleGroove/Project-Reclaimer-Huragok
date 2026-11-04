@@ -58,7 +58,7 @@ def read_state(records: Path) -> dict[str, Any]:
 
 
 def new_code(records: Path) -> str:
-    """A code for /huragok claim: whoever types it in Discord becomes an owner, the host's say-so carried across."""
+    """A code for /huragok claim: whoever types it in Discord becomes faculty, the host's say-so carried across."""
     code = "".join(secrets.choice(ALPHABET) for _ in range(8))
     shown = f"{code[:4]}-{code[4:]}"
     _write(records / CLAIM_FILE, {"code": code, "expires": time.time() + CLAIM_MINUTES * 60, "tries": 0})

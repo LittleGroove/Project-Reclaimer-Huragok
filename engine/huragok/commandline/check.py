@@ -232,7 +232,7 @@ def cmd_check(args: argparse.Namespace) -> int:
            "probationary-moderator": " (members on probation: moderators' commands as requests)",
            "moderator": f" ({len(permissions.members['moderator'])} listed)",
            "admin": f" (the server's own; {len(admins)} in dedicated.toml)",
-           "owner": f" ({len(permissions.members['owner'])} listed)"}
+           "faculty": f" ({len(permissions.members['faculty'])} listed)"}
     role_rows = []
     for role in ROLES:
         names = " ".join(prefix + n + ("*" if n in unavailable else "") for n in sorted(by_role[role]))
@@ -243,8 +243,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     if unavailable & {n for names in by_role.values() for n in names}:
         out.note("* its part is switched off")
     out.note("Each role can also use the commands listed above it. No vote can kick a member or anyone above.")
-    if not permissions.members["owner"]:
-        out.warn(f"warning: nobody is owner yet: put your player ID under [owner] players in {COMMANDS_FILE}")
+    if not permissions.members["faculty"]:
+        out.warn(f"warning: nobody is faculty yet: put your player ID under [faculty] players in {COMMANDS_FILE}")
     for player_id, roles in permissions.doubles(a.lower() for a in admins).items():
         out.warn(f"warning: {player_id[:8]}… is listed as {' and '.join(roles)}: one role each, and {roles[0]} is "
                  f"the one that counts. Take the other line out of {COMMANDS_FILE} (or dedicated.toml's admins), "

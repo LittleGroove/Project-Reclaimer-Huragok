@@ -40,11 +40,11 @@ log = logging.getLogger(__name__)
 # These go where the thing was given, which for a /ban in game is the only server that has it. A mute follows the player: its lift goes where they are.
 LIFTING = {"unban": ("ban",), "pardon": ("kick", "ban")}
 # What only makes sense from in a game, or has a better form in Discord. /strikes means "mine", and until an account is linked to a player nobody here has any.
-NOT_FROM_DISCORD = {"help", "calladmin", "report", "reports", "strikes"}  # /tickets is !reports' better form
-TAKEN = {"huragok", "note", "flag", "notify", "ticket", "report", "appeal", "server", "status", "case", "help", "tickets"}  # Discord's own
+NOT_FROM_DISCORD = {"help", "calladmin", "report", "reports", "strikes", "link", "stats", "side", "togglesides"}  # /tickets is !reports' better form
+TAKEN = {"huragok", "note", "flag", "notify", "ticket", "report", "appeal", "server", "status", "case", "help", "tickets", "link", "unlink", "stats", "leaderboard", "side", "togglesides"}  # Discord's own
 MOST_SHOWN = 1900
 # What's asked of the whole of Huragok, so no server's needed; and what's about each server, so leaving it out answers for them all.
-EVERYWHERE = {"mods", "rules", "bannames", "roles", "requests", "confirm", "deny", "banword", "unbanword", "changebanword", "admin", "whois", "said", "promote", "demote", "banname", "unbanname", "pardonplayer"}
+EVERYWHERE = {"mods", "rules", "bannames", "roles", "requests", "confirm", "deny", "banword", "unbanword", "changebanword", "admin", "whois", "said", "promote", "demote", "banname", "unbanname", "pardonplayer", "season", "newseason", "endseason"}
 EACH_SERVER = {"players", "health", "kicks", "bans", "mutes", "novotes"}
 # What to offer as you type, for the commands where that isn't everyone: who that command can do anything for. It's only what's offered: anyone can still be typed in, by name or ID, and the command says why not.
 ONLY_IF = {"unban": ("banned",), "pardon": ("kicked", "banned"), "unmute": ("muted",), "allowvote": ("novoted",), "pardonplayer": ("struck",), "demote": ("ranked",)}
@@ -410,7 +410,7 @@ def _how_they_stand(part: DiscordPart, player_id: str) -> dict[str, Any]:
     except sqlite3.Error:  # Vergil's off, and always has been
         now["struck"] = False
     rank = part.ctx.highest_role(Player(0, part.name_of(player_id), player_id))
-    now["ranked"] = rank not in ("player", "owner")  # commands.toml alone changes an owner
+    now["ranked"] = rank not in ("player", "faculty")  # commands.toml alone changes faculty
     now["rank"] = rank
     return now
 

@@ -8,7 +8,7 @@ from typing import Any
 from conftest import ALICE, BRAVO, MOD
 from test_bot_running import OTHER, answer_text
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, PROBATION_ROLE, REPORTS, STAFF, bot_file, buttons_of, fake, fill, form_of, posts_in, row_of, strike, up  # noqa: F401
-from testkit.fake_discord import ADMIN_ROLE, MOD_ROLE, OWNER_USER, FakeDiscord
+from testkit.fake_discord import ADMIN_ROLE, MOD_ROLE, FACULTY_USER, FakeDiscord
 from testkit.running import SERVER, fleet, running, wait_for
 
 ADMIN = {"user": "4441", "roles": (ADMIN_ROLE,)}
@@ -282,15 +282,15 @@ def test_a_line_sent_to_its_own_channel_stays_what_it_was(tmp_path: Path, run: A
     run(scenario())
 
 
-def test_an_owner_can_be_kept_to_admin_rank_in_game(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_faculty_can_be_kept_to_admin_rank_in_game(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         from huragok.discordbot.config import load, set_switch
         from huragok.discordbot.ranks import in_game
 
         path = bot_file(tmp_path)
-        assert in_game(load(path), "owner") == "owner"
-        set_switch(path, ("ranks",), "owners_in_game", "admin")
-        assert in_game(load(path), "owner") == "admin"
+        assert in_game(load(path), "faculty") == "faculty"
+        set_switch(path, ("ranks",), "faculty_in_game", "admin")
+        assert in_game(load(path), "faculty") == "admin"
         assert in_game(load(path), "moderator") == "moderator"
 
     run(scenario())

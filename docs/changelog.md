@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.6.1
+**Huragok 0.6.1 starts players' stats.** Every game a server reports to the stats service is kept, from each
+player's totals to the game's own medals, kills by weapon and who killed whom. Nothing to set: the servers already send
+it. On its first start it also reads in what's been kept in logs/temp-discord/stats-reports, up to 30 days.
+- **A server renamed or copied keeps its players' ranks.** One whose stats_server still pointed at Huragok's port for
+  its old name reported every game into a port nobody listened on, and its players got no rank for those games (seen on
+  the live servers, 3 November 2026). It now carries on with that port; a relay address Huragok knows nothing about
+  goes back to the project's own service.
+- **`!link` (Discord).** With `[link] enabled`, a player types `!link` in game and is told a code privately; `/link`
+  that code in your Discord ties the two, and their stats show under their name there (`[link] names`; each can choose
+  with `/link show`). `/unlink` undoes it. A link changes nobody's rank.
+- **`!stats` in game, `/stats` and `/leaderboard` in Discord (`[stats] enabled`).** A player's record, and the best at
+  anything counted: kills, K/D, wins, a medal, a weapon, over a period, on a server, map or mode. A name Vergil wouldn't
+  let in a game reads "(name hidden)". They answer privately unless `[stats] private = false` (also on /huragok setup → Stats).
+- **Seasons and Red against Blue.** Faculty start a season with `!newseason [name] [length]`; with no length it runs
+  until faculty type `!endseason`. `!season` says how Red and Blue stand.
+- **Discord: kept boards, game summaries, sides.** `[leaderboards]` keeps boards in the `stats` channel; after each game a
+  Carnage report and its rare medals (`[feed.games]`), with a Kill feed button: that game's kills, who killed whom with
+  what; `[sides]`: members and up choose a team (`!side red`, `/side`) and are put on it when that can't end the game,
+  teams kept within 2; `!togglesides` stops it for them.
+- **Huragok's roles (Discord).** Only Huragok gives them, and one given by hand is taken off: rank roles from Huragok's
+  ranks (`/promote`, `/demote`), a role for the top of each leaderboard you pick, and a role for each side.
+- **The top rank is called faculty now, not owner,** everywhere you read or type it: in game, in Discord, in the window
+  and in your files. Once 0.6.1 has stayed up, `[owner]` in commands.toml becomes `[faculty]` (everyone in it kept), and
+  settings that name the rank say `faculty` (settings.toml's `exempt_roles` and relay users; discord.toml's `[ranks] faculty`,
+  `faculty_in_game` and the ranks in `close_rank`, `power_rank` and `raw_rank`), and so do the records of who gave each
+  mute, kick, ban and !novote. Files and records that still say owner read the same, and a `[text]` rewording of
+  `console.raw_for_owners` keeps working.
+- **Faculty of the bot are faculty in game once linked.** Whoever claimed it (`/huragok claim`) and links their account
+  is listed under `[faculty]` in commands.toml (and so is anyone named faculty on the Faculty panel, once linked): with
+  writing that file by hand, the only ways to faculty. They say "Yes,
+  that's me" first, and undoing the link undoes it.
+- **With rank roles on, a rank role counts only on whoever Huragok gives it to:** one given by hand counts for nothing
+  in Discord, and goes at the next look. Rank, top and side roles wait while linking is off, and while a role is one the
+  bot can't give or one with two jobs (a rank role picked as a top role); setup says which. Have your staff `!link`
+  before switching rank roles on: a rank role comes off anyone who isn't linked.
+- **The boards don't discriminate:** a spot earned is shown. A name Vergil wouldn't let in a game reads "(name hidden)".
+  A tie shares the place (two first, then third), and everyone tied at the top wears its role. All-time boards and
+  season boards (in `season_channel`, or below the all-time ones), in your order; between seasons, the season just
+  ended. `!season 3` and `/leaderboard season:3` for a past one. Red against Blue counts only Red against Blue games
+  (not Infection or Juggernaut, nor a game with a third team). A card's medals, rarest first. One post a game: its
+  rare medals are on its Carnage report.
+- **Sides in the lobby too,** the teams kept even; whoever couldn't be moved there is moved during the round. Someone who
+  switches team themselves isn't moved again that game. `[sides] force_for_season`, with `lock_for_season`: the side's
+  forced, and `!togglesides` can't switch it off.
+- **Going back to 0.6.0 once 0.6.1 has run a few minutes** needs faculty turned back into owner by hand: `[faculty]` to
+  `[owner]` in commands.toml, `faculty` to `owner` in settings.toml's `exempt_roles` and relay users, and discord.toml's
+  `faculty` and `faculty_in_game` to `owners` and `owners_in_game`, and `owner` again where `close_rank`, `power_rank` and
+  `raw_rank` say `faculty` (or 0.6.0 opens them wider). 0.6.0 doesn't know faculty, and won't start without.
+- **Settings a beta host set for what 0.6.0 hadn't built** (0.6.0 kept them as "Not used yet" notes) come back as you
+  set them: `[link]`, `[leaderboards]` (its boards, when 0.6.1 can read them all), `[stats]`, `[roles]` (but `sync`,
+  which meant something else then: switch rank roles on again yourself), `[channels] stats`.
+- **logs/temp-discord keeps recording,** and now also each game's Kill feed as kept, each move sides makes (and the
+  game's own refusals), and what each role-sync look changed (role names and counts, no user IDs): to check them
+  against real games.
+- **Checked before release:** two bug-hunting audits of everything new in 0.6.1, the second after the host's 22 calls
+  were built (96 found, 95 fixed, one kept as it is; plans/bug-audit-0.6.1.md in the project's notes). Boards read in a
+  thread of their own, so a busy year's board never holds up the servers, and a change to them shows at once.
+
 ## 0.6.0
 **Huragok 0.6.0 adds a Discord bot, each host making their own.** It stays off until you set it up (J in the window; docs/discord.md).
 The update downloads discord.py from PyPI. If it can't, the old version stays and says why.

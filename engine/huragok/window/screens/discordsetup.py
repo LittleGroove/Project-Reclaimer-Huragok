@@ -11,7 +11,7 @@ from ...content.catalogue import parse_picks
 from ...core import desktop
 from ...discordbot import features, rest
 from ...discordbot.config import (
-    FILE, RANK_KEYS, DiscordConfig, add_owner, load, make_file, remove_owner, set_channel, set_guild,
+    FILE, RANK_KEYS, DiscordConfig, add_faculty, load, make_file, remove_faculty, set_channel, set_guild,
     set_launcher_webhook, set_message, set_mode, set_rank_roles, set_switch, set_token, set_webhook,
 )
 from ...discordbot.facts import Facts, gather
@@ -45,7 +45,7 @@ class DiscordScreens(Screens):
             choice = await self.choose("Which", [
                 ("M", "Mode and bot token", "off, webhook only, or the full bot"),
                 ("W", "Which Discord", "the one the bot works in"),
-                ("R", "Ranks", "Discord roles onto Huragok's ranks; owners"),
+                ("R", "Ranks", "Discord roles onto Huragok's ranks; faculty"),
                 ("N", "Channels", "the channels features share"),
                 ("F", "Features", "each one's state, and its switch"),
                 ("E", "Every message", "where each kind goes, its colour, on or off"),
@@ -54,7 +54,7 @@ class DiscordScreens(Screens):
                 ("P", "Reports, appeals, Contact staff", "how people reach the staff"),
                 ("C", "Check", "everything the features that are on need"),
                 ("T", "Test post", "as each of the three who speak"),
-                ("K", "Claim code", "whoever types it in Discord becomes an owner"),
+                ("K", "Claim code", "whoever types it in Discord joins the faculty"),
                 ("V", "Invite link", "to add the bot, or give it what's now switched on"),
                 ("Z", "Start over", "forget this Discord and every card: the token stays"),
                 ("L", "The start loop's webhook", "posts when Huragok is down, since the bot can't then"),
@@ -89,7 +89,7 @@ class DiscordScreens(Screens):
                 self.note(str(state["why"]), "yellow")
         rows.append(("Discord", config.guild or "none picked"))
         ranks = config.section("ranks")
-        rows.append(("owners", str(len(ranks.get("owners", [])))))
+        rows.append(("faculty", str(len(ranks.get("faculty", [])))))
         on = [feature for feature in features.FEATURES if feature.is_on(config) and feature.stage <= features.BUILT]
         rows.append(("features on", str(len(on))))
         self.listing(rows, index=False)
@@ -153,7 +153,7 @@ class DiscordScreens(Screens):
     async def _discord_start_over(self, path: Path, config: DiscordConfig) -> None:
         """A clean slate, for a Discord that's been wiped or a test from the top. The token stays, and so do players' notes: they're about the players, not this Discord."""
         self.heading("Discord", "Start over")
-        self.note("This forgets the Discord, its owners, channels, ranks and every switch, and every card, ticket, report and appeal the bot knows of. The token and what staff have written about players stay. discord.toml is backed up first.", "yellow")
+        self.note("This forgets the Discord, its faculty, channels, ranks and every switch, and every card, ticket, report and appeal the bot knows of. The token and what staff have written about players stay. discord.toml is backed up first.", "yellow")
         typed = await self.prompt_line("  Type yes to start over")
         if (typed or "").strip().lower() != "yes":
             self.note("Nothing changed.")
@@ -228,25 +228,25 @@ class DiscordScreens(Screens):
                 continue
             chosen = [(str(roles[n - 1].get("id")), str(roles[n - 1].get("name"))) for n in picks]
             set_rank_roles(path, key, chosen, guild_roles=known)
-        await self._discord_owners(path)
+        await self._discord_faculty(path)
 
-    async def _discord_owners(self, path: Path) -> None:
-        owners = [str(owner).strip() for owner in load(path).section("ranks").get("owners", [])]
-        self.heading("Discord", "Owners", note="People, never a role: they can use /huragok. Easiest: K makes a code, and "
+    async def _discord_faculty(self, path: Path) -> None:
+        faculty = [str(faculty).strip() for faculty in load(path).section("ranks").get("faculty", [])]
+        self.heading("Discord", "Faculty", note="People, never a role: they can use /huragok. Easiest: K makes a code, and "
                                                "they type /huragok claim <code>.")
-        self.listing([(owner,) for owner in owners] or [("nobody yet",)], index=False)
+        self.listing([(faculty,) for faculty in faculty] or [("nobody yet",)], index=False)
         answer = await self.prompt_line("  A Discord user ID to add or take off (Enter for neither)")
         if not answer or not answer.strip():
             return
         user = answer.strip()
         if not user.isdecimal():
             self.note("That isn't a user ID (a long number: Copy User ID in Discord, with Developer Mode on).", "yellow")
-        elif user in owners:
-            remove_owner(path, user)
-            self.note(f"{user} isn't an owner now.", "green")
+        elif user in faculty:
+            remove_faculty(path, user)
+            self.note(f"{user} isn't faculty now.", "green")
         else:
-            add_owner(path, user)
-            self.note(f"{user} is an owner now.", "green")
+            add_faculty(path, user)
+            self.note(f"{user} is faculty now.", "green")
 
     # Channels ---------------------------------------------------------------------------------------------------
 
@@ -375,8 +375,8 @@ class DiscordScreens(Screens):
                 if answer and answer.strip().isdecimal():
                     set_switch(path, ("tickets",), "stale_after_days", int(answer.strip()))
             elif choice == "R":
-                answer = await self.prompt_line("  moderator, admin or owner")
-                if answer and answer.strip().lower() in ("moderator", "admin", "owner"):
+                answer = await self.prompt_line("  moderator, admin or faculty")
+                if answer and answer.strip().lower() in ("moderator", "admin", "faculty", "faculty"):
                     set_switch(path, ("tickets",), "close_rank", answer.strip().lower())
             config = load(path)
 
@@ -411,8 +411,8 @@ class DiscordScreens(Screens):
                     have = {key: value for key, value in dict(options.get("channels") or {}).items() if key != server.strip()}
                     set_switch(path, ("console",), "channels", have if channel.strip() == "0" else {**have, server.strip(): channel.strip()})
             elif choice == "A":
-                answer = await self.prompt_line("  moderator, admin, owner or off")
-                if answer and answer.strip().lower() in ("moderator", "admin", "owner", "off"):
+                answer = await self.prompt_line("  moderator, admin, faculty or off")
+                if answer and answer.strip().lower() in ("moderator", "admin", "faculty", "faculty", "off"):
                     set_switch(path, ("console",), "raw_rank", answer.strip().lower())
             elif choice == "B":
                 answer = await self.prompt_line("  reply or thread, then file or split: reply file")
@@ -507,7 +507,7 @@ class DiscordScreens(Screens):
     async def _discord_claim(self, path: Path, config: DiscordConfig) -> None:
         code = new_code(self._settings().records)
         self.heading("Discord", "Claim code")
-        self.note("In Discord, whoever should be an owner types:")
+        self.note("In Discord, whoever should be faculty types:")
         self.terminal.print(f"  /huragok claim {code}", "cyan")
         self.note(f"It works once, for {CLAIM_MINUTES} minutes. With no Discord picked yet, it also makes that one the bot's.")
 

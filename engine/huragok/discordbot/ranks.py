@@ -1,6 +1,6 @@
 """Who someone in Discord is to Huragok: [ranks] maps Discord roles onto Huragok's ranks, and nothing counts until it's
 there. A Discord's own admins aren't the servers' admins (discord_administrators decides what that permission counts
-as). Owners are named by user ID, never a role: anyone with Manage Roles can hand out a role, but only the host can
+as). Faculty are named by user ID, never a role: anyone with Manage Roles can hand out a role, but only the host can
 write in discord.toml. What each rank may then do is commands.toml's job, in game and in Discord alike.
 """
 
@@ -46,21 +46,21 @@ def as_they_may_see(config: DiscordConfig, rank: str, text: str, *, everyone: bo
     """An answer for someone of this rank: below admin, unless `moderators_see_ids` says otherwise, a player's whole ID is cut to its start, which is enough to tell two apart. Names and #numbers are how moderators work.
     `everyone`: an answer the whole channel reads (`[commands] public`), cut whoever asked: an admin's public answer
     showed whole IDs to everyone there (audit 2026-11, 6.16)."""
-    if not everyone and (rank in ("admin", "owner") or config.section("ranks").get("moderators_see_ids")):
+    if not everyone and (rank in ("admin", "faculty") or config.section("ranks").get("moderators_see_ids")):
         return text
     return WHOLE_ID.sub(lambda found: found[0][:8], text)
 
 
-def is_owner(config: DiscordConfig, user_id: str) -> bool:
-    return str(user_id) in {str(owner).strip() for owner in config.section("ranks").get("owners", [])}
+def is_faculty(config: DiscordConfig, user_id: str) -> bool:
+    return str(user_id) in {str(one).strip() for one in config.section("ranks").get("faculty", [])}
 
 
 def rank_of(config: DiscordConfig, someone: Someone, server: str | None = None) -> str:
     """Their rank: the highest their roles give them; `server`: there, with the roles that only count on some servers
     (without it, only what holds on every server). "player" when nothing maps."""
     ranks = config.section("ranks")
-    if is_owner(config, someone.user_id):
-        return "owner"
+    if is_faculty(config, someone.user_id):
+        return "faculty"
     if someone.timed_out and ranks.get("timeout_suspends", True):
         return "player"
     found = "player"
@@ -81,8 +81,8 @@ def rank_of(config: DiscordConfig, someone: Someone, server: str | None = None) 
 
 
 def in_game(config: DiscordConfig, rank: str) -> str:
-    """What a rank is when a command runs from Discord: an owner of the bot acts as owner, unless the file keeps them to admin."""
-    return str(config.section("ranks").get("owners_in_game") or "owner") if rank == "owner" else rank
+    """What a rank is when a command runs from Discord: faculty of the bot acts as faculty, unless the file keeps them to admin."""
+    return str(config.section("ranks").get("faculty_in_game") or "faculty") if rank == "faculty" else rank
 
 
 def game_rank(config: DiscordConfig, someone: Someone, server: str | None = None) -> str:
@@ -121,7 +121,7 @@ def rank_to_run(config: DiscordConfig, someone: Someone, servers: Iterable[Any],
 
 
 def lowest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]) -> str:
-    """Their rank at its lowest, on any of these servers: for what reaches them all, as a rank on one server isn't a rank on the rest. An owner's holds everywhere, and rank_of says so."""
+    """Their rank at its lowest, on any of these servers: for what reaches them all, as a rank on one server isn't a rank on the rest. Faculty's holds everywhere, and rank_of says so."""
     names = [str(server) for server in servers]
     if not names:
         return in_game(config, rank_of(config, someone))

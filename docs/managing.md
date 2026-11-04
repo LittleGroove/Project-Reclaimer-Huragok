@@ -130,7 +130,7 @@ The moderators' console (relay) group also lists **the moderators** (M): add one
 to 128 characters, no two alike, and show only as `password set (19 characters)`.
 
 ### Roles and commands: C
-`commands.toml`: the **owners**, **moderators** and **members**, each listed with the
+`commands.toml`: the **faculty**, **moderators** and **members**, each listed with the
 note beside them (who they are, who added them), and **every in-game command** with
 the lowest role that may use it, its default, and whether it's off. Adding someone
 lists the players Huragok has seen lately (from its records), numbered, so no player
@@ -599,23 +599,23 @@ and any tool that speaks that protocol connect to Huragok instead, and:
 - only the commands **their role allows** pass, from the same lists as
   `commands.toml` (a moderator can `mute` and `kick`, not `ban`; read-only
   commands such as `status`, `players`, `maps`, `bans` pass for every moderator;
-  `admin`, `reload` and setting the join `password` need owner, while `admin` or
+  `admin`, `reload` and setting the join `password` need faculty, while `admin` or
   `password` typed alone only ask), and the reply says so otherwise. A word that isn't a
   command at all says that instead (`'foo' isn't a console command: help lists them.`). A
-  command in `[off]` passes for nobody, owners included;
+  command in `[off]` passes for nobody, faculty included;
 - nobody acts on their own role or above, as in game (their highest role on any
   server): `kick`, `ban`, `banip`,
   `mute` and `startvote kick` on a player named by `#number`, player ID or exact
-  name are refused for an owner, and for an admin or moderator when the user is
-  one too or below ("Big Boss is an owner; you can't kick them…"). So is an address
+  name are refused for faculty, and for an admin or moderator when the user is
+  one too or below ("Big Boss is faculty; you can't kick them…"). So is an address
   or a range that someone of that role is on now. A name quoted any way but the plain one
   (`"Master Chief"`) is refused, as what's checked has to be what the server acts on. The
   server's console acts with the host's authority and would do it, so the relay holds
-  the line; owners can act on anyone;
+  the line; faculty can act on anyone;
 - one command per message, on one line: a line with a new line, a tab or another
   control character in it is refused, and so is a blank word in the protocol's
   `args` (a command sent with words is never taken for a question: before, an
-  empty word let a moderator clear the owner-only join password);
+  empty word let a moderator clear the faculty-only join password);
 - the server reads **who acted**: players see "kicked by Alice", the server log
   and Huragok's log record it;
 - events reach every signed-in moderator; players' addresses and device

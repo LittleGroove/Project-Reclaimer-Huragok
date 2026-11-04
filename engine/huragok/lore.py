@@ -76,6 +76,7 @@ VISR = (
 SPEAKERS: tuple[tuple[str, Persona], ...] = (
     ("part.automod", VERGIL), ("part.commands", VERGIL), ("part.messages", VERGIL),
     ("part.watchdog", SUPERINTENDENT), ("part.eventlog", SUPERINTENDENT), ("part.tempdiscord", SUPERINTENDENT),
+    ("part.stats", SUPERINTENDENT),
     ("players", VERGIL), ("vergil", VERGIL),
     ("servers", SUPERINTENDENT), ("superintendent", SUPERINTENDENT), ("rcon", SUPERINTENDENT),
     ("core.runner", SUPERINTENDENT), ("core.mailbox", SUPERINTENDENT), ("core.events", SUPERINTENDENT),
@@ -183,10 +184,14 @@ CALLOUTS = {
     "promoted": ("happy", "welcome"),       # [^_^] WELCOME! ACCESS GRANTED! Alice made you a moderator here.
     "no votes": ("bored", "limits"),        # [-_-] OBEY POSTED LIMITS! Alice took Bravo's votes away for 10 minutes…
     "votes back": ("happy", "citizens"),    # [^_^] GOOD CITIZENS DO THEIR PART! Alice gave your votes back: …
-    "respawn": ("neutral", "detour"),       # [o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Red team: stuck.
+    "respawn": ("neutral", "detour"),
+    "sided": ("neutral", "detour"),         # [o_o] DETOUR! PROCEED WITH CAUTION! You're on Red, the side you chose: …       # [o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Red team: stuck.
     "request": ("neutral", "hero"),         # to staff: [o_o] BE A HERO! REPORT VIOLATORS! Nate (probationary …) asks…
     "request confirmed": ("happy", "taxes"),  # [^_^] YOUR TAX DOLLARS AT WORK! Mod confirmed your request #3, …
     "request denied": ("neutral", ""),      # [o_o] Mod turned down your request #3, !kick Bravo: not enough.
+    # Huragok's Discord bot: linking (discordbot/)
+    "link code": ("happy", "citizens"),     # [^_^] GOOD CITIZENS DO THEIR PART! Your link code is K7P-42Q: in the …
+    "linked": ("happy", "welcome"),         # [^_^] WELCOME! ACCESS GRANTED! You're linked to Buck on Discord: …
 }
 
 

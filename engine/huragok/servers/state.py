@@ -51,6 +51,7 @@ class ServerState:
     connected: bool = False
     version: str | None = None
     phase: str | None = None
+    team_moving_until: float = 0.0  # time.monotonic(): a team move under way here (sides, !respawn), which another waits for
     phase_since: float | None = None
     map: str | None = None
     mode: str | None = None

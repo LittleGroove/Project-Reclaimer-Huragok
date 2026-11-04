@@ -4,6 +4,7 @@ brings them up to date itself (migrate.py). tests/data/host-0.4.0/ holds the fil
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import logging
 import re
 import shutil
@@ -41,11 +42,14 @@ COMMANDS_0_4_0 = {c for section in tomllib.loads((HOST_0_4_0 / "commands.toml").
 
 # In-game commands since 0.4.0, each listed in a host's commands.toml under its default role once the new version
 # has stayed up.
-NEW_COMMANDS = {"report", "allowvote", "banall", "bannames", "bans", "banword", "calladmin", "changebanword", "confirm", "deny", "kicks", "mods", "mutes",
-                "novote", "novotes", "reports", "requests", "respawn", "restartserver", "rules", "said", "toggleglobal", "toggleproxy",
+NEW_COMMANDS = {"report", "allowvote", "banall", "bannames", "bans", "banword", "calladmin", "changebanword", "confirm", "deny", "endseason", "kicks", "link", "mods", "mutes", "newseason", "togglesides",
+                "novote", "novotes", "reports", "requests", "respawn", "restartserver", "rules", "said", "season", "side", "stats", "toggleglobal", "toggleproxy",
                 "toggleteam", "togglevoice", "unbanword"}
 
 
+# The top rank is faculty (0.6.1), once this version has stayed: 0.4.0's commands.toml has [faculty], its settings.toml
+# exempt_roles names it.
+FACULTY = ["commands.toml: [owner] is [faculty] now, everyone in it kept", "settings.toml: the rank owner is faculty now, where a setting names it"]
 # The word list in the new layout (the mutes first), once this version has stayed: 0.4.0's has notes and no lines.
 AUTOMOD_ORDER = "automod.txt: Huragok's notes as this version writes them, the mutes first (words | mutes | kicks | ban | name)"
 
@@ -129,7 +133,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "past memory_mb once a run has settled (new in 0.6.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
-        AUTOMOD_ORDER, *new_command_lines()]
+        AUTOMOD_ORDER, *FACULTY, *new_command_lines()]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -396,10 +400,10 @@ def test_a_new_command_waits_until_the_new_version_has_stayed(tmp_path: Path, mo
     records, packages = settings_path.parent / "records", settings_path.parent / "PACKAGES"
     pending = migrate.pending(settings_path, records, packages)
     assert pending == [line + " (2.5 minutes after it starts: the version before can't read it)"
-                       for line in [AUTOMOD_ORDER, *new_command_lines()]]
+                       for line in [AUTOMOD_ORDER, *FACULTY, *new_command_lines()]]
     assert load_permissions(commands).role_for(all_commands()["banword"]) == "admin"  # meanwhile: its default
     # Once this version has stayed up: the running Huragok lists them.
-    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == [AUTOMOD_ORDER,
+    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == [AUTOMOD_ORDER, *FACULTY,
                                                                                         *new_command_lines()]
     data = tomllib.loads(commands.read_text(encoding="utf-8"))
     assert {"banword", "unbanword", "banname"} <= set(data["admin"]["commands"])
@@ -432,7 +436,7 @@ def test_banname_moves_to_the_admins_once(tmp_path: Path) -> None:
     after = commands.read_text(encoding="utf-8")
     assert load_permissions(commands).role_for(banname) == "admin"
     assert f'    "banname",      # {banname.help}' not in after.split("[admin]")[0]  # out of [moderator]
-    assert '"banname",' in after.split("[admin]")[1].split("[owner]")[0]  # into [admin], with what it does
+    assert '"banname",' in after.split("[admin]")[1].split("[faculty]")[0]  # into [admin], with what it does
     assert [line for line in before.splitlines() if line not in after.splitlines()] == [
         f'    "banname",      # {banname.help}']  # nothing else went
     backup = settings_path.parent / "records" / "previous-files" / __version__ / "commands.toml"
@@ -442,12 +446,12 @@ def test_banname_moves_to_the_admins_once(tmp_path: Path) -> None:
     assert not any("!banname " in line for line in up_to_date(settings_path))
     assert load_permissions(commands).role_for(banname) == "moderator"
     # A host who had moved it to another role keeps it there; one who switched it off keeps it off.
-    settings_path = host(tmp_path / "owner")
+    settings_path = host(tmp_path / "faculty")
     commands = settings_path.parent / "commands.toml"
     remove_from_list(commands, "moderator", "commands", "banname")
-    add_to_list(commands, "owner", "commands", "banname")
+    add_to_list(commands, "faculty", "commands", "banname")
     assert not any("!banname " in line for line in up_to_date(settings_path))
-    assert load_permissions(commands).role_for(banname) == "owner"
+    assert load_permissions(commands).role_for(banname) == "faculty"
     settings_path = host(tmp_path / "off")
     commands = settings_path.parent / "commands.toml"
     add_to_list(commands, "off", "commands", "banname")  # as D -> C switches one off: its role's line stays
@@ -704,3 +708,36 @@ def test_a_restart_budget_of_the_hosts_own_becomes_a_comment(tmp_path: Path) -> 
     assert "\n# restarts_per_hour = 10\n" in text and "# Not read since 0.6.0: automatic restarts" in text
     assert migrate.RESTART_BUDGET_OLD_NOTE not in text
     assert load(settings_path).retired == []
+
+
+def test_the_top_rank_is_faculty_in_every_file(tmp_path: Path) -> None:
+    """The host's call, 3 November 2026: "owner" is "faculty" wherever it's written, in the files and in the records.
+    Settled, as the version before knows only the old name; this one reads both until it's gone."""
+    import sqlite3
+
+    settings_path = host(tmp_path)  # 0.4.0's files: [owner] in commands.toml, "owner" in exempt_roles
+    commands = settings_path.parent / "commands.toml"
+    commands.write_text(commands.read_text(encoding="utf-8").replace(
+        "[owner]\nplayers = [\n", "[owner]\nplayers = [\n    \"" + "a" * 64 + "\",  # the host\n"), encoding="utf-8")
+    assert load_permissions(commands).members["faculty"] == {"a" * 64}  # [owner] still reads
+    discord = settings_path.parent / "discord.toml"
+    discord.write_text('mode = "off"\n[ranks]\nowners = ["3000"]\nowners_in_game = "owner"\n[tickets]\nclose_rank = "owner"\n', encoding="utf-8")
+    database = settings_path.parent / "records" / "huragok.sqlite3"
+    database.parent.mkdir(exist_ok=True)
+    with closing(sqlite3.connect(database)) as db:
+        db.execute("CREATE TABLE actions (number INTEGER PRIMARY KEY, by_role TEXT)")
+        db.executemany("INSERT INTO actions (by_role) VALUES (?)", [("owner",), ("admin",), (None,)])
+        db.commit()
+    changed = up_to_date(settings_path, settled=False)
+    assert "[owner]" in commands.read_text(encoding="utf-8")  # not until this version has stayed: the one before reads [owner]
+    changed = up_to_date(settings_path)
+    text = commands.read_text(encoding="utf-8")
+    assert "[faculty]" in text and "[owner]" not in text and "# the host" in text
+    assert load_permissions(commands).members["faculty"] == {"a" * 64}
+    assert '"faculty"' in settings_path.read_text(encoding="utf-8") and load(settings_path).parts["automod"].options["exempt_roles"] == ["admin", "faculty"]
+    data = tomllib.loads(discord.read_text(encoding="utf-8"))
+    assert data["ranks"]["faculty"] == ["3000"] and data["ranks"]["faculty_in_game"] == "faculty" and data["tickets"]["close_rank"] == "faculty"
+    assert "owners" not in data["ranks"] and "owners_in_game" not in data["ranks"]
+    with closing(sqlite3.connect(database)) as db:
+        assert [row[0] for row in db.execute("SELECT by_role FROM actions ORDER BY number")] == ["faculty", "admin", None]
+    assert any("[owner] is [faculty]" in line for line in changed)

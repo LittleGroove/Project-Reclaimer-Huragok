@@ -17,7 +17,7 @@ from conftest import free_port
 GUILD = "1000"
 BOT_USER = "2000"
 APPLICATION = "2001"
-OWNER_USER = "3000"
+FACULTY_USER = "3000"
 STAFF_CHANNEL = "4001"
 PUBLIC_CHANNEL = "4002"
 ADMIN_ROLE = "5001"
@@ -55,7 +55,7 @@ class FakeDiscord:
         self.flags = (1 << 18) | (1 << 14)  # the portal's Message Content and Server Members switches
         self.bot_public = False
         self.in_guilds = [GUILD]
-        self.guild = {"id": GUILD, "name": "Test Discord", "owner_id": OWNER_USER, "mfa_level": 0, "features": [],
+        self.guild = {"id": GUILD, "name": "Test Discord", "owner_id": FACULTY_USER, "mfa_level": 0, "features": [],
                       "icon": None, "splash": None, "discovery_splash": None, "afk_channel_id": None, "afk_timeout": 300,
                       "verification_level": 0, "default_message_notifications": 0, "explicit_content_filter": 0,
                       "system_channel_id": None, "system_channel_flags": 0, "rules_channel_id": None, "vanity_url_code": None,
@@ -68,6 +68,8 @@ class FakeDiscord:
             self._role(MOD_ROLE, "SPR-Mod", 2, "0"),
             self._role(BOT_ROLE, "Huragok", 4, ALL_BUT_ADMIN, managed=True),
         ]
+        self.member_roles: dict[str, list[str]] = {}  # the members (other than the bot) and their roles
+        self.role_changes: list[tuple[str, str, str]] = []  # (PUT or DELETE, member, role) as asked for
         self.channels = [
             self._channel(STAFF_CHANNEL, "admin-log", overwrites=[{"id": GUILD, "type": 0, "allow": "0", "deny": str(1 << 10)},
                                                                   {"id": BOT_ROLE, "type": 0, "allow": str(1 << 10), "deny": "0"}]),
@@ -233,7 +235,7 @@ class FakeDiscord:
             case ("GET", ["applications", "@me"]) | ("GET", ["oauth2", "applications", "@me"]):
                 return _json({"id": APPLICATION, "name": "Huragok Test", "icon": None, "description": "",
                                           "rpc_origins": [], "bot_public": self.bot_public, "bot_require_code_grant": False,
-                                          "owner": _user(OWNER_USER, "Host"), "team": None, "summary": "", "verify_key": "0",
+                                          "owner": _user(FACULTY_USER, "Host"), "team": None, "summary": "", "verify_key": "0",
                                           "flags": self.flags})
             case ("POST", ["users", "@me", "channels"]):
                 if body["recipient_id"] in self.dms_closed:
@@ -249,8 +251,30 @@ class FakeDiscord:
                 return _json(self.roles)
             case ("GET", ["guilds", guild, "channels"]) if guild in self.in_guilds:
                 return _json(self.channels)
+            case ("GET", ["guilds", guild, "members"]) if guild in self.in_guilds:
+                if not self.flags & ((1 << 14) | (1 << 15)):  # Discord: listing members takes the Server Members switch
+                    return _json({"message": "Missing Access", "code": 50001}, status=403)
+                after, limit = request.query.get("after", "0"), int(request.query.get("limit", 1))
+                listed = sorted((user for user in self.member_roles if int(user) > int(after)), key=int)[:limit]
+                return _json([{"user": _user(user, f"user{user}"), "roles": list(self.member_roles[user]), "nick": None,
+                               "joined_at": _stamp(), "deaf": False, "mute": False, "flags": 0} for user in listed])
+            case ("PUT" | "DELETE", ["guilds", guild, "members", user, "roles", role]) if guild in self.in_guilds:
+                found = next((one for one in self.roles if one["id"] == role), None)
+                if found is None:
+                    return _json({"message": "Unknown Role", "code": 10011}, status=404)
+                if int(found["position"]) >= max(int(one["position"]) for one in self.roles if one["id"] == BOT_ROLE):
+                    return _json({"message": "Missing Permissions", "code": 50013}, status=403)  # above the bot's own
+                if found.get("managed") or role == guild:  # an integration's role, or @everyone: nobody gives those
+                    return _json({"message": "Missing Permissions", "code": 50013}, status=403)
+                have = self.member_roles.setdefault(user, [])
+                if method == "PUT" and role not in have:
+                    have.append(role)
+                elif method == "DELETE" and role in have:
+                    have.remove(role)
+                self.role_changes.append((method, user, role))
+                return web.Response(status=204)
             case ("GET", ["guilds", guild, "members", user]) if guild in self.in_guilds:
-                roles = [BOT_ROLE] if user == BOT_USER else []
+                roles = [BOT_ROLE] if user == BOT_USER else list(self.member_roles.get(user, []))
                 return _json({"user": _user(user, "Someone", bot=user == BOT_USER), "roles": roles, "nick": None,
                                           "joined_at": _stamp(), "deaf": False, "mute": False, "flags": 0})
             case ("GET", ["applications", _, "guilds", guild, "commands"]):
@@ -496,14 +520,14 @@ class FakeDiscord:
 
         asyncio.run_coroutine_threadsafe(send(), self._loop).result(10)
 
-    def right_click(self, name: str, target: dict[str, Any], *, user: str = OWNER_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
+    def right_click(self, name: str, target: dict[str, Any], *, user: str = FACULTY_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
         """Someone right-clicking a message, and picking one of the bot's commands."""
         return self._interaction(2, {"id": self.next_id(), "name": name, "type": 3, "target_id": target["id"], "resolved": {"messages": {target["id"]: target}}}, user, roles, GUILD, target["channel_id"])
 
     def message_someone_wrote(self, channel: str, text: str, *, user: str = "7001") -> dict[str, Any]:
         return {**self._message_form(channel, {"content": text}), "author": _user(user, f"user{user}"), "guild_id": GUILD}
 
-    def message(self, channel: str, text: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), bot: bool = False, webhook: bool = False) -> str:
+    def message(self, channel: str, text: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), bot: bool = False, webhook: bool = False) -> str:
         """Someone typing in a channel: the message's ID. As Discord: nothing at all for a bot that didn't ask for messages, and no text without Message Content."""
         message = self.next_id()
         intents = int(self.identifies[-1]["intents"])
@@ -542,7 +566,7 @@ class FakeDiscord:
             **extra})
         return interaction, token
 
-    def huragok(self, command: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), guild: str = GUILD,
+    def huragok(self, command: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), guild: str = GUILD,
                 channel: str = PUBLIC_CHANNEL, **options: str) -> tuple[str, str]:
         """Someone typing /huragok <command>: (the interaction's ID, its token)."""
         inner = [{"name": key, "type": 3, "value": value} for key, value in options.items()]
@@ -550,18 +574,18 @@ class FakeDiscord:
                                      "options": [{"name": command, "type": 1, "options": inner}]},
                                  user, roles, guild, channel)
 
-    def slash(self, group: str, command: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
+    def slash(self, group: str, command: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
         """Someone typing /group command: (the interaction's ID, its token)."""
         inner = [{"name": key, "type": 4 if isinstance(value, int) else 3, "value": value} for key, value in options.items()]
         return self._interaction(2, {"id": self.next_id(), "name": group, "type": 1, "options": [{"name": command, "type": 1, "options": inner}]},
                                  user, roles, GUILD, channel)
 
-    def command(self, name: str, /, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
+    def command(self, name: str, /, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
         """Someone typing /name, a command of its own rather than one of a group."""
         inner = [{"name": key, "type": 4 if isinstance(value, int) else 3, "value": value} for key, value in options.items()]
         return self._interaction(2, {"id": self.next_id(), "name": name, "type": 1, "options": inner}, user, roles, GUILD, channel)
 
-    def command_with_file(self, name: str, option: str, filename: str, content: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
+    def command_with_file(self, name: str, option: str, filename: str, content: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL, **options: Any) -> tuple[str, str]:
         """Someone typing /name, and attaching a file to it."""
         self.attachments[filename] = content
         attachment = self.next_id()
@@ -570,27 +594,27 @@ class FakeDiscord:
         resolved = {"attachments": {attachment: {"id": attachment, "filename": filename, "size": len(content), "url": address, "proxy_url": address, **({"content_type": "video/mp4"} if filename.startswith("clip") else {})}}}
         return self._interaction(2, {"id": self.next_id(), "name": name, "type": 1, "options": inner, "resolved": resolved}, user, roles, GUILD, channel)
 
-    def typing_command(self, name: str, option: str, typed: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), **others: Any) -> tuple[str, str]:
+    def typing_command(self, name: str, option: str, typed: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), **others: Any) -> tuple[str, str]:
         inner = [{"name": key, "type": 3, "value": value} for key, value in others.items()] + [{"name": option, "type": 3, "value": typed, "focused": True}]
         return self._interaction(4, {"id": self.next_id(), "name": name, "type": 1, "options": inner}, user, roles, GUILD, PUBLIC_CHANNEL)
 
-    def typing(self, group: str, command: str, option: str, typed: str, *, user: str = OWNER_USER, roles: tuple[str, ...] = (), **others: Any) -> tuple[str, str]:
+    def typing(self, group: str, command: str, option: str, typed: str, *, user: str = FACULTY_USER, roles: tuple[str, ...] = (), **others: Any) -> tuple[str, str]:
         """Someone typing in a slash command's option, with suggestions wanted."""
         inner = [{"name": key, "type": 3, "value": value} for key, value in others.items()] + [{"name": option, "type": 3, "value": typed, "focused": True}]
         return self._interaction(4, {"id": self.next_id(), "name": group, "type": 1, "options": [{"name": command, "type": 1, "options": inner}]},
                                  user, roles, GUILD, PUBLIC_CHANNEL)
 
-    def press(self, custom_id: str, post: dict[str, Any], *, user: str = OWNER_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
+    def press(self, custom_id: str, post: dict[str, Any], *, user: str = FACULTY_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
         """Someone pressing a button on something posted. Discord sends the message along; without Message Content a webhook's comes without its text."""
         message = {**self._message_form(post["channel"], {}), "id": post["id"], "webhook_id": "1"}
         return self._interaction(3, {"custom_id": custom_id, "component_type": 2}, user, roles, GUILD, post["channel"], message=message)
 
-    def choose(self, custom_id: str, post: dict[str, Any], values: list[str], *, user: str = OWNER_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
+    def choose(self, custom_id: str, post: dict[str, Any], values: list[str], *, user: str = FACULTY_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
         """Someone picking from a menu on something posted."""
         message = {**self._message_form(post["channel"], {}), "id": post["id"], "webhook_id": "1"}
         return self._interaction(3, {"custom_id": custom_id, "component_type": 3, "values": values}, user, roles, GUILD, post["channel"], message=message)
 
-    def fill_in(self, token: str, post: dict[str, Any], answers: dict[str, str], *, user: str = OWNER_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
+    def fill_in(self, token: str, post: dict[str, Any], answers: dict[str, str], *, user: str = FACULTY_USER, roles: tuple[str, ...] = ()) -> tuple[str, str]:
         """Someone sending the form an interaction (by its token) opened. `answers`: label -> what they wrote or picked."""
         form = next(callback["data"] for callback in self.callbacks if callback["token"] == token and callback.get("type") == 9)
         filled = []
@@ -603,7 +627,7 @@ class FakeDiscord:
         return self._interaction(5, {"custom_id": form["custom_id"], "components": filled}, user, roles, GUILD, post["channel"], message=message)
 
     def pick(self, opened: str, custom_id: str, kind: int, values: list[str], *, resolved: dict[str, Any] | None = None,
-             user: str = OWNER_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL) -> tuple[str, str]:
+             user: str = FACULTY_USER, roles: tuple[str, ...] = (), channel: str = PUBLIC_CHANNEL) -> tuple[str, str]:
         """Someone using a panel a slash command `opened` (its interaction's ID): a button or a menu."""
         data: dict[str, Any] = {"custom_id": custom_id, "component_type": kind, "values": values}
         if resolved:

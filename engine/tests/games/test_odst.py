@@ -440,7 +440,7 @@ def test_check_names_a_playlists_old_labels(tmp_path: Path, capsys, monkeypatch)
 
 
 def test_vergils_game_commands_are_refused_on_an_odst_server(tmp_path: Path, run) -> None:
-    from conftest import OWNER, wait_for
+    from conftest import FACULTY, wait_for
     from testkit.running import SERVER as SUPERVISED, everyone_joins, running, tells_to
 
     async def scenario() -> None:
@@ -448,10 +448,10 @@ def test_vergils_game_commands_are_refused_on_an_odst_server(tmp_path: Path, run
             supervisor.settings.server(SUPERVISED).plays_kind = "odst"
             await everyone_joins(fake)
             await wait_for(lambda: len(supervisor.superintendent.states[SUPERVISED].players) == 5)
-            await fake.chat(OWNER, "Owner", "!map The Pit")
-            await wait_for(lambda: any("console cannot change its game" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!map The Pit")
+            await wait_for(lambda: any("console cannot change its game" in t for t in tells_to(fake, FACULTY)))
             assert not fake.named("map")
-            await fake.chat(OWNER, "Owner", "!nextmap")  # only asks: sent
+            await fake.chat(FACULTY, "Faculty", "!nextmap")  # only asks: sent
             await wait_for(lambda: fake.named("nextmap"))
 
     run(scenario())

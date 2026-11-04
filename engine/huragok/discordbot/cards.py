@@ -63,6 +63,7 @@ class Card:
     decided: bool = False  # a person did this: it's on the record, not for anyone to answer
     problem: str = ""  # the server whose ongoing problem this is: one ticket, added to
     rule: str = ""  # the automod rule a strike was on, for pardoning it from its card
+    components: list[dict[str, Any]] = field(default_factory=list)  # a post's own buttons (a Carnage report's Kill feed)
 
     @property
     def message(self) -> str:

@@ -41,7 +41,7 @@ def test_every_part_is_described_and_named_for_its_section() -> None:
         assert issubclass(cls, Part) and cls.name == name and cls.description, name
         assert name not in CORE_TABLES, f"[{name}] would collide with a core section"
         assert not set(cls.defaults) & PART_SWITCHES, f"{name} defaults use a reserved setting"
-        assert name not in ("everyone", "moderator", "admin", "owner", "off"), f"{name} would read as a role"
+        assert name not in ("everyone", "moderator", "admin", "faculty", "off"), f"{name} would read as a role"
 
 
 def test_no_two_parts_claim_the_same_command(tmp_path: Path) -> None:
@@ -49,20 +49,20 @@ def test_no_two_parts_claim_the_same_command(tmp_path: Path) -> None:
     write_server_folder(tmp_path / "server", free_port())
     settings = load(write_settings(tmp_path, tmp_path / "server"))
     router = CommandRouter(settings, EventBus(), {}, {}, Roles(settings))
-    owners: dict[str, str] = {}
+    faculty: dict[str, str] = {}
     for name, cls in PARTS.items():
         for spec in commands_of(cls):
             assert spec.help, f"!{spec.name} ({name}) needs help text: it's what commands.toml and !help show"
             for word in (spec.name, *spec.aliases):
                 assert word not in RESERVED, f"!{word} ({name}) is the server's own vote"
-                assert word not in owners, f"!{word} is claimed by both {owners[word]} and {name}"
-                owners[word] = name
+                assert word not in faculty, f"!{word} is claimed by both {faculty[word]} and {name}"
+                faculty[word] = name
 
             async def handler(call: object) -> None:
                 pass
 
             router.register(spec, None, handler)  # raises on any clash, including with !help
-    assert "help" not in owners
+    assert "help" not in faculty
 
 
 def test_parts_with_settings_and_the_commands_which_are_always_on(tmp_path: Path) -> None:

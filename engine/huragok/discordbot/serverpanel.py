@@ -76,7 +76,7 @@ async def run_power(part: DiscordPart, server: str, action: str, who: str, why: 
 
 class ServerPanel(Panel):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        return True  # each button asks for itself, and it's not an owner's to use
+        return True  # each button asks for itself, and it's not faculty's to use
 
     def __init__(self, part: DiscordPart, server: str, said: str = "", *, ticket: int = 0, powers: bool = True) -> None:
         super().__init__(part)

@@ -20,19 +20,45 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from ..core.commandsfile import rank_named
 from ..core.files import write_atomic
 from ..core.discordmoved import KEYS as MOVED_KEYS
-from ..core.discordmoved import LINE_FIELDS
+from ..core.discordmoved import LINE_FIELDS, merged_ranks
 from ..core.discordmoved import TEXTS as MOVED_TEXTS
 from ..core.tomledit import add_to_list, read_toml, remove_from_list, set_nested_key, set_table_key, set_top_key
 
 FILE = "discord.toml"
+# The top rank was "owner" before 0.6.1: it's faculty (the host's call, 3 November 2026). A file from before says the
+# old names, read as the new ones until the settled step 0.6.1/faculty rewrites it.
+RANK_VALUES = {("tickets", "close_rank"), ("commands", "power_rank"), ("console", "raw_rank"), ("ranks", "faculty_in_game")}
+OLD_RANK_NAMES = {("ranks", "owners"): "faculty", ("ranks", "owners_in_game"): "faculty_in_game", ("roles", "owner"): "faculty"}
+
+
+def _old_rank_names(given: dict[str, Any]) -> None:
+    """A file from before 0.6.1 (or one the settled update hasn't reached yet): its owners are faculty, read as such.
+    The old name wins over the new one, the default an update added beside it (discord-lines); two lists of faculty
+    are both read: a claim made meanwhile is written to the new one (audit 0.6.1, 3.9)."""
+    for (table, old), new in OLD_RANK_NAMES.items():
+        found = given.get(table)
+        if isinstance(found, dict) and old in found:
+            found[new] = merged_ranks(found.pop(old), found.get(new))
+
+
+def _ranks_inside(data: dict[str, Any]) -> None:
+    """A rank a setting names, as Huragok knows it: the top rank's old name is faculty."""
+    for *table, key in RANK_VALUES:
+        found = data
+        for part in table:
+            found = found.get(part) if isinstance(found, dict) else None
+        if isinstance(found, dict) and key in found:
+            found[key] = rank_named(found[key])
+GONE_LINES = {"games-medal"}  # lines a version before this one's release had: nothing to say about them (second audit, 9.10)
 TEMPLATE = "templates/discord.toml"
 MODES = ("off", "webhook", "bot")
 VOICES = ("lore", "plain")
 
 # Tables whose keys are the host's own, on top of those the template writes as {} (per_server, names…).
-FREE_FORM = {("text",), ("ranks", "scoped"), ("colours",), ("notes", "flags")}
+FREE_FORM = {("text",), ("ranks", "scoped"), ("colours",), ("notes", "flags"), ("roles", "top")}
 OWN_ENTIRELY = {("notes", "flags")}  # what's written is the whole of it: one taken out stays out
 # How a message looks follows from the channel it goes to. A channel named any other way is a feed: a post, as a card.
 TICKET, LOG, FEED = "ticket", "log", "feed"
@@ -136,9 +162,9 @@ def _merge(known: dict[str, Any], given: dict[str, Any], where: tuple[str, ...],
                 warnings.append(f"{FILE}: {_shown(where)}{key} is {_shown(home)}{new_key} now, so it's ignored")
             elif len(where) == 2 and where[0] == "messages" and key in LINE_FIELDS:
                 warnings.append(f"{FILE}: {_shown(where)}{key} is {LINE_FIELDS[key]} now, so it's ignored")
-            elif here == ("ranks", "owner"):
-                warnings.append(f"{FILE}: [ranks] owner is ignored: owners are people, never a role; put their Discord "
-                                "user IDs in [ranks] owners")
+            elif here == ("ranks", "owner"):  # as someone might have written it before 0.6.1
+                warnings.append(f"{FILE}: {_shown(where)}{key} is ignored: faculty are people, never a role; put their Discord "
+                                "user IDs in [ranks] faculty")
             else:
                 near = difflib.get_close_matches(key, list(known), 1)
                 warnings.append(f"{FILE}: {_shown(where)}{key} isn't a setting this version knows"
@@ -245,12 +271,13 @@ NAMES = {("tickets", "buttons"): BUTTONS, ("reports", "buttons"): BUTTONS, ("app
          ("reports", "from"): ("game", "discord"), ("appeals", "for"): ("ban", "kick", "mute"), ("commands", "power_buttons"): ("start", "stop", "restart", "restart-after-game", "restart-when-empty", "cancel", "updates"),
          ("status", "board", "show"): ("state", "map", "mode", "players", "next", "uptime", "playlist", "votes", "version"), ("feed", "moderation", "sources"): ("*", "!", "/", "vergil", "vote", "console", "relay", "window", "discord")}
 # One thing out of a few. A wrong one is replaced with its default, so what reads it never has to wonder: and it can't be read as something it isn't, like a rank nobody has, or a rank everyone does.
-STAFF_RANKS = ("moderator", "admin", "owner")
+STAFF_RANKS = ("moderator", "admin", "faculty")
 STAFF_PERMISSIONS = ("", "manage_messages", "kick_members", "ban_members", "moderate_members", "manage_guild", "manage_roles", "administrator")
 CHOICES = {("tickets", "when_closed"): ("move", "stay", "thread"), ("tickets", "close_rank"): STAFF_RANKS, ("commands", "power_rank"): STAFF_RANKS, ("commands", "staff_permission"): STAFF_PERMISSIONS,
-           ("ranks", "discord_administrators"): ("nothing", "moderator", "admin"), ("ranks", "owners_in_game"): ("owner", "admin"), ("feeds", "style"): ("card", "compact"), ("status", "board", "layout"): ("per-server", "one"), ("status", "board", "player_list"): ("names", "off"),
+           ("ranks", "discord_administrators"): ("nothing", "moderator", "admin"), ("ranks", "faculty_in_game"): ("faculty", "admin"), ("feeds", "style"): ("card", "compact"), ("status", "board", "layout"): ("per-server", "one"), ("status", "board", "player_list"): ("names", "off"),
            ("status", "presence", "activity"): ("playing", "listening", "watching", "competing", "custom"), ("status", "presence", "dot"): ("health", "online"), ("console", "layout"): ("per-server", "picker"),
-           ("console", "remember_server"): ("member", "channel"), ("console", "answers"): ("reply", "thread"), ("console", "long_answers"): ("file", "split"), ("console", "ignore_others"): ("ignore", "delete"), ("console", "audit"): ("changes", "everything"), ("console", "raw_rank"): ("moderator", "admin", "owner", "off"), ("appeals", "tell_outcome"): ("dm", "no"), ("reports", "tell_reporter"): ("acted", "all", "no")}
+           ("console", "remember_server"): ("member", "channel"), ("console", "answers"): ("reply", "thread"), ("console", "long_answers"): ("file", "split"), ("console", "ignore_others"): ("ignore", "delete"), ("console", "audit"): ("changes", "everything"), ("console", "raw_rank"): ("moderator", "admin", "faculty", "off"), ("appeals", "tell_outcome"): ("dm", "no"), ("reports", "tell_reporter"): ("acted", "all", "no"),
+           ("link", "names"): ("discord", "game", "both"), ("link", "unlink"): ("self", "staff")}
 LINE_SHAPES = ("ticket", "log", "post")
 PERSONAS_KNOWN = ("superintendent", "vergil", "huragok")
 
@@ -340,7 +367,7 @@ def _check_the_rest(data: dict[str, Any], warnings: list[str], made: dict[str, A
                     del line[field]
             if "closes_to" in line and not isinstance(line["closes_to"], str):
                 line["closes_to"] = str(line["closes_to"])
-            if key not in known_lines and (near := difflib.get_close_matches(key, list(known_lines), 1)):
+            if key not in known_lines and key not in GONE_LINES and (near := difflib.get_close_matches(key, list(known_lines), 1)):
                 warnings.append(f"{FILE}: [messages] {key} isn't a message this version has (did you mean {near[0]}?)")
     power = data["commands"].get("hidden") or []
     if any(str(name).startswith(("!", "/")) for name in power):
@@ -386,7 +413,9 @@ def read(path: Path) -> DiscordConfig:
     except tomllib.TOMLDecodeError as error:
         raise DiscordFileError(f"{path.name} isn't valid TOML: {error}") from None
     config.says_mode = "mode" in given
+    _old_rank_names(given)
     config.data = _merge(defaults(), given, (), config.warnings)
+    _ranks_inside(config.data)
     config.data["text"] = _flat(config.data["text"])
     config.warnings += [f"{FILE}: [text] {key} isn't a text of this version; it does nothing" for key in unknown_texts(config.data["text"])]
     _apply_limits(config.data, config.warnings)
@@ -488,13 +517,14 @@ def set_rank_roles(path: Path, key: str, wanted: list[tuple[str, str]], *,
         add_to_list(path, "ranks", key, role, f"@{name}" if name else "")
 
 
-def add_owner(path: Path, user_id: str, note: str = "") -> bool:
+def add_faculty(path: Path, user_id: str, note: str = "") -> bool:
     make_file(path)
-    return add_to_list(path, "ranks", "owners", user_id, note)
+    return add_to_list(path, "ranks", "faculty", user_id, note)
 
 
-def remove_owner(path: Path, user_id: str) -> bool:
-    return remove_from_list(path, "ranks", "owners", user_id)
+def remove_faculty(path: Path, user_id: str) -> bool:
+    """Off the faculty list, and off a 0.6.0 file's owners list until the update renames it (audit 0.6.1, 6.4)."""
+    return any([remove_from_list(path, "ranks", "faculty", user_id), remove_from_list(path, "ranks", "owners", user_id)])
 
 
 def set_switch(path: Path, section: tuple[str, ...], key: str, value: bool) -> None:

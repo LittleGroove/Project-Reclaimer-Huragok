@@ -15,7 +15,7 @@ shows them all, starts them, keeps them up, and gives you single-key control. It
   it changes;
 - **gives in-game commands to the people you pick** (Vergil): the server's
   console-only commands (mute, map, votes, say…) and its own, each for `everyone`,
-  `member`, `probationary-moderator`, `moderator`, `admin` or `owner`, by player ID, and
+  `member`, `probationary-moderator`, `moderator`, `admin` or `faculty`, by player ID, and
   keeps everyone you list safe from votes to kick. One role each, moved a step at a time in game
   (`!promote`, `!demote`), and a ban takes it away;
 - **records everything** (Vergil): every player seen (names, visits) and every
@@ -150,7 +150,7 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
    | `discord.toml` | the Discord bot: every setting, each with its note, and all of it off until you set it up (J in the window; [docs/discord.md](docs/discord.md)) |
    | `PACKAGES\` | seven starter packages for new servers (Team Slayer, Big Team Battle, MLG Hardcore, Infection, Scripted Modes, Campaign Co-op, ODST Firefight); see [docs/setup.md](docs/setup.md) |
 
-4. **Make yourself owner:** put your player ID under `[owner]` in `commands.toml`
+4. **Make yourself faculty:** put your player ID under `[faculty]` in `commands.toml`
    (in game: Settings > Online services > Your player ID). Add your moderators
    under `[moderator]`, and regulars no vote should kick under `[member]`. Look
    over `settings.toml`; it explains every setting. Write a Windows path there in
@@ -218,7 +218,7 @@ on the screen is always still waiting for you.
 | **N** | a **new server**: a folder in `SERVERS/` made with the server program's `dedicated init`, from a package in `PACKAGES/` (its playlist, game types, maps, Workshop items), sharing the root's Halo 3 files (and one content folder, if you choose; never a ban list: every server keeps its own), checked, then started. See [docs/setup.md](docs/setup.md) |
 | **G** | **what a server plays**: what it's set to, what's on now and next, and what players pick on its ballots; **W** sets it (a playlist, one map and game type, a custom game on one map or on three or more to vote on, campaign, ODST); browse its maps, mod maps, variants and game types as numbered lists; build and edit playlists by picking from them, every version of each kept (**H**) and what players pick on each (**P**); copy a playlist or a custom game to other servers; nothing is saved that the server's own program would refuse, and its problems are shown with the fixes; Workshop items and mods (and the Forge layouts mods ship); `dedicated check`; save it as a package; import MCC's own matchmaking map and game variants (MLG, Hardcore, Infection…) into its content |
 | **I** | SteamCMD: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), tell every server about it; and **Halo 3's files**, the campaign missions and ODST's, copied from MCC on this PC or downloaded with SteamCMD. See [docs/setup.md](docs/setup.md#steamcmd-i-in-the-window) |
-| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: owners, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try; **I** `intervalmessages.txt`: the interval messages every server says, added and taken off. Then every server: its `dedicated.toml` in groups, changed while it runs (player cap, join password, voice, votes, welcome, what it plays, anti-cheat…; a value the server program would refuse, or one its version is too old for, is refused before anything is written; the screen says when each applies and the events show the server's answer), and its playlists, custom games, bans, mods switched on or off and its own interval messages. See [docs/managing.md](docs/managing.md#settings-d) |
+| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: faculty, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try; **I** `intervalmessages.txt`: the interval messages every server says, added and taken off. Then every server: its `dedicated.toml` in groups, changed while it runs (player cap, join password, voice, votes, welcome, what it plays, anti-cheat…; a value the server program would refuse, or one its version is too old for, is refused before anything is written; the screen says when each applies and the events show the server's answer), and its playlists, custom games, bans, mods switched on or off and its own interval messages. See [docs/managing.md](docs/managing.md#settings-d) |
 | **J** | the **Discord bot**, a step at a time: webhook only or your own bot and its token, Discord roles onto Huragok's ranks, channels, features, every message, tickets, the typed console, reports, appeals and Contact staff, a check and a test post. `/huragok setup` in Discord does the same. How to make the bot: [docs/discord.md](docs/discord.md) |
 | **C** | a server's own `dedicated check`: game files, settings, playlists, maps, ports |
 | **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt`, or any server's folder, `dedicated.toml`, playlists and ban list in your editor, for what D doesn't change (the server applies most edits by itself; the result shows in the events) |
@@ -390,11 +390,11 @@ commands; every role can also use the commands of the roles before it:
 
 | Role | Who | Starts with |
 | --- | --- | --- |
-| `everyone` | every player | `!help` `!strikes` `!respawn` |
-| `member` | the player IDs you list | no commands of their own yet: no vote can kick them |
+| `everyone` | every player | `!help` `!strikes` `!respawn` `!calladmin` `!report` `!mods` `!stats` `!season`, and `!link` with the Discord bot |
+| `member` | the player IDs you list | `!side` `!togglesides` (with the Discord bot's `[sides]` on); no vote can kick them |
 | `moderator` | the player IDs you list | `!players` `!whois` `!said` `!warn` `!mute` `!unmute` `!mutes` `!kick` `!kicks` `!pardon` `!novote` `!allowvote` `!novotes` `!strike` `!rules` `!bannames` `!promote` `!demote` `!roles` `!health` |
 | `admin` | the server's own admins (`admins` in `dedicated.toml`, or `!admin add` in game) | `!ban` `!unban` `!bans` `!say` `!map` `!mode` `!load` `!nextmap` `!endgame` `!endround` `!shuffle` `!team` `!teamcount` `!maxping` `!startvote` `!cancelvote` `!passvote` `!servername` `!restartserver` `!toggleglobal` `!toggleteam` `!toggleproxy` `!togglevoice` `!banword` `!unbanword` `!changebanword` `!banname` `!unbanname` `!pardonplayer` |
-| `owner` | the player IDs you list (you) | `!admin` `!reload` |
+| `faculty` | the player IDs you list (you), and whoever claimed the Discord bot once they `!link` | `!admin` `!reload` `!newseason` `!endseason` |
 
 A name with spaces needs no quotes, and when a name is more than one player's,
 nobody is acted on: you get each of them with their team, time on and the start of
@@ -404,7 +404,7 @@ their player ID, numbered `#4` (on this server) or `@1` (not on), and type that.
 Move a command to another role's list to change who can use it, or put it in
 `[off]` to switch it off. Edits apply within seconds. Roles follow the player ID, never the
 name: anyone can use any name. Nobody can act on someone of their own role or
-above. **No vote can kick a member, moderator, admin or owner:** Vergil puts
+above. **No vote can kick a member, moderator, admin or faculty:** Vergil puts
 everyone you list on each server's vote-kick immune list, so the server refuses a
 vote to kick them as it's called, and Vergil tells the caller why. See
 [docs/commands.md](docs/commands.md).

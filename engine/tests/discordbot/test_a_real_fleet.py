@@ -8,14 +8,14 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, BRAVO, OWNER
+from conftest import ALICE, BRAVO, FACULTY
 from test_bot_running import OTHER, _components, answer_text
 from test_console import press_until, reply_to
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, REPORTS, STAFF, buttons_of, posts_in
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import fleet, wait_for
 
-from huragok.discordbot.config import add_owner, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 
 STOPPED, FIRST, SECOND = "LG Backend Test", "LG Test Server", "Sim Slayer"  # as DEPLOY's list runs: the stopped one comes first
 
@@ -38,7 +38,7 @@ def bot_file(root: Path, *switches: tuple[str, ...]) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name, channel in (("staff", STAFF), ("reports", REPORTS), ("alerts", ALERTS), ("logs", LOGS), ("huragok-logs", HURAGOK_LOGS)):
         set_channel(path, name, channel, name)
     set_switch(path, ("commands",), "enabled", True)
@@ -288,7 +288,7 @@ def test_stage_3_from_end_to_end_on_a_fleet(tmp_path: Path, run: Any, fake: Fake
         async with fleet(tmp_path, up=(FIRST, SECOND), down=(STOPPED,)) as (huragok, consoles):
             part = await up(huragok)
             await wait_for(lambda: "appeal" in {command["name"] for command in fake.commands.get(GUILD, [])}, timeout=20)
-            await consoles[SECOND].join(1, "Owner", OWNER)
+            await consoles[SECOND].join(1, "Faculty", FACULTY)
             await consoles[SECOND].join(3, "Alice", ALICE)
             await consoles[SECOND].join(4, "Bravo", BRAVO)
             await wait_for(lambda: len(huragok.superintendent.states[SECOND].players) == 3, timeout=10)

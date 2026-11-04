@@ -696,7 +696,7 @@ async def pressed(part: DiscordPart, interaction: discord.Interaction, custom_id
         await _leave(part, interaction, int(pieces[2]), rank)
         return
     if not can_act(rank):
-        await answer(interaction, "This is for staff. An owner can add your role in `/huragok setup` → Ranks.")
+        await answer(interaction, "This is for staff. Faculty can add your role in `/huragok setup` → Ranks.")
         return
     if len(pieces) != 4 or pieces[1] != "t" or not pieces[2].isdecimal():
         await answer(interaction, "This card is from an earlier version, and its buttons no longer work.")

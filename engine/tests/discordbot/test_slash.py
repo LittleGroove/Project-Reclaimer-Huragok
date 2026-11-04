@@ -9,10 +9,10 @@ import pytest
 
 from conftest import ALICE, BRAVO, MOD
 from test_bot_running import OTHER
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, fleet, running, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 from huragok.core.commandsfile import all_commands
 from huragok.discordbot.slash import NOT_FROM_DISCORD, description_of, plan_of
 
@@ -35,7 +35,7 @@ def bot_file(root: Path, *, on: bool = True, change: tuple[str, str] | None = No
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "logs", STAFF_CHANNEL, "logs")
     set_switch(path, ("commands",), "enabled", on)
     text = path.read_text(encoding="utf-8")
@@ -77,11 +77,11 @@ async def said(fake: FakeDiscord, token: str) -> dict[str, Any]:
     return answer
 
 
-async def and_yes(fake: FakeDiscord, opened: str, token: str, **who: Any) -> dict[str, Any]:
+async def and_yes(fake: FakeDiscord, opened: str, token: str, label: str = "Yes", **who: Any) -> dict[str, Any]:
     """It asks first, as the console does: Yes, and what came of it."""
     await wait_for(lambda: any(c["token"] == token and c.get("type") == 4 for c in fake.callbacks), timeout=10)
     asked = next(c for c in fake.callbacks if c["token"] == token)["data"]
-    yes = next(item["custom_id"] for row in asked["components"] for item in row["components"] if item["label"] == "Yes")
+    yes = next(item["custom_id"] for row in asked["components"] for item in row["components"] if item["label"] == label)
     _, token = fake.pick(opened, yes, 2, [], **who)
     await wait_for(lambda: any(f["token"] == token for f in fake.followups), timeout=15)
     return next(f for f in fake.followups if f["token"] == token)
@@ -122,6 +122,8 @@ def test_a_command_has_the_options_it_takes(tmp_path: Path, run: Any, fake: Fake
             assert next(option for option in commands["say"]["options"] if option["name"] == "text")["required"] is True  # !say <text>
             assert [option["name"] for option in commands["endgame"].get("options", [])] == ["server"]
             assert not commands["mods"].get("options")  # it's about the whole of Huragok
+            for name in ("season", "newseason", "endseason"):  # one season for every server: none to pick
+                assert "server" not in [option["name"] for option in commands[name].get("options", [])], name
             assert [choice["value"] for choice in next(option for option in commands["team"]["options"] if option["name"] == "team")["choices"]][:2] == ["red", "blue"]
             assert next(option for option in commands["said"]["options"] if option["name"] == "lines")["type"] == 4
 
@@ -184,7 +186,7 @@ def test_a_mute_from_discord_is_the_games_own_mute(tmp_path: Path, run: Any, fak
             await said(fake, token)
             assert rcon.named("mute")[0]["args"][:2] == [ALICE, "30m"]
             row = huragok.storage.query("SELECT * FROM actions WHERE kind = 'mute'")[0]
-            assert row["by"] == f"user{OWNER_USER}" and row["reason"] == "shouting in voice"
+            assert row["by"] == f"user{FACULTY_USER}" and row["reason"] == "shouting in voice"
 
     run(scenario())
 

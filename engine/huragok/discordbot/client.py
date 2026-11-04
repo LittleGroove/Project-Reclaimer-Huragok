@@ -21,7 +21,7 @@ import discord
 from discord import app_commands
 
 from . import features, records, rest, tidy
-from .config import add_owner, set_guild
+from .config import add_faculty, set_guild
 from .outbox import ANSWER
 from .ranks import Someone, rank_of
 from .rest import INTENT_FLAGS
@@ -36,7 +36,7 @@ logging.getLogger("discord").setLevel(logging.WARNING)  # its own news is for it
 logging.getLogger("discord.client").setLevel(logging.ERROR)  # "voice will NOT be supported": nothing here speaks
 
 FATAL = (discord.LoginFailure, discord.PrivilegedIntentsRequired)
-NOT_OWNER = ("Only the owners named in discord.toml can do this. Huragok's host can give you a code from Huragok's "
+NOT_FACULTY = ("Only the faculty named in discord.toml can do this. Huragok's host can give you a code from Huragok's "
              "window (J) for `/huragok claim`.")
 ANOTHER_DISCORD = "This bot belongs to another Discord."
 CHECK_LIMIT = 3900  # characters in one card: Discord allows 4,096
@@ -86,9 +86,17 @@ def why_down(error: BaseException) -> str:
     return f" ({error})" if isinstance(error, (OSError, aiohttp.ClientError, discord.DiscordException)) else ""
 
 
+RUNNING: list[Any] = []  # each running bot's part: the roles Huragok gives count only as it gives them (rolesync.counted_roles)
+
+
 def someone_from(user: discord.abc.User) -> Someone:
     """Whoever used a command, as far as ranks go (Discord sends their roles with every interaction)."""
     roles = {str(role.id): role.name for role in getattr(user, "roles", [])}
+    guild = getattr(user, "guild", None)
+    if guild is not None and (part := next((one for one in reversed(RUNNING) if one.file.guild == str(guild.id)), None)) is not None:
+        from .rolesync import counted_roles
+
+        roles = counted_roles(part, str(user.id), roles)
     permissions = getattr(user, "guild_permissions", None)
     return Someone(str(user.id), roles, administrator=bool(permissions and permissions.administrator),
                    timed_out=bool(getattr(user, "is_timed_out", lambda: False)()))
@@ -108,6 +116,9 @@ class Bot(discord.Client):
         super().__init__(intents=intents, max_ratelimit_timeout=float(part.file.limit("wait_seconds")),
                          member_cache_flags=discord.MemberCacheFlags.none(), chunk_guilds_at_startup=False)
         self.part = part
+        if part in RUNNING:
+            RUNNING.remove(part)
+        RUNNING.append(part)  # the newest last: it wins over one that never closed
         self.tree = app_commands.CommandTree(self)
         self.tree.add_command(HuragokCommands(self))
         self.tree.on_error = self._command_failed  # type: ignore[method-assign]
@@ -168,6 +179,8 @@ class Bot(discord.Client):
     async def close(self) -> None:
         if self.commands_task is not None:
             self.commands_task.cancel()
+        if self.part in RUNNING:
+            RUNNING.remove(self.part)
         await super().close()
 
     async def try_commands(self) -> None:
@@ -217,9 +230,15 @@ class Bot(discord.Client):
     async def on_guild_role_update(self, _before: Any, _after: Any) -> None:
         self.part.look_at_discord()
 
-    async def on_member_update(self, _before: discord.Member, after: discord.Member) -> None:
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         if self.user is not None and after.id == self.user.id:  # its own roles
             self.part.look_at_discord()
+        elif {role.id for role in before.roles} != {role.id for role in after.roles} and self.part.facts is not None:
+            from .rolesync import role_ids
+
+            changed = {str(role.id) for role in before.roles} ^ {str(role.id) for role in after.roles}
+            if changed & role_ids(self.part):  # one of Huragok's roles given or taken by hand: put right soon
+                self.part.roles_due = True
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         """Added, or added back: being removed took its commands and webhooks, and maybe changed what it may do."""
@@ -280,6 +299,10 @@ class Bot(discord.Client):
                 await picked(self.part, interaction)
             elif custom_id == OPEN:
                 await contact_pressed(self.part, interaction)
+            elif custom_id.startswith("huragok:kills:"):
+                from .statscommands import kills_pressed
+
+                await kills_pressed(self.part, interaction, custom_id)
             else:
                 await pressed(self.part, interaction, custom_id)
         except Exception as error:
@@ -307,9 +330,12 @@ class Bot(discord.Client):
         from .serverpanel import server_panel, status_command
         from .staff import case_command, help_command, open_ticket, tickets_command
 
-        from .asking import appeal_command, report_command, report_message
+        from .asking import appeal_command, link_command, report_command, report_message, side_command, togglesides_command, unlink_command
+        from .statscommands import leaderboard_command, stats_command
 
-        for name, one in (("ticket", open_ticket), ("server", server_panel), ("report", report_command), ("appeal", appeal_command), ("case", case_command), ("status", status_command), ("help", help_command), ("tickets", tickets_command)):
+        for name, one in (("ticket", open_ticket), ("server", server_panel), ("report", report_command), ("appeal", appeal_command), ("case", case_command), ("status", status_command), ("help", help_command), ("tickets", tickets_command),
+                          ("link", link_command), ("unlink", unlink_command), ("stats", stats_command), ("leaderboard", leaderboard_command),
+                          ("side", side_command), ("togglesides", togglesides_command)):
             there = self.tree.get_command(name) is not None
             if name in wanted and not there:
                 self.tree.add_command(one)
@@ -440,7 +466,7 @@ def findings_cards(findings: list[features.Finding], left: list[features.Step] |
 
 
 class HuragokCommands(app_commands.Group):
-    """/huragok: setting the bot up from inside Discord, for the owners named in discord.toml. Every answer is private."""
+    """/huragok: setting the bot up from inside Discord, for the faculty named in discord.toml. Every answer is private."""
 
     def __init__(self, bot: Bot) -> None:
         super().__init__(name="huragok", description="Set up and check Huragok's bot")  # only ever in Discords, by sync
@@ -450,21 +476,21 @@ class HuragokCommands(app_commands.Group):
     def part(self) -> DiscordPart:
         return self.bot.part
 
-    async def _refused(self, interaction: discord.Interaction, *, owner: bool = True) -> bool:
+    async def _refused(self, interaction: discord.Interaction, *, faculty: bool = True) -> bool:
         """Says why not, when this Discord or this person may not."""
         mine = self.part.file.guild
         if mine and str(interaction.guild_id) != mine:
             await answer(interaction, ANOTHER_DISCORD)
             return True
-        if owner and rank_of(self.part.file, someone_from(interaction.user)) != "owner":
-            await answer(interaction, NOT_OWNER)
+        if faculty and rank_of(self.part.file, someone_from(interaction.user)) != "faculty":
+            await answer(interaction, NOT_FACULTY)
             return True
         return False
 
-    @app_commands.command(description="Become an owner, with the code from Huragok's window (J)")
+    @app_commands.command(description="Join the faculty, with the code from Huragok's window (J)")
     @app_commands.describe(code="The code Huragok's window shows")
     async def claim(self, interaction: discord.Interaction, code: str) -> None:
-        if await self._refused(interaction, owner=False):
+        if await self._refused(interaction, faculty=False):
             return
         if not records.use_code(self.part.records, code, str(interaction.user.id)):
             await answer(interaction, "That code isn't right, or it ran out. Huragok's window (J) makes a new one.")
@@ -473,11 +499,15 @@ class HuragokCommands(app_commands.Group):
         guild = interaction.guild
         if not config.guild and guild is not None:
             set_guild(self.part.path, str(guild.id), guild.name)
-        add_owner(self.part.path, str(interaction.user.id), interaction.user.name)
-        log.info("%s claimed the bot from Discord: an owner now", interaction.user.name)
+        add_faculty(self.part.path, str(interaction.user.id), interaction.user.name)
+        log.info("%s claimed the bot from Discord: faculty now", interaction.user.name)
         await self.part.reload(force=True)
         self.part.audit("setup", say(self.part.file, "audit.claim", who=interaction.user.name))
-        await answer(interaction, "You're an owner of this bot now. `/huragok setup` is next.")
+        player = await self.part.links.faculty_claimed(str(interaction.user.id))  # linked already: faculty in game too
+        if player:
+            self.part.audit("link", say(self.part.file, "audit.faculty", player=player))
+        await answer(interaction, "You're faculty on this bot now" + (f", and {player} is faculty in game" if player else "")
+                     + ". `/huragok setup` is next.")
 
     @app_commands.command(description="Set the bot up: ranks, channels, features")
     async def setup(self, interaction: discord.Interaction) -> None:

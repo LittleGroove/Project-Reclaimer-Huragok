@@ -8,13 +8,13 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, BRAVO, OWNER
+from conftest import ALICE, BRAVO, FACULTY
 from test_bot_running import OTHER, answer_text
-from testkit.fake_discord import GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import GUILD, MOD_ROLE, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, tells_to, wait_for
 
 from huragok.core.storage import Storage
-from huragok.discordbot.config import add_owner, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 
 PROBATION_ROLE = "5103"
 
@@ -35,7 +35,7 @@ def bot_file(root: Path, *, notes: bool = True, watch: bool = True, moderation: 
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name in ("staff", "logs"):
         set_channel(path, name, STAFF_CHANNEL, "admin-log")
     set_switch(path, ("notes",), "enabled", notes)
@@ -277,13 +277,13 @@ def test_whois_shows_them_in_game(tmp_path: Path, run: Any, fake: FakeDiscord) -
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):  # the bot off: what's written still shows
             await rcon.join(3, "Alice", ALICE)
-            await rcon.join(1, "Owner", OWNER)
+            await rcon.join(1, "Faculty", FACULTY)
             await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 2, timeout=10)
             huragok.storage.set_flag(ALICE, "watch", "spawn killing", "Mod (Discord)")
             huragok.storage.add_note(ALICE, "said sorry", "Admin (Discord)")
-            await rcon.chat(OWNER, "Owner", "!whois Alice")
-            await wait_for(lambda: any("Note by Admin (Discord): said sorry" in line for line in tells_to(rcon, OWNER)), timeout=10)
-            assert any("Flagged watch by Mod (Discord): spawn killing" in line for line in tells_to(rcon, OWNER))
+            await rcon.chat(FACULTY, "Faculty", "!whois Alice")
+            await wait_for(lambda: any("Note by Admin (Discord): said sorry" in line for line in tells_to(rcon, FACULTY)), timeout=10)
+            assert any("Flagged watch by Mod (Discord): spawn killing" in line for line in tells_to(rcon, FACULTY))
 
     run(scenario())
 

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from .commandsfile import Permissions, PermissionsError, load_permissions
+from .commandsfile import Permissions, PermissionsError, load_permissions, rank_named, rank_word
 from .priority import PRIORITIES
 from .priority import DEFAULT as DEFAULT_PRIORITY
 from .serverfolders import SERVERS_FOLDER, FolderProblem, ServerConfig, find_server_folders, read_servers
@@ -52,7 +52,7 @@ BACKEND_ALIASES = {"windows": "process"}  # 0.1 called the process backend `wind
 CORE_TABLES = {"rcon", "keepalive", "updates", "restarts", "process", "windows", "docker", "command", "server",
                "setup", "relay", "server_updates", "workshop_updates"}
 WORKSHOP_MIN_MINUTES = 5  # the server program never looks more often than this
-RELAY_ROLES = ("moderator", "admin", "owner")
+RELAY_ROLES = ("moderator", "admin", "faculty")
 PROGRAM_RELEASES = "ProjectReclaimer/project-reclaimer-releases"
 PART_SWITCHES = {"enabled", "dry_run", "handler_timeout"}
 PROCESS_KEYS = {"executable", "command", "stop_timeout", "stop_servers_on_exit", "priority"}
@@ -167,7 +167,7 @@ class SetupSettings:
 class RelayUser:
     name: str
     password: str
-    role: str  # moderator, admin or owner
+    role: str  # moderator, admin or faculty
 
 
 @dataclass
@@ -409,7 +409,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
         entry = Table(raw if isinstance(raw, dict) else {}, f"[[relay.user]] {number}")
         name = entry.get("name", str, "").strip()
         password = entry.get("password", str, "")
-        role = entry.get("role", str, "moderator").strip().lower()
+        role = rank_named(entry.get("role", str, "moderator"))
         if not name:
             raise ConfigError(f"{entry.where}: has no name")
         if not 8 <= len(password) <= 128:
@@ -418,7 +418,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
             raise ConfigError(f"[[relay.user]] {name}: another user has the same password, and the password is "
                               "what tells users apart")
         if role not in RELAY_ROLES:
-            raise ConfigError(f"[[relay.user]] {name}: role must be one of {', '.join(RELAY_ROLES)}")
+            raise ConfigError(f"[[relay.user]] {name}: role must be one of {', '.join(rank_word(one) for one in RELAY_ROLES)}")
         users.append(RelayUser(name, password, role))
     program_updates = top.table("server_updates")
     install = program_updates.get("install", str, "ask").strip().lower()

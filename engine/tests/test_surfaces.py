@@ -107,14 +107,14 @@ def test_a_broken_settings_file_is_refused_with_its_reason(tmp_path: Path, capsy
     assert stop.value.code == 2 and "Settings problem:" in both(capsys)
 
 
-def test_the_start_summary_warns_about_no_owner_and_no_servers(tmp_path: Path, caplog) -> None:
+def test_the_start_summary_warns_about_no_faculty_and_no_servers(tmp_path: Path, caplog) -> None:
     root = tmp_path / "reclaimer"
     (root / "SERVERS").mkdir(parents=True)
     settings = load(write_settings(root))
     with caplog.at_level(logging.INFO):
         run_module.summary(settings)
     text = messages(caplog)
-    assert "Running: commands" in text and "Nobody is owner yet: put your player ID under [owner] players" in text
+    assert "Running: commands" in text and "Nobody is faculty yet: put your player ID under [faculty] players" in text
     assert f"Each server is one folder in {root / 'SERVERS'}" in text
 
 

@@ -14,7 +14,7 @@ from testkit.fake_discord import (
 from huragok.discordbot import rest
 from huragok.discordbot.config import load, set_rank_roles
 from huragok.discordbot.facts import ALL_PERMISSIONS, Facts, gather
-from huragok.discordbot.ranks import Someone, can_act, is_owner, rank_of
+from huragok.discordbot.ranks import Someone, can_act, is_faculty, rank_of
 from huragok.discordbot.rest import PERMISSIONS as P
 
 
@@ -148,7 +148,7 @@ def test_roles_and_channels_by_id_or_name(fake: FakeDiscord) -> None:
     assert facts.find_role("nothing") is None and facts.find_channel("") is None
 
 
-def _guild(everyone: int = 0, own: int = 0, *, owner: str = "1") -> Facts:
+def _guild(everyone: int = 0, own: int = 0, *, owner: str = "1") -> Facts:  # Discord's own owner of the server
     return Facts(user={"id": "9"}, guild={"id": "100", "owner_id": owner},
                  roles=[{"id": "100", "permissions": str(everyone), "position": 0},
                         {"id": "200", "permissions": str(own), "position": 5},
@@ -214,11 +214,11 @@ def test_the_highest_mapped_role_counts_by_id_or_name(tmp_path: Path) -> None:
     assert rank_of(config, Someone("1", {"8": "other"})) == "player"
 
 
-def test_owners_are_named_never_given(tmp_path: Path) -> None:
-    config = ranks_file(tmp_path, '[ranks]\nowners = ["111"]\nadmin = ["a"]\n')
-    assert is_owner(config, "111") and rank_of(config, Someone("111")) == "owner"
+def test_faculty_are_named_never_given(tmp_path: Path) -> None:
+    config = ranks_file(tmp_path, '[ranks]\nfaculty = ["111"]\nadmin = ["a"]\n')
+    assert is_faculty(config, "111") and rank_of(config, Someone("111")) == "faculty"
     assert rank_of(config, Someone("222", {"1": "a"}, administrator=True)) == "admin"
-    assert rank_of(config, Someone("222", {"1": "owners"})) == "player"
+    assert rank_of(config, Someone("222", {"1": "faculty"})) == "player"
 
 
 def test_discords_own_administrators_count_only_as_the_file_says(tmp_path: Path) -> None:
@@ -227,10 +227,10 @@ def test_discords_own_administrators_count_only_as_the_file_says(tmp_path: Path)
     assert rank_of(config, Someone("1", administrator=False)) == "player"
 
 
-def test_a_timeout_suspends_a_rank_but_not_an_owner(tmp_path: Path) -> None:
-    config = ranks_file(tmp_path, '[ranks]\nadmin = ["a"]\nowners = ["111"]\n')
+def test_a_timeout_suspends_a_rank_but_not_an_faculty(tmp_path: Path) -> None:
+    config = ranks_file(tmp_path, '[ranks]\nadmin = ["a"]\nfaculty = ["111"]\n')
     assert rank_of(config, Someone("1", {"1": "a"}, timed_out=True)) == "player"
-    assert rank_of(config, Someone("111", timed_out=True)) == "owner"
+    assert rank_of(config, Someone("111", timed_out=True)) == "faculty"
     config = ranks_file(tmp_path, '[ranks]\nadmin = ["a"]\ntimeout_suspends = false\n')
     assert rank_of(config, Someone("1", {"1": "a"}, timed_out=True)) == "admin"
 
@@ -245,7 +245,7 @@ def test_a_rank_on_some_servers_only(tmp_path: Path) -> None:
 
 
 def test_who_can_act() -> None:
-    assert can_act("probationary-moderator") and can_act("owner") and not can_act("member") and not can_act("player")
+    assert can_act("probationary-moderator") and can_act("faculty") and not can_act("member") and not can_act("player")
 
 
 def test_ranks_can_be_set_from_a_real_role_list(tmp_path: Path, fake: FakeDiscord) -> None:

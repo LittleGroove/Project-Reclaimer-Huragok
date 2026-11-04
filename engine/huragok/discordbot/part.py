@@ -38,6 +38,7 @@ from .contact import Contact
 from .config import FILE, DiscordConfig, DiscordFileError, load, reload_if_changed
 from .facts import Facts, gather
 from .feeds import EVENTS, Feeds
+from .links import Links, shown_code
 from .outbox import Job, Outbox
 from .reports import ALREADY, OFF, TAKEN, TOO_MANY, TOO_SOON, Reports
 from .rest import BadToken, DiscordError
@@ -111,6 +112,12 @@ class DiscordPart(Part):
         self.chosen: dict[str, str] = {}  # what a choice's value stands for
         self.reports_pinged: set[int] = set()
         self.appeals = Appeals(self)
+        self.links = Links(self)
+        self.roles_due = True  # rolesync.py: a look soon, and then now and then
+        self.roles_looked = 0.0
+        self.roles_running = False  # one look at a time (audit 0.6.1, 3.11)
+        self.placing: dict[str, bool] = {}  # servers whose sides placement runs now: whether another's asked for (sides.py)
+        self.roles_key: tuple[Any, ...] | None = None  # who should wear what, at the last tick (rolesync.due_key)
         self.contact = Contact(self)
         self.kept_tried: dict[str, float] = {}  # kept.py: when each kept post was last sent
         self.panel_open: dict[int, Any] = {}  # panels.py: each person's setup panel, as only the latest may delete itself
@@ -145,10 +152,35 @@ class DiscordPart(Part):
         if event.name in ("server.ready", "server.adopted"):
             self.feeds.server_up(event.server or "")
         self.feeds.handle(event)
+        if event.name == "supervisor.commands_reloaded":  # a rank changed, maybe: rank roles follow (rolesync.py)
+            self.roles_due = True
+        if event.name == "stats.game" and self.facts is not None:  # the boards moved: so may the top roles
+            from . import rolesync
+
+            self.roles_due = self.roles_due or rolesync.on(self, "top_roles")
         if event.name == "supervisor.commands_reloaded" and self.client is not None:  # a command switched off in commands.toml goes from Discord too
             self.client.commands_soon()
         if event.name == "rcon.phase" and event.get("phase") == "playing" and event.server:
             self.alerts.game_started(event.server, str(event.get("mode") or ""), str(event.get("map") or ""))
+        if event.server and event.server in self.ctx.servers and self.takes_sides():  # onto the side they chose (sides.py)
+            from . import sides
+
+            if event.name == "rcon.phase" and event.get("phase") in (*sides.LOBBY, "finished"):
+                sides.new_game(self, event.server)  # a switch of their own lasts the game it was made in
+            if event.name == "rcon.phase" and (event.get("phase") == "playing" or event.get("phase") in sides.LOBBY):
+                sides.soon(self, event.server)
+            elif event.name in ("rcon.join", "rcon.leave") and (self.ctx.servers[event.server].phase == "playing"
+                                                                or self.ctx.servers[event.server].phase in sides.LOBBY):
+                sides.soon(self, event.server)  # someone joining or leaving may be what makes a waiting move fit
+                # and once the server takes team changes again (refused for a few seconds after a join or leave), and
+                # the one who joined has a team of their own (audit 0.6.1, 4.5; second audit, 8.9)
+                sides.soon(self, event.server, delay=sides.MOVE_SECONDS)
+        if event.name in ("stats.game", "stats.season"):
+            await self.feeds.stats_happened(event)
+        if event.name == "stats.season" and event.get("action") == "ended":
+            from . import sides
+
+            sides.season_ended(self)
 
     def where_to_run(self, player_id: str = "", preferred: str = "") -> str:
         """The server a command from Discord runs on, when nobody's said: where the player is; else the one it's about, if that's up; else any that's up. A stopped server can't do anything, and what's done
@@ -319,7 +351,7 @@ class DiscordPart(Part):
     def staff_names(self) -> list[tuple[str, str]]:
         """(player ID, name) for every member of staff commands.toml lists."""
         permissions = self.ctx.permissions
-        staff = set(permissions.members.get("owner", set())) | set(permissions.members.get("moderator", set()))
+        staff = set(permissions.members.get("faculty", set())) | set(permissions.members.get("moderator", set()))
         found = []
         for player_id in staff:
             record = self.ctx.players.get(player_id)
@@ -374,6 +406,14 @@ class DiscordPart(Part):
     def has_open_tickets(self) -> bool:
         return self.file.mode == "bot" and (self.takes_calls() or self.takes_reports())
 
+    def takes_links(self) -> bool:
+        return self.links.takes()
+
+    def takes_sides(self) -> bool:
+        from . import sides
+
+        return sides.takes(self)
+
     @command("calladmin", help="Call the staff on Discord", usage="[why]", role="player", when="takes_calls")
     async def calladmin(self, call: Any) -> None:
         if self._call(call.server, call.player.id, call.player.name, call.text):
@@ -403,6 +443,69 @@ class DiscordPart(Part):
             await call.reply(callout("request", "Thanks: the staff have it on Discord."))
         elif outcome == TAKEN:
             await call.reply("Sent.")  # so they know it worked, whatever else isn't said
+
+    @command("link", help="Your stats under your name on Discord: a code, told only to you, to give /link there", role="player", when="takes_links")
+    async def link(self, call: Any) -> None:
+        if call.channel == "discord":
+            await call.reply("That's typed in game: the code comes to you there, privately. Then /link it here.")
+            return
+        linked = self.links.of_player(call.player.id)
+        if linked is not None:
+            await call.reply(f"You're linked to {linked['member_name']} on Discord already: /unlink there undoes it.")
+            return
+        code = self.links.new_code(call.player.id, call.player.name)
+        if not code:
+            await call.reply("That's three codes in an hour: use the last one you were told, or ask again later.")
+            return
+        from .standings import counted
+
+        minutes = counted(self.links.options.get("code_minutes", 10), 10, 1, 1440)  # an inf broke !link (9.9)
+        where = f"in {self.guild_name} on Discord" if self.guild_name else "on Discord"
+        await call.reply(callout("link code", f"Your link code is {shown_code(code)}: {where}, type /link {shown_code(code)} "
+                                              f"within {minutes} minute{'s' if minutes != 1 else ''}. Only you can see this."))
+
+    @command("side", help="The team you're always put on: red, blue, or off", usage="<red|blue|off>", role="member",
+             when="takes_sides")
+    async def side(self, call: Any) -> None:
+        from . import sides
+
+        if call.channel == "discord":  # a side is a player's: here it's /side (audit 0.6.1, 4.7)
+            await call.reply("That's a player's, typed in game; here it's /side, once your account's linked.")
+            return
+        wanted = call.text.strip().lower()
+        if wanted not in ("red", "blue", "off", "none"):
+            await call.reply(f"Use: {call.prefix}side red, blue or off")
+            return
+        held = sides.locked_to(self, call.player.id)
+        if held and held != wanted:
+            await call.reply(f"You're {held.title()} until this season ends: sides are kept for the season here.")
+            return
+        sides.choose(self, call.player.id, "" if wanted in ("off", "none") else wanted)
+        if wanted in ("off", "none"):
+            await call.reply("You'll play wherever the game puts you.")
+            return
+        await call.reply(f"You're {wanted.title()} from now on: put on that team during a round, as soon as it can't "
+                         f"end the game or leave the teams uneven. {call.prefix}togglesides stops it.")
+        if call.server in self.ctx.servers:
+            sides.soon(self, call.server)
+
+    @command("togglesides", help="Stop being put on your side, or start again", role="member", when="takes_sides")
+    async def togglesides(self, call: Any) -> None:
+        from . import sides
+
+        if call.channel == "discord":
+            await call.reply("That's a player's, typed in game; here it's /togglesides, once your account's linked.")
+            return
+        if kept := sides.held(self, call.player.id):  # [sides] force_for_season (the host's call, 3 November 2026)
+            await call.reply(f"You're kept on {kept.title()} until this season ends: sides are forced here.")
+            return
+        now = sides.toggle(self, call.player.id)
+        if now is None:
+            await call.reply(f"You haven't chosen a side: {call.prefix}side red or {call.prefix}side blue.")
+            return
+        await call.reply("You're put on your side again." if now else "You'll play wherever the game puts you, keeping your side for when you switch it back.")
+        if now and call.server in self.ctx.servers:
+            sides.soon(self, call.server)
 
     @command("mods", help="Which staff are on the servers now", role="player", when="discord_on")
     async def mods(self, call: Any) -> None:
@@ -455,6 +558,35 @@ class DiscordPart(Part):
 
             keep_menu(self)
             self.contact.keep_card()
+            from .standings import keep_boards
+
+            await keep_boards(self, time.time())
+            self._roles_tick(time.time())
+
+    def _roles_tick(self, now: float) -> None:
+        """Huragok's roles (rank, top and side roles) put right every [roles] check_minutes, and soon after a change (rolesync.py)."""
+        from . import rolesync
+
+        if self.facts is None or not any(rolesync.on(self, key) for key in ("roles", "top_roles", "side_roles")):
+            return
+        if (key := rolesync.due_key(self)) != self.roles_key:  # a rank, a link, a side or a setting changed
+            self.roles_due, self.roles_key = True, key
+        if self.roles_running or rolesync.changes_waiting(self):  # the last look first, and what it asked for
+            return
+        from .standings import counted
+
+        every = counted(self.file.section("roles").get("check_minutes", 15), 15, 5, 1440) * 60.0  # 9.9
+        if self.roles_due or now - self.roles_looked >= every:
+            self.roles_due, self.roles_looked, self.roles_running = False, now, True
+            background(self._put_roles_right(), "putting Huragok's roles right", self.log)
+
+    async def _put_roles_right(self) -> None:
+        from . import rolesync
+
+        try:
+            await rolesync.put_roles_right(self)
+        finally:
+            self.roles_running = False
 
     @every(seconds=60)
     async def ticket_sweep(self) -> None:

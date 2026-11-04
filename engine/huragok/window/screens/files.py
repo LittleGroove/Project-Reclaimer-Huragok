@@ -3,7 +3,7 @@
 D lists Huragok's five files above the servers:
   S  settings.toml   how Huragok runs, in groups (the Superintendent's, Vergil's, Huragok's own), each change
                      checked as Huragok will read the file at its next start, and the moderators' console logins
-  C  commands.toml   who's who (owners, moderators, members, picked from the players seen), which role may use
+  C  commands.toml   who's who (faculty, moderators, members, picked from the players seen), which role may use
                      each in-game command, which are off, the prefix and the cooldown
   A  automod.txt     Vergil's rules: the words, then what each strike does, picked from ready-made ladders or
                      asked one part at a time, each shown as players will meet it; a line of chat can be tried
@@ -29,7 +29,7 @@ from ...core import desktop
 from ...core import hostsettings as hs
 from ...core.commandsfile import (
     COMMAND_ROLES, LISTED, ROLES, TITLES, PermissionsError, add_player, all_commands, load_permissions, make_commands_toml,
-    player_notes, remove_player, set_command_off, set_command_role, set_top,
+    player_notes, rank_plural, rank_word, remove_player, set_command_off, set_command_role, set_top,
 )
 from ...core.settings import COMMANDS_FILE
 from ...core.storage import recent_players
@@ -46,12 +46,13 @@ from ...players.messages.intervals import (
     summary,
 )
 from ...players.messages.intervals import FILE as MESSAGES_FILE
+from ...players.roles import a_role
 from ..controllers import Row
 from .base import Screens
 
 FILES = ("S", "C", "A", "N", "I")  # D's letters for Huragok's own files
 EVERY_TIMES = ("5m", "10m", "15m", "30m", "45m", "1h", "2h")  # D -> I's times to pick from (T types another)
-ROLE_TEXT = {"owner": "you: everything", "moderator": "what they can do is exactly what the commands give them",
+ROLE_TEXT = {"faculty": "you, and whoever claims the Discord bot: everything", "moderator": "what they can do is exactly what the commands give them",
              "member": "regulars, friends, clan: no vote can kick them"}
 # (what it does; then as rule_line() takes them: mute times, muted for good, the kicks' start, kick times, the ban)
 LADDERS: list[tuple[str, list[str], int | None, int | None, list[str], int | None]] = [
@@ -123,7 +124,7 @@ class FileScreens(Screens):
             permissions = load_permissions(path)
         except PermissionsError as error:
             return f"can't be read: {error}"
-        sizes = {role: len(permissions.members.get(role, set())) for role in ("owner", "moderator", "member")}
+        sizes = {role: len(permissions.members.get(role, set())) for role in ("faculty", "moderator", "member")}
         counts = [f"{size} {role}{'s' if size != 1 else ''}" for role, size in sizes.items()]
         return " · ".join(counts) + (f" · {len(permissions.off)} off" if permissions.off else "")
 
@@ -358,8 +359,8 @@ class FileScreens(Screens):
             self.heading("Huragok", "Roles and commands", note=f"{COMMANDS_FILE} · Vergil reads it again within "
                                                                "seconds")
             moved = sum(1 for name, spec in all_commands().items() if permissions.role_for(spec) != spec.role)
-            options = [(str(n), f"{role.capitalize()}s ({len(permissions.members.get(role, set()))})",
-                        ROLE_TEXT[role]) for n, role in enumerate(("owner", "moderator", "member"), 1)]
+            options = [(str(n), f"{rank_plural(role).capitalize()} ({len(permissions.members.get(role, set()))})",
+                        ROLE_TEXT[role]) for n, role in enumerate(("faculty", "moderator", "member"), 1)]
             options += [("4", f"Commands ({len(all_commands())})", f"which role may use each: {moved} moved from "
                                                                    f"its default, {len(permissions.off)} off"),
                         ("5", "Prefix", f"{permissions.prefix} now: what commands start with"),
@@ -370,7 +371,7 @@ class FileScreens(Screens):
                 return
             try:
                 if choice in ("1", "2", "3"):
-                    await self._role_players(settings, path, ("owner", "moderator", "member")[int(choice) - 1])
+                    await self._role_players(settings, path, ("faculty", "moderator", "member")[int(choice) - 1])
                 elif choice == "4":
                     await self._command_roles(path)
                 elif choice == "5":
@@ -399,10 +400,10 @@ class FileScreens(Screens):
         while True:
             members = sorted(load_permissions(path).members.get(role, set()))
             notes = player_notes(path)
-            self.heading("Huragok", "Roles and commands", f"{role.capitalize()}s", note=ROLE_TEXT[role])
+            self.heading("Huragok", "Roles and commands", rank_plural(role).capitalize(), note=ROLE_TEXT[role])
             rows = [(*_who_and_how(notes.get(pid, ""), pid), f"{pid[:16]}…") for pid in members]
             panel = self.listing([(who, player_id, how) for who, how, player_id in rows]
-                                 + [(f"add a{'n' if role == 'owner' else ''} {role}", "", "")],
+                                 + [("add a faculty member" if role == "faculty" else f"add {a_role(role)}", "", "")],
                                  keys=[str(n) for n in range(1, len(members) + 1)] + ["A"])
             answer = await self.prompt_line("  Which? (a number takes them out, A adds one; Esc goes back)",
                                             panel=panel)
@@ -415,9 +416,9 @@ class FileScreens(Screens):
                 elif answer.isdecimal() and 1 <= int(answer) <= len(members):
                     player_id = members[int(answer) - 1]
                     who = _who_and_how(notes.get(player_id, ""), player_id)[0]
-                    if await self.prompt_yes_no(f"  Take {who} out of the {role}s?", False):
+                    if await self.prompt_yes_no(f"  Take {who} out of the {rank_plural(role)}?", False):
                         remove_player(path, role, player_id)
-                        self.note(f"{who} isn't {('an ' if role == 'owner' else 'a ') + role} any more.", "green")
+                        self.note(f"{who} isn't {a_role(role)} any more.", "green")
             except (PermissionsError, OSError) as error:
                 self.note(f"Not changed: {error}", "yellow")
                 await self.wait_any_key(6)
@@ -448,7 +449,7 @@ class FileScreens(Screens):
         note = f"{name}: added as {role} in Huragok's window on {time.strftime('%Y-%m-%d')}" if name else \
             f"added as {role} in Huragok's window on {time.strftime('%Y-%m-%d')}"
         moved = add_player(path, role, player_id, note)
-        self.note(f"{who} is {('an ' if role == 'owner' else 'a ') + role} now"
+        self.note(f"{who} is {a_role(role)} now"
                   + (f" (no longer {', '.join(moved)}: one role each)" if moved else "") + ".", "green")
 
     async def _command_roles(self, path: Path) -> None:

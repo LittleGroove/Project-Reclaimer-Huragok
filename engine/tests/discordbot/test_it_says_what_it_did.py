@@ -404,7 +404,7 @@ def test_a_moderators_shorten_on_a_ban_is_refused_before_the_form(tmp_path: Path
         audit_file(tmp_path, ("appeals",))
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
-            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Owner", source="in game", reason="x")
+            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Faculty", source="in game", reason="x")
             number = part.appeals.file("7777", "Alice", ALICE, "Alice", "ban", [("What happened?", "x")])
             await wait_for(lambda: part.tickets.get(number)["message"], timeout=10)
             card = card_of(huragok, number)
@@ -566,7 +566,7 @@ def test_a_stranger_with_only_a_name_cant_lock_the_player_out(tmp_path: Path, ru
         set_switch(path, ("appeals",), "in_reason", "Appeal: /appeal {code}")
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
-            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Owner", source="in game", reason="x")
+            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Faculty", source="in game", reason="x")
             number = part.appeals.file("7777", "Stranger", ALICE, "Alice", "ban", [("What happened?", "junk")])
             assert "with only a name" in str(part.tickets.get(number)["card"])
             part.appeals.decide(number, "denied", "Mod", why="no")
@@ -598,7 +598,7 @@ def test_someone_with_the_code_joins_a_strangers_appeal_and_is_who_hears(tmp_pat
         audit_file(tmp_path, ("appeals",))
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
-            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Owner", source="in game", reason="x")
+            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Faculty", source="in game", reason="x")
             number = part.appeals.file("7777", "Stranger", ALICE, "Alice", "ban", [("What happened?", "junk")])
             assert part.appeals.file("8888", "Alice", ALICE, "Alice", "ban", [("What happened?", "it's me")], proved=True) == number
             assert any("it's me" in line for line in lines_on(huragok, number))
@@ -613,7 +613,7 @@ def test_a_new_appeal_on_a_decided_card_is_a_new_card_with_its_words(tmp_path: P
         audit_file(tmp_path, ("appeals",))
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
-            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Owner", source="in game", reason="x")
+            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Faculty", source="in game", reason="x")
             first = part.appeals.file("7777", "Alice", ALICE, "Alice", "ban", [("What happened?", "one")])
             part.appeals.decide(first, "denied", "Mod", why="no")
             part.tickets.touched(first)  # someone acts on the card, so it's back

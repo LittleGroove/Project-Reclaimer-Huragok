@@ -172,7 +172,7 @@ words = "automod.txt"
 names = "names.txt"                  # banned names: !strike <player> name adds one
 forget_after_days = 0                # strikes older than this stop counting; 0: never
 name = "Vergil"                      # players read "kicked by Vergil"
-exempt_roles = ["admin", "owner"]    # never acted on (roles as in commands.toml; "player" is everyone)
+exempt_roles = ["admin", "faculty"]    # never acted on (roles as in commands.toml; "player" is everyone)
 check_names = true                   # kick names with a word from automod.txt in them (names.txt always applies)
 # How a word from automod.txt catches a player's name. "anywhere": anywhere in
 # it, so hitler catches Hitler, DasHitler and xXhitlerXx; a short word catches
@@ -189,7 +189,7 @@ name_match = "anywhere"
 # Huragok's stay on their server too. Each server's own Vergil is on its page in D.
 across_servers = true
 # The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick
-# is a ban in all but name. Admins and owners have no limit.
+# is a ban in all but name. Admins and faculty have no limit.
 moderators_kick_at_most = "1d"
 cooldown_seconds = 10                # lines this close together count as one strike
 split_seconds = 10                   # a word split over lines this close together is caught
@@ -210,7 +210,7 @@ enabled = false
 address = "127.0.0.1"
 port_offset = 1000
 source_port_offset = 2000
-# One block per moderator. role: moderator, admin or owner. Passwords are 8 to 128
+# One block per moderator. role: moderator, admin or faculty. Passwords are 8 to 128
 # characters, no two alike (the password is what tells moderators apart).
 # [[relay.user]]
 # name = "Alice"

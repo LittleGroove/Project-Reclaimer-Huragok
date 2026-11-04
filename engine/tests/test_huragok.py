@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from conftest import ALICE, BRAVO, MOD, OWNER, staff, wait_for, write_server_folder, write_settings
+from conftest import ALICE, BRAVO, MOD, FACULTY, staff, wait_for, write_server_folder, write_settings
 from testkit.fake_rcon import FakeRcon
 from testkit.running import SERVER, everyone_joins, running, says, tells_to
 
@@ -55,18 +55,18 @@ def test_commands_ambiguous_names_and_admin_commands(tmp_path: Path, run) -> Non
             await everyone_joins(fake)
             await fake.join(6, "Alice", "9" * 64)
             await wait_for(lambda: len(supervisor.superintendent.states[SERVER].players) == 6)
-            await fake.chat(OWNER, "Owner", "!kick alice")
+            await fake.chat(FACULTY, "Faculty", "!kick alice")
             # Two players with one name: each with what tells them apart (how long they've been on, the start of
             # their player ID), and the #number to use.
             await wait_for(lambda: any(re.fullmatch(r"'Alice' could be #3 Alice \(on \d+s, cccccccc\); #6 Alice "
                                                     r"\(on \d+s, 99999999\)\. Use the #number\.", t)
-                                       for t in tells_to(fake, OWNER)))
+                                       for t in tells_to(fake, FACULTY)))
             assert not fake.named("kick")
-            await fake.chat(OWNER, "Owner", "!map The Pit")
+            await fake.chat(FACULTY, "Faculty", "!map The Pit")
             assert (await wait_for(lambda: fake.named("map")))[0]["command"] == "map The Pit"
             await fake.chat(MOD, "Mod", "!map Guardian")  # admins only
             await wait_for(lambda: any("admins and up" in t for t in tells_to(fake, MOD)))
-            await fake.chat(OWNER, "Owner", f"!ban {'8' * 64} 7d alt account")  # offline, by ID
+            await fake.chat(FACULTY, "Faculty", f"!ban {'8' * 64} 7d alt account")  # offline, by ID
             ban = await wait_for(lambda: fake.named("ban"))
             assert ban[0]["args"] == ["8" * 64, "7d", "alt account"]
 
@@ -78,8 +78,8 @@ def test_dry_run_records_without_sending(tmp_path: Path, run) -> None:
         async with running(tmp_path, 'dry_run = true') as (sup, fake, seen):
             await everyone_joins(fake)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
-            await fake.chat(OWNER, "Owner", "!kick Bravo spam")
-            await wait_for(lambda: any("Dry run" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!kick Bravo spam")
+            await wait_for(lambda: any("Dry run" in t for t in tells_to(fake, FACULTY)))
             assert not fake.named("kick")
             assert sup.storage.actions_for(BRAVO)[0]["dry_run"] == 1
 
@@ -106,8 +106,8 @@ def test_a_broken_part_is_switched_off_alone(tmp_path: Path, run, monkeypatch) -
             off = await wait_for(lambda: next((e for e in seen if e.name == "supervisor.part_disabled"), None))
             assert off["part"] == "broken" and "failures" in off["reason"]
             assert sup.runners["commands"].enabled
-            await fake.chat(OWNER, "Owner", "!players")
-            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!players")
+            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, FACULTY)))
 
     run(scenario())
 
@@ -160,8 +160,8 @@ def test_a_setting_of_the_wrong_kind_keeps_its_part_off_not_huragok(tmp_path: Pa
             assert "wrongkind" not in sup.runners and "commands" in sup.runners
             assert "a setting it can't use (TypeError" in sup.part_problems["wrongkind"]
             await everyone_joins(fake)
-            await fake.chat(OWNER, "Owner", "!players")
-            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!players")
+            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, FACULTY)))
             assert "a setting it can't use (TypeError" in config_problem(sup.settings, "wrongkind", WrongKind)
 
     run(scenario())
@@ -350,8 +350,8 @@ def test_commands_toml_edits_apply_while_running(tmp_path: Path, run) -> None:
             sup.vergil.check_files()
             await fake.chat(ALICE, "Alice", "!players")
             await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, ALICE)))
-            await fake.chat(OWNER, "Owner", "!kick Bravo")
-            await wait_for(lambda: any("Unknown command !kick" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!kick Bravo")
+            await wait_for(lambda: any("Unknown command !kick" in t for t in tells_to(fake, FACULTY)))
 
             path.write_text("[everyone\n", encoding="utf-8")  # a mistake: what was in force stays
             os.utime(path, (time.time() + 10, time.time() + 10))

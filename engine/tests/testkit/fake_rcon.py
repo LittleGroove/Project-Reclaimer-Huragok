@@ -114,6 +114,10 @@ class FakeRcon:
                                         "them one."}
         if name == "immune":
             return self._immune(message)
+        if name == "team" and len(words) == 2:  # the move made, as the real server makes it a moment later
+            player = next((p for p in self.players if p["id"] == words[0].lower() or f"#{p['number']}" == words[0]), None)
+            if player is not None:
+                player["team"] = words[1].capitalize()
         if name == "players":
             return {"ok": True, "text": f"{len(self.players)} players",
                     "data": {"count": len(self.players), "max_players": 16, "players": self.players}}

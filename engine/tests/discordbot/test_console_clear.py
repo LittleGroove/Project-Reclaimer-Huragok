@@ -407,7 +407,7 @@ def test_an_answer_a_while_later_is_gone_from_the_channel(tmp_path: Path, run: A
 
 
 def test_what_was_there_before_it_was_the_console_is_never_touched(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """An owner points the console at a channel that already has years in it."""
+    """Faculty points the console at a channel that already has years in it."""
     async def scenario() -> None:
         console_file(tmp_path)
         async with running(tmp_path) as (huragok, _, _):

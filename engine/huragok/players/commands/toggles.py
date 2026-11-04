@@ -181,7 +181,7 @@ class SettingToggles(CommandsBase):
             notes.append(f"V, B and N are all off, so nobody hears anyone yet: {call.prefix}toggleglobal, "
                          f"{call.prefix}toggleteam and {call.prefix}toggleproxy turn them on")
         if data.get("auto_reload") is False:
-            notes.append(f"its file has auto_reload off, so this (and putting it back) applies at an owner's "
+            notes.append(f"its file has auto_reload off, so this (and putting it back) applies at the next "
                          f"{call.prefix}reload or the next restart")
         return notes
 

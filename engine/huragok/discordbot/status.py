@@ -21,6 +21,8 @@ from .alerts import SCHEMA_STEP
 from .appeals import AGAIN_STEP as APPEAL_AGAIN_STEP
 from .appeals import CODES_STEP as APPEAL_CODES_STEP
 from .appeals import SCHEMA_STEP as APPEALS_STEP
+from .links import SCHEMA_STEP as LINKS_STEP
+from .sides import SCHEMA_STEP as SIDES_STEP
 from .reports import SCHEMA_STEP as REPORTS_STEP
 from .tickets import NUMBERED_STEP, REPLACING_STEP
 from .tidy import SCHEMA_STEP as TIDY_STEP
@@ -39,7 +41,8 @@ log = logging.getLogger(__name__)
 SCHEMA = ["""
     CREATE TABLE discord_posts (
         key TEXT PRIMARY KEY, message TEXT NOT NULL DEFAULT '', value TEXT NOT NULL DEFAULT '', time REAL NOT NULL);
-    """, SCHEMA_STEP, TICKETS_STEP, REPORTS_STEP, APPEALS_STEP, TIDY_STEP, REPLACING_STEP, NUMBERED_STEP, APPEAL_CODES_STEP, APPEAL_AGAIN_STEP]
+    """, SCHEMA_STEP, TICKETS_STEP, REPORTS_STEP, APPEALS_STEP, TIDY_STEP, REPLACING_STEP, NUMBERED_STEP, APPEAL_CODES_STEP, APPEAL_AGAIN_STEP,
+          LINKS_STEP, SIDES_STEP]
 BOARD_LIST = "board:list"  # which cards the board has, in order, and where
 UP = {"running", "external", "countdown"}  # it's still up for a countdown, with people playing: and Join is still worth pressing
 ON_THE_WAY = {"restarting", "stopping", "launch", "booting", "preparing"}

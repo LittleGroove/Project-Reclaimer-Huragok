@@ -1,17 +1,17 @@
 """Who's who, changed in game: one role each, on a ladder, a step at a time.
 
-    player -> member -> probationary-moderator -> moderator -> admin -> owner
+    player -> member -> probationary-moderator -> moderator -> admin -> faculty
 
 Everyone holds exactly one role. !promote moves a player one step up (out of the role they had), !demote one step
 down: an admin becomes a moderator, a moderator a probationary moderator, then a member, a member a player again. A
 player can be promoted up to the role below the caller's own (moderators make probationary moderators, admins make
-moderators, owners make admins) and demoted only by someone above them. A probationary moderator (0.5.3, a staff
+moderators, faculty make admins) and demoted only by someone above them. A probationary moderator (0.5.3, a staff
 meeting) uses moderators' commands as requests a moderator or admin confirms (requests.py); commands.toml lists them
 as members, with a note, and Huragok's database marks them (an older Huragok, if an update is put back, refuses a
-section it doesn't know, and sees a member). Owners are the host's: changed only in commands.toml. A ban through Huragok (!ban,
+section it doesn't know, and sees a member). Faculty are the host's: changed only in commands.toml. A ban through Huragok (!ban,
 Vergil's) takes every role away; the game's own /ban is that server's alone, and the roles stay (the host's call, 25
 October). A player's rank is the highest they hold on any server (an admin is each server's own), so nobody acts
-on someone of their own role or above anywhere, and only an owner can ban an admin.
+on someone of their own role or above anywhere, and only faculty can ban an admin.
 
 Members and moderators live in commands.toml, one line per player saying who they are and who changed it, the
 rest of the file as the host wrote it. Admins are the servers' own lists (the console's `admin add` and `admin
@@ -25,14 +25,14 @@ from __future__ import annotations
 import asyncio
 import time
 
-from ...core.commandsfile import PROBATION, ROLES
+from ...core.commandsfile import PROBATION, ROLES, rank_plural
 from ...core.events import Event
 from ...core.part import command, on
 from ...core.tomledit import add_to_list, remove_from_list
 from ...lore import callout
 from ...rcon import RconError
 from ...servers.state import Player
-from ..roles import a_role, role_name
+from ..roles import a_role
 from ..router import CommandCall
 from ..who import from_console
 from .base import CommandsBase
@@ -51,8 +51,8 @@ class RoleCommands(CommandsBase):
         assert target is not None
         now = self.ctx.highest_role(target)
         who = self._role_name(target)
-        if now in ("admin", "owner"):
-            await call.reply(f"{who} is {a_role(now)}: as high as a promotion goes" + (" (owners are listed in "
+        if now in ("admin", "faculty"):
+            await call.reply(f"{who} is {a_role(now)}: as high as a promotion goes" + (" (faculty are listed in "
                              "commands.toml)." if now == "admin" else "."))
             return
         new = ROLES[ROLES.index(now) + 1]
@@ -73,7 +73,7 @@ class RoleCommands(CommandsBase):
 
     @command("admin", usage="[list | add <player> | remove <player>]",
              help="The admins (the servers' own lists): add makes a player one on every server, remove makes them "
-                  "a moderator", role="owner")
+                  "a moderator", role="faculty")
     async def admin(self, call: CommandCall) -> None:
         verb = call.args[0].lower() if call.args else "list"
         if verb not in ("add", "remove") or len(call.args) < 2:
@@ -89,7 +89,7 @@ class RoleCommands(CommandsBase):
                 return
             await self._role_demote(call, target)
             return
-        if now in ("admin", "owner"):
+        if now in ("admin", "faculty"):
             await call.reply(f"{who} is {a_role(now)} already.")
             return
         if await self._role_move(call, target, now, "admin", "made an admin"):
@@ -98,7 +98,7 @@ class RoleCommands(CommandsBase):
             await self._role_tell(call, target, f"{call.player.name} made you an admin"
                                   + (" on every server." if self._across() else " here."))
 
-    @command("roles", help="Who has which role: owners, admins, moderators, probationary moderators, members",
+    @command("roles", help="Who has which role: faculty, admins, moderators, probationary moderators, members",
              role="moderator")
     async def roles(self, call: CommandCall) -> None:
         members = self.ctx.permissions.members
@@ -109,12 +109,12 @@ class RoleCommands(CommandsBase):
         lines = []
         listed = members.get("member", set())
         probation = listed & self.ctx.probation
-        for role, ids in (("owner", members.get("owner", set())), ("admin", set(where)),
+        for role, ids in (("faculty", members.get("faculty", set())), ("admin", set(where)),
                           ("moderator", members.get("moderator", set())), (PROBATION, probation),
                           ("member", listed - probation)):
             names = [self._role_seen(i) + (f" (on {', '.join(where[i])})" if role == "admin" and len(where[i])
                                            < len(self.ctx.servers) else "") for i in sorted(ids)]
-            lines.append(f"{role_name(role)}s ({len(names)}): {', '.join(names) if names else 'none'}")
+            lines.append(f"{rank_plural(role)} ({len(names)}): {', '.join(names) if names else 'none'}")
         await self._reply_text(call, "\n".join(lines))
 
     @on("rcon.ban")
@@ -130,8 +130,8 @@ class RoleCommands(CommandsBase):
         now = self.ctx.highest_role(target)
         if now == "player":
             return
-        if now == "owner":
-            self.ctx.log.warning("[%s] %s (an owner) was banned; owners are changed only in commands.toml",
+        if now == "faculty":
+            self.ctx.log.warning("[%s] %s (faculty) was banned; faculty are changed only in commands.toml",
                                  event.server, target.name)
             return
         lost, note = await self._role_strip(event.server, target, now, by=MARK)
@@ -146,8 +146,8 @@ class RoleCommands(CommandsBase):
         if now == "player":
             await call.reply(f"{who} has no role to lose.")
             return
-        if now == "owner":
-            await call.reply(f"{who} is an owner: owners are changed only in commands.toml.")
+        if now == "faculty":
+            await call.reply(f"{who} is faculty: faculty are changed only in commands.toml.")
             return
         if ROLES.index(call.role) <= ROLES.index(now):
             await call.reply(f"{who} is {a_role(now)}; you can't demote them.")
@@ -206,7 +206,7 @@ class RoleCommands(CommandsBase):
         return True
 
     async def _role_strip(self, server: str, target: Player, now: str, *, by: str) -> tuple[bool, str]:
-        """Every role but owner off `target` (a ban). (Anything lost, and a note when an admin stays one.)"""
+        """Every role but faculty off `target` (a ban). (Anything lost, and a note when an admin stays one.)"""
         path = self.ctx.permissions.path or self.ctx.home / "commands.toml"
         lost, note = False, ""
         for section in IN_FILE:

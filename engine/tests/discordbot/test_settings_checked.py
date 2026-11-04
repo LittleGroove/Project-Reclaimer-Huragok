@@ -117,11 +117,11 @@ def test_flags_taken_out_stay_out(tmp_path: Path) -> None:
     assert set(load(path).section("notes")["flags"]) == {"regular"}
 
 
-def test_an_owners_rank_in_game_is_only_what_it_says(tmp_path: Path) -> None:
+def test_the_faculty_rank_in_game_is_only_what_it_says(tmp_path: Path) -> None:
     path = a_file(tmp_path)
-    set_switch(path, ("ranks",), "owners_in_game", "moderator")
+    set_switch(path, ("ranks",), "faculty_in_game", "moderator")
     config = load(path)
-    assert config.section("ranks")["owners_in_game"] == "owner" and any("owners_in_game" in warning for warning in config.warnings)
+    assert config.section("ranks")["faculty_in_game"] == "faculty" and any("faculty_in_game" in warning for warning in config.warnings)
 
 
 def test_every_template_line_is_valid_toml_after_all_that() -> None:

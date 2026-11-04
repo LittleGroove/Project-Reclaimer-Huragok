@@ -104,7 +104,7 @@ def write_files(home: Path, server_folder: str | None = None, backend: str | Non
     commands_path = home / COMMANDS_FILE
     if force or not commands_path.exists():
         commands_path.write_text(render_commands_toml(), encoding="utf-8")
-        written.append(f"{COMMANDS_FILE:<15} who can use which in-game command. Put your player ID under [owner]")
+        written.append(f"{COMMANDS_FILE:<15} who can use which in-game command. Put your player ID under [faculty]")
     if make_file(home / DISCORD_FILE):
         written.append(f"{DISCORD_FILE:<15} the Discord bot, off until you set it up (J in the window)")
     words = home / "automod.txt"

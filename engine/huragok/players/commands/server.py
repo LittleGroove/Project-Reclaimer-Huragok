@@ -154,6 +154,6 @@ class ServerCommands(CommandsBase):
         else:
             await call.reply("Restarting: everyone on gets the usual countdown first.")
 
-    @command("reload", help="Apply edits to dedicated.toml now", role="owner")
+    @command("reload", help="Apply edits to dedicated.toml now", role="faculty")
     async def reload(self, call: CommandCall) -> None:
         await self._rcon(call, "reload")

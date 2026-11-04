@@ -17,7 +17,7 @@
     [admin]                    # the server's own admins; no players list here
     commands = ["ban", "map"]
 
-    [owner]
+    [faculty]                  # the top rank: [owner] in files from before 0.6.1
     players = ["<player ID>"]
     commands = ["admin", "reload"]
 
@@ -46,7 +46,7 @@ from .text import STORED_ID
 
 
 
-ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "owner")  # lowest to highest
+ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "faculty")  # lowest to highest
 
 
 # A moderator on probation (0.5.3, players/commands/requests.py): moderators' commands, but what they do is a request
@@ -56,7 +56,30 @@ ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "ow
 PROBATION = "probationary-moderator"
 
 
-SECTIONS = {"everyone": "player", "member": "member", "moderator": "moderator", "admin": "admin", "owner": "owner"}
+SECTIONS = {"everyone": "player", "member": "member", "moderator": "moderator", "admin": "admin", "faculty": "faculty"}
+# The top rank was "owner" before 0.6.1. It's faculty (the host's call, 3 November 2026: "the true owner of the server is
+# the one who controls the machine its on, otherwise it really is faculty"), in the code as everywhere else; the old name
+# is only ever read, in what an older version wrote (until the settled step 0.6.1/faculty rewrites it).
+OLD_RANK = "owner"
+OLD_SECTIONS = {OLD_RANK: "faculty"}  # a section's name before 0.6.1, read as its new one
+RANK_WORDS = {PROBATION: "probationary moderator"}  # a rank as people read and type it, where that isn't its name
+
+
+def rank_word(role: str) -> str:
+    """A rank as people read and type it: "probationary moderator"; the rest as they're named."""
+    return RANK_WORDS.get(role, role)
+
+
+def rank_plural(role: str) -> str:
+    """More than one of a rank, as people read it: "moderators", "probationary moderators"; faculty are faculty."""
+    return rank_word(role) if role == "faculty" else f"{rank_word(role)}s"
+
+
+def rank_named(text: object) -> str:
+    """A rank as a file, a record or a person gives it, as Huragok knows it: the old name of the top rank is faculty;
+    anything else as it is."""
+    word = str(text or "").strip().lower()
+    return "faculty" if word == OLD_RANK else word
 
 
 COMMAND_ROLES = tuple(r for r in ROLES if r != PROBATION)  # the roles a command can be given (each has a section)
@@ -65,7 +88,7 @@ COMMAND_ROLES = tuple(r for r in ROLES if r != PROBATION)  # the roles a command
 TITLES = {**{v: k for k, v in SECTIONS.items()}, PROBATION: PROBATION}  # role -> its section: player -> everyone
 
 
-LISTED = ("owner", "moderator", "member")  # the roles whose players are listed here; admins are the server's own
+LISTED = ("faculty", "moderator", "member")  # the roles whose players are listed here; admins are the server's own
 HELP = CommandSpec("help", "The commands you can use, or how to use one", "[command]")
 
 
@@ -90,7 +113,7 @@ class Permissions:
         """Players listed under more than one role (admins: the servers' own): the highest is the one that counts,
         and the rest only confuse. One role each is the rule (!promote and !demote keep it)."""
         found: dict[str, list[str]] = {}
-        for role in ("owner", "admin", "moderator", "member"):
+        for role in ("faculty", "admin", "moderator", "member"):
             for player_id in (set(admins) if role == "admin" else self.members.get(role, set())):
                 found.setdefault(player_id.lower(), []).append(role)
         return {player_id: roles for player_id, roles in found.items() if len(roles) > 1}
@@ -99,7 +122,7 @@ class Permissions:
         return self.roles.get(spec.name, spec.role)
 
     def listed(self) -> set[str]:
-        """Every player ID listed here, members, moderators and owners: nobody can vote-kick them."""
+        """Every player ID listed here, members, moderators and faculty: nobody can vote-kick them."""
         return set().union(*self.members.values())
 
 
@@ -142,6 +165,12 @@ def load_permissions(path: Path, known: dict[str, CommandSpec] | None = None) ->
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise PermissionsError(f"{name}: {error}") from None
 
+    for old, new in OLD_SECTIONS.items():  # a file from before 0.6.1: its [owner] is [faculty]
+        if isinstance(data.get(old), dict):
+            moved, kept = data.pop(old), data.setdefault(new, {})
+            if isinstance(kept, dict):
+                for key, value in moved.items():
+                    kept[key] = [*kept[key], *value] if isinstance(kept.get(key), list) and isinstance(value, list) else value
     if stray := sorted(set(data) - {"prefix", "cooldown_seconds", "off", *SECTIONS}):
         raise PermissionsError(f"{name}: [{stray[0]}] isn't a role; the roles are "
                                f"{', '.join(SECTIONS)}, and [off] for commands nobody can use")
@@ -163,14 +192,14 @@ def load_permissions(path: Path, known: dict[str, CommandSpec] | None = None) ->
             raise PermissionsError(f"{name}: {section} must be a section, like [{section}]")
         if stray := sorted(set(table) - {"commands", "players"}):
             raise PermissionsError(f"[{section}] {stray[0]}: a role has players and commands")
-        if "players" in table and section not in LISTED:
+        if "players" in table and SECTIONS.get(section) not in LISTED:
             if section == "admin":
                 raise PermissionsError("[admin] players: admins are the server's own, so there's never a second "
                                        "list to keep in step. Add them to admins in dedicated.toml, or in game "
                                        "with !admin add")
-            raise PermissionsError(f"[{section}] players: only [member], [moderator] and [owner] list players")
-        if section in LISTED:
-            result.members[section] = _player_ids(table.get("players", []), f"[{section}] players")
+            raise PermissionsError(f"[{section}] players: only [member], [moderator] and [faculty] list players")
+        if SECTIONS.get(section) in LISTED:
+            result.members[SECTIONS[section]] = _player_ids(table.get("players", []), f"[{section}] players")
         for command in _strings(table.get("commands", []), f"[{section}] commands"):
             command = command.lower().removeprefix(prefix)
             if command in aliases:
@@ -265,15 +294,17 @@ HEADER = """\
 #   admin      the server's own admins: admins in dedicated.toml, or added in game.
 #              They aren't listed here, so there's never a second list to keep in
 #              step.
-#   owner      the players you list below (you): everything.
+#   faculty    the players you list below (you), and whoever claims Huragok's Discord
+#              bot with their account linked: everything.
 #
 # One role each, on a ladder: player, member, probationary moderator, moderator,
-# admin, owner. In game, !promote <player> moves someone one step up (up to the
+# admin, faculty. In game, !promote <player> moves someone one step up (up to the
 # role below your own) and !demote one step down (only someone below you):
 # moderators make members and probationary moderators, admins make moderators,
-# owners make admins. A !ban takes every role away. Each change
+# faculty make admins. A !ban takes every role away. Each change
 # gets a line of its own below, with who they are and who changed it; your own
-# comments in the lists stay as you wrote them. Owners change only here.
+# comments in the lists stay as you wrote them. Faculty change only here (or by
+# claiming the Discord bot).
 #
 # Players are listed by player ID, never by name (anyone can use any name). It's
 # 64 letters and digits; players find theirs in game under Settings > Online
@@ -282,14 +313,14 @@ HEADER = """\
 #
 # To change who can use a command, move it to another role's list. To switch it
 # off, put it in [off]. A command in no list keeps the role it has here. Nobody
-# can use a command on someone of their own role or above (owners excepted).
+# can use a command on someone of their own role or above (faculty excepted).
 #
-# No vote can kick a member, moderator, admin or owner: Vergil puts everyone
+# No vote can kick a member, moderator, admin or faculty: Vergil puts everyone
 # listed here on each server's vote-kick immune list (the console's `immune`),
 # and takes them off again when you take them out of this file.
 
 prefix = "!"            # what commands start with ("/" lines are the game's own)
-cooldown_seconds = 3    # between uses of a command, per player; admins and owners wait for nothing
+cooldown_seconds = 3    # between uses of a command, per player; admins and faculty wait for nothing
 """
 
 PLAYERS_EXAMPLE = '    # "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",  # who this is\n'
@@ -308,7 +339,7 @@ def render_commands_toml(specs: Iterable[CommandSpec] | None = None) -> str:
     for role in COMMAND_ROLES:
         section = TITLES[role]
         out.append(f"\n[{section}]\n")
-        if section in LISTED:
+        if role in LISTED:
             out.append(f"players = [\n{PLAYERS_EXAMPLE}]\n")
         mine = [s for s in specs if s.role == role]
         if not mine:
@@ -365,7 +396,7 @@ def make_commands_toml(path: Path) -> None:
 
 
 def add_player(path: Path, role: str, player_id: str, note: str) -> list[str]:
-    """List a player under member, moderator or owner, out of any other role listed here (one role each). The
+    """List a player under member, moderator or faculty ("faculty" inside), out of any other role listed here (one role each). The
     roles they were taken out of."""
     from .tomledit import add_to_list, remove_from_list
 
@@ -381,8 +412,9 @@ def add_player(path: Path, role: str, player_id: str, note: str) -> list[str]:
 
     def change(copy: Path) -> None:
         for other in moved:
-            remove_from_list(copy, other, "players", player_id)
-        add_to_list(copy, role, "players", player_id, note)
+            for name in _names_of(TITLES.get(other, other)):
+                remove_from_list(copy, name, "players", player_id)
+        add_to_list(copy, TITLES.get(role, role), "players", player_id, note)
 
     _checked(path, change, f"{player_id[:8]} as {role}")
     return moved
@@ -393,17 +425,24 @@ def remove_player(path: Path, role: str, player_id: str) -> bool:
     from .tomledit import remove_from_list
 
     removed: list[bool] = []
-    _checked(path, lambda copy: removed.append(remove_from_list(copy, role, "players", player_id.lower())),
+    _checked(path, lambda copy: removed.extend(remove_from_list(copy, name, "players", player_id.lower())
+                                               for name in _names_of(TITLES.get(role, role))),
              f"{player_id[:8]} out of {role}")
-    return bool(removed and removed[0])
+    return any(removed)
+
+
+def _names_of(section: str) -> list[str]:
+    """A section as it's named, and as a file from before 0.6.1 has it ([owner]): until the update renames it, a player
+    or a command is taken out of either (audit 0.6.1, 6.3)."""
+    return [section, *(old for old, new in OLD_SECTIONS.items() if new == section)]
 
 
 def _listed_as(path: Path, section: str, command: str, prefix: str) -> list[str]:
     """How a command is written in a section's list ("mute", "!mute"), each way it is."""
     from .tomledit import read_toml
 
-    table = read_toml(path).get(section, {})
-    values = table.get("commands", []) if isinstance(table, dict) else []
+    data = read_toml(path)
+    values = [value for name in _names_of(section) if isinstance(data.get(name), dict) for value in data[name].get("commands", [])]
     return [v for v in values if isinstance(v, str) and v.strip().lower().removeprefix(prefix) == command]
 
 
@@ -422,7 +461,8 @@ def set_command_role(path: Path, command: str, role: str) -> None:
     def change(copy: Path) -> None:
         for section in SECTIONS:
             for written in _listed_as(copy, section, command, prefix):
-                remove_from_list(copy, section, "commands", written)
+                for name in _names_of(section):
+                    remove_from_list(copy, name, "commands", written)
         add_to_list(copy, TITLES[role], "commands", command, spec.help, width=entry_width())
 
     _checked(path, change, f"{command} for {role}")

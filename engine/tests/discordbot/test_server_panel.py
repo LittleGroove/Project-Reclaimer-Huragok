@@ -9,10 +9,10 @@ from typing import Any, Iterator
 import pytest
 
 from test_bot_running import OTHER, _components, answer_text
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
 from testkit.running import SERVER, fleet, running, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def bot_file(root: Path) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "logs", STAFF_CHANNEL, "logs")
     set_channel(path, "alerts", STAFF_CHANNEL, "alerts")
     set_switch(path, ("commands",), "enabled", True)

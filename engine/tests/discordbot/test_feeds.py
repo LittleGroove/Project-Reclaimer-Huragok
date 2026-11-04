@@ -10,7 +10,7 @@ from typing import Any, Iterator
 import pytest
 
 from conftest import ALICE
-from testkit.fake_discord import GUILD, MOD_ROLE, OWNER_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
+from testkit.fake_discord import GUILD, MOD_ROLE, FACULTY_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, huragok_started, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.core.events import Event
@@ -18,7 +18,7 @@ from huragok.discordbot import cards, features, rest
 from huragok.core.tomledit import read_toml
 from huragok.discordbot.cards import clean
 from huragok.discordbot.config import (
-    DEFAULT_COLOUR, add_owner, colour_value, load, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token,
+    DEFAULT_COLOUR, add_faculty, colour_value, load, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token,
 )
 from huragok.discordbot.facts import Facts, gather
 from huragok.discordbot.feeds import SIMPLE, Feeds, sample_cards
@@ -565,7 +565,7 @@ def bot_file(root: Path) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "staff", STAFF_CHANNEL, "admin-log")
     set_channel(path, "logs", STAFF_CHANNEL, "admin-log")
     set_channel(path, "alerts", STAFF_CHANNEL, "admin-log")

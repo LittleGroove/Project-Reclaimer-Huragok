@@ -11,10 +11,11 @@ import aiohttp
 import discord
 from discord import app_commands, ui
 
+from ..core.commandsfile import ROLES
 from ..players.targets import FULL_ID
 from . import cards
 from .client import ANOTHER_DISCORD, SaysWhatWentWrong, answer, elsewhere, named, part_of, someone_from
-from .ranks import can_act, highest_rank
+from .ranks import can_act, highest_rank, in_game, is_faculty, lowest_rank
 from .reports import ALREADY, OFF, TAKEN, TOO_MANY, TOO_SOON
 from .speakers import say
 
@@ -195,6 +196,230 @@ async def appeal_command(interaction: discord.Interaction, who: str) -> None:
         await answer(interaction, say(config, "appeals.too_soon", when=f"<t:{int(allowed)}:R>"))
     else:
         await interaction.response.send_modal(_AppealForm(part, player_id, name, about, proved))
+
+
+def _shown_words(part: DiscordPart, how: str) -> str:
+    return say(part.file, f"link.shown_{how}")
+
+
+def _tell_linked(part: DiscordPart, player_id: str, member_name: str) -> None:
+    """Told in game too, if they're on: it's what they asked for there."""
+    from ..core.background import background
+    from ..lore import callout
+
+    async def tell() -> None:
+        for server, state in list(part.ctx.servers.items()):
+            player = state.player_by_id(player_id)
+            if player is not None:
+                try:
+                    await part.ctx.tell(server, player, callout("linked", say(part.file, "link.told", member=member_name)))
+                except Exception as error:  # noqa: BLE001 - they're linked whether or not they heard
+                    log.debug("[%s] couldn't tell %s they're linked: %s", server, player.name, error)
+                return
+
+    background(tell(), "telling a player they're linked", log)
+
+
+@app_commands.command(name="link", description="Your stats under your name here: give the code !link told you in game")
+@app_commands.describe(code="The code !link told you in game", show="How you show on the stats and the leaderboards")
+@app_commands.choices(show=[app_commands.Choice(name="By my name here", value="discord"),
+                            app_commands.Choice(name="By my name in game", value="game"),
+                            app_commands.Choice(name="By both names", value="both")])  # never off them: a spot earned is shown
+async def link_command(interaction: discord.Interaction, code: str = "", show: app_commands.Choice[str] | None = None) -> None:
+    await _link(interaction, code, show)
+
+
+class _FacultyLinkSure(SaysWhatWentWrong, ui.View):
+    """Faculty of this bot linking: the player they link is made faculty in game, so they say first that it's them
+    (audit 0.6.1, 3.3: "host, type /link ABC-DEF to see my stats" made a player faculty for good)."""
+
+    def __init__(self, part: DiscordPart, code: str, show: app_commands.Choice[str] | None) -> None:
+        super().__init__(timeout=120)
+        self.part, self.code, self.show = part, code, show
+
+    @ui.button(label="Yes, that's me", style=discord.ButtonStyle.danger)
+    async def yes(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
+        self.stop()
+        await interaction.response.edit_message(content=say(self.part.file, "link.linking"), view=None)
+        await _link(interaction, self.code, self.show, sure=True)
+
+    @ui.button(label="No", style=discord.ButtonStyle.secondary)
+    async def no(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
+        self.stop()
+        await interaction.response.edit_message(content=say(self.part.file, "link.not_linked_then"), view=None)
+
+
+async def _link(interaction: discord.Interaction, code: str, show: app_commands.Choice[str] | None, *, sure: bool = False) -> None:
+    from .links import LINKED, MEMBER_TAKEN, NO_SUCH_CODE, TOO_MANY_WRONG
+
+    part = part_of(interaction)
+    config = part.file
+    if elsewhere(part, interaction):
+        await answer(interaction, ANOTHER_DISCORD)
+        return
+    if not part.links.takes():
+        await answer(interaction, say(config, "link.off"))
+        return
+    member, member_name = str(interaction.user.id), named(interaction.user)
+    part.links.seen(member, member_name)
+    linked_now = ""
+    if code.strip():
+        before = part.links.of_member(member)
+        if not sure and before is None and is_faculty(config, member) and in_game(config, "faculty") == "faculty" \
+                and (whose := part.links.peek(code)):
+            await interaction.response.send_message(say(config, "link.faculty_sure", player=cards.clean(whose)), view=_FacultyLinkSure(part, code, show),
+                                                    ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+            return
+        outcome, player_id, player_name = part.links.use_code(code, member, member_name)
+        if outcome == TOO_MANY_WRONG:
+            await answer(interaction, say(config, "link.too_many"))
+            return
+        if outcome == NO_SUCH_CODE:
+            await answer(interaction, say(config, "link.no_code"))
+            return
+        if outcome != LINKED:
+            await answer(interaction, say(config, "link.member_taken" if outcome == MEMBER_TAKEN else "link.player_taken", player=cards.clean(player_name)))
+            return
+        linked_now = player_name
+        if before is None:  # this made it
+            part.audit("link", say(config, "audit.link", who=member_name, player=player_name))
+            _tell_linked(part, player_id, member_name)
+            if await part.links.faculty_claimed(member):  # faculty of the bot: faculty in game too
+                part.audit("link", say(config, "audit.faculty", player=player_name))
+    if show is not None and not part.links.show(member, show.value):
+        await answer(interaction, say(config, "link.not_linked"))
+        return
+    mine = part.links.of_member(member)
+    if mine is None:
+        from .standings import counted
+
+        minutes = counted(part.links.options.get("code_minutes", 10), 10, 1, 1440)
+        await answer(interaction, say(config, "link.how", minutes=minutes))
+        return
+    shown = _shown_words(part, part.links.how_shown(mine))
+    if linked_now:
+        await answer(interaction, say(config, "link.linked", player=cards.clean(linked_now), shown=shown))
+    elif show is not None:
+        await answer(interaction, say(config, "link.shown_as", shown=shown))
+    else:
+        await answer(interaction, say(config, "link.status", player=cards.clean(part.links.player_name(mine)), shown=shown))
+
+
+async def _side_player(part: DiscordPart, interaction: discord.Interaction) -> str:
+    """Whose side it is: the linked player of whoever typed it, a member or up. "" after saying why not."""
+    from . import sides
+
+    config = part.file
+    if elsewhere(part, interaction):
+        await answer(interaction, ANOTHER_DISCORD)
+        return ""
+    if not sides.takes(part):
+        await answer(interaction, say(config, "link.no_sides"))
+        return ""
+    mine = part.links.of_member(str(interaction.user.id)) if part.links.takes() else None
+    if mine is None:
+        await answer(interaction, say(config, "side.not_linked"))
+        return ""
+    if not sides.may_choose(part, str(mine["player_id"])):
+        await answer(interaction, say(config, "side.members"))
+        return ""
+    return str(mine["player_id"])
+
+
+@app_commands.command(name="side", description="The team you're always put on in game: Red, Blue, or wherever the game puts you")
+@app_commands.describe(side="Your side")
+@app_commands.choices(side=[app_commands.Choice(name="Red", value="red"), app_commands.Choice(name="Blue", value="blue"),
+                            app_commands.Choice(name="Wherever the game puts me", value="off")])
+async def side_command(interaction: discord.Interaction, side: app_commands.Choice[str]) -> None:
+    from . import sides
+
+    part = part_of(interaction)
+    player_id = await _side_player(part, interaction)
+    if not player_id:
+        return
+    held = sides.locked_to(part, player_id)
+    if held and held != side.value:
+        await answer(interaction, say(part.file, "side.locked", side=held.title()))
+        return
+    sides.choose(part, player_id, side.value)
+    for server, state in part.ctx.servers.items():
+        if state.player_by_id(player_id):
+            sides.soon(part, server)
+    await answer(interaction, say(part.file, "link.side_off") if side.value == "off" else say(part.file, "link.side", side=side.name))
+
+
+@app_commands.command(name="togglesides", description="Stop being put on your side in game, or start again")
+async def togglesides_command(interaction: discord.Interaction) -> None:
+    from . import sides
+
+    part = part_of(interaction)
+    player_id = await _side_player(part, interaction)
+    if not player_id:
+        return
+    if kept := sides.held(part, player_id):  # [sides] force_for_season
+        await answer(interaction, say(part.file, "side.held", side=kept.title()))
+        return
+    now = sides.toggle(part, player_id)
+    await answer(interaction, say(part.file, "side.none") if now is None else say(part.file, "side.on" if now else "side.off"))
+    if now:  # on again: onto their side wherever they're playing (audit 0.6.1, 4.8)
+        for server, state in part.ctx.servers.items():
+            if state.player_by_id(player_id):
+                sides.soon(part, server)
+
+
+@app_commands.command(name="unlink", description="Undo your link: your stats show under your name in game again")
+@app_commands.describe(member="Admins: someone else's link to undo", player="Admins: a player's link, by their name in game or ID (for someone who's left)")
+async def unlink_command(interaction: discord.Interaction, member: discord.Member | None = None, player: str = "") -> None:
+    part = part_of(interaction)
+    config = part.file
+    if elsewhere(part, interaction):
+        await answer(interaction, ANOTHER_DISCORD)
+        return
+    if not part.links.takes():
+        await answer(interaction, say(config, "link.off"))
+        return
+    mine = someone_from(interaction.user)
+    matches = part.links.find_players(player) if member is None and player.strip() else []
+    if len(matches) > 1:
+        await answer(interaction, say(config, "link.two_named", player=cards.clean(player.strip())))
+        return
+    found = part.links.of_member(str(member.id)) if member is not None else matches[0] if matches else None
+    if (member is not None or player.strip()) and found is None:
+        await answer(interaction, say(config, "link.not_linked_them"))
+        return
+    someone_else = found is not None and str(found["member"]) != str(interaction.user.id)
+    rank = lowest_rank(config, mine, part.ctx.servers)  # an admin on every server: one server's admin isn't everyone's (audit 0.6.1, 3.6)
+    is_admin = ROLES.index(rank) >= ROLES.index("admin")
+    if someone_else and not is_admin:
+        await answer(interaction, say(config, "link.not_staff"))
+        return
+    if someone_else and found is not None and rank != "faculty" and ROLES.index(_link_rank(part, found)) >= ROLES.index(rank):
+        await answer(interaction, say(config, "link.outranked"))
+        return
+    if not someone_else and part.links.options.get("unlink", "self") == "staff" and not is_admin:
+        await answer(interaction, say(config, "link.only_staff"))
+        return
+    whose_id = str(found["member"]) if someone_else and found is not None else str(interaction.user.id)
+    gone = part.links.unlink(whose_id)
+    if gone is None:
+        await answer(interaction, say(config, "link.not_linked"))
+        return
+    player_name = part.links.player_name(gone)
+    whose = named(member) if member is not None else str(gone["member_name"] or whose_id) if someone_else else named(interaction.user)
+    await part.links.faculty_unclaimed(gone)
+    part.audit("link", say(config, "audit.unlink", who=named(interaction.user), member=whose, player=player_name))
+    await answer(interaction, say(config, "link.unlinked_them", member=cards.clean(whose), player=cards.clean(player_name)) if someone_else
+                 else say(config, "link.unlinked", player=cards.clean(player_name)))
+
+
+def _link_rank(part: DiscordPart, link: Any) -> str:
+    """The rank of whoever's at the other end of a link: faculty of this bot by their user ID, else their player's rank
+    on every server."""
+    from .rolesync import rank_on
+
+    if is_faculty(part.file, str(link["member"])):
+        return "faculty"
+    return rank_on(part, str(link["player_id"]), ("*",))
 
 
 class _ContactForm(SaysWhatWentWrong, ui.Modal):

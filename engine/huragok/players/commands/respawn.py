@@ -70,6 +70,7 @@ class RespawnCommands(CommandsBase):
         super().__init__(ctx)
         self._respawns: dict[str, Respawn] = {}  # server -> the respawn under way there
         self._respawned: dict[str, float] = {}  # player ID -> when they last respawned themselves
+        self._marks: dict[str, float] = {}  # server -> the move mark this respawn set (ServerState.team_moving_until)
 
     @command("respawn", usage="[player] [reason]",
              help="Stuck? Respawn yourself (a team game, during a round); admins name a player to respawn them",
@@ -111,9 +112,16 @@ class RespawnCommands(CommandsBase):
         if under_way is not None and now - under_way.sent < 2 * ANSWER_SECONDS:
             await call.reply("Another respawn is under way here: try again in a moment.")
             return
+        if now < state.team_moving_until:  # a player being put on their side: its answer would be taken for this one's (audit 0.6.1, 4.3)
+            await call.reply("Someone's being moved to their side just now: try again in a moment.")
+            return
         home = teams[player.id]
         respawn = Respawn(player, home, _away(teams, home), call.player.name, own, reason, call)
+        mark = time.monotonic() + 2 * ANSWER_SECONDS + TEAMS_TIMEOUT  # set before the move, from now: sides waits (8.7)
+        state.team_moving_until = max(state.team_moving_until, mark)
+        self._marks[call.server] = mark
         if not await self._respawn_move(call.server, respawn, respawn.away):
+            self._respawn_over(call.server)
             return
         self._respawns[call.server] = respawn
         if own:
@@ -163,9 +171,14 @@ class RespawnCommands(CommandsBase):
         respawn = self._respawns.get(server)
         if event.get("action") != "team" or respawn is None:
             return
+        said = str(event.get("text") or "").casefold()
+        state = self.ctx.servers.get(server)
+        others = [p.name.casefold() for p in state.players.values() if p.id != respawn.player.id and p.name] if state is not None else []
+        if said and respawn.player.name.casefold() not in said and any(name in said for name in others):
+            return  # another player's team change (most are players switching themselves), not this one's; a refusal names nobody (8.6)
         why = " ".join(str(event.get("text") or "no reason given").split())[:200]
         if not event.get("ok", True):
-            self._respawns.pop(server, None)
+            self._respawn_over(server)
             if respawn.step == 1:
                 await respawn.call.reply(f"Couldn't respawn {'you' if respawn.own else respawn.player.name}: {why}")
             else:
@@ -187,9 +200,9 @@ class RespawnCommands(CommandsBase):
         if respawn.step == 1:
             respawn.step = 2
             if not await self._respawn_move(server, respawn, respawn.home):
-                self._respawns.pop(server, None)
+                self._respawn_over(server)
             return
-        self._respawns.pop(server, None)
+        self._respawn_over(server)
         self.log.info("[%s] %s respawned (%s)", server, respawn.player.name,
                       "their own !respawn" if respawn.own else f"by {respawn.by}")
         team = respawn.home.capitalize()
@@ -202,6 +215,13 @@ class RespawnCommands(CommandsBase):
             await self.ctx.say(server, line)
         except RconError:
             await respawn.call.reply(line)
+
+    def _respawn_over(self, server: str) -> None:
+        """The respawn here over, either way: sides may move players again."""
+        self._respawns.pop(server, None)
+        mark = self._marks.pop(server, None)
+        if (state := self.ctx.servers.get(server)) is not None and state.team_moving_until == mark:  # its own mark only (8.7)
+            state.team_moving_until = 0.0
 
     async def _respawn_left_away(self, server: str, respawn: Respawn, why: str) -> None:
         """The move back was refused: they're on the other team now, and the caller reads how to put them back."""

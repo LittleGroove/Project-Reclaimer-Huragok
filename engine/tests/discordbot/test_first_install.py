@@ -10,11 +10,11 @@ import pytest
 
 from conftest import ALICE
 from test_bot_running import OTHER, _components
-from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, OWNER_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, FACULTY_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.discordbot import features
-from huragok.discordbot.config import add_owner, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 from huragok.discordbot.startover import start_over
 
 LOGS = "4203"
@@ -38,7 +38,7 @@ def bare_file(root: Path) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     return path
 
 
@@ -65,7 +65,7 @@ def test_home_says_whats_left_and_whats_next(tmp_path: Path, run: Any, fake: Fak
             _, token = fake.huragok("setup")
             form = await panel(fake, token)
             shown = form["embeds"][0]["description"]
-            assert "⬜" in shown and "nothing's switched on" in shown and "Until then only owners" in shown and "nobody's phone buzzes" in shown
+            assert "⬜" in shown and "nothing's switched on" in shown and "Until then only faculty" in shown and "nobody's phone buzzes" in shown
             buttons = labels(form)
             assert "Recommended" in buttons and any(label.startswith("Next:") for label in buttons) and "Who gets told" in buttons and "Commands" in buttons
 
@@ -186,7 +186,7 @@ def test_no_ranks_says_so(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
         async with running(tmp_path) as (huragok, _, _):
             await up(huragok)
             found, _ = features.check(load(path))
-            assert any("only owners can press" in finding.text for finding in found if not finding.good)
+            assert any("only faculty can press" in finding.text for finding in found if not finding.good)
 
     run(scenario())
 
@@ -231,7 +231,7 @@ def test_the_feed_public_switch_doesnt_open_the_console(tmp_path: Path, run: Any
         set_switch(path, ("console",), "typed", True)
         async with running(tmp_path) as (huragok, rcon, _):
             part = await up(huragok)
-            fake.message(PUBLIC_CHANNEL, "!mods", user=OWNER_USER)
+            fake.message(PUBLIC_CHANNEL, "!mods", user=FACULTY_USER)
             await wait_for(lambda: any(post.get("message_reference") for post in fake.posted), timeout=10)
             assert "can be read by everyone" in next(post for post in fake.posted if post.get("message_reference"))["content"]
 
@@ -256,7 +256,7 @@ def test_starting_over_keeps_the_token_and_what_staff_wrote(tmp_path: Path, run:
         said = start_over(path, database)
         assert any("kept as" in line for line in said)
         config = load(path)
-        assert config.token == TOKEN and config.mode == "bot" and not config.guild and not config.section("ranks")["owners"]
+        assert config.token == TOKEN and config.mode == "bot" and not config.guild and not config.section("ranks")["faculty"]
         assert not features.BY_KEY["feed.alerts"].is_on(config)
         connection = sqlite3.connect(database)
         assert connection.execute("SELECT COUNT(*) FROM discord_posts").fetchone()[0] == 0 and connection.execute("SELECT COUNT(*) FROM player_notes").fetchone()[0] == 1
@@ -275,7 +275,7 @@ def test_every_panel_can_be_drawn(tmp_path: Path, run: Any, fake: FakeDiscord) -
             part = await up(huragok)
             from huragok.discordbot import panels
 
-            for screen in (panels.Home, panels.Features, panels.Channels, panels.Ranks, panels.Owners, panels.WhoGetsTold, panels.Messages, panels.Tickets, panels.CommandsPanel, panels.Console, panels.ConsoleMore,
+            for screen in (panels.Home, panels.Features, panels.Channels, panels.Ranks, panels.FacultyPanel, panels.WhoGetsTold, panels.Messages, panels.Tickets, panels.CommandsPanel, panels.Console, panels.ConsoleMore,
                            panels.ReportsPanel, panels.AppealsPanel, panels.ContactPanel, panels.StatusPanel, panels.NotesPanel):
                 view = screen(part)
                 assert view.card().to_dict()["description"]

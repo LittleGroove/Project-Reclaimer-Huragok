@@ -9,13 +9,13 @@ from typing import Any, Iterator
 import pytest
 
 from testkit.fake_discord import (
-    ADMIN_ROLE, GUILD, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord,
+    ADMIN_ROLE, GUILD, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord,
 )
 from testkit.running import running, wait_for
 
 from huragok.core.tomledit import read_toml
 from huragok.discordbot import records
-from huragok.discordbot.config import add_owner, make_file, set_guild, set_mode, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_guild, set_mode, set_token
 
 OTHER = "3333"
 
@@ -29,15 +29,15 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeDiscord]:
     discord.stop()
 
 
-def bot_file(root: Path, *, guild: bool = True, owner: bool = True, token: str = TOKEN) -> Path:
+def bot_file(root: Path, *, guild: bool = True, faculty: bool = True, token: str = TOKEN) -> Path:
     path = root / "discord.toml"
     make_file(path)
     set_token(path, token)
     set_mode(path, "bot")
     if guild:
         set_guild(path, GUILD, "Test Discord")
-    if owner:
-        add_owner(path, OWNER_USER, "the host")
+    if faculty:
+        add_faculty(path, FACULTY_USER, "the host")
     return path
 
 
@@ -266,21 +266,21 @@ def test_a_broken_file_at_the_start_leaves_the_bot_off_and_the_servers_alone(tmp
 # /huragok ------------------------------------------------------------------------------------------------------
 
 
-def test_claim_makes_an_owner_once_and_picks_the_discord(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_claim_makes_faculty_once_and_picks_the_discord(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
-        path = bot_file(tmp_path, guild=False, owner=False)
+        path = bot_file(tmp_path, guild=False, faculty=False)
         async with running(tmp_path) as (huragok, _, _):
             part = await online(huragok)
             await wait_for(lambda: GUILD in fake.commands)  # with no Discord picked, it's where the bot is
             _, token = fake.huragok("setup", user=OTHER)
-            assert "Only the owners" in await answer_text(fake, token)
+            assert "Only the faculty" in await answer_text(fake, token)
             code = records.new_code(tmp_path / "records")
             _, token = fake.huragok("claim", user=OTHER, code="WRONG-CODE")
             assert "isn't right" in await answer_text(fake, token)
             _, token = fake.huragok("claim", user=OTHER, code=code.lower())
-            assert "You're an owner" in await answer_text(fake, token)
+            assert "You're faculty" in await answer_text(fake, token)
             data = read_toml(path)
-            assert data["ranks"]["owners"] == [OTHER] and data["guild"] == GUILD
+            assert data["ranks"]["faculty"] == [OTHER] and data["guild"] == GUILD
             assert part.file.guild == GUILD
             text = path.read_text(encoding="utf-8")
             assert f'guild = "{GUILD}"  # Test Discord' in text
@@ -303,7 +303,7 @@ def test_another_discord_gets_nothing_from_it(tmp_path: Path, run: Any, fake: Fa
     run(scenario())
 
 
-def test_a_role_alone_is_never_an_owner(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_a_role_alone_is_never_an_faculty(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         path = bot_file(tmp_path)
         text = path.read_text(encoding="utf-8").replace("admin = []", f'admin = ["{ADMIN_ROLE}"]')
@@ -311,7 +311,7 @@ def test_a_role_alone_is_never_an_owner(tmp_path: Path, run: Any, fake: FakeDisc
         async with running(tmp_path) as (huragok, _, _):
             await online(huragok)
             _, token = fake.huragok("setup", user=OTHER, roles=(ADMIN_ROLE,))
-            assert "Only the owners" in await answer_text(fake, token)
+            assert "Only the faculty" in await answer_text(fake, token)
 
     run(scenario())
 
@@ -403,7 +403,7 @@ def test_setup_writes_what_is_picked_to_the_file_comments_kept(tmp_path: Path, r
             opened, form = await _opened(fake, "setup")
             assert form["embeds"][0]["title"] == "Huragok's bot"
             labels = {c.get("label"): c["custom_id"] for c in _components(form) if c.get("custom_id") and c.get("label")}
-            assert {"Ranks", "Owners", "Channels", "Features", "Who gets told", "Messages", "Tickets", "Commands", "Console", "Reports", "Appeals", "Contact", "Status", "Notes", "Check"} <= set(labels)
+            assert {"Ranks", "Faculty", "Channels", "Features", "Who gets told", "Messages", "Tickets", "Commands", "Console", "Reports", "Appeals", "Contact", "Status", "Notes", "Check"} <= set(labels)
             before = len(fake.callbacks)
             fake.pick(opened, labels["Ranks"], 2, [])
             await wait_for(lambda: len(fake.callbacks) > before, timeout=15)

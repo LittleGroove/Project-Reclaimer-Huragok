@@ -8,14 +8,14 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, OWNER
+from conftest import ALICE, FACULTY
 from test_bot_running import OTHER, _components, answer_text
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, MOD_USER, REPORTS, STAFF, buttons_of, form_of, posts_in
-from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, OWNER_USER, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, FACULTY_USER, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.discordbot import features
-from huragok.discordbot.config import add_owner, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 from huragok.discordbot.contact import OPEN, time_of
 
 INFO = "4209"
@@ -52,7 +52,7 @@ def bot_file(root: Path, **options: Any) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name, channel in (("staff", STAFF), ("reports", REPORTS), ("alerts", ALERTS), ("logs", LOGS), ("huragok-logs", HURAGOK_LOGS), ("info", INFO)):
         set_channel(path, name, channel, name)
     set_switch(path, ("contact",), "enabled", True)

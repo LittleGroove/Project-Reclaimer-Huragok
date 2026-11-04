@@ -7,7 +7,11 @@ into logs/temp-discord/temp-discord-YYYY-MM-DD.jsonl (UTC days, kept KEEP_DAYS; 
 
   start         Huragok starting: its version, each server's program version and what it is playing
   event         every event: the console's (kills, phases, joins, votes, chat…), the server.log lines Huragok knows
-                (stats reports and each player's rank, countdowns, team changes…) and Huragok's own (restarts, moderation)
+                (stats reports and each player's rank, countdowns, team changes…) and Huragok's own (restarts, moderation).
+                Since 0.6.1, to check against real games: stats.kills (each game's Kill feed as kept, every kill with
+                the weapon as the feed says it), discord.side_move (each sides move: landed, refused with the game's
+                words, didn't land, gone), discord.roles_look and discord.role_refused (each role-sync look's changes,
+                by role name and count, never a user ID)
   players       the console's `players` reply (each player's team, score, kills, deaths, assists, betrayals, suicides,
                 engine number, service tag): at every phase change, every POLL_SECONDS while a game is on, and when a
                 kill names an engine number not seen yet
@@ -15,14 +19,14 @@ into logs/temp-discord/temp-discord-YYYY-MM-DD.jsonl (UTC days, kept KEEP_DAYS; 
   stats_report  a server's report to the stats service went by: the file it's in, the service's answer
   note          what the stats capture did (statsrelay.py)
 
-and every report a server sends the stats service, with the service's answer, into its own
-logs/temp-discord/stats-reports/stats-reports-YYYY-MM-DD.jsonl (kept KEEP_DAYS too): statsrelay.py
-passes each one on as it was sent and keeps a copy.
+and every report a server sends the stats service, with the service's answer, goes into its own
+logs/temp-discord/stats-reports/stats-reports-YYYY-MM-DD.jsonl (kept KEEP_DAYS too): the stats part (stats.py) has
+statsrelay.py pass each one on as it was sent, counts it, and keeps a copy there; this keeps the folder tidy.
 
 It's made to be sent to whoever builds that version, so nobody's private: no IP addresses or device fingerprints, player IDs
 as stand-ins ("P-" and 10 letters: one player, one stand-in, worked out with a key kept in records/ that never leaves
 this machine), chat lines as their length (a command keeps its name: "!stats …"). Names stay: the stats lines name
-players. Always on, with nothing to set. Gone in the version that brings stats.
+players. Always on, with nothing to set. Temporary: the stats (stats.py, 0.6.1) are what it was gathered for.
 """
 
 from __future__ import annotations
@@ -42,7 +46,6 @@ from ..core.background import background
 from ..core.events import Event
 from ..core.part import Part, every, on
 from ..lore import SUPERINTENDENT
-from .statsrelay import StatsCapture
 
 FOLDER = "logs/temp-discord"
 REPORTS = "stats-reports"  # in FOLDER: the stats reports, kept
@@ -131,10 +134,9 @@ def key_for(records: Path) -> bytes:
 class TempDiscord(Part):
     persona = SUPERINTENDENT
     name = "tempdiscord"
-    description = "Temporary (until a later version brings stats): records what players' stats will need, in logs/temp-discord"
+    description = "Temporary: records what the servers send, for building on, in logs/temp-discord"
     always_on = True  # nothing to set: no section in settings.toml, nothing to switch
     _file: IO[str] | None = None
-    capture: StatsCapture | None = None
 
     async def setup(self) -> None:
         self.days = KEEP_DAYS
@@ -153,21 +155,6 @@ class TempDiscord(Part):
         from .. import __version__  # here: the package imports the parts
 
         self.write("start", None, huragok=__version__, servers=[self._describe(name) for name in self.ctx.servers])
-        self.capture = StatsCapture(Path(self.ctx.home) / "records", self.record_report, self.scrub,
-                                    home=Path(self.ctx.home))
-        await self.capture.apply(list(self.ctx.servers), {name: self._paths(name) for name in self.ctx.servers})
-        self._notes()
-
-    def _paths(self, name: str) -> tuple[Path | None, Path | None]:
-        return self.ctx.config_path(name), self.ctx.server_option(name, "log_path")
-
-    def _notes(self) -> None:
-        if self.capture is None:
-            return
-        for line in self.capture.notes:
-            self.log.info("%s", line)
-            self.write("note", None, text=line)
-        self.capture.notes.clear()
 
     def _describe(self, name: str) -> dict[str, Any]:
         state = self.ctx.servers[name]
@@ -229,24 +216,18 @@ class TempDiscord(Part):
         self.prune()
         await asyncio.to_thread(self.compress)
 
-    def record_report(self, server: str, data: dict[str, Any]) -> None:
-        """A report and the service's answer: the whole of it in stats-reports/, a line in the day's record."""
-        now = time.time()
-        day = time.strftime("%Y-%m-%d", time.gmtime(now))
-        name = f"stats-reports-{day}.jsonl"
-        line = {"at": round(now, 3), "server": server, **data}
-        with (self.folder / REPORTS / name).open("a", encoding="utf-8") as file:
-            file.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
-        answer = data.get("answer") or {}
-        self.write("stats_report", server, file=f"{REPORTS}/{name}", status=answer.get("status"),
-                   bytes=(data.get("request") or {}).get("bytes"))
-        self._notes()
-
     # ── what happens ──────────────────────────────────────────────────────────────────────────────────────────────
 
     @on("*")
     async def event(self, event: Event) -> None:
         if event.name.startswith(f"{self.name}."):
+            return
+        if event.name == "stats.reported":  # the stats part kept a report's copy: a line saying where
+            self.write("stats_report", event.server, file=event.get("file"), status=event.get("status"),
+                       bytes=event.get("bytes"))
+            return
+        if event.name == "stats.capture":  # what the stats capture did (statsrelay.py)
+            self.write("note", None, text=event.get("text"))
             return
         data = dict(event.data)
         if event.name == "rcon.chat" and "text" in data:
@@ -256,11 +237,6 @@ class TempDiscord(Part):
                    data=self.scrub.value(data, said=quiet))
         if event.server is None or event.server not in self.ctx.servers:
             return
-        if event.name == "log.stats_reporting" and self.capture is not None:
-            # Where a server reports, as it starts: one Huragok hasn't pointed here yet (new, or its server.log
-            # didn't say before) is from now on, from its next start.
-            await self.capture.learned(event.server, str(event.get("url", "")), *self._paths(event.server))
-            self._notes()
         if event.name == "rcon.phase":
             background(self.poll(event.server, f"phase {event.get('phase')}", status=True), what="tempdiscord poll")
         elif event.name == "rcon.kill":
@@ -307,8 +283,6 @@ class TempDiscord(Part):
             self.log.debug("[%s] couldn't ask for %s: %s: %s", server, why, type(error).__name__, error)
 
     async def teardown(self) -> None:
-        if self.capture is not None:
-            await self.capture.close()
         if self._file:
             self._file.close()
             self._file = None

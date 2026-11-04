@@ -209,13 +209,27 @@ def test_what_isnt_built_leaves_the_file_unless_someone_chose_it(tmp_path: Path)
     said = update(path)
     text = path.read_text(encoding="utf-8")
     data = tomllib.loads(text)
-    for gone in ("link", "roles", "chat", "stats", "achievements", "leaderboards", "matches", "community", "games", "moderation"):
+    for gone in ("chat", "achievements", "matches", "community", "games", "moderation"):
         assert gone not in data, gone
+    for built in ("link", "stats", "leaderboards", "roles"):  # in 0.6.1: what it has stays, what it hasn't goes
+        assert set(data[built]) == set(defaults()[built]), built
+    assert data["leaderboards"]["boards"] == defaults()["leaderboards"]["boards"]  # the first beta's placeholder list: today's
     assert "kills" not in data["feed"] and "chat" not in data["channels"] and "chat_per_minute" not in data["limits"]
     assert "# veteran_hours = 99" in text and "# self_roles =" in text and '# chat = "123"' in text
     assert "Not used yet: [roles] comes back" in text
     assert any("[roles] veteran_hours" in line and "isn't built yet" in line for line in said)
     assert load(path).warnings == []
+
+
+def test_a_link_setting_the_first_beta_had_stays_as_it_was_set(tmp_path: Path) -> None:
+    """[link] was a placeholder in the first beta and is built in 0.6.1: a host's own value there is theirs, and
+    nothing of it becomes a comment saying it isn't built."""
+    path = from_beta(tmp_path, ("code_minutes = 10", "code_minutes = 15"), ('nickname = "off"', 'nickname = "on"'))
+    said = update(path)
+    data = read(path)
+    assert data["link"]["code_minutes"] == 15 and data["link"]["names"] == "discord"
+    assert "nickname" not in data["link"] and '# nickname = "on"' in path.read_text(encoding="utf-8")  # still to come
+    assert not any("[link] code_minutes" in line for line in said)
 
 
 def test_the_names_that_changed_keep_what_was_set(tmp_path: Path) -> None:

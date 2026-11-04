@@ -39,7 +39,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from ..core.background import background
-from ..core.commandsfile import ROLES, Permissions, all_commands
+from ..core.commandsfile import ROLES, Permissions, all_commands, rank_word
 from ..core.events import Event
 from ..core.text import is_player_id
 from ..games.plays import console_refusal
@@ -59,8 +59,8 @@ log = logging.getLogger(__name__)
 LOCKOUT_TRIES, LOCKOUT_SECONDS = 5, 600
 READ_ONLY = {"status", "players", "maps", "modes", "vote", "bans", "vpn", "help", "admins"}
 QUERIES = {"nextmap", "servername", "maxping", "teamcount", "admin", "password"}  # read-only when typed alone
-FIXED = {"tell": "moderator", "banip": "admin", "vpnallow": "admin", "vpnrevoke": "admin", "password": "owner",
-         "reload": "owner", "admin": "owner"}
+FIXED = {"tell": "moderator", "banip": "admin", "vpnallow": "admin", "vpnrevoke": "admin", "password": "faculty",
+         "reload": "faculty", "admin": "faculty"}
 ACTS_ON = {"kick", "ban", "banip", "mute"}  # against a player: never one of the user's own role or above
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")  # new lines, tabs, NUL…: a second command could hide behind one
 HIDDEN = "(hidden)"
@@ -105,7 +105,7 @@ def required_role(line: str, permissions: Permissions, args: list[str] | None = 
     if spec is not None and word not in FIXED:
         role = permissions.role_for(spec)
         return role if allows(role, "moderator") else "moderator"  # the relay's users are moderators and up
-    return FIXED.get(word, "owner")
+    return FIXED.get(word, "faculty")
 
 
 def target_of(command: str, args: list[str] | None = None) -> str:
@@ -364,7 +364,7 @@ class Relay:
                      needed)
             if word not in all_commands() and word not in FIXED and word not in READ_ONLY and word not in QUERIES:  # a typo, or someone talking: not a matter of rank
                 return False, f"'{word}' isn't a console command: help lists them.", None
-            return False, f"'{word}' needs the {needed} role; you're {user.role}. Ask the host to change commands.toml.", None
+            return False, f"'{word}' needs the {rank_word(needed)} role; you're {rank_word(user.role)}. Ask the host to change commands.toml.", None
         if why := self._outranked(user, server.name, command, args):
             log.info("[%s] console: %s (%s) not sent: %s: %s", server.name, user.name, user.role, masked(line), why)
             return False, why, None
@@ -393,11 +393,11 @@ class Relay:
         return reply.ok, text, data
 
     def _outranked(self, user: RelayUser, server: str, command: str, args: list[str] | None) -> str:
-        """Why the line's player is beyond this user, as in game: nobody acts on their own role or above (owners
+        """Why the line's player is beyond this user, as in game: nobody acts on their own role or above (faculty
         excepted). The console itself acts with the host's authority, so the relay holds the line. "" when it
         may go: no player named, or one the console will refuse to pick (no one, or several, by that name)."""
         ref, state = target_of(command, args), self.states.get(server)
-        if not ref or state is None or user.role == "owner":
+        if not ref or state is None or user.role == "faculty":
             return ""
         word, _ = command_word(command, args)
         try:

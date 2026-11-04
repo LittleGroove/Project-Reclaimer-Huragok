@@ -33,7 +33,7 @@ def test_the_first_start_writes_the_files_and_stops(tmp_path: Path, capsys) -> N
     assert [p.name for p in (root / "records").iterdir()] == ["files.json"]  # the word list's steps done: it's this version's
     assert (root / "PACKAGES" / "team-slayer" / "playlists" / "team-slayer.playlist.json").is_file()
     out = capsys.readouterr().out
-    assert "Put your player ID under [owner]" in out and "start again" in out and "2 server folder(s) found" in out
+    assert "Put your player ID under [faculty]" in out and "start again" in out and "2 server folder(s) found" in out
     settings = load(root / "settings.toml")  # works as written
     assert [s.name for s in settings.servers] == ["LG Test Server", "Second"]
     assert settings.servers_folder == (root / "SERVERS").resolve() and settings.single_folder is None
@@ -46,7 +46,7 @@ def test_the_first_start_writes_the_files_and_stops(tmp_path: Path, capsys) -> N
     assert "{executable}" in text and "{{" not in text  # the documented placeholders survive as written
     if os.name == "nt":  # on Linux `check` also wants wine for backend process
         assert cli.main(["-c", str(root / "settings.toml"), "check"]) == 0
-        assert "nobody is owner yet" in capsys.readouterr().out
+        assert "nobody is faculty yet" in capsys.readouterr().out
 
 
 def test_the_first_start_with_no_servers_makes_the_folder_and_explains(tmp_path: Path, capsys) -> None:

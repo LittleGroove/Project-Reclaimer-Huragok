@@ -44,6 +44,8 @@ def test_free_ports_are_never_the_real_servers_nor_in_use(monkeypatch: pytest.Mo
     assert free_ports(2) == [40001, 40003]
     handed = iter([49180, 40002, 40004])
     assert free_port() == 40004
+    handed = iter([45700, 40005])  # Huragok's own relay ports: an address there reads as a relay's (conftest.RELAY_PORTS)
+    assert free_port() == 40005
     handed = iter([49176] * 100)
     with pytest.raises(RuntimeError, match="keeps handing out ports from 49170 to 49199"):
         free_port()

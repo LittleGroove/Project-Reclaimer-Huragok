@@ -84,7 +84,7 @@ SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
 BACK_UP = {"server.ready", "server.adopted", "server.restarted", "server.recovered"}  # a server's problem is over
 TAKES_NEWS_DOWN = {"server.restarted", "server.crashed", "server.stopped", "server.countdown_cancelled", "server.plan_cancelled"}  # a restart that's been and gone, or a call to come and fill a server that's down
 NEWS_THAT_GOES = {"servers-restart-planned", "servers-countdown", "seeding-wanted"}
-EVENTS = (*SIMPLE, "server.countdown_cancelled", "server.plan_cancelled", "commands.request_decided", "moderation.action", "moderation.seen", "server.stopped", "server.recovered", "rcon.phase", "rcon.join", "rcon.leave", "rcon.refused", "rcon.connected")
+EVENTS = (*SIMPLE, "server.countdown_cancelled", "server.plan_cancelled", "commands.request_decided", "moderation.action", "moderation.seen", "server.stopped", "server.recovered", "rcon.phase", "rcon.join", "rcon.leave", "rcon.refused", "rcon.connected", "stats.game", "stats.season")
 GALLERY_PER_POST = 10  # a message holds 10 cards
 
 
@@ -106,6 +106,11 @@ def skeleton(name: str) -> str:
     """What a name looks like at a glance: no accents, capitals or spacing, and 0 the same as o, 1 and I the same as l."""
     plain = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
     return "".join(c for c in plain.casefold().translate(LOOKS_THE_SAME) if not c.isspace() and c not in "_-.")
+
+
+def _no_buttons(form: dict[str, Any]) -> dict[str, Any]:
+    """A form for a webhook that isn't the bot's own: what's posted, without the buttons only the bot's posts carry."""
+    return {key: value for key, value in form.items() if key != "components"}
 
 
 class Feeds:
@@ -322,6 +327,22 @@ class Feeds:
             return cards.game_ended(self.config, event, players, minutes) if players >= self._min_players() else None
         return None
 
+    async def stats_happened(self, event: Event) -> None:
+        """A game counted, or a season begun or over (servers/stats.py): the game's Carnage Report and its rare medals,
+        or the season's news, in games."""
+        from ..servers.leaderboards import game_summary
+        from . import standings
+
+        if self.config.mode == "off":
+            return
+        if event.name == "stats.season":
+            self.deliver(await standings.season_card(self.part, dict(event.data)))
+            return
+        summary = game_summary(self.part.ctx.db, str(event.get("game_id") or ""))
+        if summary is None or summary["players"] < self._min_players():
+            return
+        self.deliver(standings.carnage_report(self.part, summary, event.server))  # its rare medals in it: one post a game (the host's call, 3 November 2026)
+
     def _min_players(self) -> int:
         return int(self.config.section("feed", "games").get("min_players", 0) or 0)
 
@@ -492,7 +513,10 @@ class Feeds:
         silent = bool(options.get("silent", True)) and not roles and not card.pings
         if one_line:
             return message(mention + cards.compact(card), silent=silent, ping_roles=roles, ping_users=card.pings)
-        return message(mention, embeds=[cards.embed(card, colour_value(self.config, card.colour or options.get("colour")))], silent=silent, ping_roles=roles, ping_users=card.pings)
+        form = message(mention, embeds=[cards.embed(card, colour_value(self.config, card.colour or options.get("colour")))], silent=silent, ping_roles=roles, ping_users=card.pings)
+        if card.components:
+            form["components"] = card.components
+        return form
 
     def _send(self, card: Card, options: dict[str, Any], *, one_line: bool | None = None) -> None:
         """A post. In a log channel it's one line, as there's nothing on it to act on."""
@@ -505,8 +529,8 @@ class Feeds:
         what = f"{card.message}"
         webhook = str(options.get("webhook") or "").strip()
         if webhook or config.mode == "webhook":
-            if webhook and f"webhook:{webhook}" not in self.blocked:
-                self.part.poster.post(persona, form, webhook=webhook, priority=priority, what=what, tag=f"webhook:{webhook}")
+            if webhook and f"webhook:{webhook}" not in self.blocked:  # a webhook not the bot's can't carry its buttons (audit 0.6.1, 5.7)
+                self.part.poster.post(persona, _no_buttons(form), webhook=webhook, priority=priority, what=what, tag=f"webhook:{webhook}")
         else:
             channel = self.channel_id(options)
             if channel and f"channel:{channel}" not in self.blocked:
@@ -527,7 +551,7 @@ class Feeds:
         for address in options.get("also") or []:
             address = str(address).strip()
             if address and f"webhook:{address}" not in self.blocked:
-                self.part.poster.post(self.persona_of(card, options), form, webhook=address, priority=ALERT if card.urgent else MODERATION if card.feed in ("moderation", "vergil", "votes") else STATUS,
+                self.part.poster.post(self.persona_of(card, options), _no_buttons(form), webhook=address, priority=ALERT if card.urgent else MODERATION if card.feed in ("moderation", "vergil", "votes") else STATUS,
                                       what=f"{card.message}, a copy", tag=f"webhook:{address}")
 
     # Refusals ------------------------------------------------------------------------------------------------------
@@ -634,6 +658,11 @@ def sample_cards(config: DiscordConfig) -> list[Card]:
              cards.opened_by_hand(config, "Mod", "a" * 64, "Alice", "Server 1")]
     made += [cards.audit("notes", say(config, "audit.flag.set", who="Mod", player="Alice", flag="watch"), config),
              cards.audit("power", say(config, "audit.power", who="Admin", what="restart now", server="Server 1"), config),
+             cards.audit("link", say(config, "audit.link", who="Buck", player="Rookie"), config),
+             Card("games", "report", say(config, "game.report", what="Guardian · Team Slayer", result="**Red 50 – 41 Blue**, Red wins", players=12),
+                  cards.heading(config, "taxes", "Carnage report"), [("Top", "1. Rookie · 50 (25/9)\n2. Buck · 41 (20/11)"), ("Best streak", "Rookie · 12")], server="Server 1"),
+             Card("games", "season", say(config, "game.season_ended", number=1, name="Season 1", season="Season 1", score="**Red 14 – 11 Blue**", ties="", outcome="Red takes it"),
+                  cards.heading(config, "last train", "Season over"), [("Most kills", "Rookie · 412")]),
              cards.reported(config, "Bravo", say(config, "reports.first"), "", "Alice", "Server 1", "camping the spawn", ["get out of my spawn"], ""),
              cards.enough_reports(config, 3, "Alice", "10", say(config, "ticket.number", number=12)),
              cards.message_reported(config, "Bravo", say(config, "reports.first"), "Alice", "general", "https://discord.com/channels/", "come and fight me", ""),

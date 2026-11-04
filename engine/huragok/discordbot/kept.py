@@ -23,6 +23,10 @@ RETRY_SECONDS = 600.0  # after a post that didn't get through
 LOOK_SECONDS = 600.0  # how often to see that one's still there: nothing else would say someone deleted it
 
 
+TOO_MANY_EDITS = 30046  # Discord: this message has been edited too often
+REPOSTED: dict[str, float] = {}  # when each kept post was last posted fresh for that
+
+
 def keep(part: DiscordPart, key: str, channel: str, form: dict[str, Any], *, pin: bool = False) -> None:
     """Make it so. It's only worth calling now and then: nothing goes to Discord unless something's changed."""
     status, config, delivery = part.status, part.file, part.poster.delivery
@@ -47,9 +51,15 @@ def keep(part: DiscordPart, key: str, channel: str, form: dict[str, Any], *, pin
             return await to_thread(delivery.edit, config, channel, message, form)
 
         def failed(error: rest.DiscordError) -> bool:
-            """Someone deleted it: a new one next time."""
+            """Someone deleted it: a new one next time. Edited as often as Discord lets an old message be (30046): posted
+            fresh, at most once an hour, as the status board is (audit 0.6.1, 5.8: a kept board stayed as it was)."""
             if error.status == 404:
                 status.forget(key)
+                return True
+            if getattr(error, "code", 0) == TOO_MANY_EDITS and status.clock() - REPOSTED.get(key, 0.0) >= 3600:
+                REPOSTED[key] = status.clock()
+                _delete(part, channel, message)
+                status.store(key, message="")
                 return True
             return False
 

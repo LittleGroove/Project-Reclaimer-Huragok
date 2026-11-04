@@ -11,12 +11,12 @@ import pytest
 from conftest import ALICE, BRAVO, MOD
 from test_bot_running import OTHER, _components, _opened, answer_text
 from test_feeds import ON, feeds_for, kick
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.discordbot.buttons import HOW_LONG, how_long
 from huragok.core.tomledit import read_toml
-from huragok.discordbot.config import add_owner, colour_value, load, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, colour_value, load, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
 
 PROBATION_ROLE = "5103"
 MOD_USER = "3334"
@@ -39,7 +39,7 @@ def bot_file(root: Path, *, every_channel: bool = True, notes: bool = True, chan
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "staff", STAFF, "tickets")
     set_channel(path, "logs", LOGS, "logs")
     if every_channel:
@@ -988,7 +988,7 @@ def test_a_kick_with_a_time_is_on_the_card_as_a_kick(tmp_path: Path, run: Any, f
             await fill(fake, "Kick", post, {"How long": "7d", "Why (they'll read this)": "team killing"})
             await wait_for(lambda: fake.original_edits, timeout=10)
             assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked for 7 days: team killing"]
-            assert f"user{OWNER_USER} kicked **Alice** for 7 days (team killing)" in edited(fake)["embeds"][0]["description"]
+            assert f"user{FACULTY_USER} kicked **Alice** for 7 days (team killing)" in edited(fake)["embeds"][0]["description"]
             assert "Let back" in buttons_of(edited(fake))
 
     run(scenario())

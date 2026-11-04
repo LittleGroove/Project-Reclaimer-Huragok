@@ -1,6 +1,6 @@
-"""Roles: who a player is to Huragok, from player (everyone) up to owner.
+"""Roles: who a player is to Huragok, from player (everyone) up to faculty.
 
-owner, moderator and member come from commands.toml (commandfile.py), the same on every server; admin only from
+faculty, moderator and member come from commands.toml (commandfile.py), the same on every server; admin only from
 each server itself (its console's `admin` list, or its dedicated.toml until it answers). A probationary moderator
 (0.5.3) is a member commands.toml lists whom Huragok's database marks on probation (`probation`, which the commands
 part keeps: players/commands/requests.py). A player's rank against a `!` command is their highest role on any server.
@@ -17,17 +17,21 @@ if TYPE_CHECKING:
 
 
 def role_name(role: str) -> str:
-    """A role as players read it: 'probationary moderator'."""
-    return role.replace("-", " ")
+    """A role as players read it: 'probationary moderator', 'faculty'."""
+    from ..core.commandsfile import rank_word
+
+    return rank_word(role)
 
 
 def a_role(role: str) -> str:
-    """'an admin', 'a moderator': for players to read."""
+    """'an admin', 'a moderator', 'faculty': for players to read."""
+    if role == "faculty":
+        return role_name(role)
     return ("an " if role[:1] in ("a", "e", "i", "o", "u") else "a ") + role_name(role)
 
 
 class Roles:
-    """owner, moderator and member come from commands.toml; admin only from the server itself."""
+    """faculty, moderator and member come from commands.toml; admin only from the server itself."""
 
     def __init__(self, settings: Any) -> None:
         self.settings = settings  # reads settings.permissions each time: commands.toml reloads while running
@@ -35,8 +39,8 @@ class Roles:
 
     def role_of(self, state: ServerState | None, player: Player) -> str:
         members, pid = self.settings.permissions.members, player.id.lower()
-        if pid in members.get("owner", set()):
-            return "owner"
+        if pid in members.get("faculty", set()):
+            return "faculty"
         if player.admin or pid in self.server_admins(state):
             return "admin"
         if pid in members.get("moderator", set()):

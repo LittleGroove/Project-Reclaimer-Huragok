@@ -31,7 +31,7 @@ TEST_PARENT = "HURAGOK_TEST_PARENT"
 os.environ[TEST_PARENT] = str(os.getpid())
 
 # Player IDs for tests (not real players).
-OWNER = "a" * 64
+FACULTY = "a" * 64
 MOD = "b" * 64
 ALICE = "c" * 64
 BRAVO = "d" * 64
@@ -106,14 +106,19 @@ def write_root(root: Path, servers: list[tuple[str, int]], body: str = "", comma
 
 
 def staff(extra: str = "", cooldown: float = 0) -> str:
-    """commands.toml with OWNER and MOD listed, every command at its default role."""
+    """commands.toml with FACULTY and MOD listed, every command at its default role."""
     return f"""
 cooldown_seconds = {cooldown}
-[owner]
-players = ["{OWNER}"]
+[faculty]
+players = ["{FACULTY}"]
 [moderator]
 players = ["{MOD}"]
 {extra}"""
+
+
+# Huragok's own stats relay ports (servers/statsrelay.PORTS): an address there reads as a relay's, so a fake service
+# Linux handed one of these (its free ports run 32768 to 60999) was taken for a stale relay (second audit, Linux 3.11).
+RELAY_PORTS = range(45600, 46000)
 
 
 def free_port() -> int:
@@ -143,7 +148,7 @@ def free_ports(count: int) -> list[int]:
     ports: list[int] = []
     try:
         while len(ports) < count:
-            if len(held) >= count + len(REAL_SERVER_PORTS):
+            if len(held) >= count + len(REAL_SERVER_PORTS):  # a relay port's a rare pick: no more tries for those
                 raise RuntimeError(f"the system keeps handing out ports from {REAL_SERVER_PORTS.start} to "
                                    f"{REAL_SERVER_PORTS.stop - 1}, or ports in use: "
                                    f"{[s.getsockname()[1] for s in held]}")
@@ -151,7 +156,7 @@ def free_ports(count: int) -> list[int]:
             held.append(sock)
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-            if port not in REAL_SERVER_PORTS and port not in in_use:
+            if port not in REAL_SERVER_PORTS and port not in RELAY_PORTS and port not in in_use:
                 ports.append(port)
         return ports
     finally:

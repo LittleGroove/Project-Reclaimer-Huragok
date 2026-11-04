@@ -209,6 +209,18 @@ class VergilContext(SuperintendentContext):
         part = self._automod()
         return [name.text for name in reversed(getattr(part, "names", []))]
 
+    def name_unfit(self, name: str) -> bool:
+        """A name not to show to everyone (a leaderboard, 0.6.1): one names.txt bans, or with a word of the word list
+        in it, whether or not check_names kicks for those; a word of a line that only reports counts until the staff
+        allow the name. False with Vergil off: there's no list to go by."""
+        part = self._automod()
+        if part is None:
+            return False
+        if part.name_matcher.find(name):
+            return True
+        hits = part.word_names.find(name)
+        return any(not hit.rule.reports for hit in hits) or (bool(hits) and not part.name_allowed(name))
+
     def allow_name(self, name: str, by: str, server: str | None = None) -> bool:
         """The staff's answer to a name Vergil asked them about (a word of a line that only reports): it's fine. Whether
         it's new: False when it was allowed already, or Vergil's off."""

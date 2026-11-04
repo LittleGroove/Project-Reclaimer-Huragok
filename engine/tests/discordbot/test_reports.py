@@ -7,13 +7,13 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, BRAVO, MOD, OWNER
+from conftest import ALICE, BRAVO, MOD, FACULTY
 from test_bot_running import OTHER, answer_text
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, MOD_USER, REPORTS, STAFF, buttons_of, fill, form_of, lines_in, posts_in, said_back
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, tells_to, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
 
 PING_ROLE = ADMIN_ROLE
 
@@ -33,7 +33,7 @@ def bot_file(root: Path, **options: Any) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name, channel in (("staff", STAFF), ("reports", REPORTS), ("alerts", ALERTS), ("logs", LOGS), ("huragok-logs", HURAGOK_LOGS)):
         set_channel(path, name, channel, name)
     set_switch(path, ("reports",), "enabled", True)
@@ -59,7 +59,7 @@ async def on(huragok: Any, rcon: Any, *people: tuple[int, str, str]) -> None:
     await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) >= len(people), timeout=10)
 
 
-ALICE_ON, BRAVO_ON, OWNER_ON = (3, "Alice", ALICE), (4, "Bravo", BRAVO), (1, "Owner", OWNER)
+ALICE_ON, BRAVO_ON, FACULTY_ON = (3, "Alice", ALICE), (4, "Bravo", BRAVO), (1, "Faculty", FACULTY)
 
 
 def description(post: dict[str, Any]) -> str:
@@ -90,10 +90,10 @@ def test_staff_can_be_reported_too(tmp_path: Path, run: Any, fake: FakeDiscord) 
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            await on(huragok, rcon, ALICE_ON, OWNER_ON)
-            await rcon.chat(ALICE, "Alice", "!report Owner abusing their powers")
+            await on(huragok, rcon, ALICE_ON, FACULTY_ON)
+            await rcon.chat(ALICE, "Alice", "!report Faculty abusing their powers")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            assert "reported **Owner**" in description(posts_in(fake, REPORTS)[0])
+            assert "reported **Faculty**" in description(posts_in(fake, REPORTS)[0])
 
     run(scenario())
 
@@ -173,13 +173,13 @@ def test_another_persons_report_is_added_to_the_card(tmp_path: Path, run: Any, f
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            await on(huragok, rcon, ALICE_ON, BRAVO_ON, OWNER_ON)
+            await on(huragok, rcon, ALICE_ON, BRAVO_ON, FACULTY_ON)
             await rcon.chat(BRAVO, "Bravo", "!report Alice camping")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            await rcon.chat(OWNER, "Owner", "!report Alice cheating")
+            await rcon.chat(FACULTY, "Faculty", "!report Alice cheating")
             await wait_for(lambda: fake.edits, timeout=15)
             assert len(posts_in(fake, REPORTS)) == 1
-            assert f"**Owner** (their first report) reported **Alice** on {SERVER}: cheating" in fake.edits[-1]["embeds"][0]["description"]
+            assert f"**Faculty** (their first report) reported **Alice** on {SERVER}: cheating" in fake.edits[-1]["embeds"][0]["description"]
 
     run(scenario())
 
@@ -204,10 +204,10 @@ def test_reporting_too_fast_waits(tmp_path: Path, run: Any, fake: FakeDiscord) -
         bot_file(tmp_path, reporter_cooldown_seconds=60)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            await on(huragok, rcon, ALICE_ON, BRAVO_ON, OWNER_ON)
+            await on(huragok, rcon, ALICE_ON, BRAVO_ON, FACULTY_ON)
             await rcon.chat(BRAVO, "Bravo", "!report Alice")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            await rcon.chat(BRAVO, "Bravo", "!report Owner")
+            await rcon.chat(BRAVO, "Bravo", "!report Faculty")
             await wait_for(lambda: any("moment ago" in said for said in tells_to(rcon, BRAVO)), timeout=10)
             assert len(posts_in(fake, REPORTS)) == 1
 
@@ -220,11 +220,11 @@ def test_enough_people_ping_staff_once(tmp_path: Path, run: Any, fake: FakeDisco
         set_message(path, "reports-many", ping=PING_ROLE)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            await on(huragok, rcon, ALICE_ON, BRAVO_ON, OWNER_ON, (2, "Mod", MOD))
+            await on(huragok, rcon, ALICE_ON, BRAVO_ON, FACULTY_ON, (2, "Mod", MOD))
             await rcon.chat(BRAVO, "Bravo", "!report Alice")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             assert not lines_in(fake, REPORTS)
-            await rcon.chat(OWNER, "Owner", "!report Alice")
+            await rcon.chat(FACULTY, "Faculty", "!report Alice")
             await wait_for(lambda: lines_in(fake, REPORTS), timeout=15)
             ping = lines_in(fake, REPORTS)[0]
             assert f"<@&{PING_ROLE}>" in ping["content"] and "2 different people have reported **Alice**" in ping["content"]
@@ -279,12 +279,12 @@ def test_their_record_shows_on_their_next_report(tmp_path: Path, run: Any, fake:
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            await on(huragok, rcon, ALICE_ON, BRAVO_ON, OWNER_ON)
+            await on(huragok, rcon, ALICE_ON, BRAVO_ON, FACULTY_ON)
             await rcon.chat(BRAVO, "Bravo", "!report Alice")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            await rcon.chat(BRAVO, "Bravo", "!report Owner")
+            await rcon.chat(BRAVO, "Bravo", "!report Faculty")
             await wait_for(lambda: len(posts_in(fake, REPORTS)) == 2, timeout=15)
-            assert "**Bravo** (1 report, 0 acted on) reported **Owner**" in description(posts_in(fake, REPORTS)[1])
+            assert "**Bravo** (1 report, 0 acted on) reported **Faculty**" in description(posts_in(fake, REPORTS)[1])
 
     run(scenario())
 

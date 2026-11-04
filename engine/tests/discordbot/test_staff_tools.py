@@ -8,12 +8,12 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, BRAVO, MOD, OWNER
+from conftest import ALICE, BRAVO, MOD, FACULTY
 from test_bot_running import OTHER, answer_text
-from testkit.fake_discord import GUILD, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import GUILD, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, tells_to, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def bot_file(root: Path, *feeds: str, body: str = "") -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name in ("staff", "info", "logs"):
         set_channel(path, name, STAFF_CHANNEL, "admin-log")
     for name in feeds:
@@ -328,10 +328,10 @@ def test_mods_says_who_is_on(tmp_path: Path, run: Any, fake: FakeDiscord) -> Non
             await rcon.chat(ALICE, "Alice", "!mods")
             await wait_for(lambda: any("No staff are in a game just now: !calladmin reaches them" in line for line in tells_to(rcon, ALICE)), timeout=10)
             await rcon.join(1, "Mod", MOD)
-            await rcon.join(2, "Owner", OWNER)
+            await rcon.join(2, "Faculty", FACULTY)
             await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 3, timeout=10)
             await rcon.chat(ALICE, "Alice", "!mods")
-            await wait_for(lambda: any(f"Mod ({SERVER}), Owner ({SERVER})" in line for line in tells_to(rcon, ALICE)), timeout=10)
+            await wait_for(lambda: any(f"Faculty ({SERVER}), Mod ({SERVER})" in line for line in tells_to(rcon, ALICE)), timeout=10)
 
     run(scenario())
 
@@ -441,7 +441,7 @@ def test_reaching_a_number_pings_who_asked_once(tmp_path: Path, run: Any, fake: 
         async with running(tmp_path) as (huragok, rcon, _):
             part = await up(huragok)
             part.alerts.add(OTHER, "players", "2", "")
-            part.alerts.add(OWNER_USER, "players", "2", SERVER)
+            part.alerts.add(FACULTY_USER, "players", "2", SERVER)
             part.alerts.add("3999", "players", "3", "")
             part.alerts.add("3998", "players", "2", "Elsewhere")
             part.alerts.tick()  # its first look crosses nothing: a restart pings nobody
@@ -454,7 +454,7 @@ def test_reaching_a_number_pings_who_asked_once(tmp_path: Path, run: Any, fake: 
             part.alerts.tick()
             await wait_for(lambda: len(pings_of(fake)) == 1, timeout=15)
             post = pings_of(fake)[0]
-            assert sorted(post["allowed_mentions"]["users"]) == sorted([OTHER, OWNER_USER])
+            assert sorted(post["allowed_mentions"]["users"]) == sorted([OTHER, FACULTY_USER])
             assert f"<@{OTHER}>" in post["content"] and "flags" not in post  # a ping that's silent isn't a ping
             assert post["embeds"][0]["description"] == f"{SERVER} has reached 2 players"
             await rcon.leave(4)

@@ -105,6 +105,7 @@ class Storage:
     def __init__(self, path: Path | None = None) -> None:
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path  # None: in memory
         self.db = sqlite3.connect(str(path) if path else ":memory:", isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.create_function("casefold", 1, _casefold, deterministic=True)
@@ -139,6 +140,17 @@ class Storage:
         self.db.execute("BEGIN")
         try:
             self.db.executemany(sql, rows)
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+        self.db.execute("COMMIT")
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Several writes, one commit, and none of them if one fails (a game's report: every table it goes into)."""
+        self.db.execute("BEGIN")
+        try:
+            yield
         except BaseException:
             self.db.execute("ROLLBACK")
             raise
@@ -280,6 +292,11 @@ class PartStore:
         self._storage = storage
         self.part = part
 
+    @property
+    def path(self) -> Path | None:
+        """The records' file (None: in memory), for a reading on a connection of its own (leaderboards.Reading)."""
+        return self._storage.path
+
     def migrate(self, steps: Iterable[str]) -> int:
         return self._storage.migrate(self.part, list(steps))
 
@@ -288,6 +305,9 @@ class PartStore:
 
     def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
         self._storage.execute_many(sql, rows)
+
+    def transaction(self) -> Any:
+        return self._storage.transaction()
 
     def query(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> list[sqlite3.Row]:
         return self._storage.query(sql, params)

@@ -483,10 +483,10 @@ its name):
 | `names` | `"names.txt"` | The banned names |
 | `forget_after_days` | `0` | Strikes older than this stop counting; `0` means never. A mute runs its time either way |
 | `name` | `"Vergil"` | Who players read as acting ("muted by Vergil"). A `settings.toml` written before 0.4.0 says `"AutoMod"` |
-| `exempt_roles` | `["admin", "owner"]` | Never acted on, in chat or by name |
+| `exempt_roles` | `["admin", "faculty"]` | Never acted on, in chat or by name |
 | `check_names` | `true` | Kick names with a word from `automod.txt` in them. `names.txt` applies either way |
 | `name_match` | `"anywhere"` | How a word from `automod.txt` catches a name: `"anywhere"` in it, or `"words"` (only as a word of its own, the name taken apart at its capitals and digits). See [Names](#names) |
-| `moderators_kick_at_most` | `"1d"` | The longest kick with a time a moderator can give, and lift with `!pardon`. Admins and owners have no limit. A value that isn't a time counts as `"1d"`. See [commands.md](commands.md#kicks-with-a-time-and-bans) |
+| `moderators_kick_at_most` | `"1d"` | The longest kick with a time a moderator can give, and lift with `!pardon`. Admins and faculty have no limit. A value that isn't a time counts as `"1d"`. See [commands.md](commands.md#kicks-with-a-time-and-bans) |
 | `across_servers` | `true` | Huragok's moderation (`!` commands, Vergil, the relay, the window's console) reaches every server: a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), and so does an admin Huragok makes. The game's own `/kick` and `/ban`, and votes, stay on their server (only written on the player's record; `!banall` puts a `/ban` on every server). `false`: Huragok's stay on theirs too |
 | `cooldown_seconds` | `10` | Lines this close together count as one strike |
 | `split_seconds` | `10` | Catch a word split over lines this close together |

@@ -9,17 +9,17 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ADMIN, ALICE, BRAVO, OWNER
+from conftest import ADMIN, ALICE, BRAVO, FACULTY
 from test_a_real_fleet import _label, _select, press, saying_yes
 from test_bot_running import OTHER, _components, answer_text
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, MOD_USER, REPORTS, STAFF, buttons_of, form_of, posts_in, said_back
 from testkit.discord_rules import component_problems, modal_problems
-from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, OWNER_USER, PUBLIC_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, BOT_ROLE, GUILD, MOD_ROLE, FACULTY_USER, PUBLIC_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, fleet, running, wait_for
 
 from huragok.core.settings import RelayUser
 from huragok.discordbot import cards, features
-from huragok.discordbot.config import add_owner, make_file, remove_owner, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, remove_faculty, set_channel, set_guild, set_mode, set_switch, set_token
 
 STOPPED, FIRST, SECOND = "LG Backend Test", "LG Test Server", "Sim Slayer"
 ADMIN_USER = "4441"
@@ -46,7 +46,7 @@ def bot_file(root: Path, *switches: tuple[str, ...], text: str = "") -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name, channel in (("staff", STAFF), ("reports", REPORTS), ("alerts", ALERTS), ("logs", LOGS), ("huragok-logs", HURAGOK_LOGS)):
         set_channel(path, name, channel, name)
     set_switch(path, ("commands",), "enabled", True)
@@ -118,7 +118,7 @@ def test_every_panel_builds_and_fits(tmp_path: Path, run: Any, fake: FakeDiscord
         bot_file(tmp_path)
         async with fleet(tmp_path, up=(FIRST,), down=(STOPPED,)) as (huragok, _):
             part = await up(huragok)
-            made: list[Any] = [panels.Home(part), panels.Ranks(part), panels.Owners(part), panels.Tickets(part), panels.Console(part), panels.ReportsPanel(part), panels.AppealsPanel(part), panels.ContactPanel(part),
+            made: list[Any] = [panels.Home(part), panels.Ranks(part), panels.FacultyPanel(part), panels.Tickets(part), panels.Console(part), panels.ReportsPanel(part), panels.AppealsPanel(part), panels.ContactPanel(part),
                                serverpanel.ServerPanel(part, FIRST), serverpanel._Confirm(part, FIRST, "restart")]
             for page in range(panels.Channels(part).pages):
                 made.append(panels.Channels(part, page))
@@ -130,6 +130,11 @@ def test_every_panel_builds_and_fits(tmp_path: Path, run: Any, fake: FakeDiscord
             set_switch(part.path, ("console",), "layout", "per-server")
             await part.reload(force=True)
             made += [panels.Console(part), panels.ServerChannels(part)]
+            set_switch(part.path, ("leaderboards",), "enabled", True)  # 0.6.1's: every button there is
+            set_switch(part.path, ("roles",), "top", {"kills season": "5001"})
+            await part.reload(force=True)
+            made += [panels.StatsPanel(part), panels.LeaderboardsPanel(part), panels.LeaderboardsPanel(part, "week"),
+                     panels.StatsRolesPanel(part), panels.StatsRolesPanel(part, "kills season"), panels.SidesPanel(part)]
             for panel in made:
                 assert not component_problems(panel.to_components()), type(panel).__name__
                 panel.card()
@@ -151,7 +156,7 @@ def test_a_kicks_reason_cant_change_what_it_does(tmp_path: Path, run: Any, fake:
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             post = await card_for(fake, part, FIRST)
-            await fill(fake, "Kick", post, {"Why (they'll read this)": why}, user=OWNER_USER)
+            await fill(fake, "Kick", post, {"Why (they'll read this)": why}, user=FACULTY_USER)
             await wait_for(lambda: consoles[FIRST].named("kick"), timeout=15)
             assert consoles[FIRST].named("ban") == []
             rows = huragok.storage.query("SELECT kind, duration, reason FROM actions WHERE target_id = ?", (ALICE,))
@@ -167,7 +172,7 @@ def test_a_bans_reason_is_only_its_reason(tmp_path: Path, run: Any, fake: FakeDi
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             post = await card_for(fake, part, FIRST)
-            await fill(fake, "Ban", post, {"Why (they'll read this)": "2h of slurs"}, user=OWNER_USER)
+            await fill(fake, "Ban", post, {"Why (they'll read this)": "2h of slurs"}, user=FACULTY_USER)
             await wait_for(lambda: consoles[FIRST].named("ban"), timeout=15)
             rows = huragok.storage.query("SELECT duration, reason FROM actions WHERE kind = 'ban' AND target_id = ?", (ALICE,))
             assert (rows[0]["duration"], rows[0]["reason"]) == (None, "2h of slurs")
@@ -186,8 +191,8 @@ def test_a_failed_lift_leaves_the_appeal_open_and_says_nothing_to_them(tmp_path:
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
-            await consoles[FIRST].chat(OWNER, "Owner", "!ban Alice perm slurs")
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
+            await consoles[FIRST].chat(FACULTY, "Faculty", "!ban Alice perm slurs")
             await wait_for(lambda: part.tickets.standing(ALICE)["banned"], timeout=15)
             post = await appeal(fake)
             refuse(consoles[FIRST], "unban")
@@ -208,8 +213,8 @@ def test_shortening_when_the_new_time_doesnt_go_on_says_so_and_stays_open(tmp_pa
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
-            await consoles[FIRST].chat(OWNER, "Owner", "!kick Alice 2h spam")
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
+            await consoles[FIRST].chat(FACULTY, "Faculty", "!kick Alice 2h spam")
             await wait_for(lambda: part.tickets.standing(ALICE)["kicked"], timeout=15)
             post = await appeal(fake)
             number = int(buttons_of(post)["Lift it"].split(":")[2])
@@ -249,7 +254,7 @@ def test_a_press_that_failed_leaves_the_next_thing_they_do_its_own_card(tmp_path
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             post = await card_for(fake, part, FIRST)
-            await fill(fake, "Mute", post, {"How long": "10m", "Why (they'll read this)": "first"}, user=OWNER_USER)
+            await fill(fake, "Mute", post, {"How long": "10m", "Why (they'll read this)": "first"}, user=FACULTY_USER)
             await wait_for(lambda: consoles[FIRST].named("mute") and not part.tickets.expecting, timeout=15)
             _, token = fake.command("kick", player=ALICE, reason="second")
             await said_back(fake, token)
@@ -325,7 +330,7 @@ def test_lifting_goes_where_it_was_given(tmp_path: Path, run: Any, fake: FakeDis
         async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
             await up(huragok)
             await on(huragok, consoles[SECOND], SECOND)
-            huragok.storage.record_action(kind="ban", server=FIRST, target_id=ALICE, target_name="Alice", by="Owner", source="in game", reason="slurs")
+            huragok.storage.record_action(kind="ban", server=FIRST, target_id=ALICE, target_name="Alice", by="Faculty", source="in game", reason="slurs")
             _, token = fake.command("unban", player=ALICE)
             await said_back(fake, token)
             await wait_for(lambda: consoles[FIRST].named("unban"), timeout=15)
@@ -409,7 +414,7 @@ def test_a_rank_for_one_server_counts_on_that_server(tmp_path: Path, run: Any, f
     run(scenario())
 
 
-def test_an_owner_taken_off_cant_go_on_using_an_open_panel(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_faculty_taken_off_cant_go_on_using_an_open_panel(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         path = bot_file(tmp_path)
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
@@ -417,13 +422,13 @@ def test_an_owner_taken_off_cant_go_on_using_an_open_panel(tmp_path: Path, run: 
             opened, token = fake.huragok("setup")
             await wait_for(lambda: any(c["token"] == token for c in fake.callbacks), timeout=15)
             form = next(c for c in fake.callbacks if c["token"] == token)["data"]
-            assert remove_owner(path, OWNER_USER)
+            assert remove_faculty(path, FACULTY_USER)
             await part.reload(force=True)
             custom_id = _label(form, "Reports")
             before = len(fake.callbacks)
             fake.pick(opened, custom_id, 2, [])
             await wait_for(lambda: len(fake.callbacks) > before, timeout=5)
-            assert "Only the owners" in str(fake.callbacks[-1]["data"].get("content"))
+            assert "Only the faculty" in str(fake.callbacks[-1]["data"].get("content"))
 
     run(scenario())
 
@@ -523,8 +528,8 @@ def test_emptying_the_questions_doesnt_kill_appeal(tmp_path: Path, run: Any, fak
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
-            await consoles[FIRST].chat(OWNER, "Owner", "!ban Alice perm slurs")
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
+            await consoles[FIRST].chat(FACULTY, "Faculty", "!ban Alice perm slurs")
             await wait_for(lambda: part.tickets.standing(ALICE)["banned"], timeout=15)
             _, token = fake.command("appeal", user=OTHER, who="Alice")
             assert not modal_problems(await form_of(fake, token))
@@ -603,9 +608,9 @@ def test_banall_of_a_timed_ban_stays_a_kick(tmp_path: Path, run: Any, fake: Fake
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
-            consoles[FIRST].ban_list.append({"id": ALICE, "name": "Alice", "reason": "spam", "banned_by": "Owner", "banned_at": int(time.time()), "expires": int(time.time()) + 7200})  # as someone's /ban in game leaves it
-            await consoles[FIRST].chat(OWNER, "Owner", f"!banall {ALICE}")
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
+            consoles[FIRST].ban_list.append({"id": ALICE, "name": "Alice", "reason": "spam", "banned_by": "Faculty", "banned_at": int(time.time()), "expires": int(time.time()) + 7200})  # as someone's /ban in game leaves it
+            await consoles[FIRST].chat(FACULTY, "Faculty", f"!banall {ALICE}")
             await wait_for(lambda: huragok.storage.query("SELECT 1 FROM actions WHERE reason LIKE 'every server%'"), timeout=15)
             assert {key: value for key, value in part.tickets.standing(ALICE).items() if key != "on"} == {"muted": False, "kicked": True, "banned": False}
 
@@ -622,8 +627,8 @@ def test_a_pardon_typed_in_the_console_reaches_the_record(tmp_path: Path, run: A
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
-            await consoles[FIRST].chat(OWNER, "Owner", "!kick Alice spam")
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
+            await consoles[FIRST].chat(FACULTY, "Faculty", "!kick Alice spam")
             await wait_for(lambda: part.tickets.standing(ALICE)["kicked"], timeout=15)
             fake.message(STAFF, "pardon Alice")
             await wait_for(lambda: consoles[FIRST].named("pardon"), timeout=15)
@@ -645,20 +650,20 @@ def test_an_unban_by_a_command_means_no_banned_elsewhere(tmp_path: Path, run: An
     run(scenario())
 
 
-def test_an_admin_cant_reach_an_owner_by_their_address(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_an_admin_cant_reach_faculty_by_their_address(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     async def scenario() -> None:
         bot_file(tmp_path)
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
             await up(huragok)
-            await on(huragok, consoles[FIRST], FIRST, 1, "Owner", OWNER)
+            await on(huragok, consoles[FIRST], FIRST, 1, "Faculty", FACULTY)
             relay = huragok.vergil.relay
             admin = RelayUser("someone", "", "admin")
-            address = huragok.superintendent.states[FIRST].player_by_id(OWNER).ip
+            address = huragok.superintendent.states[FIRST].player_by_id(FACULTY).ip
             assert address
             assert "you can't ban" in relay._outranked(admin, FIRST, f"ban {address.partition(':')[0]}", None)
             assert "you can't ban" in relay._outranked(admin, FIRST, f"ban {address.partition(':')[0].rsplit('.', 1)[0]}.0/24", None)
             assert relay._outranked(admin, FIRST, "ban 198.51.100.7", None) == ""
-            assert relay._outranked(RelayUser("host", "", "owner"), FIRST, f"ban {address.partition(':')[0]}", None) == ""
+            assert relay._outranked(RelayUser("host", "", "faculty"), FIRST, f"ban {address.partition(':')[0]}", None) == ""
 
     run(scenario())
 

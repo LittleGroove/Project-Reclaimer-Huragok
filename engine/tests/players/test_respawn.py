@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, wait_for
+from conftest import ADMIN, ALICE, BRAVO, MOD, FACULTY, wait_for
 from testkit.running import SERVER, everyone_joins, running, says, tells_to
 
 from huragok.players.commands import respawn as respawn_module
 
-TEAMS = {"Owner": "Red", "Mod": "Blue", "Alice": "Red", "Bravo": "Blue", "Admin": "Blue"}
+TEAMS = {"Faculty": "Red", "Mod": "Blue", "Alice": "Red", "Bravo": "Blue", "Admin": "Blue"}
 
 
 def told(fake, player_id: str, text: str) -> bool:
@@ -80,13 +80,13 @@ def test_an_admin_respawns_someone_else_but_not_their_own_rank(tmp_path: Path, r
                            "map." in says(fake))
             assert moves(fake) == [[BRAVO, "red"], [BRAVO, "blue"]]
 
-            await fake.chat(ADMIN, "Admin", "!respawn Owner")
-            await wait_for(lambda: told(fake, ADMIN, "Owner is an owner; you can't do that to them."))
+            await fake.chat(ADMIN, "Admin", "!respawn Faculty")
+            await wait_for(lambda: told(fake, ADMIN, "Faculty is faculty; you can't do that to them."))
             await fake.chat(ADMIN, "Admin", "!respawn")  # their own, again at once: an admin isn't held
             await answered(fake, 3)
             await answered(fake, 4)
             await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Admin respawned on Blue team." in says(fake))
-            await fake.chat(OWNER, "Owner", "!respawn Admin")  # an owner may
+            await fake.chat(FACULTY, "Faculty", "!respawn Admin")  # faculty may
             await wait_for(lambda: len(moves(fake)) == 5)
 
     run(scenario())
@@ -117,10 +117,10 @@ def test_what_the_server_refuses_and_when_theres_no_round_or_no_teams(tmp_path: 
             assert len(moves(fake)) == 1
 
             # The move back refused: they're told where they are.
-            await fake.chat(OWNER, "Owner", "!respawn")
+            await fake.chat(FACULTY, "Faculty", "!respawn")
             await answered(fake, 2)
             await answered(fake, 3, "Teams are locked until the next round starts.", ok=False)
-            await wait_for(lambda: told(fake, OWNER, "You respawned, but on Blue team: the server wouldn't move you "
+            await wait_for(lambda: told(fake, FACULTY, "You respawned, but on Blue team: the server wouldn't move you "
                                                      "back (Teams are locked until the next round starts.)."))
 
             # No answer at all: each move is taken as done after a moment.

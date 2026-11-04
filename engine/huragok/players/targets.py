@@ -14,7 +14,7 @@ they have spaces, capitals and apostrophes, and they change at will. What a comm
   list, for ten minutes). For a command that reaches players who left (scope "seen"), the ones seen here count too.
 - The start of a name acts on nobody, except for a command that only looks or lifts (`start`), and then only when
   one player on has it.
-- Nobody acts on someone of their own role or above (`acts`; owners excepted), named by name, number or ID alike.
+- Nobody acts on someone of their own role or above (`acts`; faculty excepted), named by name, number or ID alike.
 
 Lists of players who aren't on (!bans, !mutes, !kicks) number their entries the same way, so `!unban @2` is the
 second ban the caller was shown.
@@ -392,9 +392,9 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
 
 
 def outranked(call: CommandCall, player: Player) -> str:
-    """Why the caller can't act on this player ("" when they can): nobody acts on their own role or above, owners
+    """Why the caller can't act on this player ("" when they can): nobody acts on their own role or above, faculty
     excepted. Roles follow the player ID, so this holds for someone who isn't on too."""
-    if call.role == "owner" or call.role_of is None:
+    if call.role == "faculty" or call.role_of is None:
         return ""
     role = call.role_of(player)
     if ROLES.index(role) < ROLES.index(call.role):

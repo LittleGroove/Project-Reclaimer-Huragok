@@ -184,7 +184,7 @@ def _said(findings: list[features.Finding]) -> str:
 
 def test_the_check_on_a_good_setup(tmp_path: Path, fake: FakeDiscord) -> None:
     next(channel for channel in fake.channels if channel["id"] == STAFF_CHANNEL)["permission_overwrites"].append({"id": ADMIN_ROLE, "type": 0, "allow": str(1 << 10), "deny": "0"})  # they can see their tickets
-    config = bot(tmp_path, f'[ranks]\nowners = ["3000"]\nadmin = ["@SPR-Admin"]\n[channels]\nstaff = "{STAFF_CHANNEL}"\n')
+    config = bot(tmp_path, f'[ranks]\nfaculty = ["3000"]\nadmin = ["@SPR-Admin"]\n[channels]\nstaff = "{STAFF_CHANNEL}"\n')
     findings, facts = check(config)
     assert facts is not None and all(f.good for f in findings), _said(findings)
     said = _said(findings)
@@ -193,17 +193,17 @@ def test_the_check_on_a_good_setup(tmp_path: Path, fake: FakeDiscord) -> None:
 
 def test_the_check_says_when_a_staff_channel_is_public(tmp_path: Path, fake: FakeDiscord) -> None:
     next(channel for channel in fake.channels if channel["id"] == PUBLIC_CHANNEL)["permission_overwrites"] = READ_ONLY
-    body = f'[ranks]\nowners = ["3000"]\nadmin = ["@SPR-Admin"]\n[channels]\nstaff = "{PUBLIC_CHANNEL}"\nstatus = "{PUBLIC_CHANNEL}"\n'
+    body = f'[ranks]\nfaculty = ["3000"]\nadmin = ["@SPR-Admin"]\n[channels]\nstaff = "{PUBLIC_CHANNEL}"\nstatus = "{PUBLIC_CHANNEL}"\n'
     said = _said(check(bot(tmp_path, body))[0])
     assert "BAD Channel staff: #servers can be read by @everyone" in said and "[feeds] public = true" in said
     assert "ok Channel status: #servers" in said  # a public one is meant to be
-    findings, _ = check(bot(tmp_path, body + "[feeds]\npublic = true\n"))  # a Discord with only its owner in it
+    findings, _ = check(bot(tmp_path, body + "[feeds]\npublic = true\n"))  # a Discord with only its faculty in it
     assert all(f.good for f in findings), _said(findings)
 
 
 def test_the_check_says_what_to_fix_first(tmp_path: Path, fake: FakeDiscord) -> None:
     fake.bot_public = True
-    config = bot(tmp_path, '[ranks]\nadmin = ["@Nobody"]\nowners = ["@Boss"]\n[channels]\nstaff = "nowhere"\n')
+    config = bot(tmp_path, '[ranks]\nadmin = ["@Nobody"]\nfaculty = ["@Boss"]\n[channels]\nstaff = "nowhere"\n')
     findings, _ = check(config)
     said = _said(findings)
     assert "Public Bot" in said and "no role '@Nobody'" in said and "no channel 'nowhere'" in said
@@ -212,7 +212,7 @@ def test_the_check_says_what_to_fix_first(tmp_path: Path, fake: FakeDiscord) -> 
     assert [f.good for f in findings] == sorted(f.good for f in findings)
 
 
-def test_the_check_with_no_owner_points_at_the_claim(tmp_path: Path, fake: FakeDiscord) -> None:
+def test_the_check_with_no_faculty_points_at_the_claim(tmp_path: Path, fake: FakeDiscord) -> None:
     findings, _ = check(bot(tmp_path))
     assert "/huragok claim" in _said(findings)
 
@@ -247,7 +247,7 @@ def test_the_check_on_a_broken_file_says_only_that(tmp_path: Path) -> None:
 
 
 def test_the_check_says_when_anyone_can_type_in_a_channel_for_reading(tmp_path: Path, fake: FakeDiscord) -> None:
-    body = f'[ranks]\nowners = ["3000"]\n[channels]\nstatus = "{PUBLIC_CHANNEL}"\n'
+    body = f'[ranks]\nfaculty = ["3000"]\n[channels]\nstatus = "{PUBLIC_CHANNEL}"\n'
     assert "BAD Channel status: anyone can type in #servers" in _said(check(bot(tmp_path, body))[0])
     public = next(channel for channel in fake.channels if channel["id"] == PUBLIC_CHANNEL)
     public["permission_overwrites"] = [{"id": GUILD, "type": 0, "allow": "0", "deny": str(1 << 11)}]  # nobody can, and that means the bot too
@@ -268,6 +268,6 @@ def test_every_message_off_says_so_rather_than_naming_no_channel(tmp_path: Path,
     feed = BY_KEY["feed.games"]
     body = f'[channels]\ngames = "{PUBLIC_CHANNEL}"\n[feed.games]\nenabled = true\n'
     assert state_of(feed, bot(tmp_path, body), facts)[0] == ON  # switching it on is the choice: it posts
-    off = body + "[messages]\ngames-ended = { post = false }\ngames-started = { post = false }\ngames-playlist = { post = false }\n"
+    off = body + "[messages]\n" + "".join(f"games-{line} = {{ post = false }}\n" for line in ("ended", "started", "playlist", "report", "medal", "season"))
     state, why = state_of(feed, bot(tmp_path, off), facts)
     assert state == WAITING and "messages are switched off" in why and "Messages" in why

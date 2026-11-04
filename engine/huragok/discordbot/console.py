@@ -251,9 +251,9 @@ def _no_raw_lines(part: DiscordPart, rank: str) -> str:
     wanted = str(part.file.section("console").get("raw_rank") or "admin")
     if wanted == "off":
         return say(part.file, "console.commands_only", prefix=part.ctx.command_prefix)
-    if rank in {"moderator": ("moderator", "admin", "owner"), "admin": ("admin", "owner"), "owner": ("owner",)}[wanted]:
+    if rank in {"moderator": ("moderator", "admin", "faculty"), "admin": ("admin", "faculty"), "faculty": ("faculty",)}[wanted]:
         return ""
-    return say(part.file, {"moderator": "console.raw_for_moderators", "admin": "console.raw_for_admins", "owner": "console.raw_for_owners"}[wanted], prefix=part.ctx.command_prefix)
+    return say(part.file, {"moderator": "console.raw_for_moderators", "admin": "console.raw_for_admins", "faculty": "console.raw_for_faculty"}[wanted], prefix=part.ctx.command_prefix)
 
 
 def _code(text: str) -> str:

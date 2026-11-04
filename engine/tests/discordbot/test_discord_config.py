@@ -9,8 +9,8 @@ import pytest
 
 from huragok.core.tomledit import read_toml
 from huragok.discordbot.config import (
-    DiscordFileError, add_owner, clean_token, defaults, launcher_webhook, load, make_file, read, reload_if_changed,
-    remove_owner, set_channel, set_guild, set_launcher_webhook, set_mode, set_rank_roles, set_switch, set_token,
+    DiscordFileError, add_faculty, clean_token, defaults, launcher_webhook, load, make_file, read, reload_if_changed,
+    remove_faculty, set_channel, set_guild, set_launcher_webhook, set_mode, set_rank_roles, set_switch, set_token,
     template_text,
 )
 
@@ -19,7 +19,7 @@ def test_the_template_is_every_feature_off_and_no_secret() -> None:
     data = tomllib.loads(template_text())
     assert data["mode"] == "off" and data["token"] == "" and data["guild"] == ""
     assert data["feed"]["moderation"]["enabled"] is False and data["status"]["board"]["enabled"] is False
-    assert data["ranks"]["owners"] == [] and data["ranks"]["discord_administrators"] == "nothing"
+    assert data["ranks"]["faculty"] == [] and data["ranks"]["discord_administrators"] == "nothing"
     assert data["console"]["typed"] is False
     assert "FINAL DRAFT" not in template_text()
 
@@ -63,10 +63,10 @@ def test_the_wrong_kind_of_value_falls_back_to_its_default(tmp_path: Path) -> No
     assert sum("default is used" in line for line in config.warnings) == 2
 
 
-def test_an_owner_role_is_refused_with_the_reason(tmp_path: Path) -> None:
+def test_an_old_owner_role_is_refused_with_the_reason(tmp_path: Path) -> None:
     path = tmp_path / "discord.toml"
     path.write_text('[ranks]\nowner = ["@Boss"]\n', encoding="utf-8")
-    assert any("owners are people, never a role" in line for line in load(path).warnings)
+    assert any("faculty are people, never a role" in line for line in load(path).warnings)
 
 
 def test_every_timer_keeps_to_its_floor(tmp_path: Path) -> None:
@@ -168,9 +168,9 @@ def test_an_old_name_written_by_hand_says_what_its_called_now(tmp_path: Path) ->
 
 def test_what_was_only_ever_planned_is_just_not_a_setting(tmp_path: Path) -> None:
     path = tmp_path / "discord.toml"
-    path.write_text("[link]\nenabled = true\n[feed.kills]\nenabled = true\n", encoding="utf-8")
+    path.write_text("[achievements]\nenabled = true\n[feed.kills]\nenabled = true\n", encoding="utf-8")
     said = "\n".join(load(path).warnings)
-    assert "link isn't a setting this version knows" in said and "kills isn't a setting this version knows" in said
+    assert "achievements isn't a setting this version knows" in said and "kills isn't a setting this version knows" in said
 
 
 def test_a_reworded_text_works_quoted_or_not(tmp_path: Path) -> None:
@@ -303,12 +303,12 @@ def test_the_ranks_are_exactly_what_is_picked_each_once(tmp_path: Path) -> None:
     assert read_toml(path)["ranks"]["admin"] == []
 
 
-def test_owners_are_added_and_taken_off(tmp_path: Path) -> None:
+def test_faculty_are_added_and_taken_off(tmp_path: Path) -> None:
     path = tmp_path / "discord.toml"
-    assert add_owner(path, "111", "the host") is True
-    assert add_owner(path, "111") is False
+    assert add_faculty(path, "111", "the host") is True
+    assert add_faculty(path, "111") is False
     assert '"111",  # the host' in path.read_text(encoding="utf-8")
-    assert remove_owner(path, "111") is True and read_toml(path)["ranks"]["owners"] == []
+    assert remove_faculty(path, "111") is True and read_toml(path)["ranks"]["faculty"] == []
 
 
 def test_the_start_loops_webhook_never_fails_it(tmp_path: Path) -> None:

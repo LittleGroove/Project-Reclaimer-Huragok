@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import MOD, OWNER
+from conftest import MOD, FACULTY
 from testkit.screens import screen, template_root, text_of
 from testkit.setup import ALPHA
 
@@ -114,7 +114,7 @@ def test_moderators_of_the_console_relay(tmp_path: Path) -> None:
                                       ("Dee", "dee-long-password", "god", "the role is one of")):
         with pytest.raises(hs.HostSettingsError, match=why):
             hs.add_relay_user(path, name, password, role)
-    hs.change_relay_user(path, "alice", role="owner")
+    hs.change_relay_user(path, "alice", role="faculty")
     hs.change_relay_user(path, "Bob", password="bob-new-password")
     hs.remove_relay_user(path, "Alice")
     users = read_toml(path)["relay"]["user"]
@@ -134,9 +134,9 @@ def test_array_blocks_and_top_keys_are_changed_in_place(tmp_path: Path) -> None:
     add_array_block(path, ("relay", "user"), {"name": "B", "password": "bbbbbbbb", "role": "admin"})
     text = path.read_text(encoding="utf-8")
     assert text.index("# Moderators below.") < text.index('name = "A"') < text.index('name = "B"') < text.index("[rcon]")
-    set_array_block_key(path, ("relay", "user"), "b", "role", "owner")
+    set_array_block_key(path, ("relay", "user"), "b", "role", "faculty")
     remove_array_block(path, ("relay", "user"), "A")
-    assert read_toml(path)["relay"] == {"enabled": True, "user": [{"name": "B", "password": "bbbbbbbb", "role": "owner"}]}
+    assert read_toml(path)["relay"] == {"enabled": True, "user": [{"name": "B", "password": "bbbbbbbb", "role": "faculty"}]}
     with pytest.raises(TomlEditError, match="no \\[\\[relay.user\\]\\] block named C"):
         remove_array_block(path, ("relay", "user"), "C")
     only = tmp_path / "only.toml"
@@ -159,9 +159,9 @@ def test_who_is_who_and_who_may_use_which_command(tmp_path: Path) -> None:
     assert BRAVO in members["member"] and BRAVO not in members["moderator"]
     assert remove_player(path, "member", BRAVO) and not remove_player(path, "member", BRAVO)
     with pytest.raises(PermissionsError, match="not a player ID"):
-        add_player(path, "owner", "Alice", "")
+        add_player(path, "faculty", "Alice", "")
     with pytest.raises(PermissionsError, match="admins are the servers' own"):
-        add_player(path, "admin", OWNER, "")
+        add_player(path, "admin", FACULTY, "")
     set_command_role(path, "kick", "admin")
     permissions = load_permissions(path)
     assert permissions.roles["kick"] == "admin" and "# " + all_commands()["kick"].help in path.read_text(encoding="utf-8")
@@ -248,10 +248,10 @@ def test_mods_switched_off_and_on(tmp_path: Path) -> None:
 def test_the_players_seen_lately(tmp_path: Path) -> None:
     assert recent_players(tmp_path / "none.sqlite3") == [] and recent_players(None) == []
     storage = Storage(tmp_path / "records.sqlite3")
-    storage.record_join(OWNER, "Alice", None, when=100.0)
+    storage.record_join(FACULTY, "Alice", None, when=100.0)
     storage.record_join(BRAVO, "Bravo", None, when=200.0)
     storage.close()
-    assert recent_players(tmp_path / "records.sqlite3") == [(BRAVO, "Bravo", 200.0), (OWNER, "Alice", 100.0)]
+    assert recent_players(tmp_path / "records.sqlite3") == [(BRAVO, "Bravo", 200.0), (FACULTY, "Alice", 100.0)]
 
 
 # The screens -------------------------------------------------------------------------------------------------
@@ -266,7 +266,7 @@ def test_d_changes_settings_toml_a_step_at_a_time(tmp_path: Path, run) -> None:
     keys = ["S", "ENTER",  # D's list: How Huragok runs
             "7", "ENTER",  # Automod
             "2", "ENTER", "N",  # dry_run off
-            "7", "ENTER", *"4,5,6", "ENTER",  # exempt_roles: moderator, admin, owner
+            "7", "ENTER", *"4,5,6", "ENTER",  # exempt_roles: moderator, admin, faculty
             "ESC",
             "8", "ENTER", "M", "ENTER",  # the relay's moderators
             "A", "ENTER", *"Alice", "ENTER", *"alice-long-password", "ENTER", "1",  # Alice, moderator
@@ -278,7 +278,7 @@ def test_d_changes_settings_toml_a_step_at_a_time(tmp_path: Path, run) -> None:
     run(menu.screen_settings())
     text = text_of(terminal)
     data = read_toml(path)
-    assert data["automod"]["dry_run"] is False and data["automod"]["exempt_roles"] == ["moderator", "admin", "owner"]
+    assert data["automod"]["dry_run"] is False and data["automod"]["exempt_roles"] == ["moderator", "admin", "faculty"]
     assert data["relay"]["user"] == [{"name": "Alice", "password": "alice-long-password", "role": "admin"}]
     assert data["server_updates"]["repository"] == "ProjectReclaimer/project-reclaimer-releases"
     assert "dry_run = off, written to settings.toml" in text and "when Huragok starts again" in text
@@ -412,12 +412,12 @@ def test_d_settings_toml_refuses_and_takes_out(tmp_path: Path, run) -> None:
     assert "has that password" in text and "Alice's password changed." in text and "Alice taken out." in text
 
 
-def test_d_commands_toml_made_owners_typed_and_the_cooldown(tmp_path: Path, run) -> None:
+def test_d_commands_toml_made_faculty_typed_and_the_cooldown(tmp_path: Path, run) -> None:
     path = template_root(tmp_path)
     commands = path.parent / "commands.toml"
     commands.unlink()
     keys = ["C", "ENTER", "Y",  # made, as init writes it
-            "1", "A", "ENTER", *OWNER, "ENTER", "ESC",  # an owner by player ID (no records yet)
+            "1", "A", "ENTER", *FACULTY, "ENTER", "ESC",  # faculty by player ID (no records yet)
             "1", "A", "ENTER", *"Alice", "ENTER", "x", "ESC",  # not a player ID
             "6", *"5", "ENTER", "6", *"lots", "ENTER",  # the cooldown, then not a number
             "5", "?", "ENTER",  # the prefix
@@ -426,9 +426,9 @@ def test_d_commands_toml_made_owners_typed_and_the_cooldown(tmp_path: Path, run)
     run(menu.screen_settings())
     text = text_of(terminal)
     permissions = load_permissions(commands)
-    assert OWNER in permissions.members["owner"] and permissions.cooldown == 5 and permissions.prefix == "?"
-    assert player_notes(commands)[OWNER].startswith("added as owner in Huragok's window on ")
-    assert "No players in Huragok's records yet" in text and "is an owner now." in text
+    assert FACULTY in permissions.members["faculty"] and permissions.cooldown == 5 and permissions.prefix == "?"
+    assert player_notes(commands)[FACULTY].startswith("added as faculty in Huragok's window on ")
+    assert "No players in Huragok's records yet" in text and "is faculty now." in text
     assert "Not changed: Alice is not a player ID" in text and "Not changed: a number of seconds, 0 to 3600." in text
     assert "cooldown_seconds = 5 written." in text and "Commands start with ? now: !help reads ?help." in text
 

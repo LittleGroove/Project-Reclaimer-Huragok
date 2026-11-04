@@ -23,13 +23,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from ..core.background import background
-from ..core.commandsfile import HELP, PROBATION, ROLES, TITLES
+from ..core.commandsfile import HELP, PROBATION, ROLES, TITLES, rank_plural
 from ..core.events import Event, EventBus
 from ..core.part import CommandSpec
 from ..core.storage import acting
 from ..rcon import RconError
 from ..servers.state import Player, ServerState
-from .roles import Roles, role_name
+from .roles import Roles
 from .targets import QUOTES, SCOPES, Picks, find, is_team, is_time, outranked, player_and_rest
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ def wrap(text: str, limit: int = LINE_LIMIT) -> list[str]:
 
 def role_plural(role: str) -> str:
     """For players to read: 'moderators', 'everyone'."""
-    return "everyone" if role == "player" else f"{role_name(role)}s"
+    return "everyone" if role == "player" else rank_plural(role)
 
 
 @dataclass
@@ -180,20 +180,20 @@ class CommandRouter:
 
     def register(self, spec: CommandSpec, runner: PartRunner | None,
                  method: Callable[[CommandCall], Awaitable[Any]]) -> None:
-        owner = runner.name if runner else "Huragok"
+        part_name = runner.name if runner else "Huragok"  # whose command it is
         for word in (spec.name, *spec.aliases):
             if not WORD.fullmatch(word):
-                raise ValueError(f"{owner}: '{word}' isn't a usable command name")
+                raise ValueError(f"{part_name}: '{word}' isn't a usable command name")
             if word in RESERVED:
-                raise ValueError(f"{owner}: !{word} is the server's own vote")
+                raise ValueError(f"{part_name}: !{word} is the server's own vote")
             if word in self.commands or word in self.aliases:
                 taken = self.commands.get(self.aliases.get(word, word))
                 by = taken.runner.name if taken and taken.runner else "Huragok"
-                raise ValueError(f"{owner}: !{word} is already {by}'s")
+                raise ValueError(f"{part_name}: !{word} is already {by}'s")
         if spec.role not in ROLES:
-            raise ValueError(f"{owner}: !{spec.name} role must be one of {', '.join(ROLES)}")
+            raise ValueError(f"{part_name}: !{spec.name} role must be one of {', '.join(ROLES)}")
         if spec.player and spec.player not in SCOPES:
-            raise ValueError(f"{owner}: !{spec.name} player must be one of {', '.join(SCOPES)}")
+            raise ValueError(f"{part_name}: !{spec.name} player must be one of {', '.join(SCOPES)}")
         self.commands[spec.name] = Registered(spec, runner, method)
         for alias in spec.aliases:
             self.aliases[alias] = spec.name
@@ -271,7 +271,7 @@ class CommandRouter:
         cooldown = spec_cooldown if spec_cooldown is not None else self.settings.permissions.cooldown
         key = (player.id, call.name)
         now = time.monotonic()
-        if call.role not in ("admin", "owner") and now - self._last_use.get(key, -1e9) < cooldown:
+        if call.role not in ("admin", "faculty") and now - self._last_use.get(key, -1e9) < cooldown:
             return
         self._last_use[key] = now
         log.info("[%s] %s (%s) %s %s%s %s", call.server, player.name, TITLES[call.role],

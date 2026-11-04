@@ -429,7 +429,7 @@ def across_servers(ctx: Context) -> list[str]:
 
 KICK_LIMIT_COMMENT = [  # the template's, above [automod] moderators_kick_at_most
     "The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick",
-    "is a ban in all but name. Admins and owners have no limit.",
+    "is a ban in all but name. Admins and faculty have no limit.",
 ]
 
 
@@ -632,6 +632,202 @@ def requests_command(ctx: Context) -> list[str]:
             add_to_list(copy, section, "commands", "requests", all_commands()["requests"].help, width=entry_width())
 
     _checked(path, change, "!requests")
+    return said
+
+
+NOT_USED = re.compile(r"#\s*Not used yet: (?:\[([^\]]+)\] comes back|this (channel|limit) comes back)")
+
+
+def _means_the_same(where: tuple[str, ...], key: str, value: Any) -> bool:
+    """Whether a beta's value means now what it meant then: [roles] sync made a Discord role a rank in the first beta,
+    and takes rank roles off whoever isn't linked now; its boards were named in a way 0.6.1 can't read (second audit,
+    9.1). Those stay notes."""
+    from ..servers.leaderboards import PERIODS, known
+
+    if (where, key) == (("roles",), "sync"):
+        return False
+    if (where, key) == (("leaderboards",), "boards"):
+        def readable(entry: Any) -> bool:
+            words = str(entry).strip().lower().split()
+            return words == ["red-blue"] or (1 <= len(words) <= 2 and known(words[0]) and (len(words) == 1 or words[1] in PERIODS))
+
+        return isinstance(value, list) and all(readable(entry) for entry in value)
+    return True
+
+
+def discord_built(ctx: Context) -> list[str]:
+    """A setting 0.6.0 took out as a note ("Not used yet: … comes back with the version that builds it"), for what this
+    version builds: back as the host set it. Left as notes, the host's own values were lost, and [channels] stats was
+    written over with the default (audit 0.6.1, 6.2). One whose table this version still doesn't build stays a note."""
+    import tomllib
+
+    from ..core.tomledit import set_nested_key
+    from .notes import template_text
+
+    path = ctx.home / "discord.toml"
+    if not path.is_file() or not _read(path):
+        return []
+    template = tomllib.loads(template_text("discord.toml"))
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept: list[str] = []
+    back: list[tuple[tuple[str, ...], str, Any]] = []
+    number = 0
+    while number < len(lines):
+        found = NOT_USED.match(lines[number])
+        if not found:
+            kept.append(lines[number])
+            number += 1
+            continue
+        where = tuple(found.group(1).split(".")) if found.group(1) else ("channels",) if found.group(2) == "channel" else ("limits",)
+        block, body, end = [lines[number]], [], number + 1
+        while end < len(lines) and lines[end].startswith("# ") and not NOT_USED.match(lines[end]):
+            block.append(lines[end])
+            body.append(lines[end][2:])
+            end += 1
+        try:
+            values = tomllib.loads("".join(body))
+        except tomllib.TOMLDecodeError:
+            values = {}
+        table: Any = template
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        if values and isinstance(table, dict) and all(key in table and not isinstance(value, dict) and _means_the_same(where, key, value)
+                                                      for key, value in values.items()):
+            back += [(where, key, value) for key, value in values.items()]
+        else:
+            kept += block
+        number = end
+    if not back:
+        return []
+    said = [f"{path.name}: [{'.'.join(where)}] {key} back as you set it, now it's built" for where, key, _ in back]
+    if not ctx.dry:
+        ctx.backup(path)
+        write_atomic(path, "".join(kept))
+        for where, key, value in back:
+            set_nested_key(path, where, key, value)
+    return said
+
+
+FACULTY_NOTES = {  # 0.6.0's notes on the lines the faculty step renames, and this version's
+    "# Discord USER IDs with owner rights from Discord. People, never a role.":
+        "# Discord USER IDs with faculty rights from Discord (whoever types /huragok claim). People, never a role.",
+    "# what an owner of the bot acts as, running commands from Discord: owner | admin":
+        "# what faculty act as, running commands from Discord: faculty | admin",
+}
+
+def faculty(ctx: Context) -> list[str]:
+    """The top rank was "owner" before 0.6.1. It's faculty (the host's call, 3 November 2026: "the true owner of the
+    server is the one who controls the machine its on, otherwise it really is faculty"), wherever it's written:
+    [owner] in commands.toml is [faculty], its notes and players kept; a setting that names the rank says faculty
+    (settings.toml's exempt_roles and relay users, discord.toml's owners, owners_in_game, [roles] owner and the ranks
+    in close_rank, power_rank and raw_rank); and the records say faculty for the rank of whoever gave each action.
+    Settled: the version before knows only the old name, and this one reads both until it's gone."""
+    import sqlite3
+    from contextlib import closing
+
+    from ..core.commandsfile import OLD_RANK, all_commands, entry_width, player_notes
+    from ..core.tomledit import (add_to_list, remove_empty_table, remove_nested_key, remove_table_key, rename_nested_key,
+                                 set_nested_key)
+    from .notes import NotesError, refresh_text
+
+    said: list[str] = []
+    path = ctx.commands_path
+    text = path.read_text(encoding="utf-8") if path.is_file() and _read(path) else ""  # one that can't be read is never touched
+    owner_header = re.compile(rf'(?mi)^[ \t]*\[[ \t]*"?{OLD_RANK}"?[ \t]*\](?=[ \t]*(#.*)?$)')  # however it's written (6.3)
+    if owner_header.search(text):
+        said.append(f"{path.name}: [{OLD_RANK}] is [faculty] now, everyone in it kept")
+        if not ctx.dry:
+            ctx.backup(path)
+            faculty_now = (_read(path) or {}).get("faculty")
+            if isinstance(faculty_now, dict):
+                # Written before this step (a claim, the window, a new command listed): into [owner], with their notes,
+                # and [owner] renamed as it stands. Left beside it, [owner] stayed for good: its faculty couldn't be taken
+                # out, and 0.6.0 refused the file (audit 0.6.1, 6.3).
+                notes = player_notes(path)
+                prefix = str((_read(path) or {}).get("prefix") or "!")
+                for player_id in faculty_now.get("players") or []:
+                    add_to_list(path, OLD_RANK, "players", str(player_id).lower(), notes.get(str(player_id).lower(), ""))
+                for command in faculty_now.get("commands") or []:
+                    spec = all_commands().get(str(command).strip().lower().removeprefix(prefix))
+                    add_to_list(path, OLD_RANK, "commands", str(command), spec.help if spec else "", width=entry_width())
+                for key in list(faculty_now):
+                    remove_table_key(path, "faculty", key)
+                remove_empty_table(path, ("faculty",))
+                text = path.read_text(encoding="utf-8")
+            renamed = owner_header.sub("[faculty]", text, count=1)
+            try:  # its notes as this version writes them, now its sections are named as this version's are
+                renamed = refresh_text("commands.toml", renamed).text
+            except NotesError:
+                pass
+            write_atomic(path, renamed)
+    settings = ctx.settings_path
+    text = settings.read_text(encoding="utf-8") if settings.is_file() and _read(settings) else ""
+    lines, table, changed = text.splitlines(keepends=True), "", False
+    quoted = re.compile(rf"""(["']){OLD_RANK}\1""", re.IGNORECASE)  # "owner", 'Owner'…, as 0.6.0 took them all (6.6)
+    in_roles = False
+    for number, line in enumerate(lines):
+        if found := re.match(r"\s*\[\[?([^\]]+)\]\]?", line):
+            table = found.group(1).strip()
+        new, value = line, line.split("#", 1)[0]  # the value only: a note of the host's is theirs
+        if table == "automod" and (in_roles or re.match(r"\s*exempt_roles\s*=", line)):
+            new = quoted.sub('"faculty"', value) + line[len(value):]
+            in_roles = "]" not in value  # an exempt_roles over several lines
+        elif table == "relay.user" and re.match(r"\s*role\s*=", line):
+            new = quoted.sub('"faculty"', value, count=1) + line[len(value):]
+        if new != line:
+            lines[number], changed = new, True
+    if changed:
+        said.append(f"{settings.name}: the rank {OLD_RANK} is faculty now, where a setting names it")
+        if not ctx.dry:
+            ctx.backup(settings)
+            write_atomic(settings, "".join(lines))
+    discord = ctx.home / "discord.toml"
+    data = _read(discord) if discord.is_file() else {}
+    renames = [(("ranks",), "owners", "faculty"), (("ranks",), "owners_in_game", "faculty_in_game"), (("roles",), OLD_RANK, "faculty")]
+    wanted = [(table, old, new) for table, old, new in renames if old in (data.get(table[0]) or {})]  # the host's, over a default beside it
+    values = [(("ranks",), "faculty_in_game"), (("tickets",), "close_rank"), (("commands",), "power_rank"), (("console",), "raw_rank")]
+    if wanted or any(str((data.get(table[0]) or {}).get(key, "")).lower() == OLD_RANK for table, key in values) \
+            or str((data.get("ranks") or {}).get("owners_in_game", "")).lower() == OLD_RANK:
+        said.append(f"{discord.name}: owners are faculty now")
+        if not ctx.dry:
+            ctx.backup(discord)
+            for table, old, new in wanted:
+                given = data.get(table[0]) or {}
+                if new in given:
+                    # The new name's an update's default, or a claim made before this step: what it has goes onto the
+                    # old list with its note, and the old's renamed as it stands, each ID's note beside it kept (the
+                    # Discord name a claim writes: audit 0.6.1, 6.1). A single value: the old one, as it was set.
+                    if isinstance(given[old], list) and isinstance(given[new], list):
+                        written = discord.read_text(encoding="utf-8")
+                        for entry in given[new]:
+                            if entry not in given[old]:
+                                found = re.search(rf'"{re.escape(str(entry))}"\s*,?\s*#\s*(.*)', written)
+                                add_to_list(discord, table[0], old, str(entry), found.group(1).strip() if found else "")
+                    remove_nested_key(discord, table, new)
+                rename_nested_key(discord, table, old, new)
+            data = _read(discord)
+            for table, key in values:
+                if str((data.get(table[0]) or {}).get(key, "")).lower() == OLD_RANK:
+                    set_nested_key(discord, table, key, "faculty")
+            written = discord.read_text(encoding="utf-8")  # 0.6.0's own notes on the renamed lines, as this version writes them
+            for was, now in FACULTY_NOTES.items():
+                written = written.replace(was, now)
+            write_atomic(discord, written)
+    database = ctx.home / str((_read(ctx.settings_path) or {}).get("database") or "records/huragok.sqlite3")
+    if database.is_file():
+        try:
+            with closing(sqlite3.connect(str(database), timeout=10)) as db:
+                tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                kept = 0
+                for name in ("actions", "commands_no_votes"):  # who gave each, with the rank they had then
+                    if name in tables:
+                        kept += (db.execute(f"SELECT COUNT(*) FROM {name} WHERE by_role = ?", (OLD_RANK,)).fetchone()[0] if ctx.dry
+                                 else db.execute(f"UPDATE {name} SET by_role = 'faculty' WHERE by_role = ?", (OLD_RANK,)).rowcount)
+                db.commit()
+            if kept:
+                said.append(f"{database.name}: {kept} record{'s' if kept != 1 else ''} of what faculty did say faculty, not {OLD_RANK}")
+        except sqlite3.Error as error:
+            log.warning("Couldn't bring the records' ranks up to date: %s", error)
     return said
 
 
@@ -1073,19 +1269,35 @@ def discord_unbuilt(ctx: Context) -> list[str]:
     import json
     from importlib import resources
 
-    from ..core.tomledit import comment_out_nested_key, remove_empty_table, remove_nested_key, remove_table_key
+    from ..core.tomledit import comment_out_nested_key, remove_empty_table, remove_nested_key, remove_table_key, set_nested_key
 
     path = ctx.home / "discord.toml"
     data = _read(path)
     if not path.is_file() or not data:
         return []
+    import tomllib
+
+    from .notes import template_text
+
     shipped = json.loads(resources.files("huragok").joinpath("templates/discord-not-built.json").read_text(encoding="utf-8"))
+    built_since = tomllib.loads(template_text("discord.toml"))  # a later version built some ([link] in 0.6.1): those stay
     found: list[tuple[tuple[str, ...], str, Any]] = []  # what's still there: each with where it lives
     tables: list[tuple[str, ...]] = []  # deepest last, and taken out the other way round
+
+    def is_built(where: tuple[str, ...], key: str) -> bool:
+        table: Any = built_since
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        return isinstance(table, dict) and key in table
+
+    built_found: list[tuple[tuple[str, ...], str, Any]] = []  # what's built since: kept, but a first beta's own value gets today's
 
     def walk(given: dict[str, Any], where: tuple[str, ...]) -> None:
         tables.append(where)
         for key, value in given.items():
+            if is_built(where, key):
+                built_found.append((where, key, value))
+                continue
             if isinstance(value, dict) and (where, key) not in ONE_VALUE_TABLES:
                 walk(value, (*where, key))
             else:
@@ -1109,8 +1321,17 @@ def discord_unbuilt(ctx: Context) -> list[str]:
             table = table.get(part) if isinstance(table, dict) else None
         return table.get(key) if isinstance(table, dict) else None
 
+    def default_now(where: tuple[str, ...], key: str) -> Any:
+        table: Any = built_since
+        for part in where:
+            table = table.get(part) if isinstance(table, dict) else None
+        return table.get(key) if isinstance(table, dict) else None
+
     if not ctx.dry:
         ctx.backup(path)
+    for where, key, value in built_found:  # the first beta's placeholder, never someone's choice: what it is now
+        if value == first_said(where, key) and value != default_now(where, key) and not ctx.dry:
+            set_nested_key(path, where, key, default_now(where, key))
     for where, key, value in found:
         if value == first_said(where, key):
             gone += 1
@@ -1122,7 +1343,7 @@ def discord_unbuilt(ctx: Context) -> list[str]:
                 comment_out_nested_key(path, where, key, f"Not used yet: [{'.'.join(where)}] comes back with the version that builds it:")
     for name in shipped["channels"]:
         reference = (data.get("channels") or {}).get(name)
-        if reference is None:
+        if reference is None or is_built(("channels",), name):
             continue
         if str(reference).strip():
             said.append(f"discord.toml: [channels] {name}: what it's for isn't built yet, so it's a comment for now, as you'd set it")
@@ -1400,7 +1621,7 @@ def discord_retired(ctx: Context) -> list[str]:
 def new_commands(ctx: Context) -> list[str]:
     """Commands newer than the host's commands.toml, put in their default role's list so the host sees them (a
     command in no list has its default role anyway: this changes nobody's rights)."""
-    from ..core.commandsfile import SECTIONS, TITLES
+    from ..core.commandsfile import OLD_SECTIONS, SECTIONS, TITLES
     from ..core.commandsfile import all_commands, entry_width
     from ..core.tomledit import add_to_list
 
@@ -1409,7 +1630,7 @@ def new_commands(ctx: Context) -> list[str]:
     if not path.is_file() or not data:
         return []
     listed: set[str] = set()
-    for section in [*SECTIONS, "off"]:
+    for section in [*SECTIONS, *OLD_SECTIONS, "off"]:  # [owner] too, as a file before 0.6.1 has it
         table = data.get(section)
         commands = table.get("commands") if isinstance(table, dict) else None
         if isinstance(commands, list):
@@ -1487,12 +1708,14 @@ STEPS: list[Step] = [
     Step("0.6.0/automod-reports", "the word list's lines with nothing in them go on kicking", automod_reports),
     Step("0.6.0/restart-budget", "[restarts] restarts_per_hour does nothing any more", restart_budget),
     Step("0.6.0/watchdog-memory", "[watchdog] memory only warns unless turned on", watchdog_memory),
+    Step("0.6.1/discord-built", "what 0.6.0 kept as notes, for what's built now, back as it was set", discord_built),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.
     Step(f"{__version__}/notes", "Huragok's notes in your files, as this version writes them", notes),
     Step("0.5.1/automod-order", "the word list with the mutes before the kicks", automod_order, settled=True),
     Step("0.6.0/requests-command", "!reports is !requests in commands.toml", requests_command, settled=True),
+    Step("0.6.1/faculty", "the top rank is faculty, not owner, wherever it's written", faculty, settled=True),
     Step("commands", "new in-game commands listed in commands.toml", new_commands, always=True, settled=True),
     Step("starters", "new starter packages in PACKAGES/", new_starters, always=True),
 ]

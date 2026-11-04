@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ...core.commandsfile import PROBATION, ROLES, all_commands
+from ...core.commandsfile import PROBATION, ROLES, all_commands, rank_named
 from ...core.events import Event
 from ...core.files import mtime
 from ...core.part import Part, command, every, on
@@ -213,7 +213,7 @@ class AutoMod(Part):
         "words": "automod.txt",
         "names": "names.txt",
         "forget_after_days": 0,    # strikes older than this stop counting; 0: never
-        "exempt_roles": ["admin", "owner"],
+        "exempt_roles": ["admin", "faculty"],
         "check_names": True,
         "name_match": "anywhere",  # how a listed word catches a name: anywhere in it, or as a word of its own
         "moderators_kick_at_most": "1d",  # read by the commands part: a kick with a time from a moderator
@@ -253,7 +253,7 @@ class AutoMod(Part):
         self.name_match = check_name_match(self.config["name_match"])
         if not isinstance(self.config["across_servers"], bool):
             raise ValueError("across_servers must be true or false")
-        if bad := set(self.config["exempt_roles"]) - set(ROLES):
+        if bad := {rank_named(role) for role in self.config["exempt_roles"]} - set(ROLES):
             raise ValueError(f"exempt_roles: '{sorted(bad)[0]}' isn't a role")
         forget = self.config["forget_after_days"]
         if isinstance(forget, bool) or not isinstance(forget, (int, float)) or forget < 0:
@@ -383,7 +383,7 @@ class AutoMod(Part):
     # Watching -------------------------------------------------------------------------
 
     def _exempt(self, server: str, player: Player) -> bool:
-        return self.ctx.highest_role(player) in self.config["exempt_roles"]  # their rank on any server
+        return self.ctx.highest_role(player) in {rank_named(role) for role in self.config["exempt_roles"]}  # their rank on any server
 
     def _player(self, server: str, player_id: str, name: str) -> Player:
         return self.ctx.server(server).player_by_id(player_id) or Player(0, name, player_id)
@@ -945,7 +945,7 @@ class AutoMod(Part):
         return (player.id, player.name) if player else None
 
     def _outranks(self, call: CommandCall, player: Player) -> bool:
-        return call.role == "owner" or ROLES.index(self.ctx.highest_role(player)) < ROLES.index(call.role)
+        return call.role == "faculty" or ROLES.index(self.ctx.highest_role(player)) < ROLES.index(call.role)
 
     def strike_rules(self) -> list[str]:
         """The lines a strike can be given on: not one that only reports, where it would do nothing."""

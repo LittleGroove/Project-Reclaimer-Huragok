@@ -40,7 +40,7 @@ def test_a_console_answer_has_no_address_in_it_whoever_asked(tmp_path: Path, run
 def test_a_name_cant_put_a_link_or_a_heading_on_a_card() -> None:
     masked = cards.clean("[View the clip on Discord](https://evil.example/login)")
     assert "[View" not in masked.replace("\\[View", "") and "\\[" in masked and "\\]" in masked
-    heading = cards.clean("line\n# Approved by the owner\n- item\n1. one\n-# small")
+    heading = cards.clean("line\n# Approved by the faculty\n- item\n1. one\n-# small")
     for start in ("# Approved", "- item", "1. one", "-# small"):
         assert f"\n{start}" not in heading, start
 

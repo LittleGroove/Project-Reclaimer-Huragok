@@ -156,7 +156,7 @@ def test_something_new_against_them_can_still_be_appealed(tmp_path: Path, run: A
             part, post = await appealed(huragok, rcon, fake)
             await denied(part, fake, post, **{AGAIN: "never"})
             assert part.appeals.no_more(OTHER, ALICE, "ban")
-            huragok.vergil.moderation.record_seen("ban", SERVER, ALICE, "Alice", by="Owner", source="in game", reason="again")
+            huragok.vergil.moderation.record_seen("ban", SERVER, ALICE, "Alice", by="Faculty", source="in game", reason="again")
             assert not part.appeals.no_more(OTHER, ALICE, "ban") and not part.appeals.next_allowed(OTHER, ALICE, "ban")
 
     run(scenario())

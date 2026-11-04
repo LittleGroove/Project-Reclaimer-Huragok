@@ -28,9 +28,9 @@ admin = []                     # roles whose members are Huragok admins on every
 moderator = []                 # e.g. ["@Server Mod"]
 probationary_moderator = []    # e.g. ["@Probation"]: their actions are requests a moderator confirms
 member = []                    # e.g. ["@Member"]
-owners = []                    # Discord USER IDs with owner rights from Discord. People, never a role.
+faculty = []                   # Discord USER IDs with faculty rights from Discord (whoever types /huragok claim). People, never a role.
 discord_administrators = "nothing"  # what Discord's own Administrator permission counts as: nothing | moderator | admin
-owners_in_game = "owner"       # what an owner of the bot acts as, running commands from Discord: owner | admin
+faculty_in_game = "faculty"    # what faculty act as, running commands from Discord: faculty | admin
 moderators_see_ids = false     # moderators see players' 64-character IDs in Discord
 timeout_suspends = true        # a member timed out in Discord can't use their rank meanwhile
 
@@ -43,6 +43,7 @@ timeout_suspends = true        # a member timed out in Discord can't use their r
 status = ""                    # the server cards and nothing else, e.g. "#servers"
 info = ""                      # news: pings people asked for, seeding, restarts planned, updates, e.g. "#server-news"
 games = ""                     # games ending, and playlists changing with the player count
+stats = ""                     # the leaderboards, kept up to date
 # Tickets: one card per incident, for staff to act on, updated until it's dealt with.
 staff = ""                     # what Vergil did and who to keep an eye on, e.g. "#staff-tickets"
 reports = ""                   # people asking staff for something: calls for an admin, reports, Contact. Empty: staff
@@ -62,7 +63,7 @@ console = ""
 [tickets]
 when_closed = "move"           # move: to its log channel | stay: where it is, in the closed colour | thread: where it is, with a thread of its own from the start, which closing locks and hides
 stale_after_days = 2           # Vergil's and the Superintendent's untouched this long count as finished, in the stale colour. 0: never. People's wait until someone closes them. A line in [messages] can say its own: stale_after_hours = 12, as the watch list's and reports' do
-close_rank = "moderator"       # who can Acknowledge or Close: moderator | admin | owner
+close_rank = "moderator"       # who can Acknowledge or Close: moderator | admin | faculty
 buttons = ["mute", "kick", "ban", "whois", "note"]  # also "strike", "warn", "said". Mute and Kick ask how long, Ban is for good, Strike goes on the word list's ladder; each needs the same rank as its command in game
 threads = true                 # a Discuss button, which makes a thread under the card for whoever presses it
 evidence_lines = 5             # their chat before it, from every server
@@ -126,6 +127,8 @@ enabled = false
 webhook = ""
 persona = "superintendent"
 min_players = 2
+kill_feed = true               # a Kill feed button on each Carnage report: that game's kills, to whoever presses it (kept two weeks)
+rare_medals = ["killtacular", "killtrocity", "killimanjaro", "killtastrophe", "killpocalypse", "killionaire", "rampage", "untouchable", "invincible", "kills_in_a_row_35", "kills_in_a_row_40", "extermination", "perfection"]  # each one earned is listed on its game's Carnage report
 
 [feed.joins]
 enabled = false
@@ -242,6 +245,7 @@ audit-notes              = { channel = "logs", colour = "lavender", post = true,
 audit-console            = { channel = "logs", colour = "lilac", post = true, ping = "" }
 audit-power              = { channel = "logs", colour = "peach", post = true, ping = "" }
 audit-setup              = { channel = "logs", colour = "purple", post = true, ping = "" }
+audit-link               = { channel = "logs", colour = "indigo", post = true, ping = "" }
 # News for everyone: a post each
 seeding-wanted           = { channel = "info", colour = "chartreuse", post = true, ping = "", remove_after_minutes = 30 }
 notify-told              = { channel = "info", colour = "lime", post = true, ping = "", remove_after_minutes = 60 }
@@ -252,6 +256,8 @@ servers-countdown        = { channel = "info", colour = "amber", post = false, p
 games-ended              = { channel = "games", colour = "steel", post = true, ping = "" }
 games-started            = { channel = "games", colour = "green", post = false, ping = "", remove_after_minutes = 30 }
 games-playlist           = { channel = "games", colour = "teal", post = true, ping = "" }
+games-report             = { channel = "games", colour = "blurple", post = true, ping = "" }
+games-season             = { channel = "games", colour = "purple", post = true, ping = "" }
 
 
 # ---------------------------------------------------------------------------------
@@ -372,7 +378,7 @@ channel = "console"            # the picker's channel, on per-server too if it's
 channels = {}                  # the per-server layout: { "Server 1" = "#server1-console" }
 server_prefix = true           # "server1: kick 3" names the server on the line
 remember_server = "member"     # the picker remembers each member's server | channel (one for everyone)
-raw_rank = "admin"             # who can type console lines, not only Huragok's ! commands: moderator | admin | owner | off
+raw_rank = "admin"             # who can type console lines, not only Huragok's ! commands: moderator | admin | faculty | off
 public = false                 # true: it runs in a channel anyone can read, answers and all. Otherwise it waits until the channel's private
 confirm = ["endgame", "endround", "reload", "password", "restartserver", "ban"]  # lines that ask "are you sure?" first
 answers = "reply"              # reply | thread
@@ -402,7 +408,7 @@ game_commands = true           # every in-game command as a slash command, same 
 staff_permission = "manage_messages"  # staff's commands only show to members with this Discord permission (""): your rank is what decides, whatever shows. Server Settings, Integrations can change who sees each
 names = {}                     # rename any: { whois = "lookup" }. Already different from the game, where its name there would mislead: /bannedwords (!rules), /bannednames (!bannames), /letback (!pardon), /clearstrikes (!pardonplayer), /reloadserver (!reload)
 hidden = []                    # never registered
-power_rank = "admin"           # who can use /server's power buttons: moderator | admin | owner
+power_rank = "admin"           # who can use /server's power buttons: moderator | admin | faculty
 power_buttons = ["start", "stop", "restart", "restart-after-game", "restart-when-empty", "cancel", "updates"]  # on /server, each asking first
 shown_as = "{name}"            # how someone acting from Discord is named to players ("Bravo was kicked by Mod"). {name} is their name in this Discord. "{name} (Discord)", or "a moderator" to name nobody. Staff's cards always have their real name
 public = []                    # commands whose answer everyone in the channel sees. The rest are only the asker's
@@ -443,6 +449,59 @@ thread_role = ""               # the role brought into each thread, or several, 
 transcript = true              # a file of the thread when it's closed. It needs Message Content Intent, on the developer portal's Bot page
 close_after_days = 7           # with nothing said for this long, a thread closes. 0: never
 cooldown_minutes = 10          # one person can open another this long after their last, as each is a thread, a card and a ping. 0: any time
+
+# ---------------------------------------------------------------------------------
+# Linking a player in game to their account here, so their stats show under the name people know them by here
+# (bot mode). !link in game tells them a code privately; /link that code here ties the two. One player, one account.
+# A link changes nobody's rank.
+[link]
+enabled = false
+code_minutes = 10              # how long a code from !link works, once
+names = "discord"              # how a linked player shows on the stats: discord (their name here) | game | both ("Buck (Rookie)"). Each can choose otherwise with /link show
+unlink = "self"                # self: anyone undoes their own link with /unlink | staff: only admins do, with /unlink member
+
+# ---------------------------------------------------------------------------------
+# Players' stats, from every game the servers report to Project Reclaimer's stats service (bot mode): /stats, a
+# player's service record, and /leaderboard, the best at anything counted, over a period, on a server, map or mode.
+# A name Vergil wouldn't let in a game is shown as "(name hidden)".
+[stats]
+enabled = false
+rows = 10                      # how many a leaderboard shows
+min_games = 5                  # games before someone's on a board of rates (K/D, win rate), so one lucky game doesn't top it
+private = true                 # /stats and /leaderboard answer only whoever asked. false: in the channel, for everyone
+
+# The leaderboards kept in a channel, each one message brought up to date as games are reported (bot mode).
+[leaderboards]
+enabled = false
+channel = "stats"              # a name from [channels], or a channel itself
+boards = ["kills all", "kd all", "wins all", "kills season", "kd season", "wins season", "best_streak season", "red-blue"]  # each a stat as /leaderboard names it (kills, kd, win_rate, medal:overkill, weapon:sniper_rifle…) and a period: all | season | month | week | day. "red-blue": Red against Blue
+update_minutes = 15            # how often they're brought up to date: 5 at least
+season_channel = ""            # the season's boards (a stat with "season", and red-blue): "" for the channel above, after its all-time ones
+
+# Roles Huragok gives (bot mode): only Huragok gives these, and a role given by hand is taken off at the next look.
+# Rank roles: a linked member wears the role [ranks] maps to the rank Huragok gives them. !promote and !demote (in
+# game, or /promote and /demote here) change a rank; the role follows. Needs Manage Roles, the bot's role above these,
+# and Server Members Intent on the developer portal's Bot page.
+[roles]
+sync = false                   # rank roles as above. Anyone Huragok doesn't know as staff (not linked yet) loses them: link staff first
+faculty = ""                   # the role faculty wear, e.g. "@Faculty" (what faculty may do here is still [ranks] faculty)
+check_minutes = 15             # a look at every member this often, on top of soon after each change
+top_roles = false              # a role for the top of each leaderboard below: linking is how it's claimed
+top = {}                       # a leaderboard and its role, e.g. { "kills season" = "@Top Slayer" }: /huragok setup → Stats → Stats roles
+top_count = 1                  # how many of a board's top places wear its role (linked players only)
+
+# A player's own team, Red or Blue, for members and up (!side in game; /side here, for a linked member): they're put
+# on it in the lobby and during a round, never emptying a team (as !respawn), and tried again as others join. !togglesides
+# (/togglesides) stops it for them alone. Two who'd each rather be on the other's team swap.
+[sides]
+enabled = false
+most_apart = 2                 # how many more players the team someone joins may then have than the one they left
+roles = false                  # a role for each side, worn by linked members who chose it (only Huragok gives them): open a category to each
+red_role = ""                  # e.g. "@Red Team"
+blue_role = ""                 # e.g. "@Blue Team"
+lock_for_season = false        # a side chosen while a season runs is kept until it ends. false: switch at will
+reset_at_season_end = false    # when a season ends, everyone's side is cleared, to choose again
+force_for_season = false       # with lock_for_season: forced too, no !togglesides off, a switch of their own put back
 
 # ---------------------------------------------------------------------------------
 # What staff write down about players (bot mode).

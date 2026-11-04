@@ -1,5 +1,5 @@
 """/huragok setup and /huragok features: the same steps as the window's J, with Discord's own pickers. Every panel is
-private to the owner using it, and each change is written to discord.toml straight away (the part reloads it), so the
+private to the faculty using it, and each change is written to discord.toml straight away (the part reloads it), so the
 window, the file and Discord always agree."""
 
 from __future__ import annotations
@@ -13,9 +13,10 @@ import discord
 from discord import ui
 
 from . import cards, contact, features, kept, rest, tidy
-from .client import NOT_OWNER, SaysWhatWentWrong, acting_as, answer, someone_from
-from .config import add_owner, colour_value, colour_value_of, LOG, ping_value, pings_of, RANK_KEYS, remove_owner, set_channel, set_message, set_rank_roles, set_switch, TICKET
+from .client import NOT_FACULTY, SaysWhatWentWrong, acting_as, answer, someone_from
+from .config import add_faculty, colour_value, colour_value_of, LOG, ping_value, pings_of, RANK_KEYS, remove_faculty, set_channel, set_message, set_rank_roles, set_switch, TICKET
 from .features import FEATURES, MARKS
+from ..core.commandsfile import rank_word
 from .ranks import rank_of
 from .speakers import say
 from .workers import to_thread
@@ -51,11 +52,11 @@ class Panel(SaysWhatWentWrong, ui.View):
         self.shown_through: discord.Interaction | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Asked at every press: a panel left open outlives the owner who opened it, and each press makes it new again."""
-        if rank_of(self.part.file, someone_from(interaction.user)) == "owner":
+        """Asked at every press: a panel left open outlives the faculty who opened it, and each press makes it new again."""
+        if rank_of(self.part.file, someone_from(interaction.user)) == "faculty":
             self.shown_through = interaction  # the token it's taken down with lasts 15 minutes from here
             return True
-        await answer(interaction, NOT_OWNER)
+        await answer(interaction, NOT_FACULTY)
         return False
 
     def card(self) -> discord.Embed:
@@ -110,8 +111,8 @@ class Home(Panel):
         link = _invite_link(part)
         if link and features.missing_permissions(part.file, part.facts):
             self.add_item(ui.Button(label="Invite link", url=link, row=0))
-        for number, (label, screen) in enumerate((("Features", Features), ("Channels", Channels), ("Ranks", Ranks), ("Owners", Owners), ("Who gets told", WhoGetsTold), ("Messages", Messages), ("Tickets", Tickets), ("Commands", CommandsPanel),
-                                                  ("Console", Console), ("Reports", ReportsPanel), ("Appeals", AppealsPanel), ("Contact", ContactPanel), ("Status", StatusPanel), ("Notes", NotesPanel))):
+        for number, (label, screen) in enumerate((("Features", Features), ("Channels", Channels), ("Ranks", Ranks), ("Faculty", FacultyPanel), ("Who gets told", WhoGetsTold), ("Messages", Messages), ("Tickets", Tickets), ("Commands", CommandsPanel),
+                                                  ("Console", Console), ("Reports", ReportsPanel), ("Appeals", AppealsPanel), ("Contact", ContactPanel), ("Status", StatusPanel), ("Notes", NotesPanel), ("Stats", StatsPanel))):
             self.add_item(_Open(label, screen, part, row=1 + number // 5))
 
     def card(self) -> discord.Embed:
@@ -228,49 +229,49 @@ class Ranks(Panel):
         return discord.Embed(title="Ranks", description=text, colour=discord.Colour.blurple())
 
 
-class _OwnerSelect(ui.UserSelect[Panel]):
+class _FacultySelect(ui.UserSelect[Panel]):
     def __init__(self, part: DiscordPart) -> None:
-        super().__init__(placeholder="Owners", min_values=0, max_values=25,
-                         default_values=_defaults(part.file.section("ranks").get("owners", []),
+        super().__init__(placeholder="Faculty", min_values=0, max_values=25,
+                         default_values=_defaults(part.file.section("ranks").get("faculty", []),
                                                   discord.SelectDefaultValueType.user))
         self.part = part
 
     async def callback(self, interaction: discord.Interaction) -> None:
         wanted = {str(user.id): user.name for user in self.values}
-        current = [str(owner).strip() for owner in self.part.file.section("ranks").get("owners", [])]
+        current = [str(faculty).strip() for faculty in self.part.file.section("ranks").get("faculty", [])]
         if str(interaction.user.id) not in wanted:
-            await interaction.response.send_message("You can't take yourself off here: another owner can, or the host in "
+            await interaction.response.send_message("You can't take yourself off here: another of the faculty can, or the host in "
                                                     "discord.toml.", ephemeral=True)
             return
-        for owner in current:
-            if owner not in wanted:
-                remove_owner(self.part.path, owner)
-        for owner, name in wanted.items():
-            if owner not in current:
-                add_owner(self.part.path, owner, name)
-        log.info("%s changed the bot's owners in Discord", interaction.user.name)
+        for faculty in current:
+            if faculty not in wanted:
+                remove_faculty(self.part.path, faculty)
+        for faculty, name in wanted.items():
+            if faculty not in current:
+                add_faculty(self.part.path, faculty, name)
+        log.info("%s changed the bot's faculty in Discord", interaction.user.name)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what="changed the bot's owners"))
-        await Owners(self.part).open(interaction)
+        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what="changed the bot's faculty"))
+        await FacultyPanel(self.part).open(interaction)
 
 
-class Owners(Panel):
+class FacultyPanel(Panel):
     def __init__(self, part: DiscordPart) -> None:
         super().__init__(part)
-        self.add_item(_OwnerSelect(part))
-        self.add_item(_SettingChoice(part, "ranks", "owners_in_game", "What they can do from Discord", [("From Discord they act as owners: any command, on anyone", "owner"), ("From Discord they act as admins", "admin")], part.file.section("ranks").get("owners_in_game") or "owner", Owners))
+        self.add_item(_FacultySelect(part))
+        self.add_item(_SettingChoice(part, "ranks", "faculty_in_game", "What they can do from Discord", [("From Discord they act as faculty: any command, on anyone", "faculty"), ("From Discord they act as admins", "admin")], part.file.section("ranks").get("faculty_in_game") or "faculty", FacultyPanel))
         self.nav()
 
     def card(self) -> discord.Embed:
-        text = ("Owners can use `/huragok` and everything it changes. They're people, never a role: anyone with Manage Roles can hand out a role, but only an owner or the host can name an owner.\n\n"
-                f"**From Discord they act as:** {self.part.file.section('ranks').get('owners_in_game') or 'owner'}, on every server. It gives them no rank in the game itself: there, commands.toml decides.")
-        return discord.Embed(title="Owners", description=text, colour=discord.Colour.blurple())
+        text = ("Faculty can use `/huragok` and everything it changes. They're people, never a role: anyone with Manage Roles can hand out a role, but only faculty or the host can name faculty.\n\n"
+                f"**From Discord they act as:** {rank_word(str(self.part.file.section('ranks').get('faculty_in_game') or 'faculty'))}, on every server. Once their account is linked (`!link` in game, then `/link`), they're faculty in game too, listed in commands.toml.")
+        return discord.Embed(title="Faculty", description=text, colour=discord.Colour.blurple())
 
 
 # Channels ------------------------------------------------------------------------------------------------------
 
 
-CHANNEL_ORDER = ("staff", "logs", "reports", "appeals", "alerts", "huragok-logs", "console", "status", "info", "games")  # most needed first; those for what isn't built yet stay out
+CHANNEL_ORDER = ("staff", "logs", "reports", "appeals", "alerts", "huragok-logs", "console", "status", "info", "games", "stats")  # most needed first; those for what isn't built yet stay out
 
 
 class _ChannelSelect(ui.ChannelSelect[Panel]):
@@ -388,7 +389,7 @@ class _ChannelPage(ui.Button[Panel]):
 
 WHEN_CLOSED = {"move": "When finished: move to its log channel", "stay": "When finished: stay where it is", "thread": "When finished: stay, with a thread of its own"}
 STALE_DAYS = (0, 1, 2, 3, 7, 14, 30)
-CLOSE_RANKS = ("moderator", "admin", "owner")
+CLOSE_RANKS = ("moderator", "admin", "faculty")
 
 
 class Tickets(Panel):
@@ -399,7 +400,7 @@ class Tickets(Panel):
         options = part.file.section("tickets")
         self.add_item(_TicketChoice(part, "when_closed", "When a card's finished…", [(label, value) for value, label in WHEN_CLOSED.items()], str(options.get("when_closed"))))
         self.add_item(_TicketChoice(part, "stale_after_days", "Untouched, Huragok's are finished after…", [("Untouched automatic tickets stay open" if days == 0 else f"Untouched automatic tickets finish after {days} day{'s' if days != 1 else ''}", str(days)) for days in STALE_DAYS], str(options.get("stale_after_days"))))
-        self.add_item(_TicketChoice(part, "close_rank", "Who can acknowledge or close…", [(f"Acknowledge or close: {rank}s and above" if rank != "owner" else "Acknowledge or close: owners", rank) for rank in CLOSE_RANKS], str(options.get("close_rank"))))
+        self.add_item(_TicketChoice(part, "close_rank", "Who can acknowledge or close…", [(f"Acknowledge or close: {rank}s and above" if rank != "faculty" else "Acknowledge or close: faculty", rank) for rank in CLOSE_RANKS], str(options.get("close_rank"))))
         self.nav()
 
     def card(self) -> discord.Embed:
@@ -426,7 +427,7 @@ class _TicketChoice(ui.Select[Panel]):
 
 
 CONSOLE_LAYOUTS = {"picker": "One channel, and pick the server", "per-server": "A channel for each server"}
-CONSOLE_LINES = {"owner": "Console lines: owners only", "admin": "Console lines: admins and owners", "moderator": "Console lines: moderators too", "off": "Console lines: nobody, only ! commands"}
+CONSOLE_LINES = {"faculty": "Console lines: faculty only", "admin": "Console lines: admins and faculty", "moderator": "Console lines: moderators too", "off": "Console lines: nobody, only ! commands"}
 CONSOLE_ANSWERS = {"reply+file": "Answers as a reply, a long one as a file", "reply+split": "Answers as a reply, a long one in pieces", "thread+file": "Answers in a thread, a long one as a file", "thread+split": "Answers in a thread, a long one in pieces"}
 CONSOLE_OTHERS = {"ignore": "Lines from people without a rank: ignored", "delete": "Lines from people without a rank: deleted"}
 
@@ -587,8 +588,8 @@ class _TableForm(SaysWhatWentWrong, ui.Modal):
         self.add_item(ui.Label(text="One to a line: name = value", component=self.words))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if rank_of(self.part.file, someone_from(interaction.user)) != "owner":
-            await answer(interaction, NOT_OWNER)
+        if rank_of(self.part.file, someone_from(interaction.user)) != "faculty":
+            await answer(interaction, NOT_FACULTY)
             return
         found = {name.strip(): value.strip() for name, _, value in (line.partition("=") for line in str(self.words.value).splitlines()) if name.strip() and value.strip()}
         set_switch(self.part.path, self.section, self.key, found)
@@ -599,7 +600,7 @@ class _TableForm(SaysWhatWentWrong, ui.Modal):
 
 STAFF_SEES = [("Staff commands show to those with Manage Messages", "manage_messages"), ("Staff commands show to those with Kick Members", "kick_members"), ("Staff commands show to those with Moderate Members", "moderate_members"),
               ("Staff commands show to those with Manage Server", "manage_guild"), ("Staff commands show to everyone (rank still decides)", "")]
-POWER_RANKS = [("The power buttons are for moderators and up", "moderator"), ("The power buttons are for admins and up", "admin"), ("The power buttons are for owners", "owner")]
+POWER_RANKS = [("The power buttons are for moderators and up", "moderator"), ("The power buttons are for admins and up", "admin"), ("The power buttons are for faculty", "faculty")]
 POWER_CHOICES = [("Start", "start"), ("Stop", "stop"), ("Restart", "restart"), ("Restart after the game", "restart-after-game"), ("Restart when empty", "restart-when-empty"), ("Cancel what's planned", "cancel"), ("Check for updates", "updates")]
 
 
@@ -704,8 +705,8 @@ class _NestedWordsForm(SaysWhatWentWrong, ui.Modal):
         self.add_item(ui.Label(text="One to a line", component=self.words))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if rank_of(self.part.file, someone_from(interaction.user)) != "owner":
-            await answer(interaction, NOT_OWNER)
+        if rank_of(self.part.file, someone_from(interaction.user)) != "faculty":
+            await answer(interaction, NOT_FACULTY)
             return
         set_switch(self.part.path, self.table, self.key, [line.strip() for line in str(self.words.value).splitlines() if line.strip()])
         await self.part.reload(force=True)
@@ -762,8 +763,8 @@ class _AsksFirstForm(SaysWhatWentWrong, ui.Modal):
         self.add_item(self.words)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if rank_of(self.part.file, someone_from(interaction.user)) != "owner":
-            await answer(interaction, NOT_OWNER)
+        if rank_of(self.part.file, someone_from(interaction.user)) != "faculty":
+            await answer(interaction, NOT_FACULTY)
             return
         wanted = [word.strip().lstrip("!").lower() for word in str(self.words.value).replace(",", " ").split() if word.strip().lstrip("!")]
         set_switch(self.part.path, ("console",), "confirm", wanted)
@@ -830,6 +831,368 @@ class _ForgetServerChannels(ui.Button[Panel]):
 # Reports, appeals, contact ---------------------------------------------------------------------------------------
 
 
+class StatsPanel(Panel):
+    """Players' stats (0.6.1): /stats and /leaderboard, the boards kept in a channel, linking and sides."""
+
+    def __init__(self, part: DiscordPart) -> None:
+        super().__init__(part)
+        stats, boards = part.file.section("stats"), part.file.section("leaderboards")
+        self.add_item(_SettingChoice(part, "stats", "rows", "How many a board shows", [("A board shows the top 5", 5), ("A board shows the top 10", 10), ("A board shows the top 15", 15), ("A board shows the top 20", 20)], stats.get("rows", 10), StatsPanel))
+        self.add_item(_SettingChoice(part, "stats", "min_games", "Games before a rate counts", [("K/D and win rate after 1 game", 1), ("K/D and win rate after 5 games", 5), ("K/D and win rate after 10 games", 10), ("K/D and win rate after 25 games", 25)], stats.get("min_games", 5), StatsPanel))
+        self.add_item(_SettingChoice(part, "leaderboards", "update_minutes", "How often the kept boards update", [("Kept boards update every 5 minutes", 5), ("Kept boards update every 15 minutes", 15), ("Kept boards update every hour", 60)], boards.get("update_minutes", 15), StatsPanel))
+        self.nav(row=3)
+        if features.BY_KEY["leaderboards"].is_on(part.file):
+            self.add_item(_Open("Leaderboards", LeaderboardsPanel, part, row=3))
+        self.add_item(_Open("Stats roles", StatsRolesPanel, part, row=3))
+        self.add_item(_Open("Sides", SidesPanel, part, row=3))
+        self.add_item(_SettingSwitch(part, "stats", "private", "Answers only to whoever asked", StatsPanel, row=3))
+        self.add_item(_FeatureSwitch(part, "stats", StatsPanel, named="/stats and /leaderboard"))
+        self.add_item(_FeatureSwitch(part, "leaderboards", StatsPanel, named="Kept boards"))
+        self.add_item(_FeatureSwitch(part, "link", StatsPanel, named="Linking"))
+        self.add_item(_FeatureSwitch(part, "sides", StatsPanel, named="Sides"))
+
+    def card(self) -> discord.Embed:
+        lines = [f"{MARKS[features.state_of(features.BY_KEY[key], self.part.file, self.part.facts)[0]]} {features.BY_KEY[key].title}: {features.WHAT.get(key, '')}" for key in ("stats", "leaderboards", "link", "sides", "top_roles", "roles")]
+        private = self.part.file.section("stats").get("private", True)
+        listed = [f"`{board}`" for board in self.part.file.section("leaderboards").get("boards") or []]
+        boards = (", ".join(listed[:MOST_LISTED]) + (f" and {len(listed) - MOST_LISTED} more" if len(listed) > MOST_LISTED else "")) or "none"  # 5.11
+        return discord.Embed(title="Stats", description="\n".join([*lines, "", f"**/stats and /leaderboard answer** {'only whoever asked' if private else 'in the channel, for everyone'}.", f"**Kept boards:** {boards}. **Leaderboards** picks them, once Kept boards is on.", "**Stats roles:** a role for the top of each board, and rank roles.", "Seasons: faculty starts one with !newseason (with a length, or until !endseason)."]), colour=discord.Colour.blurple())
+
+
+PERIOD_CHOICES = (("This season (nobody while none runs)", "season"), ("All time", "all"), ("The last 30 days", "month"), ("The last 7 days", "week"), ("The last 24 hours", "day"))
+
+
+def _boards_of(part: DiscordPart) -> list[str]:
+    return [str(entry).strip().lower() for entry in part.file.section("leaderboards").get("boards") or [] if str(entry).strip()]
+
+
+def _board_entry(stat: str, period: str) -> str:
+    return stat if stat == "red-blue" else f"{stat} {period}"
+
+
+def _board_title(entry: str) -> str:
+    from .standings import board_wanted
+
+    board = board_wanted(entry)
+    return "Red against Blue" if entry == "red-blue" else board.title if board is not None else entry
+
+
+class BoardOrderPanel(Panel):
+    """The boards in the host's own order (the host's call, 3 November 2026): all time's first, the season's below them
+    (standings.ordered_boards), each kept in the order set here."""
+
+    def __init__(self, part: DiscordPart) -> None:
+        super().__init__(part)
+        from .standings import is_season_board, ordered_boards
+
+        boards = ordered_boards(_boards_of(part))
+        if any(number and is_season_board(entry) == is_season_board(boards[number - 1]) for number, entry in enumerate(boards)):
+            self.add_item(_MoveEarlier(part))
+        self.add_item(_SeasonChannel(part))
+        self.add_item(_Open("Back to Leaderboards", LeaderboardsPanel, part, row=4))
+
+    def card(self) -> discord.Embed:
+        from .standings import ordered_boards
+
+        boards = ordered_boards(_boards_of(self.part))
+        listed = "\n".join([f"{number}. {_board_title(entry)}" for number, entry in enumerate(boards[:MOST_LISTED], 1)]
+                           + ([f"and {len(boards) - MOST_LISTED} more"] if len(boards) > MOST_LISTED else [])) or "None yet."
+        return discord.Embed(title="Order the boards", description=f"As they're kept, top to bottom (all time's first, the season's below):\n{listed}\n\n"
+                                                                   "Pick one to move it a place earlier.", colour=colour_value(self.part.file, "blurple"))
+
+
+class _SeasonChannel(ui.ChannelSelect[Panel]):
+    """[leaderboards] season_channel, from setup: the season's boards in a channel of their own, or none (below the rest)."""
+
+    def __init__(self, part: DiscordPart) -> None:
+        current = str(part.file.section("leaderboards").get("season_channel") or "")
+        super().__init__(placeholder="The season's boards' own channel (none: below the rest)", min_values=0, max_values=1, row=1,
+                         channel_types=[discord.ChannelType.text],
+                         default_values=_defaults([current] if current.isdecimal() else [], discord.SelectDefaultValueType.channel))
+        self.part = part
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        channel = self.values[0] if self.values else None
+        set_switch(self.part.path, ("leaderboards",), "season_channel", str(channel.id) if channel else "")
+        await self.part.reload(force=True)
+        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user),
+                                     what=f"the season's boards go to {'#' + channel.name if channel else 'the boards channel'}"))
+        await BoardOrderPanel(self.part).open(interaction)
+
+class _MoveEarlier(ui.Select[Panel]):
+    def __init__(self, part: DiscordPart) -> None:
+        from .standings import ordered_boards
+
+        from .standings import is_season_board
+
+        boards = ordered_boards(_boards_of(part))
+        movable = [(number, entry) for number, entry in enumerate(boards, 1)  # the first of its kind can't go earlier (9.7)
+                   if number > 1 and is_season_board(entry) == is_season_board(boards[number - 2])]
+        options = [discord.SelectOption(label=f"{number}. {_board_title(entry)}"[:100], value=str(number - 1)) for number, entry in movable[:25]]
+        super().__init__(placeholder="Move a board a place earlier", options=options, min_values=1, max_values=1, row=0)
+        self.part = part
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        from .standings import is_season_board, ordered_boards
+
+        boards = ordered_boards(_boards_of(self.part))
+        at = int(self.values[0])
+        if 0 < at < len(boards) and is_season_board(boards[at]) == is_season_board(boards[at - 1]):  # within its own kind
+            boards[at - 1], boards[at] = boards[at], boards[at - 1]
+            set_switch(self.part.path, ("leaderboards",), "boards", boards)
+            await self.part.reload(force=True)
+            self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user),
+                                         what=f"the board {_board_title(boards[at - 1])} is number {at} now"))
+        await BoardOrderPanel(self.part).open(interaction)
+
+class _BoardToggle(ui.Select[Panel]):
+    """Boards of one kind, each switched on or off for the stats channel, as Features does: the period is the panel's."""
+
+    def __init__(self, part: DiscordPart, placeholder: str, choices: list[tuple[str, str]], period: str, row: int) -> None:
+        have = set(_boards_of(part))
+        options = [discord.SelectOption(label=label[:100], value=stat, emoji=MARKS[features.ON if _board_entry(stat, period) in have else features.OFF])
+                   for label, stat in choices[:25]]
+        super().__init__(placeholder=placeholder, options=options, min_values=1, max_values=1, row=row)
+        self.part, self.period = part, period
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        entry = _board_entry(self.values[0], self.period)
+        boards = _boards_of(self.part)
+        boards = [one for one in boards if one != entry] if entry in boards else [*boards, entry]
+        set_switch(self.part.path, ("leaderboards",), "boards", boards)
+        await self.part.reload(force=True)
+        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the board {_board_title(entry)} is {'on' if entry in boards else 'off'}"))
+        await LeaderboardsPanel(self.part, self.period).open(interaction)
+
+
+class _PeriodChoice(ui.Select[Panel]):
+    def __init__(self, part: DiscordPart, period: str) -> None:
+        super().__init__(placeholder="Over how long", options=[discord.SelectOption(label=label, value=value, default=value == period) for label, value in PERIOD_CHOICES], row=3)
+        self.part = part
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await LeaderboardsPanel(self.part, self.values[0]).open(interaction)
+
+
+class LeaderboardsPanel(Panel):
+    """Which boards are kept in the stats channel (the host's ask, 3 November 2026: picked like the features)."""
+
+    def __init__(self, part: DiscordPart, period: str = "season") -> None:
+        from ..servers import leaderboards
+
+        super().__init__(part)
+        self.period = period
+        stats = [(stat.title, key) for key, stat in leaderboards.STATS.items()] + [("Red against Blue", "red-blue")]
+        self.add_item(_BoardToggle(part, "Switch a board on or off", stats, period, 0))
+        medals = [(f"{leaderboards.words_of(name)} (medal)", f"medal:{name}") for name in _most_earned(part, "medal")]
+        if medals:
+            self.add_item(_BoardToggle(part, "A medal's board", medals, period, 1))
+        weapons = [(f"{leaderboards.words_of(name)} kills", f"weapon:{name}") for name in _most_earned(part, "weapon")]
+        if weapons:
+            self.add_item(_BoardToggle(part, "A weapon's board", weapons, period, 2))
+        self.add_item(_PeriodChoice(part, period))
+        self.add_item(_Open("Back to Stats", StatsPanel, part, row=4))
+        self.add_item(_Open("Stats roles", StatsRolesPanel, part, row=4))
+        if len(_boards_of(part)) > 1:
+            self.add_item(_Open("Order the boards", BoardOrderPanel, part, row=4))
+
+    def card(self) -> discord.Embed:
+        boards = _boards_of(self.part)
+        listed = "\n".join([f"✅ {_board_title(entry)}" for entry in boards[:MOST_LISTED]]
+                           + ([f"and {len(boards) - MOST_LISTED} more"] if len(boards) > MOST_LISTED else [])) or "None yet."  # 5.11
+        words = dict((value, label) for label, value in PERIOD_CHOICES)[self.period]
+        return discord.Embed(title="Leaderboards", description=f"Kept in the stats channel, each one message brought up to date as games are reported:\n{listed}\n\nThe menus switch a board on or off **over {words.lower()}** (the last menu changes that). Medals and weapons are those earned most here.", colour=discord.Colour.blurple())
+
+
+MOST_LISTED = 40  # boards named in a panel's text: Discord takes 4,096 characters
+EARNED_SECONDS = 3600.0  # how long the count of what's earned most is kept before it's counted again
+
+
+def _most_earned(part: DiscordPart, kind: str) -> list[str]:
+    """The medals or weapons earned most in these servers' games: what a board of one is worth having for. Counted in a
+    thread now and then, never as the panel's built: that read every medal row on the event loop, half a minute on a
+    busy year, each time it opened or a board was switched (audit 0.6.1, 5.1). Until it's counted, what's been seen."""
+    import time
+
+    from ..core.background import background
+    from ..servers import leaderboards
+
+    kept = part.__dict__.setdefault("most_earned", {})
+    when, names = kept.get(kind, (float("-inf"), None))  # counted at once: monotonic time starts at the PC's start (9.6)
+    if time.monotonic() - when >= EARNED_SECONDS and not kept.get(f"{kind}:counting"):
+        kept[f"{kind}:counting"] = True
+        background(_count_earned(part, kind), f"counting the {kind}s earned most", log)
+    if names is not None:
+        return names
+    try:
+        return leaderboards.choices(part.ctx.db, kind, most=25)
+    except Exception:  # noqa: BLE001 - the stats tables are the stats part's: without them, no such menu
+        return []
+
+
+async def _count_earned(part: DiscordPart, kind: str) -> None:
+    import time
+
+    from ..servers import leaderboards
+
+    try:
+        part.most_earned[kind] = (time.monotonic(), await leaderboards.read_soon(part.ctx.db, _earned, kind))
+    except Exception as error:  # noqa: BLE001 - the menu keeps what it had
+        log.debug("Couldn't count the %ss earned most: %s", kind, error)
+    finally:
+        part.most_earned.pop(f"{kind}:counting", None)
+
+
+def _earned(db: Any, kind: str) -> list[str]:
+    sql = {"medal": "SELECT medal AS name, SUM(count) AS n FROM stats_medals GROUP BY medal",
+           "weapon": "SELECT weapon AS name, SUM(kills) AS n FROM stats_weapons GROUP BY weapon HAVING n > 0"}[kind]
+    return [str(row["name"]) for row in db.query(sql + " ORDER BY n DESC LIMIT 25")]
+
+
+class _TopBoardChoice(ui.Select[Panel]):
+    def __init__(self, part: DiscordPart, entries: list[str], chosen: str) -> None:
+        from .standings import board_wanted
+
+        top = part.file.section("roles").get("top") or {}
+        entries = [entry for entry in entries if len(str(entry)) <= 100 and board_wanted(entry) is not None]  # Discord's 100 (9.8)
+        entries = sorted(entries, key=lambda entry: entry not in top)  # those with a role first: past 25, the rest can't be shown (5.11)
+        options = [discord.SelectOption(label=_board_title(entry)[:100], value=entry, default=entry == chosen,
+                                        description=(f"Its role: {_role_name(part, top[entry])}" if entry in top else "No role yet")[:100]) for entry in entries[:25]]
+        super().__init__(placeholder="Which board's role", options=options, row=0)
+        self.part = part
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await StatsRolesPanel(self.part, self.values[0]).open(interaction)
+
+
+def _role_refused(part: DiscordPart, role: discord.Role) -> str:
+    """Why this role can't be one Huragok gives a top or a side: "" when it can. Each is taken off everyone else, and a
+    rank role worn by the top of a board made them staff here (audit 0.6.1, 3.5, 3.8)."""
+    me = role.guild.me
+    if role.is_default():
+        return "@everyone can't be one of the roles Huragok gives: pick a role of its own."
+    if role.managed:
+        return f"@{role.name} belongs to an integration (a bot's role, or the boosters'): nobody can give it."
+    if me is not None and role >= me.top_role:
+        return f"@{role.name} isn't below the bot's own role: move the bot's role above it in Server Settings > Roles, or pick another."
+    ranks = {str(found["id"]) for ref, _ in features.given_roles("roles", part.file) if part.facts is not None and (found := part.facts.find_role(ref))}
+    if str(role.id) in ranks:
+        return f"@{role.name} is a rank role ([ranks]): whoever wore it for this would be staff here. Pick a role of its own."
+    return ""
+
+
+class _TopRoleSelect(ui.RoleSelect[Panel]):
+    def __init__(self, part: DiscordPart, entry: str) -> None:
+        current = (part.file.section("roles").get("top") or {}).get(entry)
+        super().__init__(placeholder="Its role", min_values=1, max_values=1, row=1,
+                         default_values=_defaults([current] if current else [], discord.SelectDefaultValueType.role))
+        self.part, self.entry = part, entry
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        role = self.values[0]
+        if why := _role_refused(self.part, role):
+            await answer(interaction, why)
+            return
+        top = dict(self.part.file.section("roles").get("top") or {})
+        top[self.entry] = str(role.id)
+        set_switch(self.part.path, ("roles",), "top", top)
+        await self.part.reload(force=True)
+        self.part.roles_due = True
+        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{role.name} is the top role of {_board_title(self.entry)}"))
+        await StatsRolesPanel(self.part, self.entry).open(interaction)
+
+
+class _NoTopRole(ui.Button[Panel]):
+    def __init__(self, part: DiscordPart, entry: str) -> None:
+        super().__init__(label="No role for it", style=discord.ButtonStyle.secondary, row=2)
+        self.part, self.entry = part, entry
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        top = {key: value for key, value in (self.part.file.section("roles").get("top") or {}).items() if key != self.entry}
+        set_switch(self.part.path, ("roles",), "top", top)
+        await self.part.reload(force=True)
+        self.part.roles_due = True
+        await StatsRolesPanel(self.part, self.entry).open(interaction)
+
+
+def _role_name(part: DiscordPart, ref: Any) -> str:
+    found = part.facts.find_role(ref) if part.facts is not None else None
+    return f"@{found['name']}" if found else str(ref)
+
+
+class _SideRoleSelect(ui.RoleSelect[Panel]):
+    def __init__(self, part: DiscordPart, side: str, row: int) -> None:
+        current = part.file.section("sides").get(f"{side}_role")
+        super().__init__(placeholder=f"{side.title()}'s role", min_values=0, max_values=1, row=row,
+                         default_values=_defaults([current] if current else [], discord.SelectDefaultValueType.role))
+        self.part, self.side = part, side
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        role = self.values[0] if self.values else None
+        if role is not None and (why := _role_refused(self.part, role)):
+            await answer(interaction, why)
+            return
+        set_switch(self.part.path, ("sides",), f"{self.side}_role", str(role.id) if role else "")
+        await self.part.reload(force=True)
+        self.part.roles_due = True
+        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.side.title()}'s role is {role.name if role else 'none'}"))
+        await SidesPanel(self.part).open(interaction)
+
+
+class SidesPanel(Panel):
+    """Red against Blue: players' own sides, the roles that go with them, how even the teams are kept."""
+
+    def __init__(self, part: DiscordPart) -> None:
+        super().__init__(part)
+        sides = part.file.section("sides")
+        self.add_item(_SideRoleSelect(part, "red", 0))
+        self.add_item(_SideRoleSelect(part, "blue", 1))
+        self.add_item(_SettingChoice(part, "sides", "most_apart", "How even the teams are kept", [("Teams kept within 1 of each other", 1), ("Teams kept within 2 of each other", 2), ("Teams kept within 3 of each other", 3), ("Teams kept within 4 of each other", 4)], sides.get("most_apart", 2), SidesPanel))
+        self.add_item(_Open("Back to Stats", StatsPanel, part, row=4))
+        self.add_item(_FeatureSwitch(part, "sides", SidesPanel, named="Sides"))
+        self.add_item(_FeatureSwitch(part, "side_roles", SidesPanel, named="Side roles"))
+        self.add_item(_SettingSwitch(part, "sides", "lock_for_season", "Kept for the season", SidesPanel))
+        self.add_item(_SettingSwitch(part, "sides", "reset_at_season_end", "Cleared as a season ends", SidesPanel))
+        self.add_item(_SettingSwitch(part, "sides", "force_for_season", "Forced while kept for the season", SidesPanel, row=3))
+
+    def card(self) -> discord.Embed:
+        sides = self.part.file.section("sides")
+        states = [f"{MARKS[features.state_of(features.BY_KEY[key], self.part.file, self.part.facts)[0]]} {features.BY_KEY[key].title}: {features.WHAT.get(key, '')}" for key in ("sides", "side_roles")]
+        roles = f"**Red:** {_role_name(self.part, sides.get('red_role')) if sides.get('red_role') else 'no role'} · **Blue:** {_role_name(self.part, sides.get('blue_role')) if sides.get('blue_role') else 'no role'}"
+        return discord.Embed(title="Sides", description="\n".join([*states, "", roles, "",
+                                                                    "Members and up choose with !side in game or /side here, and !togglesides (/togglesides) stops it for them alone. They're moved during a round only when it can't end the game: a team's last player never moves. Two who'd each rather be on the other's team swap. A side's role is worn by linked members who chose it, and only Huragok gives it."]), colour=discord.Colour.blurple())
+
+
+class StatsRolesPanel(Panel):
+    """A role for the top of each leaderboard (the host's ask, 3 November 2026), and the rank roles Huragok gives."""
+
+    def __init__(self, part: DiscordPart, chosen: str = "") -> None:
+        from ..servers import leaderboards
+
+        super().__init__(part)
+        top = part.file.section("roles").get("top") or {}
+        entries = list(dict.fromkeys([*(entry for entry in _boards_of(part) if entry != "red-blue"), *top,
+                                      *(f"{key} season" for key in leaderboards.STATS)]))
+        self.chosen = chosen if chosen in entries else ""
+        self.add_item(_TopBoardChoice(part, entries, self.chosen))
+        if self.chosen:
+            self.add_item(_TopRoleSelect(part, self.chosen))
+            if self.chosen in top:
+                self.add_item(_NoTopRole(part, self.chosen))
+        roles = part.file.section("roles")
+        self.add_item(_SettingChoice(part, "roles", "top_count", "How many at the top wear it", [("The leader wears it", 1), ("The top 3 wear it", 3), ("The top 5 wear it", 5), ("The top 10 wear it", 10)], roles.get("top_count", 1), StatsRolesPanel))
+        self.add_item(_Open("Back to Stats", StatsPanel, part, row=4))
+        self.add_item(_FeatureSwitch(part, "top_roles", StatsRolesPanel, named="Top roles"))
+        self.add_item(_FeatureSwitch(part, "roles", StatsRolesPanel, named="Rank roles"))
+
+    def card(self) -> discord.Embed:
+        top = self.part.file.section("roles").get("top") or {}
+        listed = "\n".join(f"• {_board_title(entry)}: {_role_name(self.part, ref)}" for entry, ref in top.items()) or "None yet: pick a board, then its role."
+        states = [f"{MARKS[features.state_of(features.BY_KEY[key], self.part.file, self.part.facts)[0]]} {features.BY_KEY[key].title}: {features.WHAT.get(key, '')}" for key in ("top_roles", "roles")]
+        return discord.Embed(title="Stats roles", description="\n".join([*states, "", "**Top roles**", listed, "", "Only linked players wear one: linking is how it's claimed.",
+                                                                          "**Rank roles** are the [ranks] roles (Ranks on the first page), given only by Huragok: someone with one Huragok doesn't know as that rank (not linked, say) loses it. Link staff first. /promote and /demote change a rank."]), colour=discord.Colour.blurple())
+
+
 class _SettingChoice(ui.Select[Panel]):
     """One setting, picked from a few: its value is written, and the panel shown again."""
 
@@ -849,9 +1212,9 @@ class _SettingChoice(ui.Select[Panel]):
 
 
 class _SettingSwitch(ui.Button[Panel]):
-    def __init__(self, part: DiscordPart, section: str, key: str, label: str, screen: type[Panel]) -> None:
+    def __init__(self, part: DiscordPart, section: str, key: str, label: str, screen: type[Panel], *, row: int = 4) -> None:
         self.now = bool(part.file.section(section).get(key))
-        super().__init__(label=f"{label}: {'yes' if self.now else 'no'}"[:80], style=discord.ButtonStyle.secondary, row=4)
+        super().__init__(label=f"{label}: {'yes' if self.now else 'no'}"[:80], style=discord.ButtonStyle.secondary, row=row)
         self.part, self.section, self.key, self.screen = part, section, key, screen
 
     async def callback(self, interaction: discord.Interaction) -> None:
@@ -902,8 +1265,8 @@ class _WordsForm(SaysWhatWentWrong, ui.Modal):
         self.add_item(self.words)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if rank_of(self.part.file, someone_from(interaction.user)) != "owner":
-            await answer(interaction, NOT_OWNER)
+        if rank_of(self.part.file, someone_from(interaction.user)) != "faculty":
+            await answer(interaction, NOT_FACULTY)
             return
         typed = str(self.words.value).strip()
         set_switch(self.part.path, (self.section,), self.key, [line.strip() for line in typed.splitlines() if line.strip()] if self.is_list else typed)

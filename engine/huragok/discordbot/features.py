@@ -17,7 +17,7 @@ from .config import DiscordConfig, FALLBACKS, pings_of, RANK_KEYS, set_channel
 from .facts import Facts, gather
 from .rest import PERMISSION_NAMES, DiscordError
 
-BUILT = 3  # the stage of plans/discord-bot-design.md this version has got to (2.1 feeds, 2.2 status, 2.3 the watch list and calls, 2.4 notes and buttons)
+BUILT = 5  # the stage of plans/discord-bot-design.md this version has got to (2.1 feeds, 2.2 status, 2.3 the watch list and calls, 2.4 notes and buttons; 4 linking, with its role sync still to come; 5 stats, being built)
 
 OFF, WAITING, ON, COMING = "off", "waiting", "on", "coming"
 MARKS = {OFF: "⬜", WAITING: "⏳", ON: "✅", COMING: "🔜"}
@@ -25,8 +25,8 @@ MARKS = {OFF: "⬜", WAITING: "⏳", ON: "✅", COMING: "🔜"}
 ANNOUNCEMENT = 5  # Discord's kind of channel
 POSTS = ("view", "send", "embed")  # what posting cards in a channel needs
 PRIVATE_CHANNELS = {"staff", "alerts", "console", "reports", "appeals", "logs", "huragok-logs"}  # [channels] names for what staff alone should read
-READ_ONLY_CHANNELS = {"status", "info", "games"}  # for everyone to read, and nobody to type in
-CHANNELS = {"status": "the server cards and nothing else", "info": "news: pings people asked for, seeding, restarts planned, updates", "games": "games ending, and playlists changing with the player count",
+READ_ONLY_CHANNELS = {"status", "info", "games", "stats"}  # for everyone to read, and nobody to type in
+CHANNELS = {"status": "the server cards and nothing else", "info": "news: pings people asked for, seeding, restarts planned, updates", "games": "games ending, and playlists changing with the player count", "stats": "the leaderboards, kept up to date",
             "staff": "tickets: what Vergil did, and who to keep an eye on", "reports": "tickets: people asking staff for something (unset: staff)", "appeals": "tickets: people appealing what's against them (unset: reports)",
             "alerts": "tickets: what's wrong with the servers now (unset: staff)", "logs": "the record of what people did", "huragok-logs": "the record of what Vergil and the Superintendent did (unset: logs)",
             "console": "typing console lines"}
@@ -84,6 +84,15 @@ FEATURES: tuple[Feature, ...] = (
     Feature("reports", "Reports", 2.95, channel=True, staff=True, lines="reports-"),
     Feature("appeals", "Appeals", 2.96, channel=True, staff=True, lines="appeals-"),
     Feature("contact", "Contact staff", 3, channel=True, permissions=("create_private_threads", "send_in_threads", "manage_threads")),
+    # Stage 4: links (0.6.1; role sync to come)
+    Feature("link", "Linking players to their accounts here", 4),
+    Feature("roles", "Rank roles from Huragok", 4, switch="sync", permissions=("manage_roles",), intents=("members",)),
+    # Stage 5: stats (0.6.1)
+    Feature("stats", "Stats and leaderboards", 5),
+    Feature("leaderboards", "Leaderboards kept in a channel", 5, channel=True),
+    Feature("sides", "Players on the team they chose", 5),
+    Feature("side_roles", "Side roles", 5, section=("sides",), switch="roles", permissions=("manage_roles",), intents=("members",)),
+    Feature("top_roles", "Top roles for the leaderboards", 5, section=("roles",), switch="top_roles", permissions=("manage_roles",), intents=("members",)),
 )
 BY_KEY = {feature.key: feature for feature in FEATURES}
 FEEDS_ELSEWHERE = {"seeding": "status.seeding", "notify": "notify"}  # a card's feed, whose feature isn't feed.<its name>
@@ -103,7 +112,14 @@ WHAT = {"personas": "Posts come from three names of their own, rather than the b
         "status.seeding": "A post in info when a server is nearly empty and could use players", "notify": "/notify: anyone can ask to be pinged when a server reaches so many players, or a game type starts", "status.presence": "What the bot's status line says", "status.bio": "What the bot's bio says", "status.nickname": "The bot's nickname shows the player count",
         "status.channel_names": "A channel's name shows a count", "status.topics": "A channel's topic shows a count", "status.voice_status": "A voice channel's status shows a count", "notes": "/note and /flag: what staff write down about a player, shown on their cards",
         "console": "Lines typed in a private channel run on a server", "commands": "/kick, /whois and every other in-game command in Discord, with /server, /status, /ticket and /case", "reports": "/report and right-click a message: a ticket for staff",
-        "appeals": "/appeal: a ticket staff can lift, shorten or deny, and the person's told", "contact": "A button anyone can press to open a private thread with staff"}
+        "appeals": "/appeal: a ticket staff can lift, shorten or deny, and the person's told", "contact": "A button anyone can press to open a private thread with staff",
+        "link": "!link in game and /link here: a player's stats show under their name in this Discord",
+        "stats": "/stats: a player's service record, and /leaderboard: the best at anything the servers count",
+        "leaderboards": "Boards kept in a channel, brought up to date as games are reported, with Red against Blue",
+        "sides": "!side or /side red or blue, for members and up: put on that team in the lobby or during a round, never emptying a team, the teams kept within most_apart",
+        "roles": "A linked member wears the role of their rank in Huragok, and only Huragok gives those roles: one given by hand is taken off",
+        "top_roles": "A role for the top of each leaderboard you pick, worn by the linked players there, moved as the board changes",
+        "side_roles": "A role for Red and one for Blue, worn by linked members who chose that side: open a category to each"}
 # What a first install is best off starting with: what staff need, and nothing that posts in public.
 RECOMMENDED = ("feed.moderation", "feed.vergil", "feed.alerts", "feed.calls", "feed.requests", "feed.audit", "commands", "notes")
 # Those whose message matters enough to set in one place: (what it's about, its lines in [messages]).
@@ -142,7 +158,7 @@ def steps(config: DiscordConfig, facts: Facts | None) -> list[Step]:
     return [Step(bool(on), "What it does", f"**What it does:** {len(on)} switched on" if on else "**What it does:** nothing's switched on. Recommended turns on what staff need", "features"),
             Step(bool(str(channels.get("staff") or "").strip() and str(channels.get("logs") or "").strip()), "Channels", "**Channels:** staff and logs are all a small Discord needs. Tickets go in one and the record in the other", "channels"),
             Step(not missing, "Permissions", "**Permissions:** the bot's role has what it needs" if not missing else f"**Permissions:** the bot's role lacks {', '.join(missing[:6])}. The invite link below adds them", "features"),
-            Step(any(ranks.get(key) for key in RANK_KEYS.values()), "Ranks", "**Ranks:** which of your roles are moderators and admins. Until then only owners can press anything", "ranks"),
+            Step(any(ranks.get(key) for key in RANK_KEYS.values()), "Ranks", "**Ranks:** which of your roles are moderators and admins. Until then only faculty can press anything", "ranks"),
             Step(pinged, "Who gets told", "**Who gets told:** a role to ping when a server goes down or someone calls for an admin. Until then nobody's phone buzzes", "told"),
             Step(not waiting, "Waiting", "**Everything on is working**" if not waiting else f"**Waiting:** {', '.join(waiting[:6])}. Features says why", "features")]
 
@@ -170,6 +186,12 @@ def slash_commands(config: DiscordConfig) -> set[str]:
         wanted |= {"ticket", "server", "status", "case", "help", "tickets"}
     if BY_KEY["appeals"].is_on(config):
         wanted.add("appeal")
+    if BY_KEY["link"].is_on(config):
+        wanted |= {"link", "unlink"}
+    if BY_KEY["stats"].is_on(config):
+        wanted |= {"stats", "leaderboard"}
+    if BY_KEY["sides"].is_on(config) and config.mode == "bot":
+        wanted |= {"side", "togglesides"}
     if BY_KEY["reports"].is_on(config) and "discord" in (config.section("reports").get("from") or []):
         wanted.add("report")
         if config.section("reports").get("right_click", True):
@@ -241,6 +263,56 @@ def why_waiting(feature: Feature, config: DiscordConfig, facts: Facts | None) ->
                 return (f"#{channel.get('name')} can be read by @everyone, and this feature posts private things: make it private, or allow it" + (" on the Console panel" if feature.key == "console" else " on the Channels panel"))
     if feature.key == "contact":
         return _contact_waiting(config, facts)
+    if feature.key in ROLE_FEATURES:
+        return _roles_waiting(feature, config, facts)
+    return ""
+
+
+ROLE_FEATURES = ("roles", "top_roles", "side_roles")  # the roles Huragok gives, and takes off whoever shouldn't wear them
+
+
+def given_roles(key: str, config: DiscordConfig) -> list[tuple[str, str]]:
+    """(the role as written, the rank it stands for, or "" for a top or side role) for each role a feature gives."""
+    if key == "roles":
+        ranks = config.section("ranks")
+        found = [(str(ref), rank) for rank, name in RANK_KEYS.items() for ref in ranks.get(name) or []]
+        found += [(str(block.get("role") or ""), str(block.get("rank", "")).strip().replace("_", "-"))
+                  for block in ranks.get("scoped") or [] if isinstance(block, dict)]
+        found.append((str(config.section("roles").get("faculty") or ""), "faculty"))
+    elif key == "top_roles":
+        found = [(str(ref), "") for ref in (config.section("roles").get("top") or {}).values()]
+    else:
+        found = [(str(config.section("sides").get(f"{side}_role") or ""), "") for side in ("red", "blue")]
+    return [(ref.strip(), rank) for ref, rank in found if ref.strip()]
+
+
+def _roles_waiting(feature: Feature, config: DiscordConfig, facts: Facts) -> str:
+    """A role Huragok gives is taken off everyone else, so each has to be one it can give, and one with no other job
+    (audit 0.6.1, 3.1, 3.5, 3.8): a top role that's also a rank role made the top of a board staff here; one role on
+    two ranks gave moderators an admin's; a role above the bot's own was refused at every look."""
+    if not config.section("link").get("enabled"):
+        return "linking is off ([link] enabled): only linked members wear the roles Huragok gives, so it would take every one off"
+    top = facts.top_position()
+    ranks_of: dict[str, set[str]] = {}
+    for ref, rank in given_roles(feature.key, config):
+        role = facts.find_role(ref)
+        if role is None:  # on, giving nothing, and nothing said (second audit, 9.11)
+            return f"there's no role {ref} in {facts.guild.get('name') if facts.guild else 'the Discord'}"
+        name, role_id = role.get("name"), str(role.get("id"))
+        if facts.guild is not None and role_id == str(facts.guild.get("id")):
+            return "@everyone can't be one of the roles Huragok gives: pick a role of its own"
+        if role.get("managed"):
+            return f"@{name} belongs to an integration (a bot's role, or the boosters'): nobody can give it"
+        if int(role.get("position") or 0) >= top:
+            return f"@{name} isn't below the bot's own role: move the bot's role above it in Server Settings > Roles"
+        ranks_of.setdefault(role_id, set()).add(rank)
+    if feature.key != "roles":
+        rank_roles = {str(role["id"]) for ref, _ in given_roles("roles", config) if (role := facts.find_role(ref))}
+        if clash := next((facts.find_role(role_id) for role_id in ranks_of if role_id in rank_roles), None):
+            what = "the top of a board" if feature.key == "top_roles" else "everyone on a side"
+            return f"@{clash.get('name')} is a rank role ([ranks]): {what} would be staff here. Pick a role of its own"
+    elif clash := next((facts.find_role(role_id) for role_id, ranks in ranks_of.items() if len(ranks) > 1), None):
+        return f"@{clash.get('name')} stands for more than one rank in [ranks]: whoever wears it would count as the highest. Give each rank its own role"
     return ""
 
 
@@ -330,6 +402,27 @@ def names_to_ids(config: DiscordConfig, facts: Facts) -> list[str]:
                 remove_from_list(path, "ranks", key, str(entry))
                 add_to_list(path, "ranks", key, str(role.get("id")), f"@{role.get('name')}")
                 changed.append(f"[ranks] {key}")
+    # The other roles Huragok gives, one by one: written by name, another role of that name was never the one (audit 0.6.1, 3.14).
+    from .config import set_switch
+
+    for table, key in (("roles", "faculty"), ("sides", "red_role"), ("sides", "blue_role")):
+        text = str(config.section(table).get(key) or "").strip()
+        role = facts.find_role(text) if text and not text.isdecimal() else None
+        if role is not None:
+            set_switch(path, (table,), key, str(role.get("id")))  # type: ignore[arg-type]
+            changed.append(f"[{table}] {key}")
+    text = str(config.section("leaderboards").get("season_channel") or "").strip()
+    channel = facts.find_channel(text) if text and not text.isdecimal() else None
+    if channel is not None:  # by name: its ID, as [channels] are (9.11)
+        set_switch(path, ("leaderboards",), "season_channel", str(channel.get("id")))  # type: ignore[arg-type]
+        changed.append("[leaderboards] season_channel")
+    top = config.section("roles").get("top") or {}
+    if isinstance(top, dict):
+        named = {entry: str(found["id"]) if (text := str(ref).strip()) and not text.isdecimal() and (found := facts.find_role(text)) else ref
+                 for entry, ref in top.items()}
+        if named != top:
+            set_switch(path, ("roles",), "top", named)  # type: ignore[arg-type]
+            changed.append("[roles] top")
     for feature in FEATURES:
         if not feature.channel:
             continue
@@ -356,15 +449,15 @@ class Finding:
 def _ranks(config: DiscordConfig, facts: Facts) -> list[Finding]:
     ranks = config.section("ranks")
     found: list[Finding] = []
-    owners = [str(owner).strip() for owner in ranks.get("owners", [])]
-    for owner in owners:
-        if not owner.isdecimal():
-            found.append(Finding(False, "Owners", f"'{owner}' isn't a Discord user ID: owners are people, never a role"))
-    if not owners:
-        found.append(Finding(False, "Owners", "nobody can set the bot up from Discord yet: get a code from Huragok's "
+    faculty = [str(faculty).strip() for faculty in ranks.get("faculty", [])]
+    for faculty in faculty:
+        if not faculty.isdecimal():
+            found.append(Finding(False, "Faculty", f"'{faculty}' isn't a Discord user ID: faculty are people, never a role"))
+    if not faculty:
+        found.append(Finding(False, "Faculty", "nobody can set the bot up from Discord yet: get a code from Huragok's "
                                               "window (J) and type /huragok claim"))
     else:
-        found.append(Finding(True, "Owners", f"{len(owners)} named"))
+        found.append(Finding(True, "Faculty", f"{len(faculty)} named"))
     for rank, key in RANK_KEYS.items():
         for ref in ranks.get(key, []):
             role = facts.find_role(ref)
@@ -375,14 +468,14 @@ def _ranks(config: DiscordConfig, facts: Facts) -> list[Finding]:
                 if rank != "member":  # members aren't staff: they're not meant to see any of this
                     found += _rank_can_see(rank, role, config, facts)
     if not any(ranks.get(key) for key in RANK_KEYS.values()):
-        found.append(Finding(False, "Ranks", "no roles are mapped, so only owners can press anything on a card: pick them on the Ranks panel"))
+        found.append(Finding(False, "Ranks", "no roles are mapped, so only faculty can press anything on a card: pick them on the Ranks panel"))
     if ranks.get(RANK_KEYS["probationary-moderator"]) and not BY_KEY["feed.requests"].is_on(config):
         found.append(Finding(False, "Rank probationary-moderator", "their commands become requests, and with Probationary moderators' requests off, Discord hears nothing of them: switch it on in Features"))
     return found
 
 
 def _rank_can_see(rank: str, role: dict[str, Any], config: DiscordConfig, facts: Facts) -> list[Finding]:
-    """A role given a rank that can't see its tickets, or whose slash commands stay hidden from it. Discord shows an owner and an administrator everything, so the host won't notice."""
+    """A role given a rank that can't see its tickets, or whose slash commands stay hidden from it. Discord shows faculty and an administrator everything, so the host won't notice."""
     found: list[Finding] = []
     needed = str(config.section("commands").get("staff_permission") or "")
     if BY_KEY["commands"].is_on(config) and needed and needed in rest.DISCORD_FLAGS and not int(role.get("permissions") or 0) & (rest.DISCORD_FLAGS[needed] | rest.PERMISSIONS["administrator"]):

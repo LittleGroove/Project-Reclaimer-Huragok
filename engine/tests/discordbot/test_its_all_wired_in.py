@@ -125,7 +125,7 @@ def test_a_refused_appeal_deny_doesnt_open_its_form(tmp_path: Path, run: Any, fa
         set_switch(path, ("tickets",), "close_rank", "admin")
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, _):
             part = await up(huragok)
-            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Owner", source="in game", reason="x")
+            huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Faculty", source="in game", reason="x")
             number = part.appeals.file("7777", "Alice", ALICE, "Alice", "ban", [("What happened?", "x")])
             await wait_for(lambda: part.tickets.get(number)["message"], timeout=10)
             ticket = part.tickets.get(number)
@@ -136,13 +136,13 @@ def test_a_refused_appeal_deny_doesnt_open_its_form(tmp_path: Path, run: Any, fa
     run(scenario())
 
 
-def test_owners_in_game_reaches_what_they_can_do(tmp_path: Path) -> None:
+def test_faculty_in_game_reaches_what_they_can_do(tmp_path: Path) -> None:
     """It was only tested as a function: nothing proved a command saw it."""
     path = tmp_path / "discord.toml"
-    path.write_text('[ranks]\nowners = ["9"]\nowners_in_game = "admin"\n', encoding="utf-8")
+    path.write_text('[ranks]\nfaculty = ["9"]\nfaculty_in_game = "admin"\n', encoding="utf-8")
     config = load(path)
     someone = Someone("9", {}, False, False)
-    assert rank_of(config, someone) == "owner" and game_rank(config, someone) == "admin"
+    assert rank_of(config, someone) == "faculty" and game_rank(config, someone) == "admin"
 
 
 def test_a_channel_event_gets_discord_read_again(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:

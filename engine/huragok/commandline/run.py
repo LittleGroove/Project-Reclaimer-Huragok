@@ -39,9 +39,9 @@ def summary(settings: Settings) -> None:
     if parts["eventlog"].enabled:
         on.append("eventlog")
     log.info("Running: %s", ", ".join(on))
-    owners = settings.permissions.members.get("owner", set())
-    if not owners:
-        log.warning("Nobody is owner yet: put your player ID under [owner] players in %s", COMMANDS_FILE)
+    faculty = settings.permissions.members.get("faculty", set())
+    if not faculty:
+        log.warning("Nobody is faculty yet: put your player ID under [faculty] players in %s", COMMANDS_FILE)
     for line in settings.notes:  # old values: legal, but maybe not what the host thinks they are
         log.warning(line)
     if not settings.servers:

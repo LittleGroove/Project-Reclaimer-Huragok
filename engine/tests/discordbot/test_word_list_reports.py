@@ -156,8 +156,8 @@ def test_a_name_banned_another_way_closes_its_card(tmp_path: Path, run: Any, fak
             await up(huragok)
             await rcon.join(4, "Rudeword", BRAVO)
             await wait_for(lambda: huragok.storage.query("SELECT 1 FROM discord_tickets WHERE kind = 'vergil-name-asked'"), timeout=15)
-            await rcon.join(1, "Owner", "a" * 64)
-            await rcon.chat("a" * 64, "Owner", "!banname Rudeword")
+            await rcon.join(1, "Faculty", "a" * 64)
+            await rcon.chat("a" * 64, "Faculty", "!banname Rudeword")
             await wait_for(lambda: row_of(huragok)["state"] == "closed", timeout=15)
 
     run(scenario())

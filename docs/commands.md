@@ -8,7 +8,7 @@ who may use each one.
 
 ## commands.toml
 The first start writes it with every command under its default role, each with
-a line on what it does. **D → C** in the window changes it for you: owners,
+a line on what it does. **D → C** in the window changes it for you: faculty,
 moderators and members picked from the players seen lately, each command moved to
 a role or switched off, the prefix and the cooldown. By hand, it looks like this:
 
@@ -17,13 +17,13 @@ prefix = "!"
 cooldown_seconds = 3
 
 [everyone]
-commands = ["help", "strikes", "respawn", "calladmin", "report", "mods"]
+commands = ["help", "strikes", "respawn", "calladmin", "report", "mods", "link", "stats", "season"]
 
 [member]
 players = [
     "0123…cdef",   # Charlie, a regular
 ]
-commands = []
+commands = ["side", "togglesides"]
 
 [moderator]
 players = [
@@ -34,20 +34,20 @@ commands = ["players", "whois", "warn", "mute", "unmute", "kick", "pardon", "str
 [admin]
 commands = ["ban", "unban", "map", "say", …]
 
-[owner]
+[faculty]
 players = ["…"]
-commands = ["admin", "reload"]
+commands = ["admin", "reload", "newseason", "endseason"]
 
 [off]
 commands = []
 ```
 
 - **Each role can use its own commands and those of every role before it.**
-  Admins can use everything moderators and everyone can, and owners everything.
+  Admins can use everything moderators and everyone can, and faculty everything.
 - **To change who can use a command, move it** to another role's list. To let
   everyone see who's on, move `"players"` to `[everyone]`. To keep `!ban` for
-  owners, move `"ban"` to `[owner]`.
-- **To switch a command off, put it in `[off]`.** Nobody can use it then, owners
+  faculty, move `"ban"` to `[faculty]`.
+- **To switch a command off, put it in `[off]`.** Nobody can use it then, faculty
   included, wherever else it's listed, and `!help` stops listing it. `!help`
   itself can't be switched off.
 - A command in no list keeps its default role, so commands added in an update
@@ -67,29 +67,29 @@ commands = []
 | `probationary-moderator` | members on probation as moderators: made one in game with `!promote` | Moderators' commands, but each kick, mute, strike, warning… is a request a moderator or admin confirms before it happens: see [Probationary moderators](#probationary-moderators). Listed under `[member]`, with a note saying so. No vote can kick them. |
 | `moderator` | the player IDs under `[moderator]` | The game itself doesn't know about moderators: what they can do is what's listed for them. No vote can kick them. |
 | `admin` | the server's own admins: `admins` in `dedicated.toml`, or added in game with `!admin add` | Not listed in `commands.toml`, so there's never a second list to keep in step. Vergil reads the server's list live. |
-| `owner` | the player IDs under `[owner]` | You. Can act on anyone. |
+| `faculty` | the player IDs under `[faculty]` | You. Can act on anyone. |
 
 **One role each, on a ladder: player, member, probationary moderator, moderator, admin,
-owner.** In game, `!promote <player>` moves someone one step up and `!demote <player>`
+faculty.** In game, `!promote <player>` moves someone one step up and `!demote <player>`
 one step down: demoting an admin makes them a moderator, a moderator a probationary
 moderator, then a member, a member a player again. You can promote someone up to the
 role below your own (moderators make members and probationary moderators, admins make
-moderators, owners make admins) and demote only someone below you. `!roles` lists who has which. Moving someone takes them out of the role
+moderators, faculty make admins) and demote only someone below you. `!roles` lists who has which. Moving someone takes them out of the role
 they had, so nobody is ever two things. Moderators and members live in
 `commands.toml`, each on a line of their own saying who they are and who moved
 them (`"…",  # Bravo: promoted by Alice on 2026-10-19`); the rest of the file, your
 own comments included, stays as you wrote it, and the change is in force at once,
 the vote-kick immune list included. Admins are the servers' own lists: `!admin add
-<player>` (owners) makes someone one in a step, on every server (Huragok keeps them
+<player>` (faculty) makes someone one in a step, on every server (Huragok keeps them
 on its own list and puts them on each server's, a new one's too), `!admin remove`
 makes them a moderator everywhere. An admin `dedicated.toml` names stays one until
-that file says otherwise (the reply says so). Owners change only in the file.
+that file says otherwise (the reply says so). Faculty change only in the file.
 
 **A ban through Huragok takes every role away** (`!ban`, Vergil's, the relay's, the
 window's), on every server, and the reply says so ("Alice's moderator role goes with
 the ban."). A kick with a time takes nothing away: they'll be back, and so will their
 role. The game's own `/ban` is that server's alone: the roles stay. Since nobody acts
-on their own role or above, only an owner can ban an admin.
+on their own role or above, only faculty can ban an admin.
 
 Roles follow the **player ID**, never the name: anyone can use any name. A player
 ID is 64 letters and digits. Players find theirs in game under Settings >
@@ -99,8 +99,8 @@ shows the first 8 characters.
 
 Nobody can use a command on someone of their own role or above: a moderator
 can't mute an admin, and an admin can't ban another admin. That holds when the
-player is named by ID while they're away, too (`!ban <an owner's player ID>` from
-an admin reads "… is an owner; you can't do that to them"). Owners can act on anyone.
+player is named by ID while they're away, too (`!ban <faculty's player ID>` from
+an admin reads "… is faculty; you can't do that to them"). Faculty can act on anyone.
 Admins are each server's own, and a `!` command reaches every server, so a player
 counts as the highest role they hold on **any** server: someone who's an admin only
 on Server 2 is an admin everywhere as far as a `!ban` is concerned, and `!roles` lists
@@ -109,7 +109,7 @@ them "(on Server 2)".
 ## Votes to kick
 Players can vote to kick anyone the server doesn't protect, and the server
 protects only its own admins. Vergil protects everyone else you list: every
-member, moderator and owner goes on the server's **vote-kick immune list** (the
+member, moderator and faculty goes on the server's **vote-kick immune list** (the
 console's `immune`), as each server connects, within seconds of an edit to
 `commands.toml`, and every 5 minutes in case someone took them off. Take a player
 out of `commands.toml` and they come off the list again.
@@ -240,7 +240,7 @@ spamming votes. Any vote they call is cancelled.` when it's given.
   who, why, how long and on which server. A kick with a time is a kick there.
 - Times are like `30m`, `1h`, `7d`, `2w`; `perm` means for good.
 - `cooldown_seconds` holds back repeats of the same command by the same player.
-  Admins and owners aren't held back.
+  Admins and faculty aren't held back.
 - Every warn, mute, kick and ban is recorded with who did it and why, and players
   read who acted ("Bravo was muted by Alice").
 - A reply a slow or restarting server can't take in time is dropped (the log says
@@ -308,6 +308,30 @@ them. `[off]` in `commands.toml` switches them off either way.
 - **`!mods`** says which staff are in a game now. Staff who are only on Discord aren't
   counted: `!calladmin` reaches them.
 
+## Stats
+**`!stats [player]`** (0.6.1) is anyone's record on these servers, from every game the servers reported to the
+stats service: `Alpha: 32 games, 21 won (66%), K/D 2.26, best streak 27, most kills with the tank. Rank: Apprentice.`
+Left out, it's your own. It's there with or without Discord; with the bot, `/stats` and `/leaderboard` say more.
+
+## Seasons and sides
+**`!season`** says how Red and Blue stand in the season running now (between seasons, the one just ended): the team
+games each colour won, in Red against Blue games only (not Infection or Juggernaut, nor a game with a third team);
+**`!season 3`** says a past one's. Faculty
+start one with **`!newseason [name] [length]`** (`!newseason Winter 30d`): with no length it runs until faculty
+type **`!endseason`**. With the Discord bot's `[sides]` on, members and up pick their team with **`!side red`**,
+`!side blue` or `!side off`, and are put on it in the lobby, or during a round as soon as that can't end the game
+(never a team's last player), the teams within 2. **`!togglesides`** stops it, or starts it again, for whoever types
+it, except while `force_for_season` holds their side for the season. Someone who switches team themselves isn't
+moved again that game.
+
+## Linking to Discord
+**`!link`** (0.6.1) is for hosts with the Discord bot and `[link] enabled` in `discord.toml`; without it, it reads
+"Unknown command". It tells the player a code, privately: `[^_^] GOOD CITIZENS DO THEIR PART! Your link code is
+K7P-42Q: in SPR on Discord, type /link K7P-42Q within 10 minutes. Only you can see this.` Typing `/link` with it in
+the Discord ties the two, and the player's stats show under their name there. A code works once; three can be asked
+for in an hour. A player already linked is told who to, and `/unlink` in Discord undoes it. A link changes nobody's
+rank. See [discord.md](discord.md).
+
 ## Acting from Discord
 With the Discord bot, staff can do all this without being in a game: the buttons on a
 card, a slash command for each of these commands, and lines typed in a console channel.
@@ -315,7 +339,7 @@ card, a slash command for each of these commands, and lines typed in a console c
 same rules:
 
 - **Rank comes from `[ranks]` in `discord.toml`:** the Discord roles you've mapped onto
-  moderator, admin and the rest, and owners by Discord user ID. Being a moderator in game
+  moderator, admin and the rest, and faculty by Discord user ID. Being a moderator in game
   isn't being one in Discord, or the other way round, as Discord doesn't know who a player
   is. What each rank may use is still `commands.toml`, and nobody acts on someone of their
   own rank or above. On probation, what names a player is a request.
@@ -340,6 +364,11 @@ same rules:
 | `!calladmin [why]` | everyone | Call the staff on Discord. Only while Discord can take it: see [Telling the staff](#telling-the-staff) |
 | `!report <player> [why]` | everyone | Tell the staff on Discord about a player. Only while Discord can take it: see [Telling the staff](#telling-the-staff) |
 | `!mods` | everyone | Which staff are in a game now. Only with the Discord bot on |
+| `!stats [player]` | everyone | A player's record on these servers, from every game reported: yours, left out |
+| `!season [number]` | everyone | Red against Blue in the season running (or just ended), or a past one's |
+| `!link` | everyone | A code for `/link` in your Discord, told only to you. Only with the Discord bot's `[link]` on |
+| `!side <red \| blue \| off>` | member | The team you're always put on. Only with the Discord bot's `[sides]` on |
+| `!togglesides` | member | Stop being put on your side, or start again |
 | `!respawn [reason]`, `!respawn <player> [reason]` | everyone; admins for someone else | Stuck? Respawns you on your own team: Huragok moves you to another team and straight back, as the game's admin menu does (the server has no kill command). Everyone reads `[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Red team: stuck in a wall.` Team games during a round only: not free-for-all, and not a team's last player (the server refuses, and you read why). Once a minute for your own; admins aren't held to it, and name a player to respawn them (not someone of their own role or above). Not yet tried with players: whether the move back is a second respawn, and whether it counts as a death |
 | `!players [name]` | moderator | Who's on, with `#numbers`, player IDs, team, time on and roles; `!players nate` lists only those with "nate" in their name (a busy server has more than one answer shows) |
 | `!whois <player \| ID> [lines]` | moderator | Their whole record, from every server: where they are, other names, what's on them now (a mute, a kick keeping them out, their bans as each server's list has them), every kick, mute, ban and warning with its case number (by `!`, `/`, Vergil, a vote or the console, who, why, on which server), strikes on each line |
@@ -388,8 +417,10 @@ same rules:
 | `!toggleteam [on \| off] [time]` | admin | Team voice (the B key: teammates hear), the same way |
 | `!toggleproxy [on \| off] [time]` | admin | Proximity voice (the N key: players nearby hear), the same way |
 | `!togglevoice` | admin | All voice chat off on this server for 10 minutes, then back on by itself; typed again, it's back on at once. Always 10 minutes: it's for stopping voice spam, so it can't be left off |
-| `!admin [list \| add \| remove]` | owner | The server's own admin list, shared by every server using the ban list: `add` makes a player an admin, `remove` a moderator |
-| `!reload` | owner | Apply edits to `dedicated.toml` now |
+| `!admin [list \| add \| remove]` | faculty | The server's own admin list, shared by every server using the ban list: `add` makes a player an admin, `remove` a moderator |
+| `!reload` | faculty | Apply edits to `dedicated.toml` now |
+| `!newseason [name] [length]` | faculty | End the season running, if any, and start the next: for good, or for a time (`30d`) |
+| `!endseason` | faculty | End the season running now |
 
 Everyone on the server reads each toggle as a `[Server]` line ("[-.-] PLEASE REMAIN CALM! Alice turned global voice (V) off for 10 minutes."), and again when a timed one switches back ("[^_^] YOUR TAX DOLLARS AT WORK! Global voice (V) is back on after 10 minutes."). A timed toggle is kept by Huragok through its own restarts; one whose time ran out while Huragok was down switches back as it starts. Someone changing the setting in the meantime (another toggle, or the window's D) wins: it isn't switched back. There's no `!togglechat`: the server's own lines are text chat, so with it off nobody could read why, or type the command to bring it back.
 
@@ -423,6 +454,6 @@ is the server's own lines: what it tells everyone as it happens, and what it tel
 the door: "You are banned from this server for another 6 days. Reason: Kicked for 7 days: cheating".
 
 A moderator's kick lasts one day at most: `moderators_kick_at_most` in `[automod]` changes that.
-Admins and owners have no limit. It holds on Discord's buttons too, and when a moderator confirms a
+Admins and faculty have no limit. It holds on Discord's buttons too, and when a moderator confirms a
 request. `!pardon` goes by the same line: at moderator rank it lifts what a moderator could have
 given, and a longer one takes an admin.

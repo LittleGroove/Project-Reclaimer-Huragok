@@ -44,9 +44,9 @@ def test_every_key_belongs_to_a_part() -> None:
     for key, persona in lore.KEYS.items():
         if key != "?":
             assert f"[{key}]" in shown, key
-    owners = {who: keys for who, keys, _ in key_rows(True)}
-    assert all(f"[{k}]" in owners["SUPERINTENDENT"] for k in "SXRKTL")
-    assert all(f"[{k}]" in owners["VERGIL"] for k in "PMAB")
+    faculty = {who: keys for who, keys, _ in key_rows(True)}
+    assert all(f"[{k}]" in faculty["SUPERINTENDENT"] for k in "SXRKTL")
+    assert all(f"[{k}]" in faculty["VERGIL"] for k in "PMAB")
 
 
 def test_the_key_rows_fit_the_widest_dashboard() -> None:

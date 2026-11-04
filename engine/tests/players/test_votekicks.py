@@ -1,4 +1,4 @@
-"""Votes to kick: members, moderators and owners go on each server's vote-kick immune list, Vergil explains a vote
+"""Votes to kick: members, moderators and faculty go on each server's vote-kick immune list, Vergil explains a vote
 the server refused, and a vote on one of them that gets called anyway is cancelled."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from conftest import ALICE, BRAVO, MOD, OWNER, free_port, staff, wait_for, write_server_folder, write_settings
+from conftest import ALICE, BRAVO, MOD, FACULTY, free_port, staff, wait_for, write_server_folder, write_settings
 from testkit.fake_rcon import FakeRcon
 from testkit.running import SERVER, everyone_joins, running, says, tells_to
 
@@ -24,7 +24,7 @@ MEMBER = "7" * 64  # Charlie
 
 
 def listed(*members: str) -> str:
-    """commands.toml with OWNER and MOD, and these members (Charlie when none are named)."""
+    """commands.toml with FACULTY and MOD, and these members (Charlie when none are named)."""
     ids = ", ".join(f'"{m}"' for m in members or (MEMBER,))
     return staff(f"[member]\nplayers = [{ids}]\n")
 
@@ -38,18 +38,18 @@ def test_member_is_a_role_between_everyone_and_moderator(tmp_path: Path) -> None
     path = tmp_path / "commands.toml"
     path.write_text(listed(), encoding="utf-8")
     permissions = load_permissions(path)
-    assert permissions.members["member"] == {MEMBER} and permissions.listed() == {OWNER, MOD, MEMBER}
+    assert permissions.members["member"] == {MEMBER} and permissions.listed() == {FACULTY, MOD, MEMBER}
     state = ServerState(SERVER, admins=set())
     roles = Roles(SimpleNamespace(permissions=permissions))
     assert roles.role_of(state, Player(1, "Charlie", MEMBER)) == "member"
     assert roles.role_of(state, Player(2, "Mod", MOD)) == "moderator"
     assert Roles.allows("member", "player") and not Roles.allows("member", "moderator")
 
-    text = render_commands_toml()  # what init writes: [member] with players to fill in and no commands
+    text = render_commands_toml()  # what init writes: [member] with players to fill in, and only the sides commands
     assert "\n[member]\nplayers = [\n" in text and "no vote can kick them" in text
     path.write_text(text, encoding="utf-8")
     written = load_permissions(path)
-    assert "member" in written.sections and "member" not in written.roles.values()
+    assert "member" in written.sections and {c for c, r in written.roles.items() if r == "member"} == {"side", "togglesides"}
 
 
 def test_check_points_out_a_commands_file_from_before_members(tmp_path: Path, capsys) -> None:
@@ -76,7 +76,7 @@ def test_everyone_listed_is_made_vote_kick_immune_and_taken_off_when_unlisted(tm
     def prepare(fake: FakeRcon) -> None:
         fake.immune.append({"id": BRAVO, "added_by": "RCON", "added_at": 0})  # the host's own: it stays
         fake.immune.append({"id": ALICE, "added_by": "Vergil (RCON)", "added_at": 0})  # listed once, not any more
-        fake.immune_configured.append(OWNER)  # dedicated.toml's vote_kick_immune
+        fake.immune_configured.append(FACULTY)  # dedicated.toml's vote_kick_immune
 
     async def scenario() -> None:
         async with running(tmp_path, commands=listed(), prepare=prepare) as (sup, fake, _):
@@ -109,18 +109,18 @@ def test_a_commands_file_gone_for_a_moment_takes_nobody_off_the_list(tmp_path: P
 
     async def scenario() -> None:
         async with running(tmp_path, commands=listed()) as (sup, fake, _):
-            await wait_for(lambda: fake.immune_ids() == {MOD, MEMBER, OWNER})
+            await wait_for(lambda: fake.immune_ids() == {MOD, MEMBER, FACULTY})
             path = tmp_path / "commands.toml"
             text = path.read_text(encoding="utf-8")
             path.unlink()  # an editor replacing the file as it saves
             sup.vergil.check_files()
             assert "commands.toml is missing or empty" in caplog.text
-            assert sup.settings.permissions.listed() == {OWNER, MOD, MEMBER}
+            assert sup.settings.permissions.listed() == {FACULTY, MOD, MEMBER}
             await sup.runners["commands"].part.immune_check()
             path.write_text("", encoding="utf-8")  # or emptying it first
             sup.vergil.check_files()
             await sup.runners["commands"].part.immune_check()
-            assert not [c for c in changes(fake) if c[0] == "remove"] and fake.immune_ids() == {MOD, MEMBER, OWNER}
+            assert not [c for c in changes(fake) if c[0] == "remove"] and fake.immune_ids() == {MOD, MEMBER, FACULTY}
             path.write_text(text, encoding="utf-8")  # the save finishes
             os.utime(path, (time.time() + 5, time.time() + 5))
             sup.vergil.check_files()
@@ -150,12 +150,12 @@ def test_a_refused_vote_is_explained_to_whoever_called_it(tmp_path: Path, run, c
             refused("Alice", "Admin can't be vote-kicked on this server.")
             await wait_for(lambda: tells_to(fake, ALICE))
             assert "Admin is an admin here" in tells_to(fake, ALICE)[0]
-            refused("Owner", "Bravo can't be vote-kicked on this server.")  # the host's own list: no role to explain
-            refused("Owner", "Another vote is under way. Wait for it to end.")
+            refused("Faculty", "Bravo can't be vote-kicked on this server.")  # the host's own list: no role to explain
+            refused("Faculty", "Another vote is under way. Wait for it to end.")
             refused("Mod", "Charlie can't be vote-kicked on this server.")  # handled in order: once Mod is told,
             await wait_for(lambda: tells_to(fake, MOD))                      # the two before are done
-            assert len(tells_to(fake, BRAVO)) == 1 and not tells_to(fake, OWNER)
-            assert "Owner tried to vote-kick Bravo; the server refused" in caplog.text
+            assert len(tells_to(fake, BRAVO)) == 1 and not tells_to(fake, FACULTY)
+            assert "Faculty tried to vote-kick Bravo; the server refused" in caplog.text
             assert not fake.named("cancelvote")
 
     run(scenario())

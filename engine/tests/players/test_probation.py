@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, wait_for
+from conftest import ADMIN, ALICE, BRAVO, MOD, FACULTY, wait_for
 from testkit.running import SERVER, everyone_joins, running, tells_to
 
 PROBATION = "probationary-moderator"
@@ -37,7 +37,7 @@ def test_a_request_waits_for_a_moderator_and_happens_as_theirs(tmp_path: Path, r
             await heard(fake, ALICE, "Sent for review as #1: !kick Bravo spamming.")
             staff_line = ("[o_o] BE A HERO! REPORT VIOLATORS! Alice (probationary moderator) asks, #1 on "
                           f"{SERVER}: !kick Bravo spamming. !confirm 1 or !deny 1")
-            for who in (MOD, ADMIN, OWNER):
+            for who in (MOD, ADMIN, FACULTY):
                 await heard(fake, who, staff_line)
             await asyncio.sleep(0.3)
             assert not fake.named("kick") and not tells_to(fake, BRAVO)[-1:] == [staff_line]

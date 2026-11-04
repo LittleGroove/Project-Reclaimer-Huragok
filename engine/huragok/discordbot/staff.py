@@ -60,7 +60,7 @@ def name_shown(part: DiscordPart, player_id: str, matched: str = "") -> str:
 
 def as_choices(part: DiscordPart, interaction: discord.Interaction, found: list[tuple[str, str]]) -> list[app_commands.Choice[str]]:
     """What Discord shows, as (what it says, their ID). Only two of a name get a piece of their ID, to tell them apart. Who may not see IDs gets a stand-in for what's picked."""
-    sees_ids = highest_rank(part.file, someone_from(interaction.user), part.ctx.servers) in ("admin", "owner") or bool(part.file.section("ranks").get("moderators_see_ids"))
+    sees_ids = highest_rank(part.file, someone_from(interaction.user), part.ctx.servers) in ("admin", "faculty") or bool(part.file.section("ranks").get("moderators_see_ids"))
     twice = {name for name, count in Counter(label.partition(" · ")[0].casefold() for label, _ in found).items() if count > 1}
     return [app_commands.Choice(name=(f"{label} · {player_id[:8]}" if label.partition(" · ")[0].casefold() in twice else label)[:100], value=player_id if sees_ids else part.opaque(player_id)) for label, player_id in found[:MOST_CHOICES]]
 
@@ -93,7 +93,7 @@ class StaffCommands(app_commands.Group):
             return True
         rank = rank_here(interaction)
         if not can_act(rank):
-            await answer(interaction, "This is for staff. An owner can add your role in `/huragok setup` → Ranks.")
+            await answer(interaction, "This is for staff. Faculty can add your role in `/huragok setup` → Ranks.")
             return True
         if moderator and rank == PROBATION:
             await answer(interaction, "That takes a moderator.")
@@ -302,7 +302,7 @@ async def open_ticket(interaction: discord.Interaction, player: str) -> None:
     if part.tickets.open_by_hand(named(interaction.user), record.id, record.last_name, where):
         await answer(interaction, f"A ticket on **{clean(record.last_name)}** is on its way.")
     else:
-        await answer(interaction, "It has nowhere to post: staff has no channel. An owner can set one in `/huragok setup` → Channels.")
+        await answer(interaction, "It has nowhere to post: staff has no channel. Faculty can set one in `/huragok setup` → Channels.")
 
 
 @app_commands.command(name="case", description="One recorded action: what, who and why, with that player's tickets")

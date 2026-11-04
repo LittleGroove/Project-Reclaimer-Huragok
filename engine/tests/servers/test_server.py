@@ -199,7 +199,7 @@ def test_check_reads_a_ban_list_as_the_program_would(tmp_path: Path) -> None:
 
     from huragok.content.gamefiles import ban_list_problems
 
-    good = {"players": [{"id": "a" * 64, "name": "Bravo", "reason": "x", "banned_by": "Owner (RCON)",
+    good = {"players": [{"id": "a" * 64, "name": "Bravo", "reason": "x", "banned_by": "Faculty (RCON)",
                          "banned_at": 1793013102, "group": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}], "ips": []}
     path = tmp_path / "bans.json"
     path.write_text(json.dumps(good), encoding="utf-8")

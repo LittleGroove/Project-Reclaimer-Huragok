@@ -747,9 +747,9 @@ def test_required_roles() -> None:
     assert required_role("players", permissions) == "moderator" and required_role("kick #3 x", permissions) == "moderator"
     assert required_role("ban #3 7d x", permissions) == "admin" and required_role("say hi", permissions) == "admin"
     assert required_role("nextmap", permissions) == "moderator" and required_role("nextmap Guardian", permissions) == "admin"
-    assert required_role("admin", permissions) == "moderator" and required_role("admin add #2", permissions) == "owner"
-    assert required_role("reload", permissions) == "owner" and required_role("password x", permissions) == "owner"
-    assert required_role("banip #3", permissions) == "admin" and required_role("frobnicate", permissions) == "owner"
+    assert required_role("admin", permissions) == "moderator" and required_role("admin add #2", permissions) == "faculty"
+    assert required_role("reload", permissions) == "faculty" and required_role("password x", permissions) == "faculty"
+    assert required_role("banip #3", permissions) == "admin" and required_role("frobnicate", permissions) == "faculty"
 
 
 def test_the_relay_signs_moderators_in_and_gates_commands(tmp_path: Path, run) -> None:

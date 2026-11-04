@@ -7,7 +7,7 @@ import logging
 import time
 from pathlib import Path
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, wait_for
+from conftest import ADMIN, ALICE, BRAVO, MOD, FACULTY, wait_for
 from testkit.running import SERVER, everyone_joins, running, says, tells_to
 
 
@@ -111,8 +111,8 @@ def test_nobody_takes_the_votes_of_their_own_role_or_above_and_bad_times_are_ref
     async def scenario() -> None:
         async with running(tmp_path, prepare=lambda f: f.admins_configured.append(ADMIN)) as (sup, fake, _):
             await on_and_ready(sup, fake)
-            await fake.chat(MOD, "Mod", "!novote Owner 10m")
-            await wait_for(lambda: told(fake, MOD, "Owner is an owner; you can't do that to them."))
+            await fake.chat(MOD, "Mod", "!novote Faculty 10m")
+            await wait_for(lambda: told(fake, MOD, "Faculty is faculty; you can't do that to them."))
             await fake.chat(MOD, "Mod", "!novote Admin")
             await wait_for(lambda: told(fake, MOD, "Admin is an admin; you can't do that to them."))
             await fake.chat(ALICE, "Alice", "!novote Bravo")
@@ -120,7 +120,7 @@ def test_nobody_takes_the_votes_of_their_own_role_or_above_and_bad_times_are_ref
             await fake.chat(MOD, "Mod", "!novote Bravo 0m")
             await wait_for(lambda: told(fake, MOD, "Use: !novote <player> [time | perm] [reason]"))
             assert not rows(sup)
-            await fake.chat(OWNER, "Owner", "!novote Mod perm")  # perm: the same as no time
+            await fake.chat(FACULTY, "Faculty", "!novote Mod perm")  # perm: the same as no time
             await wait_for(lambda: rows(sup))
             assert rows(sup)[0]["until"] is None and rows(sup)[0]["reason"] == ""
 

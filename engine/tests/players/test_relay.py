@@ -24,13 +24,13 @@ PLAYER = "d" * 64
 IDEOGRAPHIC, NBSP = chr(0x3000), chr(0xA0)  # spaces str.split() splits at and drops
 USERS = ('[[relay.user]]\nname = "Alice"\npassword = "alicealice"\nrole = "moderator"\n'
          '[[relay.user]]\nname = "Bob"\npassword = "bobbobbob"\nrole = "admin"\n'
-         '[[relay.user]]\nname = "Olga"\npassword = "olgaolgaolga"\nrole = "owner"\n')
+         '[[relay.user]]\nname = "Olga"\npassword = "olgaolgaolga"\nrole = "faculty"\n')
 PLAYERS_TEXT = f"1/16 players\n#1 Dee {PLAYER[:8]} 203.0.113.4 device {FINGERPRINT}"
 PLAYERS_DATA = {"count": 1, "players": [{"number": 1, "name": "Dee", "id": PLAYER, "ip": "203.0.113.4",
                                          "device": FINGERPRINT, "admin": False}]}
-BANS_TEXT = (f"Bravo ({PLAYER[:8]}): cheating, by Owner (RCON)\n  ip 198.51.100.7\n  Device ban: {FINGERPRINT}\n"
+BANS_TEXT = (f"Bravo ({PLAYER[:8]}): cheating, by Faculty (RCON)\n  ip 198.51.100.7\n  Device ban: {FINGERPRINT}\n"
              "Range 198.51.100.0/24: proxies\nFrom 2001:db8::1: spam")
-BANS_DATA = {"players": [{"id": PLAYER, "name": "Bravo", "reason": "cheating", "banned_by": "Owner (RCON)",
+BANS_DATA = {"players": [{"id": PLAYER, "name": "Bravo", "reason": "cheating", "banned_by": "Faculty (RCON)",
                           "group": 3}],
              "ips": [{"ip": "198.51.100.7", "name": "Bravo", "reason": "cheating", "group": 3},
                      {"ip": "198.51.100.0/24", "reason": "proxies"}],
@@ -78,14 +78,14 @@ def test_a_query_is_alone_only_when_nothing_follows_it() -> None:
     permissions = Permissions()
     assert required_role("password", permissions) == "moderator"  # reads whether a password is set
     assert required_role("password ", permissions) == "moderator"
-    assert required_role("password x", permissions) == "owner"
-    assert required_role(f"password {IDEOGRAPHIC}", permissions) == "owner"  # str.split() would lose that word
-    assert required_role(f"password{IDEOGRAPHIC}x", permissions) == "owner"
+    assert required_role("password x", permissions) == "faculty"
+    assert required_role(f"password {IDEOGRAPHIC}", permissions) == "faculty"  # str.split() would lose that word
+    assert required_role(f"password{IDEOGRAPHIC}x", permissions) == "faculty"
     assert required_role(f"servername {NBSP}", permissions) == "admin"
     # The protocol's split form: anything in args means it isn't alone.
     assert required_role("password", permissions, []) == "moderator"
-    assert required_role("password", permissions, [""]) == "owner"
-    assert required_role("password", permissions, ["\x1f"]) == "owner"
+    assert required_role("password", permissions, [""]) == "faculty"
+    assert required_role("password", permissions, ["\x1f"]) == "faculty"
     assert required_role("servername", permissions, [IDEOGRAPHIC]) == "admin"
     assert required_role("kick", permissions, ["#3", "camping"]) == "moderator"
     assert required_role("ban", permissions, ["#3"]) == "admin"
@@ -113,7 +113,7 @@ def test_ordinary_lines_go_through() -> None:
     assert line_refusal("password") == "" and line_refusal("password", None) == ""
 
 
-def test_a_moderator_cannot_reach_owner_commands_through_args(tmp_path: Path, run) -> None:
+def test_a_moderator_cannot_reach_faculty_commands_through_args(tmp_path: Path, run) -> None:
     relay, client, settings = relay_for(tmp_path)
     alice, server = session(settings, "Alice"), settings.servers[0]
 
@@ -127,34 +127,34 @@ def test_a_moderator_cannot_reach_owner_commands_through_args(tmp_path: Path, ru
         ok, _, _ = await relay._run_command(alice, server, "password", None)  # whether one is set: read-only
         assert ok and client.sent == [("password", (), "Alice")]
         ok, text, _ = await relay._run_command(alice, server, "password", ["x"])
-        assert not ok and "'password' needs the owner role; you're moderator" in text
+        assert not ok and "'password' needs the faculty role; you're moderator" in text
 
     run(scenario())
 
 
 def test_nobody_acts_on_their_own_role_or_above_through_the_relay(tmp_path: Path, run) -> None:
     """The console acts with the host's authority, so the relay holds the in-game rule: a moderator can't kick an
-    owner or another moderator, an admin can't ban an owner by ID while they're away; owners can."""
-    from conftest import MOD, OWNER
+    faculty or another moderator, an admin can't ban faculty by ID while they're away; faculty can."""
+    from conftest import MOD, FACULTY
 
     from huragok.servers.state import Player
 
     relay, client, settings = relay_for(tmp_path)
     state = relay.states["Alpha"]
-    state.players = {1: Player(1, "Big Boss", OWNER), 2: Player(2, "Mod Man", MOD), 3: Player(3, "Dee", PLAYER)}
+    state.players = {1: Player(1, "Big Boss", FACULTY), 2: Player(2, "Mod Man", MOD), 3: Player(3, "Dee", PLAYER)}
     alice, bob, olga = (session(settings, name) for name in ("Alice", "Bob", "Olga"))
     server = settings.servers[0]
 
     async def scenario() -> None:
         for user, command, args in [(alice, "kick #1 camping", None), (alice, 'kick "big boss" camping', None),
                                     (alice, "mute", ["#2", "10m"]), (alice, "kick", ["Mod Man"]),
-                                    (bob, f"ban {OWNER} 7d", None), (bob, "startvote kick #1", None),
+                                    (bob, f"ban {FACULTY} 7d", None), (bob, "startvote kick #1", None),
                                     (bob, "mute 1", None)]:
             ok, text, _ = await relay._run_command(user, server, command, args)
             assert not ok and "you can't" in text and "nobody acts on their own role or above" in text, (command, text)
         assert client.sent == []
         ok, text, _ = await relay._run_command(alice, server, "kick #1 camping", None)
-        assert text == "Big Boss is an owner; you can't kick them (nobody acts on their own role or above)."
+        assert text == "Big Boss is faculty; you can't kick them (nobody acts on their own role or above)."
         for user, command, args in [(alice, "kick #3 camping", None), (alice, "mute", ["Dee", "10m"]),
                                     (bob, "mute #2", None), (olga, "kick #1", None), (alice, "kick Nobody", None)]:
             ok, text, _ = await relay._run_command(user, server, command, args)
@@ -181,7 +181,7 @@ def test_a_blank_or_oversized_command_is_refused_and_the_session_goes_on(tmp_pat
     run(scenario())
 
 
-def test_off_applies_through_the_relay_too_owners_included(tmp_path: Path, run) -> None:
+def test_off_applies_through_the_relay_too_faculty_included(tmp_path: Path, run) -> None:
     relay, client, settings = relay_for(tmp_path, '[off]\ncommands = ["say", "kick"]\n')
     server = settings.servers[0]
 
@@ -217,7 +217,7 @@ def test_moderators_get_replies_without_addresses_or_devices(tmp_path: Path, run
         _, _, data = await relay._run_command(alice, server, "status")
         assert "address" not in data and data["name"] == "Alpha"
 
-        # Admins and owners get it all, as the server sends it.
+        # Admins and faculty get it all, as the server sends it.
         ok, text, data = await relay._run_command(session(settings, "Bob"), server, "bans")
         assert text == BANS_TEXT and data == BANS_DATA
         _, text, data = await relay._run_command(session(settings, "Olga"), server, "players")
@@ -237,7 +237,7 @@ def test_events_reach_moderators_without_devices(tmp_path: Path) -> None:
     alice = next(u for u in settings.relay.users if u.name == "Alice")
     bob = next(u for u in settings.relay.users if u.name == "Bob")
     ban = Event("rcon.ban", "Alpha", {"name": "Bravo", "id": PLAYER, "ip": "198.51.100.7", "device": FINGERPRINT,
-                                      "by": "Owner (RCON)", "reason": "cheating", "expires": 0})
+                                      "by": "Faculty (RCON)", "reason": "cheating", "expires": 0})
     message = relay._event_message(ban, alice)
     assert message is not None and "ip" not in message and "device" not in message and message["id"] == PLAYER
     assert relay._event_message(ban, bob)["device"] == FINGERPRINT  # type: ignore[index]

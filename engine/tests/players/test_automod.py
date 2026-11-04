@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, wait_for
+from conftest import ADMIN, ALICE, BRAVO, MOD, FACULTY, wait_for
 from testkit.commands import FrozenServer
 from testkit.running import SERVER, everyone_joins, running, tells_to
 
@@ -595,10 +595,10 @@ def test_a_strike_while_away_mutes_them_when_they_join(tmp_path: Path, run) -> N
                                           "[-_-] KEEP IT CLEAN! You're still muted (rude): 23 hours 59 minutes left"))
 
             # !pardonplayer lifts it, and Vergil doesn't put it back.
-            await fake.chat(OWNER, "Owner", f"!pardonplayer {ZED}")
+            await fake.chat(FACULTY, "Faculty", f"!pardonplayer {ZED}")
             await wait_for(lambda: fake.named("unmute"))
             assert fake.named("unmute")[0]["args"] == [ZED]
-            await wait_for(lambda: any("1 strike cleared (rude); unmuted" in t for t in tells_to(fake, OWNER)))
+            await wait_for(lambda: any("1 strike cleared (rude); unmuted" in t for t in tells_to(fake, FACULTY)))
             await fake.join(6, "Zed", ZED)
             await vergil_has_caught_up(fake)
             assert len(mutes_of(fake, ZED)) == 1
@@ -697,8 +697,8 @@ def test_strike_name_bans_the_name_and_unbanname_lifts_it(tmp_path: Path, run) -
             # Lifting it is for admins.
             await fake.chat(MOD, "Mod", "!unbanname Bravo")
             await wait_for(lambda: any("admins and up" in t for t in tells_to(fake, MOD)))
-            await fake.chat(OWNER, "Owner", "!unbanname bravo")
-            await wait_for(lambda: any("bravo can be used again" in t for t in tells_to(fake, OWNER)))
+            await fake.chat(FACULTY, "Faculty", "!unbanname bravo")
+            await wait_for(lambda: any("bravo can be used again" in t for t in tells_to(fake, FACULTY)))
             names = (tmp_path / "names.txt").read_text(encoding="utf-8")
             assert "Bravo" not in names and "by Mod" not in names and names.startswith("# Vergil's banned names")
             kicks = len(fake.named("kick"))
@@ -707,11 +707,11 @@ def test_strike_name_bans_the_name_and_unbanname_lifts_it(tmp_path: Path, run) -
             await sup.runners["automod"].part.check_names()
             assert len(fake.named("kick")) == kicks
 
-            await fake.chat(OWNER, "Owner", "!unbanname Bravo")
-            await wait_for(lambda: any("Bravo isn't a banned name" in t for t in tells_to(fake, OWNER)))
-            await fake.chat(OWNER, "Owner", "!unbanname badword")
-            await wait_for(lambda: any("still caught by automod.txt's slurs line" in t for t in tells_to(fake, OWNER)))
-            await fake.chat(MOD, "Mod", "!strike owner name")
+            await fake.chat(FACULTY, "Faculty", "!unbanname Bravo")
+            await wait_for(lambda: any("Bravo isn't a banned name" in t for t in tells_to(fake, FACULTY)))
+            await fake.chat(FACULTY, "Faculty", "!unbanname badword")
+            await wait_for(lambda: any("still caught by automod.txt's slurs line" in t for t in tells_to(fake, FACULTY)))
+            await fake.chat(MOD, "Mod", "!strike faculty name")
             await wait_for(lambda: any("you can't do that to them" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike bravo")
             await wait_for(lambda: any("or name, to ban their name" in t for t in tells_to(fake, MOD)))
@@ -744,9 +744,9 @@ def test_strike_finds_a_name_with_spaces(tmp_path: Path, run) -> None:
                                        for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!pardonplayer nate higgers")  # !pardonplayer finds them the same way
             await wait_for(lambda: any("!pardonplayer is for admins and up" in t for t in tells_to(fake, MOD)))
-            await fake.chat(OWNER, "Owner", "!pardonplayer nate higgers slurs sorry")
+            await fake.chat(FACULTY, "Faculty", "!pardonplayer nate higgers slurs sorry")
             await wait_for(lambda: any(t.startswith("Pardoned Nate Higgers: 1 strike cleared (slurs)")
-                                       for t in tells_to(fake, OWNER)))
+                                       for t in tells_to(fake, FACULTY)))
 
     run(scenario())
 
@@ -953,7 +953,7 @@ def test_banword_adds_a_line_from_the_game(tmp_path: Path, run) -> None:
 
 
 def test_rules_bannames_and_changebanword_from_the_game(tmp_path: Path, run) -> None:
-    """Admins who aren't the owner see what's on the lists and change a line's steps without the window."""
+    """Admins who aren't the faculty see what's on the lists and change a line's steps without the window."""
     async def scenario() -> None:
         async with running(tmp_path, setup_words(tmp_path, names="# notes\nEdgelord\nxX Bad Xx\n")) as (sup, fake, _):
             await everyone_joins(fake)
@@ -963,8 +963,8 @@ def test_rules_bannames_and_changebanword_from_the_game(tmp_path: Path, run) -> 
                                       "for 7 days…")
             await answered(fake, MOD, "rude: rudeword. 1st: muted for 1 day; 2nd and after: muted for 3 days")
             await answered(fake, MOD, "rule3: kickword. Every time: kicked")
-            await fake.chat(OWNER, "Owner", "!rules badword")  # by a word on it: in full
-            await answered(fake, OWNER, "slurs (line 2): badword 1st: kicked for 1 hour 2nd: kicked for 1 day 3rd: "
+            await fake.chat(FACULTY, "Faculty", "!rules badword")  # by a word on it: in full
+            await answered(fake, FACULTY, "slurs (line 2): badword 1st: kicked for 1 hour 2nd: kicked for 1 day 3rd: "
                                         "kicked for 7 days 4th: banned for good")
             await fake.chat(MOD, "Mod", "!bannames")
             await answered(fake, MOD, "@1 xX Bad Xx @2 Edgelord !unbanname @number takes one off.")
@@ -1004,25 +1004,25 @@ def test_unbanword_takes_a_word_off(tmp_path: Path, run) -> None:
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             words.write_text(WORDS.replace("badword    ", "badword, otherword"), encoding="utf-8")
             await sup.runners["automod"].part.reload_if_changed()
-            await fake.chat(OWNER, "Owner", "!unbanword OtherWord")
-            await answered(fake, OWNER, "Taken off automod.txt: otherword (slurs). Strikes already given for it stay.")
+            await fake.chat(FACULTY, "Faculty", "!unbanword OtherWord")
+            await answered(fake, FACULTY, "Taken off automod.txt: otherword (slurs). Strikes already given for it stay.")
             assert "\nbadword | | 1h, 1d, 7d | 3 | slurs\n" in words.read_text(encoding="utf-8")
             assert any(e.name == "automod.word_allowed" and e["rules"] == ["slurs"] for e in seen)
             await fake.chat(ALICE, "Alice", "otherword")  # said at once: nothing happens
             await vergil_has_caught_up(fake)
             assert not fake.named("ban")
             # The last word of a line: the line goes too.
-            await fake.chat(OWNER, "Owner", "!unbanword kickword")
-            await answered(fake, OWNER, "The rule3 line had no other words, so it went.")
+            await fake.chat(FACULTY, "Faculty", "!unbanword kickword")
+            await answered(fake, FACULTY, "The rule3 line had no other words, so it went.")
             assert "kickword" not in words.read_text(encoding="utf-8")
             # Not listed itself: which entry catches it, and what to do.
-            await fake.chat(OWNER, "Owner", "!unbanword b4dw0rd")
-            await answered(fake, OWNER, "b4dw0rd isn't listed by itself: the slurs line's badword catches it. "
+            await fake.chat(FACULTY, "Faculty", "!unbanword b4dw0rd")
+            await answered(fake, FACULTY, "b4dw0rd isn't listed by itself: the slurs line's badword catches it. "
                                         "!unbanword badword takes that off, or -b4dw0rd on that line lets it through.")
-            await fake.chat(OWNER, "Owner", "!unbanword nothing")
-            await answered(fake, OWNER, "nothing isn't on the word list.")
-            await fake.chat(OWNER, "Owner", "!unbanword")
-            await answered(fake, OWNER, "Use: !unbanword <word>")
+            await fake.chat(FACULTY, "Faculty", "!unbanword nothing")
+            await answered(fake, FACULTY, "nothing isn't on the word list.")
+            await fake.chat(FACULTY, "Faculty", "!unbanword")
+            await answered(fake, FACULTY, "Use: !unbanword <word>")
             await fake.chat(MOD, "Mod", "!unbanword badword")
             await answered(fake, MOD, "!unbanword is for admins and up")
             assert "badword" in words.read_text(encoding="utf-8")
@@ -1055,10 +1055,10 @@ def test_strike_strikes_and_pardonplayer(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!pardonplayer bravo")
             await wait_for(lambda: any("admins and up" in t for t in tells_to(fake, MOD)))
 
-            await fake.chat(OWNER, "Owner", "!pardonplayer bravo all false positive")
+            await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo all false positive")
             await wait_for(lambda: fake.named("unban"))
             assert fake.named("unban")[0]["args"] == [BRAVO] and not fake.named("unmute")
-            await wait_for(lambda: any("2 strikes cleared" in t for t in tells_to(fake, OWNER)))
+            await wait_for(lambda: any("2 strikes cleared" in t for t in tells_to(fake, FACULTY)))
             await fake.chat(BRAVO, "Bravo", "badword")  # starts over at the first chance
             await wait_for(lambda: len(fake.named("ban")) == 3)
             assert fake.named("ban")[2]["args"][1] == "1h"
@@ -1285,9 +1285,9 @@ def test_who_a_strike_is_for(tmp_path: Path, run) -> None:
 
     async def scenario() -> None:
         async with running(tmp_path, setup_words(tmp_path)) as (sup, fake, _):
-            for player_id, name in ((stranger, "Stranger"), (cafe, "Cafe Owner"), (bob, "Bob")):
+            for player_id, name in ((stranger, "Stranger"), (cafe, "Cafe Faculty"), (bob, "Bob")):
                 sup.storage.record_join(player_id, name, None)  # seen before, not on now
-            await everyone_joins(fake)  # Owner #1, Mod #2, Alice #3, Bravo #4, Admin #5
+            await everyone_joins(fake)  # Faculty #1, Mod #2, Alice #3, Bravo #4, Admin #5
             await fake.join(6, "Bobby", bobby)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 6)
             part = sup.runners["automod"].part
@@ -1298,7 +1298,7 @@ def test_who_a_strike_is_for(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!strike cafe rude")  # an ID's start that short picks nobody
             await wait_for(lambda: any("Nobody called 'cafe' is on or has been seen" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike cafe1111 rude")  # eight characters or more: theirs
-            await wait_for(lambda: any(t.startswith("Cafe Owner: rude strike 1, muted for 1 day (not on now")
+            await wait_for(lambda: any(t.startswith("Cafe Faculty: rude strike 1, muted for 1 day (not on now")
                                        for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike bob rude")  # Bob left and Bobby is on: Bob's name, seen, wins
             await wait_for(lambda: any(t.startswith("Bob: rude strike 1") for t in tells_to(fake, MOD)))
@@ -1556,10 +1556,10 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
             await fake.chat(BRAVO, "Bravo", "badword")  # slurs: out 1 hour, a timed ban
             await wait_for(lambda: fake.ban_list)
             assert fake.ban_list[0]["banned_by"] == "Vergil (RCON)"
-            fake.ban_list.append({"id": BRAVO, "name": "Bravo", "reason": "cheating", "banned_by": "Owner (RCON)",
+            fake.ban_list.append({"id": BRAVO, "name": "Bravo", "reason": "cheating", "banned_by": "Faculty (RCON)",
                                   "banned_at": int(time.time()) - 86400})
             await fake.chat(ADMIN, "Admin", "!pardonplayer bravo")
-            await wait_for(lambda: "ban not lifted: Owner banned them too (cheating), and the server's unban lifts every ban on them; "
+            await wait_for(lambda: "ban not lifted: Faculty banned them too (cheating), and the server's unban lifts every ban on them; "
                                    "!unban lifts both" in told(fake, ADMIN))  # a long answer is two tells: the second can come a moment later
             assert not fake.named("unban") and len(fake.ban_list) == 2
 
@@ -1574,19 +1574,19 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
 
             # Someone else's ban alone: kept, and said so.
             add_strike(part, ZED, when=time.time() - 7 * 86400)
-            fake.ban_list.append({"id": ZED, "name": "Zed", "reason": "griefing", "banned_by": "Owner (RCON)",
+            fake.ban_list.append({"id": ZED, "name": "Zed", "reason": "griefing", "banned_by": "Faculty (RCON)",
                                   "banned_at": int(time.time())})
             await fake.chat(ADMIN, "Admin", f"!pardonplayer {ZED}")
-            await wait_for(lambda: "Owner's ban stays (griefing): it isn't automod's; !unban lifts it"
+            await wait_for(lambda: "Faculty's ban stays (griefing): it isn't automod's; !unban lifts it"
                            in told(fake, ADMIN))
             assert len(fake.named("unban")) == 1
 
             # The ban list can't be read: nothing is lifted.
             add_strike(part, MOD)
             fake.replies["bans"] = lambda m: {"ok": False, "text": "The ban list can't be read."}
-            await fake.chat(OWNER, "Owner", "!pardonplayer mod")
+            await fake.chat(FACULTY, "Faculty", "!pardonplayer mod")
             await wait_for(lambda: "ban not lifted: the ban list couldn't be read (The ban list can't be read.)"
-                           in told(fake, OWNER))
+                           in told(fake, FACULTY))
             assert len(fake.named("unban")) == 1
 
             # The second audit: what Vergil did on another server is lifted there, wherever this is typed (from

@@ -7,13 +7,13 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, OWNER
+from conftest import ALICE, FACULTY
 from test_bot_running import OTHER, answer_text
 from test_tickets import ALERTS, HURAGOK_LOGS, LOGS, MOD_USER, REPORTS, STAFF, buttons_of, fill, form_of, posts_in
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_message, set_mode, set_switch, set_token
 
 WHAT, WHY = "What happened?", "Why should it be lifted?"
 
@@ -33,7 +33,7 @@ def bot_file(root: Path, **options: Any) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     for name, channel in (("staff", STAFF), ("reports", REPORTS), ("alerts", ALERTS), ("logs", LOGS), ("huragok-logs", HURAGOK_LOGS)):
         set_channel(path, name, channel, name)
     set_switch(path, ("appeals",), "enabled", True)
@@ -55,10 +55,10 @@ async def up(huragok: Any) -> Any:
 async def banned(huragok: Any, rcon: Any, fake: FakeDiscord, *, how: str = "!ban Alice perm slurs in voice", kind: str = "ban") -> None:
     """Alice on, and dealt with by a moderator in game."""
     await rcon.join(3, "Alice", ALICE)
-    await rcon.join(1, "Owner", OWNER)
+    await rcon.join(1, "Faculty", FACULTY)
     await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 2, timeout=10)
     await rcon.chat(ALICE, "Alice", "get out of my spawn")
-    await rcon.chat(OWNER, "Owner", how)
+    await rcon.chat(FACULTY, "Faculty", how)
     await wait_for(lambda: rcon.named(kind), timeout=15)
     await wait_for(lambda: posts_in(fake, LOGS), timeout=15)
 
@@ -86,7 +86,7 @@ def test_its_a_card_with_the_case_and_their_answers(tmp_path: Path, run: Any, fa
             post = await appeal(fake)
             text = str(post["embeds"][0])
             assert "appeals the ban on **Alice**" in text and "I got carried away" in text and "It won't happen again" in text
-            assert "by Owner" in text and "slurs in voice" in text and "get out of my spawn" in text
+            assert "by Faculty" in text and "slurs in voice" in text and "get out of my spawn" in text
             assert list(buttons_of(post)) == ["Lift it", "Shorten it", "Deny", "Whois", "Discuss", "Close"]
 
     run(scenario())
@@ -209,7 +209,7 @@ def test_lifting_it_in_game_decides_it_too(tmp_path: Path, run: Any, fake: FakeD
             part = await up(huragok)
             await banned(huragok, rcon, fake)
             await appeal(fake)
-            await rcon.chat(OWNER, "Owner", f"!unban {ALICE}")
+            await rcon.chat(FACULTY, "Faculty", f"!unban {ALICE}")
             await wait_for(lambda: dms(fake), timeout=15)
             assert "is lifted" in dms(fake)[0]
             await wait_for(lambda: not posts_in(fake, REPORTS), timeout=15)
@@ -274,8 +274,8 @@ def test_only_what_the_setting_says_can_be_appealed(tmp_path: Path, run: Any, fa
             await part.reload(force=True)
             post = await appeal(fake)
             assert "appeals the mute on **Alice**" in post["embeds"][0]["description"]
-            # The owner muted her in game: lifting takes their rank (the host's call, 2 Nov 2026), so it's the owner's
-            fake.press(buttons_of(post)["Lift it"], post, user=OWNER_USER)
+            # The faculty muted her in game: lifting takes their rank (the host's call, 2 Nov 2026), so it's the faculty's
+            fake.press(buttons_of(post)["Lift it"], post, user=FACULTY_USER)
             await wait_for(lambda: rcon.named("unmute"), timeout=15)
 
     run(scenario())
@@ -331,7 +331,7 @@ def test_after_a_decision_they_wait_unless_something_new_is_against_them(tmp_pat
             assert "again <t:" in await answer_text(fake, token)
             assert part.appeals.next_allowed(OTHER, ALICE)
             huragok.storage.db.execute("UPDATE discord_appeals SET time = time - 1000")
-            huragok.storage.record_action(kind="ban", server=SERVER, target_id=ALICE, target_name="Alice", by="Owner", source="commands", reason="again", duration=None, evidence=None, dry_run=False, ok=True, reply="")
+            huragok.storage.record_action(kind="ban", server=SERVER, target_id=ALICE, target_name="Alice", by="Faculty", source="commands", reason="again", duration=None, evidence=None, dry_run=False, ok=True, reply="")
             assert part.appeals.next_allowed(OTHER, ALICE) == 0.0
 
     run(scenario())

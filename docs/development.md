@@ -24,7 +24,8 @@ On top of them run the **parts**, each belonging to one named part (its `persona
 | `messages` | [players/messages](../engine/huragok/players/messages) | `intervalmessages.txt` (Huragok's folder and each server's) | `[Server]` | Interval messages. Always on; no messages until the host adds some |
 | `watchdog` | [servers/watchdog.py](../engine/huragok/servers/watchdog.py) | `[watchdog]` | the Superintendent (`SUPT`) | Restarts a server that died, lets nobody in or got stuck; notices a slow one. Each case is watch, act or actnow |
 | `eventlog` | [servers/eventlog.py](../engine/huragok/servers/eventlog.py) | `[eventlog]` | the Superintendent (`SUPT`) | Every event as JSON |
-| `tempdiscord` | [servers/tempdiscord.py](../engine/huragok/servers/tempdiscord.py), [servers/statsrelay.py](../engine/huragok/servers/statsrelay.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | From 0.5.2 until the version that brings players' stats: the record those are built from, and a copy of every stats report each server sends. Both are pruned after `KEEP_DAYS` (30) |
+| `tempdiscord` | [servers/tempdiscord.py](../engine/huragok/servers/tempdiscord.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | Temporary, from 0.5.2: a record of what the servers send, and the folder of stats report copies kept tidy. Both are pruned after `KEEP_DAYS` (30) |
+| `stats` | [servers/stats.py](../engine/huragok/servers/stats.py), [servers/statsrelay.py](../engine/huragok/servers/statsrelay.py) | none (always on, nothing to set) | the Superintendent (`SUPT`) | From 0.6.1: every game a server reports, into the `stats_*` tables, through the relay that stands between each server and the stats service; a copy of each report goes to `logs/temp-discord/stats-reports/` and is read back in as it starts |
 | `discord` | [discordbot/part.py](../engine/huragok/discordbot/part.py) | `discord.toml`, no section in `settings.toml` | Huragok (`HRGK`) | The Discord bot. Always on: its switch is `mode` in that file |
 
 Parts are a way to keep the code apart, not something hosts install: everything
@@ -184,7 +185,7 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `fleet.py` | The `Fleet`, which ticks every manager, writes `records/live.json`, answers requests from `records/requests/` and is what the window's keys call; `Lifecycle`, the thin view parts get (`restart`, `cancel`, `planned`, `busy`) |
 | `backends.py`, `ports.py`, `keepalive.py` | The **backends**: `process` (one `dedicated` per server, Windows or Linux), `docker`, `command`, `attach`. A backend only starts, stops and watches processes; it decides nothing. `PortWatch` reads the system's listening sockets (psutil) at most once a second for every stopped server, so no check blocks the loop. `Keepalive` restarts a hung server. `memory_mb` is what a server's process tree uses, for the watchdog and V alike |
 | `state.py`, `logs.py` | The live picture of each server; `server.log`, `status.json` and the console output as events. `logs.py` matches every pattern at the start of the server's own message, and the lines that carry someone's words (console echoes, refusals, kick and ban reasons: `ECHOES`) first, so typed text never passes for a server line |
-| `watchdog.py`, `eventlog.py`, `tempdiscord.py`, `statsrelay.py` | The Superintendent's parts: the temporary record, and the copy of each stats report that goes in it |
+| `watchdog.py`, `eventlog.py`, `tempdiscord.py`, `stats.py`, `statsrelay.py` | The Superintendent's parts: the temporary record; every reported game counted, through the relay that stands in the middle |
 
 **`players/`** (Vergil's)
 
@@ -484,7 +485,7 @@ Superintendent's parts; `VergilContext` (vergil.py) adds the players, for Vergil
 | `ctx.say(server, text)` | Superintendent | A `[Server]` line everyone reads |
 | `ctx.tell(server, player, text)` | Superintendent | A `[Server]` line one player reads (a `Player` or a player ID) |
 | `ctx.players.get(id)`, `.find(text)` | Vergil | Everyone this Huragok has seen (one database per root): names used, IPs, first and last seen, visits |
-| `ctx.role_of(server, player)`, `ctx.highest_role(player)` | Vergil | `player` (everyone), `member`, `moderator`, `admin` (the server's own admins) or `owner`; on whichever server ranks them highest |
+| `ctx.role_of(server, player)`, `ctx.highest_role(player)` | Vergil | `player` (everyone), `member`, `moderator`, `admin` (the server's own admins) or `faculty`; on whichever server ranks them highest |
 | `ctx.permissions` | Vergil | `commands.toml` as it's in force now (it reloads when edited) |
 | `ctx.moderation` | Vergil | `warn`, `mute`, `unmute`, `kick`, `ban`, `unban`, `pardon`: recorded with a reason, shown to players as by your part (or the `by=` you pass), and dry-run aware (`live=True` sends one through your part's dry run, for putting back what a person did; `pending=True` records a mute for someone who isn't on, for automod to apply as they join). Use these for anything done to a player |
 | `ctx.lifecycle` | Superintendent | `restart(server, when="now" / "after_game" / "when_empty", reason=…, countdown=…)`, `cancel(server)`, `planned`, `busy`, `can_control`. `countdown=0` means right away; a number is the seconds of notice; none means the host's `warn_seconds` |

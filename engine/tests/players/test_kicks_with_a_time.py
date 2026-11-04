@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from conftest import ALICE, MOD, OWNER
+from conftest import ALICE, MOD, FACULTY
 from testkit.running import SERVER, running, tells_to, wait_for
 
 from huragok.players.ledger import is_housekeeping, kick_reason, shown_kind
@@ -39,14 +39,14 @@ def test_what_the_player_reads() -> None:
 def test_a_kick_with_a_time_is_the_servers_timed_ban_with_the_reason_saying_so(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (3, "Alice", ALICE))
-            await rcon.chat(OWNER, "Owner", "!kick Alice 7d team killing")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice 7d team killing")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
             assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked for 7 days: team killing"]
             assert rcon.named("kick") == []
             row = rows_of(huragok, "ban")[0]
             assert row["duration"] == "7d" and row["reason"] == "team killing"  # the record has the reason alone
-            await wait_for(lambda: any("is kicked for 7 days" in line for line in tells_to(rcon, OWNER)), timeout=10)
+            await wait_for(lambda: any("is kicked for 7 days" in line for line in tells_to(rcon, FACULTY)), timeout=10)
 
     run(scenario())
 
@@ -54,12 +54,12 @@ def test_a_kick_with_a_time_is_the_servers_timed_ban_with_the_reason_saying_so(t
 def test_whois_calls_it_a_kick(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (3, "Alice", ALICE))
-            await rcon.chat(OWNER, "Owner", "!kick Alice 7d team killing")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice 7d team killing")
             await wait_for(lambda: rows_of(huragok, "ban"), timeout=10)
-            await rcon.chat(OWNER, "Owner", f"!whois {ALICE}")
-            await wait_for(lambda: any("Record:" in line for line in tells_to(rcon, OWNER)), timeout=10)
-            said = "\n".join(tells_to(rcon, OWNER))
+            await rcon.chat(FACULTY, "Faculty", f"!whois {ALICE}")
+            await wait_for(lambda: any("Record:" in line for line in tells_to(rcon, FACULTY)), timeout=10)
+            said = "\n".join(tells_to(rcon, FACULTY))
             assert "Record: 1 kick" in said and ": kick 7d" in said and "!kick" in said
             assert "1 ban" not in said
 
@@ -87,8 +87,8 @@ def test_kicks_lists_it_and_pardon_lifts_it_at_a_pardons_rank(tmp_path: Path, ru
 def test_pardon_doesnt_lift_a_ban(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (2, "Mod", MOD), (3, "Alice", ALICE))
-            await rcon.chat(OWNER, "Owner", "!ban Alice cheating")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (2, "Mod", MOD), (3, "Alice", ALICE))
+            await rcon.chat(FACULTY, "Faculty", "!ban Alice cheating")
             await wait_for(lambda: rows_of(huragok, "ban"), timeout=10)
             await rcon.chat(MOD, "Mod", f"!pardon {ALICE}")
             await wait_for(lambda: rcon.named("pardon"), timeout=10)  # the console's own pardon, which lifts kicks alone
@@ -114,13 +114,13 @@ def test_a_kick_with_a_time_that_has_run_out_isnt_lifted(tmp_path: Path, run: An
 def test_a_kick_with_a_time_leaves_their_role(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (2, "Mod", MOD))
-            await rcon.chat(OWNER, "Owner", "!kick Mod 1d spam")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (2, "Mod", MOD))
+            await rcon.chat(FACULTY, "Faculty", "!kick Mod 1d spam")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
-            await wait_for(lambda: any("is kicked for 1 day" in line for line in tells_to(rcon, OWNER)), timeout=10)
+            await wait_for(lambda: any("is kicked for 1 day" in line for line in tells_to(rcon, FACULTY)), timeout=10)
             await asyncio.sleep(0.3)  # time for the server's announcement of it to have been heard
             assert MOD in huragok.settings.permissions.members["moderator"]
-            assert not any("role goes with" in line for line in tells_to(rcon, OWNER))
+            assert not any("role goes with" in line for line in tells_to(rcon, FACULTY))
 
     run(scenario())
 
@@ -128,11 +128,11 @@ def test_a_kick_with_a_time_leaves_their_role(tmp_path: Path, run: Any) -> None:
 def test_a_kick_for_good_is_a_ban_and_takes_a_bans_rank(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (2, "Mod", MOD), (3, "Alice", ALICE))
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (2, "Mod", MOD), (3, "Alice", ALICE))
             await rcon.chat(MOD, "Mod", "!kick Alice perm cheating")
             await wait_for(lambda: any("for admins and up" in line for line in tells_to(rcon, MOD)), timeout=10)
             assert rcon.named("ban") == [] and rcon.named("kick") == []
-            await rcon.chat(OWNER, "Owner", "!kick Alice perm cheating")
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice perm cheating")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
             assert rcon.named("ban")[0]["args"] == [ALICE, "cheating"] and rcon.named("kick") == []
             assert rows_of(huragok, "ban")[0]["duration"] is None
@@ -176,11 +176,11 @@ def test_a_limit_it_cant_read_is_still_a_limit(tmp_path: Path, run: Any) -> None
     run(scenario())
 
 
-def test_an_owner_has_no_limit(tmp_path: Path, run: Any) -> None:
+def test_faculty_have_no_limit(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (3, "Alice", ALICE))
-            await rcon.chat(OWNER, "Owner", "!kick Alice 52w spam")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice 52w spam")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
 
     run(scenario())
@@ -189,8 +189,8 @@ def test_an_owner_has_no_limit(tmp_path: Path, run: Any) -> None:
 def test_a_kick_without_a_time_is_the_servers_own(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (3, "Alice", ALICE))
-            await rcon.chat(OWNER, "Owner", "!kick Alice spam")
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice spam")
             await wait_for(lambda: rcon.named("kick"), timeout=10)
             assert rcon.named("kick")[0]["args"][-1] == "spam" and rcon.named("ban") == []
 
@@ -227,9 +227,9 @@ def test_an_unban_only_the_server_saw_has_their_name(tmp_path: Path, run: Any) -
 def test_an_unban_by_id_knows_who_it_was(tmp_path: Path, run: Any) -> None:
     async def scenario() -> None:
         async with running(tmp_path) as (huragok, rcon, _):
-            await on(huragok, rcon, (1, "Owner", OWNER), (3, "Alice", ALICE))
+            await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
             await rcon.leave(3)
-            await rcon.chat(OWNER, "Owner", f"!unban {ALICE}")
+            await rcon.chat(FACULTY, "Faculty", f"!unban {ALICE}")
             await wait_for(lambda: rows_of(huragok, "unban"), timeout=10)
             assert rows_of(huragok, "unban")[0]["target_name"] == "Alice"
 

@@ -30,8 +30,8 @@ APPLIES = "when Huragok starts again (the servers keep running meanwhile)"
 WATCHDOG_ACTIONS = ("watch", "act", "actnow")
 BACKENDS = ("process", "docker", "command", "attach")
 SHARE = ("game", "content")
-ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "owner")
-RELAY_ROLES = ("moderator", "admin", "owner")
+ROLES = ("player", "member", "probationary-moderator", "moderator", "admin", "faculty")
+RELAY_ROLES = ("moderator", "admin", "faculty")
 
 GROUPS: list[tuple[str, str, str, str]] = [  # (key, whose: SUPT/VRGL/HRGK, title, what's in it)
     ("general", "SUPT", "Which servers, and who starts them", "backend, servers, the name players read, dry run"),
@@ -200,7 +200,7 @@ SETTINGS: list[HostSetting] = [
       default=0, low=0, high=36500),
     H("automod", "name", "str", "the name players read (\"kicked by Vergil\")", "automod", default="Vergil"),
     H("automod", "exempt_roles", "roles", "never acted on (roles as in commands.toml; player is everyone)",
-      "automod", default=["admin", "owner"]),
+      "automod", default=["admin", "faculty"]),
     H("automod", "check_names", "bool", "kick names with a word from the word list in them (the banned names always "
       "apply)", "automod", default=True),
     H("automod", "name_match", "choice", "how a word from the word list catches a name: anywhere (anywhere in it: "
@@ -208,7 +208,7 @@ SETTINGS: list[HostSetting] = [
       "the exception, like -classic) or words (only as a word of its own, the name taken apart at its capitals and "
       "digits: DasHitler, not dashitler)", "automod", choices=("anywhere", "words"), default="anywhere"),
     H("automod", "moderators_kick_at_most", "str", "the longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick is a ban in "
-      "all but name; admins and owners have no limit. A time like 12h, 1d or 7d", "automod", default="1d"),
+      "all but name; admins and faculty have no limit. A time like 12h, 1d or 7d", "automod", default="1d"),
     H("automod", "across_servers", "bool", "Huragok's moderation (! commands, Vergil) reaches every server: a mute "
       "follows the player to any server, a kick keeps them off every server until its time is up, a ban reaches "
       "servers with a ban list of their own. The game's own /kick and /ban, and votes, stay on their server (they're "

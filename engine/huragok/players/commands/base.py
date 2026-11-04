@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ...core.commandsfile import ROLES
+from ...core.commandsfile import ROLES, rank_named
 from ...core.part import Part
 from ...core.text import describe_time, seconds_of
 from ...games.plays import console_refusal
@@ -43,7 +43,7 @@ class CommandsBase(Part):
 
     @staticmethod
     def outranked_by(call: CommandCall, role: Any, by: Any, what: str, a_role: Any) -> str:
-        role = str(role or "")
+        role = rank_named(role)  # as an older version kept it: "owner" is faculty
         if role in ROLES and call.role in ROLES and ROLES.index(call.role) < ROLES.index(role):
             return f"{by or 'Someone'} gave that {what}, and lifting it takes {a_role(role)} or above."
         return ""

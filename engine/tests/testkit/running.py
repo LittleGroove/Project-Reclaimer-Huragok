@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
-from conftest import ADMIN, ALICE, BRAVO, MOD, OWNER, free_port, staff, wait_for, write_server_folder, write_settings
+from conftest import ADMIN, ALICE, BRAVO, MOD, FACULTY, free_port, staff, wait_for, write_server_folder, write_settings
 from testkit.fake_rcon import FakeRcon
 
 from huragok.core.events import Event
@@ -23,7 +23,7 @@ async def running(tmp_path: Path, body: str = "", *, commands: str | None = None
                   prepare: Callable[[FakeRcon], None] | None = None,
                   adjust: Callable[[Any], None] | None = None,
                   **folder: Any) -> AsyncIterator[tuple[Huragok, FakeRcon, list[Event]]]:
-    """Huragok on one fake server, with OWNER and MOD listed (or `commands`); `prepare` sets the server up first,
+    """Huragok on one fake server, with FACULTY and MOD listed (or `commands`); `prepare` sets the server up first,
     `adjust` the settings (to times below what settings.toml allows, so a test runs in seconds)."""
     async with FakeRcon() as fake:
         if prepare:
@@ -76,6 +76,6 @@ def says(fake: FakeRcon) -> list[str]:
 
 
 async def everyone_joins(fake: FakeRcon) -> None:
-    for number, (name, pid) in enumerate([("Owner", OWNER), ("Mod", MOD), ("Alice", ALICE), ("Bravo", BRAVO)], 1):
+    for number, (name, pid) in enumerate([("Faculty", FACULTY), ("Mod", MOD), ("Alice", ALICE), ("Bravo", BRAVO)], 1):
         await fake.join(number, name, pid)
     await fake.join(5, "Admin", ADMIN, admin=True)

@@ -12,7 +12,8 @@
   "0.5.3",
   "0.6.0-beta.1",
   "0.6.0-beta.2",
-  "0.6.0"
+  "0.6.0",
+  "0.6.1"
  ],
  "files": {
   "settings.toml": {
@@ -197,7 +198,8 @@
      "# name = \"Alice\"",
      "# password = \"a long passphrase only Alice knows\"",
      "# role = \"moderator\"",
-     "# ── HURAGOK ── builds and mends ──────────────────────────────────────────────────"
+     "# ── HURAGOK ── builds and mends ──────────────────────────────────────────────────",
+     "# One block per moderator. role: moderator, admin or faculty. Passwords are 8 to 128"
     ],
     "updates|check": [
      "# New versions of Huragok (not the game server), from its GitHub releases.",
@@ -412,7 +414,8 @@
      "# long each time they try. A ban is for good. This is the longest a moderator can",
      "# give, as a long kick is a ban in all but name; admins and owners have no limit.",
      "# The longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick",
-     "# is a ban in all but name. Admins and owners have no limit."
+     "# is a ban in all but name. Admins and owners have no limit.",
+     "# is a ban in all but name. Admins and faculty have no limit."
     ],
     "workshop_updates|adopt": [
      "# Mods copied into a server's content folder by hand that name a Workshop item (their",
@@ -659,7 +662,15 @@
      "# role below your own) and !demote one step down (only someone below you):",
      "# moderators make members and probationary moderators, admins make moderators,",
      "# owners make admins. A !ban takes every role away. Each change",
-     "#              is a request a moderator or admin confirms (!requests, !confirm,"
+     "#              is a request a moderator or admin confirms (!requests, !confirm,",
+     "#   faculty    the players you list below (you), and whoever claims Huragok's Discord",
+     "#              bot with their account linked: everything.",
+     "# admin, faculty. In game, !promote <player> moves someone one step up (up to the",
+     "# faculty make admins. A !ban takes every role away. Each change",
+     "# comments in the lists stay as you wrote them. Faculty change only here (or by",
+     "# claiming the Discord bot).",
+     "# can use a command on someone of their own role or above (faculty excepted).",
+     "# No vote can kick a member, moderator, admin or faculty: Vergil puts everyone"
     ]
    },
    "inline": {
@@ -667,7 +678,8 @@
      "# what commands start with (\"/\" lines are the game's own)"
     ],
     "|cooldown_seconds": [
-     "# between uses of a command, per player; admins and owners wait for nothing"
+     "# between uses of a command, per player; admins and owners wait for nothing",
+     "# between uses of a command, per player; admins and faculty wait for nothing"
     ]
    },
    "commands": {
@@ -710,7 +722,8 @@
     ],
     "roles": [
      "Who has which role: owners, admins, moderators, members",
-     "Who has which role: owners, admins, moderators, probationary moderators, members"
+     "Who has which role: owners, admins, moderators, probationary moderators, members",
+     "Who has which role: faculty, admins, moderators, probationary moderators, members"
     ],
     "strike": [
      "Give a strike on an automod rule, e.g. for something said in voice; 'name' bans their name"
@@ -873,6 +886,29 @@
     ],
     "requests": [
      "The probationary moderators' requests waiting, on every server: !confirm or !deny each"
+    ],
+    "link": [
+     "Your stats under your name on Discord: a code, told only to you, to give /link there"
+    ],
+    "stats": [
+     "Your record on these servers, or another player's, from every game reported"
+    ],
+    "season": [
+     "The season running now, and Red against Blue in it",
+     "The season running now, and Red against Blue in it; or a past season's, by its number"
+    ],
+    "side": [
+     "The team you're always put on, once you've linked: red, blue, or off",
+     "The team you're always put on: red, blue, or off"
+    ],
+    "endseason": [
+     "End the season running now"
+    ],
+    "newseason": [
+     "End the season running, if any, and start the next: for good, or for a time"
+    ],
+    "togglesides": [
+     "Stop being put on your side, or start again"
     ]
    }
   },
@@ -971,13 +1007,20 @@
      "# servers = [\"Server 1\"]",
      "# ---------------------------------------------------------------------------------",
      "# Linking a Discord account to a player: !link in game sends a private code;",
-     "# /link <code> in Discord finishes it."
+     "# /link <code> in Discord finishes it.",
+     "# Linking a player in game to their account here, so their stats show under the name people know them by here",
+     "# (bot mode). !link in game tells them a code privately; /link that code here ties the two. One player, one account.",
+     "# A link changes nobody's rank."
     ],
     "[roles]": [
      "# ---------------------------------------------------------------------------------",
      "# Roles kept in step. Huragok owns every rank: a mapped role given or taken in Discord changes",
      "# the player's rank on every server; a rank changed in game (by anyone) changes the role; linking",
-     "# gives the current rank as a role. Every change is written down with who and where. Owner is never synced."
+     "# gives the current rank as a role. Every change is written down with who and where. Owner is never synced.",
+     "# Roles Huragok gives (bot mode): only Huragok gives these, and a role given by hand is taken off at the next look.",
+     "# Rank roles: a linked member wears the role [ranks] maps to the rank Huragok gives them. !promote and !demote (in",
+     "# game, or /promote and /demote here) change a rank; the role follows. Needs Manage Roles, the bot's role above these,",
+     "# and Server Members Intent on the developer portal's Bot page."
     ],
     "[channels]": [
      "# ---------------------------------------------------------------------------------",
@@ -1020,7 +1063,10 @@
     ],
     "[stats]": [
      "# ---------------------------------------------------------------------------------",
-     "# Stats: Huragok counts; Discord shows. !stats works in game too."
+     "# Stats: Huragok counts; Discord shows. !stats works in game too.",
+     "# Players' stats, from every game the servers report to Project Reclaimer's stats service (bot mode): /stats, a",
+     "# player's service record, and /leaderboard, the best at anything counted, over a period, on a server, map or mode.",
+     "# A name Vergil wouldn't let in a game is shown as \"(name hidden)\"."
     ],
     "[achievements]": [
      "# Medals, worked out from each game's kills the way Halo 3 awards them."
@@ -1166,6 +1212,17 @@
     ],
     "[notify]": [
      "# ---------------------------------------------------------------------------------"
+    ],
+    "[leaderboards]": [
+     "# The leaderboards kept in a channel, each one message brought up to date as games are reported (bot mode)."
+    ],
+    "[sides]": [
+     "# A linked player's own team, Red or Blue (!side in game, /link side here): they're put on it as team games start",
+     "# and as they join one, as long as the teams stay even. Needs [link].",
+     "# A player's own team, Red or Blue, for members and up (!side in game; /side here, for a linked member): they're put",
+     "# on it during a round, never emptying a team (as !respawn), and tried again as others join. !togglesides",
+     "# (/togglesides) stops it for them alone. Two who'd each rather be on the other's team swap.",
+     "# on it in the lobby and during a round, never emptying a team (as !respawn), and tried again as others join. !togglesides"
     ]
    },
    "inline": {
@@ -1224,7 +1281,8 @@
      "# game-code | staff (admins link someone by picking them and a player)"
     ],
     "link|code_minutes": [
-     "# how long a code works (once)"
+     "# how long a code works (once)",
+     "# how long a code from !link works, once"
     ],
     "link|linked_role": [
      "# a role for linked members, e.g. \"@Verified Spartan\" (gate channels with it)"
@@ -1236,7 +1294,8 @@
      "# their in-game name and service tag: \"Rookie R117\" (32 characters at most)"
     ],
     "link|unlink": [
-     "# self | staff: who may unlink"
+     "# self | staff: who may unlink",
+     "# self: anyone undoes their own link with /unlink | staff: only admins do, with /unlink member"
     ],
     "link|staff_keep_link": [
      "# members with a rank can't unlink themselves"
@@ -1251,7 +1310,8 @@
      "# post \"<member> linked as <player>\" in a channel"
     ],
     "roles|sync": [
-     "# keep the ranks and the mapped roles in step (needs linking)"
+     "# keep the ranks and the mapped roles in step (needs linking)",
+     "# rank roles as above. Anyone Huragok doesn't know as staff (not linked yet) loses them: link staff first"
     ],
     "roles|from_discord": [
      "# a role given or taken in Discord changes the rank"
@@ -1260,7 +1320,8 @@
      "# a rank changed in game changes the role"
     ],
     "roles|check_minutes": [
-     "# a full comparison now and then (anything missed while the bot was offline)"
+     "# a full comparison now and then (anything missed while the bot was offline)",
+     "# a look at every member this often, on top of soon after each change"
     ],
     "roles|online": [
      "# a role while a linked member is on any server, e.g. \"@In Game\""
@@ -1281,7 +1342,8 @@
      "# official (Project Reclaimer's rank from the log) | huragok (playtime + EXP)"
     ],
     "roles|top": [
-     "# leaderboard -> role for its top players: { \"season-kills\" = \"@Top Slayer\" }"
+     "# leaderboard -> role for its top players: { \"season-kills\" = \"@Top Slayer\" }",
+     "# a leaderboard and its role, e.g. { \"kills season\" = \"@Top Slayer\" }: /huragok setup → Stats → Stats roles"
     ],
     "channels|staff": [
      "# e.g. \"#admin-log\"",
@@ -1297,7 +1359,8 @@
     ],
     "channels|stats": [
      "# leaderboards, achievements",
-     "# leaderboards"
+     "# leaderboards",
+     "# the leaderboards, kept up to date"
     ],
     "channels|chat": [
      "# game chat"
@@ -1849,7 +1912,8 @@
      "# Vergil's and the Superintendent's untouched this long count as finished, in the stale colour. 0: never. People's wait until someone closes them. A line in [messages] can say its own: stale_after_hours = 12, as the watch list's and reports' do"
     ],
     "tickets|close_rank": [
-     "# who can Acknowledge or Close: moderator | admin | owner"
+     "# who can Acknowledge or Close: moderator | admin | owner",
+     "# who can Acknowledge or Close: moderator | admin | faculty"
     ],
     "tickets|buttons": [
      "# \"said\" too, if you like. Mute and Kick ask how long, Ban is for good; each needs the same rank as its command in game",
@@ -1889,7 +1953,8 @@
      "# staff's commands only show to members with this Discord permission (\"\"): your rank is what decides, whatever shows. Server Settings, Integrations can change who sees each"
     ],
     "commands|power_rank": [
-     "# who can use /server's power buttons: moderator | admin | owner"
+     "# who can use /server's power buttons: moderator | admin | owner",
+     "# who can use /server's power buttons: moderator | admin | faculty"
     ],
     "commands|power_buttons": [
      "# on /server, each asking first"
@@ -1984,7 +2049,8 @@
      "# each alert, at most this often"
     ],
     "console|raw_rank": [
-     "# who can type console lines, not only Huragok's ! commands: moderator | admin | owner | off"
+     "# who can type console lines, not only Huragok's ! commands: moderator | admin | owner | off",
+     "# who can type console lines, not only Huragok's ! commands: moderator | admin | faculty | off"
     ],
     "reports|right_click": [
      "# \"Report message\" when someone right-clicks a message"
@@ -2019,6 +2085,77 @@
     ],
     "channels|appeals": [
      "# people appealing what's against them. Empty: reports"
+    ],
+    "link|names": [
+     "# how a linked player shows on the stats: discord (their name here) | game | both (\"Buck (Rookie)\"). Each can choose otherwise with /link show"
+    ],
+    "stats|rows": [
+     "# how many a leaderboard shows"
+    ],
+    "stats|min_games": [
+     "# games before someone's on a board of rates (K/D, win rate), so one lucky game doesn't top it"
+    ],
+    "feed.games|kill_feed": [
+     "# a Kill feed button on each Carnage report: that game's kills, to whoever presses it (kept two weeks)"
+    ],
+    "feed.games|rare_medals": [
+     "# each one earned is posted (games-medal), and listed on its game's Carnage Report",
+     "# each one earned is listed on its game's Carnage report"
+    ],
+    "stats|private": [
+     "# /stats and /leaderboard answer only whoever asked. false: in the channel, for everyone"
+    ],
+    "leaderboards|channel": [
+     "# a name from [channels], or a channel itself"
+    ],
+    "leaderboards|boards": [
+     "# each a stat as /leaderboard names it (kills, kd, win_rate, medal:overkill, weapon:sniper_rifle…) and a period: all | season | month | week | day. \"red-blue\": Red against Blue"
+    ],
+    "leaderboards|update_minutes": [
+     "# how often they're brought up to date: 5 at least"
+    ],
+    "sides|most_apart": [
+     "# how many more players one team may have than the other after a move",
+     "# how many more players the team someone joins may then have than the one they left"
+    ],
+    "roles|owner": [
+     "# the role owners wear, e.g. \"@Owner\" (what owners may do here is still [ranks] owners)"
+    ],
+    "roles|top_roles": [
+     "# a role for the top of each leaderboard below: linking is how it's claimed"
+    ],
+    "roles|top_count": [
+     "# how many of a board's top places wear its role (linked players only)"
+    ],
+    "sides|roles": [
+     "# a role for each side, worn by linked members who chose it (only Huragok gives them): open a category to each"
+    ],
+    "sides|red_role": [
+     "# e.g. \"@Red Team\""
+    ],
+    "sides|blue_role": [
+     "# e.g. \"@Blue Team\""
+    ],
+    "sides|lock_for_season": [
+     "# a side chosen while a season runs is kept until it ends. false: switch at will"
+    ],
+    "sides|reset_at_season_end": [
+     "# when a season ends, everyone's side is cleared, to choose again"
+    ],
+    "ranks|faculty": [
+     "# Discord USER IDs with faculty rights from Discord (whoever types /huragok claim). People, never a role."
+    ],
+    "ranks|faculty_in_game": [
+     "# what faculty act as, running commands from Discord: faculty | admin"
+    ],
+    "roles|faculty": [
+     "# the role faculty wear, e.g. \"@Faculty\" (what faculty may do here is still [ranks] faculty)"
+    ],
+    "leaderboards|season_channel": [
+     "# the season's boards (a stat with \"season\", and red-blue): \"\" for the channel above, after its all-time ones"
+    ],
+    "sides|force_for_season": [
+     "# with lock_for_season: forced too, no !togglesides off, a switch of their own put back"
     ]
    }
   }

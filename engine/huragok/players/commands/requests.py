@@ -269,7 +269,7 @@ class ProbationRequests(CommandsBase):
 
     def _outranks(self, call: CommandCall, target: Player) -> str:
         role = self.ctx.highest_role(target)
-        if call.role == "owner" or ROLES.index(role) < ROLES.index(call.role):
+        if call.role == "faculty" or ROLES.index(role) < ROLES.index(call.role):
             return ""
         return f"{target.name} outranks you"
 

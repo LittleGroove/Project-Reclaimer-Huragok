@@ -10,12 +10,12 @@ from typing import Any, Iterator
 import pytest
 
 from conftest import ALICE
-from testkit.fake_discord import GUILD, OWNER_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import GUILD, FACULTY_USER, PUBLIC_CHANNEL, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
 from huragok.core.tomledit import set_nested_key
 from huragok.discordbot import features
-from huragok.discordbot.config import add_owner, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 from huragok.discordbot.status import UNCHANGED_EVERY, Status, condition, fill
 
 
@@ -34,7 +34,7 @@ def bot_file(root: Path, *switches: str) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "status", PUBLIC_CHANNEL, "servers")
     for name in switches:
         set_switch(path, ("status", name), "enabled", True)

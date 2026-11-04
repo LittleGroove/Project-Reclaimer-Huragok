@@ -156,7 +156,7 @@ class AcrossServers(CommandsBase):
         if (kick := self._across_block(player_id, event.server)) is None:
             return
         player = self.ctx.server(event.server).player_by_id(player_id)
-        if player is not None and self.ctx.role_of(event.server, player) not in ("admin", "owner"):
+        if player is not None and self.ctx.role_of(event.server, player) not in ("admin", "faculty"):
             await self._across_kick(event.server, player, kick)
 
     # Huragok's own list: its bans (and the admins it made) on every server's ---------------------------------------
@@ -660,7 +660,7 @@ class AcrossServers(CommandsBase):
         listed_id = str(entry.get("id") or "").lower()
         if is_player_id(listed_id) and (why := outranked(call, Player(0, str(entry.get("name") or listed_id[:8]),
                                                                       listed_id))):
-            await call.reply(why)  # as !ban: a /ban on an owner or a fellow admin isn't spread by an admin
+            await call.reply(why)  # as !ban: a /ban on faculty or a fellow admin isn't spread by an admin
             return
         await call.reply(await self._ban_everywhere(call.server, entry, call.player.name))
 

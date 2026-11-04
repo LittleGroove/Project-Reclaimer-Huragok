@@ -586,7 +586,7 @@ CONTENT_RULES = [
     (re.compile(r"\bERROR\b|CRITICAL|Traceback|FAULTED|^Error:|WILL NOT COME BACK"), "red"),
     (re.compile(r"crashed|exited on its own|cannot be played|refused it \(error", re.IGNORECASE), "red"),
     (re.compile(r"\bWARNING\b|\bWARN\b|refused|rejected|Skipped|unavailable|cannot find|could not|unreachable|"
-                r"not found|failed|PROBLEM|out of range|NOT reloaded|nobody is owner", re.IGNORECASE), "yellow"),
+                r"not found|failed|PROBLEM|out of range|NOT reloaded|nobody is faculty|nobody is faculty", re.IGNORECASE), "yellow"),
     (re.compile(r"RCON connected|up and answering|started \(process|started `dedicated`|All servers stopped|"
                 r"looking after it now|reloaded|reload applied|Online: players join|Workshop \d+: (ready|installed)|"
                 r"Everything is ready|RCON listening|now plays", re.IGNORECASE), "green"),

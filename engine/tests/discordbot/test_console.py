@@ -8,12 +8,12 @@ from typing import Any, Iterator
 
 import pytest
 
-from conftest import ALICE, MOD, OWNER
+from conftest import ALICE, MOD, FACULTY
 from test_bot_running import OTHER
-from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, OWNER_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
+from testkit.fake_discord import ADMIN_ROLE, GUILD, MOD_ROLE, FACULTY_USER, STAFF_CHANNEL, TOKEN, FakeDiscord, use_fake_discord
 from testkit.running import SERVER, running, wait_for
 
-from huragok.discordbot.config import add_owner, make_file, set_channel, set_guild, set_mode, set_switch, set_token
+from huragok.discordbot.config import add_faculty, make_file, set_channel, set_guild, set_mode, set_switch, set_token
 from huragok.servers.state import ServerState
 
 ADMIN_USER, MOD_USER, PROBATION_USER = "4441", "4442", "4443"
@@ -37,7 +37,7 @@ def bot_file(root: Path, **console: Any) -> Path:
     set_token(path, TOKEN)
     set_mode(path, "bot")
     set_guild(path, GUILD, "Test Discord")
-    add_owner(path, OWNER_USER, "the host")
+    add_faculty(path, FACULTY_USER, "the host")
     set_channel(path, "console", STAFF_CHANNEL, "console")
     set_switch(path, ("console",), "typed", True)
     for key, value in console.items():
@@ -202,13 +202,13 @@ def test_the_relays_checks_hold_a_line_to_its_rank(tmp_path: Path, run: Any, fak
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            line = fake.message(STAFF_CHANNEL, "reload", roles=(ADMIN_ROLE,), user=ADMIN_USER)  # owner's alone, and one that asks first
+            line = fake.message(STAFF_CHANNEL, "reload", roles=(ADMIN_ROLE,), user=ADMIN_USER)  # faculty's alone, and one that asks first
             asked = await reply_to(fake, line)
-            await press_until(fake, lambda: any("needs the owner role" in str(post.get("content")) for post in replies(fake, line)), buttons(asked)["Yes"], asked, user=ADMIN_USER, roles=(ADMIN_ROLE,))
+            await press_until(fake, lambda: any("needs the faculty role" in str(post.get("content")) for post in replies(fake, line)), buttons(asked)["Yes"], asked, user=ADMIN_USER, roles=(ADMIN_ROLE,))
             assert rcon.named("reload") == []
-            await rcon.join(1, "Owner", OWNER)
+            await rcon.join(1, "Faculty", FACULTY)
             await wait_for(lambda: huragok.superintendent.states[SERVER].players, timeout=10)
-            line = fake.message(STAFF_CHANNEL, f"kick {OWNER}", roles=(ADMIN_ROLE,), user=ADMIN_USER)
+            line = fake.message(STAFF_CHANNEL, f"kick {FACULTY}", roles=(ADMIN_ROLE,), user=ADMIN_USER)
             assert "nobody acts on their own role or above" in (await reply_to(fake, line))["content"] and rcon.named("kick") == []
 
     run(scenario())
@@ -424,7 +424,7 @@ def test_the_menu_keeps_each_persons_own_choice(tmp_path: Path, run: Any, fake: 
             line = fake.message(STAFF_CHANNEL, "maps", roles=(ADMIN_ROLE,), user=ADMIN_USER)
             await reply_to(fake, line)
             assert rcon.named("maps")
-            line = fake.message(STAFF_CHANNEL, "maps", user=OWNER_USER)  # who hasn't picked is still asked
+            line = fake.message(STAFF_CHANNEL, "maps", user=FACULTY_USER)  # who hasn't picked is still asked
             assert (await reply_to(fake, line))["components"]
 
     run(scenario())
@@ -453,7 +453,7 @@ def test_one_server_for_everyone_is_a_setting(tmp_path: Path, run: Any, fake: Fa
             await wait_for(lambda: menus(fake), timeout=15)
             fake.choose("huragok:console:pick", menus(fake)[0], [SERVER], user=ADMIN_USER, roles=(ADMIN_ROLE,))
             await wait_for(lambda: part.status.stored("console:channel")[1] == SERVER, timeout=15)
-            line = fake.message(STAFF_CHANNEL, "maps", user=OWNER_USER)  # someone else's goes there too
+            line = fake.message(STAFF_CHANNEL, "maps", user=FACULTY_USER)  # someone else's goes there too
             await reply_to(fake, line)
             assert rcon.named("maps")
             await part.status_tick()

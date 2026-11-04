@@ -18,7 +18,16 @@ KEYS: dict[tuple[tuple[str, ...], str], tuple[tuple[str, ...], str]] = {
 LINES = {"seeding-notify": "notify-told"}
 LINE_FIELDS = {"remove_after": "remove_after_minutes"}
 # What [text] can reword: a host's wording keeps working under the name it was written for.
-TEXTS = {"seeding.players": "notify.players", "seeding.game": "notify.game"}
+TEXTS = {"seeding.players": "notify.players", "seeding.game": "notify.game",
+         "console.raw_for_owners": "console.raw_for_faculty"}  # the top rank was "owner" before 0.6.1
 
 
-__all__ = ["KEYS", "LINES", "LINE_FIELDS", "TEXTS"]
+def merged_ranks(old: object, new: object) -> object:
+    """An old setting's value over its new name's (the top rank's, before 0.6.1): both lists' entries when both are
+    lists, as a claim made before the update reached the file is written to the new one (audit 0.6.1, 3.9)."""
+    if isinstance(old, list) and isinstance(new, list):
+        return [*old, *(one for one in new if one not in old)]
+    return old
+
+
+__all__ = ["KEYS", "LINES", "LINE_FIELDS", "TEXTS", "merged_ranks"]

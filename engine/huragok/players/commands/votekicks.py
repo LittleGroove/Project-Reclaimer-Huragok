@@ -3,7 +3,7 @@
 The server never lets a vote kick its admins, and keeps a list of other players no vote can
 kick (its console's `immune`, kept in its ban list: each server's own since 0.5.0, so Vergil
 keeps every server's). Vergil keeps that list in step with commands.toml: every member, moderator and
-owner is on it, put there as the server connects, when commands.toml changes, and every few
+faculty is on it, put there as the server connects, when commands.toml changes, and every few
 minutes in case someone took them off; whoever is taken out of commands.toml comes off it
 again. Only the entries Vergil added ("Vergil (RCON)") are ever taken off: the host's own,
 added on the console or in dedicated.toml's vote_kick_immune, stay.
@@ -38,7 +38,7 @@ TELL_GAP = 30.0  # seconds between explanations to the same caller
 IMMUNE = re.compile(r"(?P<name>.+) can't be vote-kicked on this server\.?")
 SUFFIX = re.compile(r"(?P<name>.+) \((?P<tag>[0-9A-Za-z]{2,6})\)")  # "Player (A7B)": how votes tell same-named players apart
 ARTICLE = {"member": "a member", "probationary-moderator": "a probationary moderator", "moderator": "a moderator",
-           "admin": "an admin", "owner": "an owner"}
+           "admin": "an admin", "faculty": "faculty"}
 
 
 def _named(state: ServerState, name: str) -> list[Player]:
@@ -112,7 +112,7 @@ class VoteKicks(CommandsBase):
                 if server not in self._no_list:
                     self._no_list.add(server)
                     self.log.warning("[%s] this server program has no vote-kick immune list, so Vergil cancels "
-                                     "votes to kick members, moderators and owners as they're called. A newer "
+                                     "votes to kick members, moderators and faculty as they're called. A newer "
                                      "server program refuses them outright", server)
             else:
                 self.log.warning("[%s] couldn't read the vote-kick immune list: %s", server, reply.text)

@@ -14,10 +14,12 @@ switched on what you want:
 - staff act from Discord: buttons on each card, every in-game command as a slash command,
   a typed console, and notes and flags on players;
 - players reach staff: `!report` and `!calladmin` in game, `/report`, `/appeal` and a Contact
-  button in Discord.
+  button in Discord;
+- players link their account here to the one in game (`!link`, then `/link`), so their stats
+  show under their name here (0.6.1).
 
-It doesn't link Discord accounts to players, sync roles, keep stats or leaderboards, carry
-game chat, run minigames, or moderate the Discord itself.
+It doesn't carry game chat, run minigames, or moderate the Discord itself.
+New in 0.6.1: the stats (`/stats`, `/leaderboard`, boards kept in a channel), linking, Huragok's roles and sides.
 
 ## What you need
 - Huragok 0.6.0 or newer, running, with the bot's connection out to the internet. No
@@ -70,7 +72,7 @@ Rather not use the window? Put `mode = "bot"` and `token = "..."` at the top of
 changing. Or keep the token out of the file: `token_variable = "NAME"` reads it from that
 environment variable, which only changes when Huragok starts again. With no window at all
 (Docker), that's the way: the variable under `environment:`, and your Discord user ID under
-`owners` in `[ranks]`, since there's no window to give you a claim code.
+`faculty` in `[ranks]`, since there's no window to give you a claim code.
 
 ## 3. Add the bot to your Discord
 7. Copy the invite link Huragok printed after the token, and open it in a browser. If it
@@ -110,17 +112,17 @@ and stay until you delete them by hand. `/huragok setup` says what's still missi
 the link while something is. `/huragok check` warns if the role has Administrator, Ban Members or
 Kick Members, none of which the bot uses.
 
-## 4. Make yourself its owner
+## 4. Join its faculty
 9. In the window, press **J**, then **K**. It shows a code that works once, for 15 minutes.
 10. In your Discord, in any channel, type `/huragok claim` and the code. If `/huragok`
     doesn't come up, reload Discord with Ctrl+R. Only you see the answer.
 
-That makes you an owner of the bot, and makes that Discord the bot's own. Owners are the
+That makes you faculty on the bot, and makes that Discord the bot's own. Faculty are the
 people who can use `/huragok`. They're named by user ID, never by a role, because anyone
 with Manage Roles could hand out a role. To add others: a new code for each (**J**, **K**), or
-**Owners** in `/huragok setup`. From Discord an owner acts at owner rank on every server: any
+**Faculty** in `/huragok setup`. From Discord, faculty act as faculty on every server: any
 command, on anyone. If that's more than someone setting up the bot should have,
-`owners_in_game = "admin"` in `[ranks]` (or **Owners** in `/huragok setup`) keeps them to admin.
+`faculty_in_game = "admin"` in `[ranks]` (or **Faculty** in `/huragok setup`) keeps them to admin.
 It gives them no rank in the game itself: there, `commands.toml` decides.
 
 ## 5. Set up your Discord
@@ -134,7 +136,8 @@ people.
 | --- | --- | --- | --- |
 | `status` | the server cards, and nothing else | everyone; **nobody types** | `#servers` |
 | `info` | news: pings people asked for, seeding, restarts planned, updates. Contact staff's button goes here unless you say | everyone; **nobody types** | `#server-news` |
-| `games` | games ending with at least `min_players` on, and starting too once `games-started` is switched on in **Messages**; a playlist put in rotation by the player count (`games-playlist`, see G → P in the window) | everyone; **nobody types** | `#games` |
+| `games` | games ending with at least `min_players` on, and starting too once `games-started` is switched on in **Messages**; a playlist put in rotation by the player count (`games-playlist`, see G → P in the window); each game's Carnage report, rare medals and seasons | everyone; **nobody types** | `#games` |
+| `stats` | the leaderboards kept up to date (`[leaderboards]`) | everyone; **nobody types** | `#leaderboards` |
 | `staff` | tickets: what Vergil did, who to keep an eye on | **staff only** | `#staff-tickets` |
 | `reports` | tickets: people asking staff for something. Unset, these go to `staff` | **staff only** | `#reports` |
 | `appeals` | tickets: people appealing what's against them. Unset, these go to `reports` | **staff only** | `#appeals` |
@@ -164,7 +167,7 @@ Discord with only you in it none of that matters: a switch on the **Channels** p
 - **Who gets told:** the roles to ping when a server's in trouble, someone calls for an admin, and so on: as many as it's for, as ranks don't ping each other. Until then a card arrives and nobody's phone buzzes, though some make a sound for whoever has that channel's notifications on (`silent` below).
 - **Say hello in every channel** posts a line in each, saying what it's for, so you can see they work and see the layout. They go by themselves after a few minutes.
 - **Check:** everything the features you turned on need.
-- **Owners, Messages, Tickets, Commands, Console, Reports, Appeals, Contact, Status, Notes:** each with its settings, and its switch where it has one. **Commands** is switched in Features. The Console's clearing is under **Clearing and more**.
+- **Faculty, Messages, Tickets, Commands, Console, Reports, Appeals, Contact, Status, Notes, Stats:** each with its settings, and its switch where it has one. **Commands** is switched in Features. The Console's clearing is under **Clearing and more**.
 - **Invite link:** on the first screen while the bot's role lacks something.
 
 Each change takes effect straight away, and something you fix in Discord shows within moments, or five minutes at the most. **J** in the window (**R**, **N**,
@@ -230,12 +233,12 @@ A card on the board reads **Online**, **Full**, **Restarting**, **Offline** (it 
 12. `/huragok test` in a channel posts three messages, as the Superintendent, Vergil and
     Huragok, which go by themselves after a few minutes. In the window, **J** then **T** asks
     which channel and posts the same three, which stay there.
-13. Have someone who isn't an owner try `/huragok setup`. They should be told no.
+13. Have someone who isn't faculty try `/huragok setup`. They should be told no.
 
 ## What's what
 | In Discord | |
 | --- | --- |
-| `/huragok claim <code>` | become an owner, with the window's code |
+| `/huragok claim <code>` | become faculty, with the window's code |
 | `/huragok setup` | what's left to do, and everything else |
 | `/huragok gallery` | every message, in its colour, with where it goes, for you alone |
 | `/huragok features` | every feature's state, with its switch |
@@ -243,7 +246,7 @@ A card on the board reads **Online**, **Full**, **Restarting**, **Offline** (it 
 | `/huragok test` | a test post here, as the Superintendent, Vergil and Huragok. They go by themselves after a few minutes |
 | `/huragok reload` | read `discord.toml` again now, and say what's wrong with it |
 
-Everyone sees `/huragok` in the list, but only owners can use it (`claim` is for anyone
+Everyone sees `/huragok` in the list, but only faculty can use it (`claim` is for anyone
 with a code), and only the person using it sees the answers.
 
 **In-game commands as slash commands,** once the `commands` feature is on: `/mute`, `/kick`, `/whois`, `/bans`, `/restartserver` and the rest.
@@ -262,7 +265,7 @@ with a code), and only the person using it sees the answers.
 | --- | --- |
 | **M** | mode and bot token |
 | **W** | which Discord |
-| **R** | ranks and owners |
+| **R** | ranks and faculty |
 | **N** | channels |
 | **F** | features |
 | **E** | every message: where it goes, its colour, on or off |
@@ -273,7 +276,7 @@ with a code), and only the person using it sees the answers.
 | **T** | test post |
 | **K** | claim code |
 | **V** | invite link |
-| **Z** | start over: forgets this Discord, its owners, channels, ranks and switches, and every card; keeps the token and what staff wrote about players. The old file is kept beside the new one, as `discord.before-start-over-…toml`, token and all |
+| **Z** | start over: forgets this Discord, its faculty, channels, ranks and switches, and every card; keeps the token and what staff wrote about players. The old file is kept beside the new one, as `discord.before-start-over-…toml`, token and all |
 | **L** | the start loop's webhook (below) |
 | **X** | the texts the bot posts, which `[text]` in `discord.toml` can reword (`"ticket.closed" = "words"`) |
 | **O** | open `discord.toml` |
@@ -330,7 +333,7 @@ A probationary moderator's press is a request, as their command is: it's written
 - **What happens to a finished card is yours to choose:** `when_closed` in `[tickets]` (`/huragok setup` → Tickets, or **J**, **I**). `move` is the default: to its log channel. `stay` leaves it where it is, in the closed colour. `thread` also gives each card a thread of its own from the start, which closing locks and hides (the bot needs Manage Threads). Log channels can be shared, by giving `logs` and `huragok-logs` the same channel, or a kind of card can have its own: `closes_to` on its line in `[messages]` (setup → Messages), which also takes `stay` or `thread` for that kind alone. Whatever goes with a card (a clip someone reported with, a Contact thread's transcript) goes where the card will end up, so it isn't left behind.
 - **What the bot says only to you goes by itself:** a word about what happened after 10 minutes, and a command's answer or something you asked to read after 14, the most Discord allows (`[answers]`). What everyone can see is only there if you've asked for it.
 - **`/server [name]`** (with the `commands` feature) shows a server's state, seen only by you, for anyone with a staff rank. Those with `power_rank` (admins and above, unless you change it) also get its power buttons: Start, Stop, Restart, Restart after the game, Restart when empty, Cancel, Check for updates. Each asks first, with a **Yes, and say why** that everyone on will read, and goes in the audit log, and a press from an alert goes on that alert; Check for updates only asks GitHub, so it does neither. `power_buttons` says which there are (the **Commands** panel). **Refresh** looks again. A ticket in `alerts` has a **Server** button that opens it. **`/status`** lists the servers, for anyone.
-- **The typed console** (`console`, in `/huragok setup` → Console) lets staff type in a console channel. A line starting with `!` is one of Huragok's commands, as your rank allows in game, and on probation it's a request. Anything else is a console line (`players`, `say hello`), with the same checks as the relay: `raw_rank` says who can (`moderator`, `admin`, `owner`, or `off` for nobody; admins and above unless you change it), and nobody acts on someone of their own rank or above.
+- **The typed console** (`console`, in `/huragok setup` → Console) lets staff type in a console channel. A line starting with `!` is one of Huragok's commands, as your rank allows in game, and on probation it's a request. Anything else is a console line (`players`, `say hello`), with the same checks as the relay: `raw_rank` says who can (`moderator`, `admin`, `faculty`, or `off` for nobody; admins and above unless you change it), and nobody acts on someone of their own rank or above.
   - **Answers** come back as a reply, or in a thread; long ones as a file, or in pieces. Everyone with a rank reads this channel, so answers never show an address, or a whole ID unless `moderators_see_ids` is on, whoever asked. Lines in `confirm` ask "Send `line` to **server**?" first.
   - **Everyone else's lines** are ignored, or deleted if you choose. A line starting with `ignore_prefix` (`//`, say) is ignored from anyone, so staff can talk there. `audit` says which lines go in the audit log.
   - **A password** typed there is deleted at once, if the bot has Manage Messages.
@@ -344,6 +347,13 @@ A probationary moderator's press is a request, as their command is: it's written
 - **Appeals** (`appeals`): someone banned types `/appeal` with their name in game, their player ID, or the code from their ban's message, and answers your `questions`. It's a ticket in the `appeals` channel, or `reports` until you set one, with the case and what they said before it, and **Lift it**, **Shorten it**, **Deny** and **Close**. They're told how it went by DM, if they take DMs from your Discord; the card says if they couldn't be told. Shortening a ban makes it a kick with a time. Lifting an appeal against what Vergil did takes that strike off too (`lift_clears_strike`). `for` says what can be appealed (kicks and mutes too, if you like), `cooldown_days` how soon they can ask again, and `in_reason` adds a line to a ban's message in game, such as `Appeal on discord.gg/yours: /appeal {code}`.
   - **The code** is random, and stays the same for that player. With `{code}` in `in_reason` the card says whether they came with it or with only a name, since a name is anyone's to type. `code_only = true` refuses a name alone; a `/ban` in game has no code, so those people need Contact staff. Only an appeal with the code counts against the player for the wait, so a stranger typing their name can't lock them out.
   - **Nothing tells them** they can appeal unless `in_reason` does: `/huragok check` says so when it's empty.
+- **Linking** (`link`, from 0.6.1): a player claims their spot on the stats under their name in your Discord. They type **`!link`** in game and are told a code privately; then **`/link`** with that code here. It works once, for `code_minutes`, and three can be asked for in an hour. One player, one account, and the other way round. That way round, as game chat is public: a code from Discord typed in game could be pasted by someone tricked into it. A link changes nobody's rank. On the stats a linked player shows as `names` says: `discord` (their name here, the default), `game`, or `both` ("Buck (Rookie)"); each can choose otherwise with **`/link show`**. **`/link`** alone says how they stand. **`/unlink`** undoes it; with `unlink = "staff"` only admins do, with `/unlink member`. Each link and unlink is a line in `logs` (`audit-link`).
+- **Stats** (`stats`, from 0.6.1): every game your servers report to Project Reclaimer's stats service is kept by Huragok (nothing to set for that), and this shows it. **`/stats [player]`** is a player's service record: games, won and lost, K/D, best streak, time played, best multi-kill and spree, medals, the weapon they've most kills with, nemesis and favourite victim, and their Project Reclaimer rank as the service last said. Left out, it's your own once you've linked. **`/leaderboard`** is the best at anything counted (`stat`: kills, K/D, wins, win rate, a medal, a weapon…), over a `period`, on one `server`, `map` or `mode` if you like, each suggested as you type. Both answer privately unless `private = false` (or **Answers only to whoever asked** on `/huragok setup` → Stats). `rows` is a board's length; `min_games` how many games before someone's on a board of rates. A name Vergil wouldn't let in a game (on `names.txt`, or with a word of the word list in it) reads **(name hidden)**, keeping their place: the boards don't discriminate, so nobody takes themselves off one. A tie shares the place (two first, then third). **`!stats`** in game says the same in a line, with or without Discord.
+- **Seasons and Red against Blue:** faculty starts a season with **`!newseason [name] [length]`** in game (or `/newseason`); with no length it runs until faculty types **`!endseason`**, and that's how one starts unless you give a length (`30d`). `!season` says how Red and Blue stand in it: the team games each colour won, only Red against Blue games (none with a third team, nor Infection or Juggernaut, where a team is what you are); `!season 3` says a past one's. A board's `season` period is the season running now, and between seasons the one just ended; `/leaderboard season:3` shows a past one's. Red against Blue on `/leaderboard` with a `period` counts over that period too.
+- **Kept boards** (`leaderboards`): the boards in `boards` are kept in the `stats` channel, one message each, brought up to date every `update_minutes` (5 at least). Each is a stat as `/leaderboard` names it and a period (`kills all`, `kills season`, `medal:overkill week`), or `red-blue`. All time's boards come first and the season's (a `season` period, and `red-blue`) below them, or in `season_channel` if you set one; within each, your order (**Order the boards** on the Leaderboards panel). Taken off the list, a board's message goes (and those after it are posted again, to keep the order). There's no button on them: `!link` is what puts someone's name here on a board.
+- **Sides** (`sides`): members and up pick the team they always play on: **`!side red`**, `!side blue` or `!side off` in game, or **`/side`** here for a linked member. Picking one switches being put on it on; **`!togglesides`** (`/togglesides`) switches it off or on again, for them alone. In the lobby, and during a round for whoever couldn't be moved there (a late joiner, or a move the balance wouldn't allow), they're moved onto it with the console's `team` command, one move at a time, each seen through before the next. During a round with `!respawn`'s checks so a move can't end the game: a team game, the teams as the server has them now, and never a team's last player (a moment with a team empty ends the game). Nobody's moved in a game with a third team, or in Infection or Juggernaut, where a team is what you are. Someone who switches team themselves isn't moved again that game. Each is told, privately, once they're on their side; a move that didn't happen (the game refuses some for a moment) says nothing, and is tried again. Moves go a few seconds apart, and a swap's two in the order that keeps the teams closest. Two who'd each rather be on the other's team swap, however even the teams are, the move from the bigger team first. Anyone else moves only while the team they join then has at most `most_apart` (2) more players than the one they left, whoever joined first first. A move that can't be made yet is tried again as someone else joins. `lock_for_season` keeps a side chosen in a season until it ends; with `force_for_season` too, it's forced: `!togglesides` can't switch it off, and a switch of their own is put back. `reset_at_season_end` clears everyone's side as a season ends, to choose again. All are off: by default anyone switches at will (without `lock_for_season`, `force_for_season` does nothing). **Sides** on `/huragok setup` → Stats has all of it.
+- **Huragok's roles** (on `/huragok setup` → Stats → **Stats roles** and **Sides**): only Huragok gives these, and one given or taken by hand is put back as it should be at the next look, every `[roles] check_minutes` and soon after anything changes. Each look reads every member, so it needs **Server Members Intent** on the developer portal's Bot page, **Manage Roles**, and the bot's own role above these. **Rank roles** (`[roles] sync`): a linked member wears the role `[ranks]` maps to the rank Huragok gives them, `[roles] faculty` for faculty; a rank changes with `/promote` and `/demote` (or `!promote` and `!demote` in game), never by giving a role, and anyone wearing one Huragok doesn't know as that rank (not linked yet, say) loses it, so link your staff first: the audit feed says whom each came off. **One rank role each, by design:** a linked member wears the one role their rank reaches, never a stack of them, as a higher role in Discord's own order gives what the lower ones do; give each rank role what it needs and the ones above it what more they need. **Faculty:** whoever claimed the bot (`/huragok claim`) is faculty in game too once their account is linked: Huragok lists their player under `[faculty]` in `commands.toml`, as `!promote` writes a rank, and they wear the faculty role. So is anyone faculty name on the **Faculty** panel, once they link. Those and writing `commands.toml` by hand are the only ways to faculty. A role limited to some servers is worn only by someone with that rank on all of them. **Top roles** (`top_roles`, `top`, `top_count`): a role for each board you pick, worn by the linked players among its top `top_count` (everyone tied at a place among them too), moved as the board changes; an unlinked leader doesn't wear it, as linking is how it's claimed. **Side roles** (`[sides] roles`, `red_role`, `blue_role`): worn by linked members who chose that side, so you can open a category to each.
+- **After each game** (with `feed.games`, and at least its `min_players`): a **Carnage report** (`games-report`: the score, the top three, the best streak, its rare medals, those in `rare_medals`): one post a game; and a season begun or over (`games-season`, Red against Blue and its best). Each Carnage report has a **Kill feed** button (`kill_feed`): that game's kills, who killed whom, when and with what (the weapon, a headshot, a stick, a splatter), to whoever presses it, as a file when there are many. They're kept two weeks. There's no kill feed in a channel: a busy server's 45 kills a minute are more than Discord lets a channel take.
 - **Contact staff** (`contact`): a button in a channel everyone can read (`channel`, `info` unless you say) opens a private thread with the staff, for what doesn't fit a form. It's seen by them, by the role in `thread_role`, and by anyone who presses **Discuss** on its ticket in `reports` (those with Manage Threads can always see them). One open at a time for each person, and another only after `cooldown_minutes`. Closing it keeps a transcript (`transcript`, which needs Message Content Intent: without it the card says there's none) and locks the thread; `close_after_days` closes quiet ones. In that channel, people need **Send Messages in Threads** to write back, even where they can't type in the channel itself. The bot needs **Create Private Threads**, and **Manage Threads** so that a closed thread can be opened again when its card comes back; that also lets the bot see every private thread in your Discord.
 - With the `commands` feature, **`/status [server]`** is for anyone, and **`/case <number>`** shows staff a case by its number on a card or in `!whois`, which isn't the ticket's number. **`/tickets`** lists what's live, for staff alone: what someone's waiting on first, then what's wrong, then the rest, each with what was last done; if it's long, it's a file. Staff can drop clips and screenshots into a card's thread: they stay with it.
 - **`/ticket <player>`** (with the `commands` feature, for those who can close a ticket) posts a card with the buttons for anyone, any time.
@@ -355,7 +365,7 @@ A probationary moderator's press is a request, as their command is: it's written
 - **The colours** say where a card stands: its own message's colour until someone touches it, then `active`, `stale` or `closed` from `[tickets] colours`.
 - **The watch list** (`feed.watch`) tells staff about someone back soon after a kick (within
   `back_after_kick_minutes` of the server's block ending, unless they were pardoned), a name
-  made to look like a moderator's or an owner's (`0livia` for Olivia), someone new on a nearly empty
+  made to look like a moderator's or faculty's (`0livia` for Olivia), someone new on a nearly empty
   server, someone banned on another of your servers, and the server's anti-cheat acting.
   Each is its own line under `[messages]`, so any of them can go elsewhere or be turned off.
 - **Notes and flags** (`notes`) are what staff write about a player. `/note add` (`days` says when it's dropped), `/note list`
@@ -418,7 +428,7 @@ say why the bot is off, and `logs/huragok.log` has the details. The token never 
 | Old cards stay up, and a second one appears when they change, after removing the bot and adding it back | Discord deleted the webhook that posted them, so nothing can edit them now | delete the old ones by hand, or give the bot Manage Messages. New cards work as usual |
 | The bot's dot is yellow | a server that's meant to be up isn't. A server you stopped doesn't count, unless they all are, which is yellow too. Red: none are up | look at the status board. `dot = "online"` in `[status.presence]` keeps it green |
 | "the bot isn't allowed to add its commands" | it was added without `applications.commands` | open the invite link again: it tries again by itself |
-| Moderators don't see `/mute` | they lack the Discord permission in `staff_permission`. An owner or a Discord admin sees everything, so you won't notice | **Commands** panel, or give their role that permission. `/huragok check` names the roles |
+| Moderators don't see `/mute` | they lack the Discord permission in `staff_permission`. Faculty or a Discord admin sees everything, so you won't notice | **Commands** panel, or give their role that permission. `/huragok check` names the roles |
 | A card turned up, and nobody's phone buzzed | nothing pings until you say who | **Who gets told** in `/huragok setup` |
 | Players get "Unknown command" for `!report` or `!calladmin` | Discord can't take it: the mode's off (for `!report`, anything but the full bot), or the `reports` or `feed.calls` feature is, or `from` in `[reports]` leaves out `game` | switch it on |
 | The console isn't clearing itself | the bot lacks Manage Messages there, the channel's also used for something else, or there's nowhere to keep what was said | `/huragok check` says which |
@@ -426,7 +436,7 @@ say why the bot is off, and `logs/huragok.log` has the details. The token never 
 | "The application did not respond" | Huragok isn't running or was restarting | check the window; type the command again |
 | "This panel has closed" | it was open over 10 minutes, or the bot signed in again meanwhile | type the command again |
 | "This bot belongs to another Discord" | it's set up for a different one | **J**, **W** |
-| "Only the owners…" | you aren't one yet | **J**, **K**, then `/huragok claim` |
+| "Only the faculty…" | you aren't one yet | **J**, **K**, then `/huragok claim` |
 | "That code isn't right" | it was used, ran out, or you've had too many wrong tries | **J**, **K** for a new one |
 | Test posts don't appear | the bot can't see or post in that channel | add its role to the channel; `/huragok check` names what's missing |
 | Posts come from the bot's name | no **Manage Webhooks** there, the channel has Discord's 15 webhooks already, or `voice = "plain"` | it still works; give it the permission if you want the three names |

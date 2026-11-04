@@ -307,6 +307,78 @@ def test_capture_answers_502_when_the_service_cant_be_reached(tmp_path: Path, ru
     run(scenario())
 
 
+def test_a_renamed_server_takes_over_the_port_kept_under_its_old_name(tmp_path: Path, run) -> None:
+    """The live servers, 3 November 2026: a server renamed while its dedicated.toml pointed at the relay's port for its
+    old name. Huragok saw one of its own addresses, knew nothing under the new name, and said "waiting until it has
+    started once" at every start, while nothing listened on that port: every game's report failed four times and was
+    abandoned, so its players got no rank for seven games."""
+    async def scenario() -> None:
+        async with FakeService() as service:
+            config = dedicated(tmp_path / "one", service.url)
+            log = tmp_path / "one" / "server.log"
+            first = StatsCapture(tmp_path / "records", lambda s, d: None, Scrubber(b"k" * 32))
+            await first.apply(["Huge Battles #1"], {"Huge Battles #1": (config, log)})
+            url = configured(config)[1]
+            for listener in first.listeners.values():  # Huragok gone without putting it back (or the folder copied)
+                listener.close()
+            log.write_text(f"10:00:00 Stats reporting to {url}; server key k= (whitelist this public key on the "
+                           "service)\n", encoding="utf-8")
+            kept: list[tuple[str, dict[str, Any]]] = []
+            again = StatsCapture(tmp_path / "records", lambda s, d: kept.append((s, d)), Scrubber(b"k" * 32))
+            await again.apply(["HugeGrass CTF"], {"HugeGrass CTF": (config, log)})
+            assert configured(config)[1] == url  # the running server reaches the service on the port it has
+            status, _ = await post(url, b'{"players": []}')
+            assert status == 201 and len(service.received) == 1 and kept[0][0] == "HugeGrass CTF"
+            assert "Huge Battles #1" not in again.saved["servers"] and "waiting" not in " ".join(again.notes)
+            await again.close()
+            assert configured(config) == (True, service.url)  # back as it was under the old name
+
+    run(scenario())
+
+
+def test_a_copied_server_learns_the_service_but_keeps_its_own_port(tmp_path: Path, run) -> None:
+    """A server folder copied while it pointed here: the one it was copied from still runs and keeps its port; the copy
+    learns where the service is and gets a port of its own from its next start."""
+    async def scenario() -> None:
+        async with FakeService() as service:
+            config = dedicated(tmp_path / "one", service.url)
+            capture = StatsCapture(tmp_path / "records", lambda s, d: None, Scrubber(b"k" * 32))
+            await capture.apply(["One"], {"One": (config, None)})
+            url = configured(config)[1]
+            copy = tmp_path / "two" / "dedicated.toml"
+            copy.parent.mkdir()
+            copy.write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
+            await capture.apply(["One", "Two"], {"One": (config, None), "Two": (copy, None)})
+            assert configured(config)[1] == url and configured(copy)[1] not in (url, service.url)
+            assert capture.saved["servers"]["Two"]["upstream"] == service.url
+            assert (await post(configured(copy)[1], b"{}"))[0] == 201
+            await capture.close()
+            assert configured(copy) == (True, service.url)
+
+    run(scenario())
+
+
+def test_a_relay_address_nobody_knows_is_never_taken_for_the_service(tmp_path: Path, run) -> None:
+    """A server pointed at a relay port this Huragok has no record of (its records/ lost, or a folder from another
+    install): taken for the real service, every report went to a port nobody listens on. Put back to the project's own
+    service instead, from its next start, and learned again as it says where it reports."""
+    async def scenario() -> None:
+        config = dedicated(tmp_path / "one", "http://127.0.0.1:45999")
+        log = tmp_path / "one" / "server.log"
+        log.write_text("10:00:00 Stats reporting to http://127.0.0.1:45999; server key k= (whitelist this public key "
+                       "on the service)\n", encoding="utf-8")
+        assert last_reported_to(log, set()) is None
+        capture = StatsCapture(tmp_path / "records", lambda s, d: None, Scrubber(b"k" * 32))
+        await capture.apply(["One"], {"One": (config, log)})
+        assert configured(config) == (True, "") and not capture.listeners  # "": the project's own service
+        assert "put back" in capture.notes[-1]
+        await capture.learned("One", "http://127.0.0.1:45999", config, log)  # a start before the change: still nothing
+        assert configured(config) == (True, "") and not capture.listeners
+        await capture.close()
+
+    run(scenario())
+
+
 def test_readable_bodies() -> None:
     assert readable(b'{"a": 1}', []) == {"json": {"a": 1}}
     assert readable(b"hello", []) == {"text": "hello"}
@@ -339,4 +411,4 @@ def test_the_relay_forwards_on_threads_of_its_own(tmp_path: Path, run, monkeypat
             assert status == 201
 
     run(scenario())
-    assert threads and all(name.startswith("stats relay") for name in threads)
+    assert threads and all(name.startswith(("stats relay", "stats reports")) for name in threads)  # its own: reports in a lane apart (audit 0.6.1, 1.5)

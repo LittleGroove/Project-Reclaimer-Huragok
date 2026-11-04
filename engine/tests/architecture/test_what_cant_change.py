@@ -29,12 +29,12 @@ def _hash(step: str) -> str:
     return hashlib.sha256(step.encode("utf-8")).hexdigest()
 
 
-@pytest.mark.parametrize("owner", sorted(STEPS))
-def test_a_released_schema_step_is_never_edited(owner: str) -> None:
+@pytest.mark.parametrize("faculty", sorted(STEPS))
+def test_a_released_schema_step_is_never_edited(faculty: str) -> None:
     """It's run on hosts' databases, and won't run again: a change has to be a new step at the end."""
-    now = [_hash(step) for step in STEPS[owner]]
-    frozen = FROZEN["schema"][owner]
-    assert now[:len(frozen)] == frozen, f"A step of {owner}'s has changed. Never edit a released step: add one at the end"
+    now = [_hash(step) for step in STEPS[faculty]]
+    frozen = FROZEN["schema"][faculty]
+    assert now[:len(frozen)] == frozen, f"A step of {faculty}'s has changed. Never edit a released step: add one at the end"
 
 
 def test_every_press_a_card_can_send_still_means_something() -> None:

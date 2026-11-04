@@ -20,10 +20,11 @@ from testkit.screens import screen, template_root, text_of
 from huragok.commandline import launcher
 from huragok.core.tomledit import read_toml
 from huragok.discordbot import records, rest, speakers
-from huragok.discordbot.config import add_owner, load, make_file, set_guild, set_launcher_webhook, set_mode, set_token
+from huragok.discordbot.config import add_faculty, load, make_file, set_guild, set_launcher_webhook, set_mode, set_token
 from huragok.discordbot.outbox import Outbox
 from huragok.discordbot.speakers import Delivery, Poster, message, say, speaker
 from huragok.updates import notes
+from huragok.window.screens.base import PAGE
 
 
 @pytest.fixture
@@ -111,7 +112,7 @@ def test_with_no_token_the_steps_say_so(tmp_path: Path, run: Any) -> None:
 
 def test_ranks_from_the_discords_own_roles(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     # Listed highest first, without @everyone and without the bot's own: 1 SPR-Admin, 2 SPR-Mod. Admin, moderator, then
-    # Enter for the other two, and Enter for no owner.
+    # Enter for the other two, and Enter for no faculty.
     menu, terminal, path = opened(tmp_path, ["R"], keys("1"), keys("2"), ["ENTER"], ["ENTER"], ["ENTER"], ["ESC"])
     bot_ready(path)
     run(menu.screen_discord())
@@ -121,16 +122,16 @@ def test_ranks_from_the_discords_own_roles(tmp_path: Path, run: Any, fake: FakeD
     assert "@SPR-Admin" in shown and "@@everyone" not in shown and "@Huragok" not in shown  # nor the bot's own role
 
 
-def test_owners_by_user_id(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_faculty_by_user_id(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
     add = [["R"], ["ENTER"] * 4, keys("123456"), ["ESC"]]
     menu, terminal, path = opened(tmp_path, *add)
     bot_ready(path)
     run(menu.screen_discord())
-    assert read_toml(path)["ranks"]["owners"] == ["123456"]
+    assert read_toml(path)["ranks"]["faculty"] == ["123456"]
     menu, terminal, path = opened(tmp_path / "again", ["R"], ["ENTER"] * 4, keys("not a number"), ["ESC"])
     bot_ready(path)
     run(menu.screen_discord())
-    assert read_toml(path)["ranks"]["owners"] == [] and "isn't a user ID" in text_of(terminal)
+    assert read_toml(path)["ranks"]["faculty"] == [] and "isn't a user ID" in text_of(terminal)
 
 
 def test_channels_numbered_with_who_can_read_them(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
@@ -153,8 +154,8 @@ def test_features_show_what_is_built_and_switch(tmp_path: Path, run: Any) -> Non
 
 
 def test_every_message_in_the_window(tmp_path: Path, run: Any) -> None:
-    # Which one: the first, moderation-ban. Then C and staff, by its number on the channels list (4th), then #hex by L, then P off.
-    menu, terminal, path = opened(tmp_path, ["E"], keys("1"), ["C"], keys("4"), keys("1"), ["L"], keys("#123456"), keys("1"), ["P"], ["ESC"], ["ESC"])
+    # Which one: the first, moderation-ban. Then C and staff, by its number on the channels list (5th), then #hex by L, then P off.
+    menu, terminal, path = opened(tmp_path, ["E"], keys("1"), ["C"], keys("5"), keys("1"), ["L"], keys("#123456"), keys("1"), ["P"], ["ESC"], ["ESC"])
     run(menu.screen_discord())
     line = read_toml(path)["messages"]["moderation-ban"]
     assert line == {"channel": "staff", "colour": "#123456", "post": False, "ping": ""}
@@ -223,7 +224,8 @@ def test_the_start_loops_webhook_is_checked_before_it_is_kept(tmp_path: Path, ru
 
 
 def test_every_text_is_listed(tmp_path: Path, run: Any) -> None:
-    menu, terminal, _ = opened(tmp_path, ["X"], ["ENTER"] * 16, ["ESC"])  # a page at a time
+    pages = -(-2 * len(speakers.TEXTS) // PAGE)  # each text is two lines: its key and its words
+    menu, terminal, _ = opened(tmp_path, ["X"], ["ENTER"] * (pages - 1), ["ESC"])  # a page at a time
     run(menu.screen_discord())
     for key in speakers.TEXTS:
         assert key in text_of(terminal)
@@ -407,7 +409,7 @@ def test_the_token_stays_through_the_notes_step(tmp_path: Path) -> None:
     path = settings.parent / "discord.toml"
     make_file(path)
     set_token(path, TOKEN)
-    add_owner(path, "111", "the host")
+    add_faculty(path, "111", "the host")
     up_to_date(settings)
     data = read_toml(path)
-    assert data["token"] == TOKEN and data["ranks"]["owners"] == ["111"]
+    assert data["token"] == TOKEN and data["ranks"]["faculty"] == ["111"]
