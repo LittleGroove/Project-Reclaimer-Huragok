@@ -492,7 +492,8 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
                        ("G", "what a server plays: maps, variants, game types, playlists built from numbered lists, "
                              "playlists picked by player count, Workshop items and mods"),
                        ("I", "SteamCMD: finds or installs it, signs in once, tells every server; gets Halo 3's files "
-                             "(copied from MCC here, or downloaded), the campaign missions and ODST's"),
+                             "(copied from MCC here, or downloaded), the campaign missions and ODST's, and from "
+                             "Project Reclaimer 0.10 Reach's, Combat Evolved's and Halo 2's (from MCC)"),
                        ("D", "settings, a step at a time, no file formats to know: Huragok's own (how it runs, "
                              "roles and commands, Vergil's word list and banned names), and everything about each "
                              "server in groups, changed while it runs (or after the game when it needs a restart), "

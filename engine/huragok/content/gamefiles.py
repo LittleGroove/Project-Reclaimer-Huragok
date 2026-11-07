@@ -12,7 +12,8 @@ server's folder is found, and again before each start, Huragok reads what its de
   shared game/ first); with none, game/ is filled: copied from MCC when it's on this PC, otherwise downloaded with
   SteamCMD ([setup] download_game_files). With neither, the server waits ("needs Halo 3's files: press I")
   instead of failing its starts until it's FAULTED. ODST's files and the campaign missions, for a server that plays
-  them, the same way;
+  them, the same way; and from Project Reclaimer 0.10 Halo: Reach's, Combat Evolved's and Halo 2's, for a server
+  whose map or playlist names their maps (those come from MCC alone: their SteamCMD depots aren't known yet);
 - a [workshop] steamcmd that isn't on this PC: this folder's SteamCMD (the one I set up) in its place;
 - a ban list shared with other servers (bans = "../../bans.json", what [setup] share gave new servers up to 0.4.4):
   as the server is about to start (the moment it reads the path), a copy of it in the server's own folder, and the
@@ -32,15 +33,17 @@ import logging
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from .. import steam
 from ..core.files import write_atomic
+from ..games.bungie import GAMES
 from ..games.files import (
-    CAMPAIGN_MISSIONS, DEPOTS, LABELS, MAPS_FOR, SKIPPED, has_campaign, has_game_files, has_odst_files,
-    kinds_in_failure, missing,
+    CAMPAIGN_MISSIONS, DEPOTS, GAME_OF_KIND, HAS, KINDS, LABELS, MAPS_FOR, SKIPPED, add_reach_variants, has, has_campaign,
+    has_game_files, has_odst_files, has_reach_campaign, in_mcc, kinds_in_failure, lacking, missing, needed, needed_by,
+    plays_on,
 )
 from ..steam import is_mcc_install
 from .newserver import game_folders, link_tree, relative_posix
@@ -77,6 +80,11 @@ class ServerPaths:
     bans: Path
     steamcmd: str
     username: str
+    blocks: list[dict[str, Any]] = field(default_factory=list)  # its [[server]] blocks
+
+    def block(self, name: str) -> dict[str, Any]:
+        """The [[server]] block of that name ({} when it isn't there)."""
+        return next((b for b in self.blocks if str(b.get("name", "")).lower() == name.lower()), {})
 
 
 def read_paths(folder: Path, config_name: str) -> ServerPaths | None:
@@ -94,9 +102,10 @@ def read_paths(folder: Path, config_name: str) -> ServerPaths | None:
         return value if isinstance(value, str) and value.strip() else default
 
     game, content, bans = text("game", "game"), text("content", "content"), text("bans", "bans.json")
+    blocks = [b for b in data.get("server", []) if isinstance(b, dict)] if isinstance(data.get("server"), list) else []
     return ServerPaths(folder, config, game, (folder / game).resolve(), content, (folder / content).resolve(), bans,
                        (folder / bans).resolve(), str(workshop.get("steamcmd") or ""),
-                       str(workshop.get("username") or ""))
+                       str(workshop.get("username") or ""), blocks)
 
 
 UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -142,6 +151,38 @@ def ban_list_problems(path: Path) -> list[str]:
 def missing_kinds(paths: ServerPaths, plays_kind: str) -> list[str]:
     """What the server's game folder lacks for what it plays: halo3 first (the others go beside it)."""
     return missing(paths.game, plays_kind)
+
+
+def server_version(settings: Settings, server: ServerConfig) -> str | None:
+    """The version of the program the server runs (its `--version`, asked once per file), or None."""
+    from ..program.releases import program_of, program_version, readable
+
+    try:
+        program = program_of(settings, server)
+        version = program_version(settings, program) if program is not None else None
+    except OSError:
+        return None
+    return version if readable(version) else None
+
+
+def server_kinds(settings: Settings, server: ServerConfig, paths: ServerPaths,
+                 version: Callable[[], str | None] | None = None) -> list[str]:
+    """Every kind the server needs for what its [[server]] block (and its playlist) plays: Halo 3's first, then
+    each other game its maps are from, as far as the program it runs plays them. The program's version (`version`,
+    else its `--version`: slow the first time, never on the loop) is asked only when another game than Halo 3 and
+    ODST is named."""
+    block = paths.block(server.name)
+    kinds = needed_by(block, paths.folder) if block else needed(server.plays_kind)
+    if any(GAME_OF_KIND[kind] not in ("halo3", "odst") for kind in kinds):
+        known = version() if version is not None else server_version(settings, server)
+        kinds = [kind for kind in kinds if plays_on(kind, known)]
+    return kinds
+
+
+def server_missing(settings: Settings, server: ServerConfig, paths: ServerPaths,
+                   version: Callable[[], str | None] | None = None) -> list[str]:
+    """What the server's game folder lacks for what it plays: halo3 first (the others go beside it)."""
+    return lacking(paths.game, server_kinds(settings, server, paths, version))
 
 
 # Quick repairs: no copying, no downloading ----------------------------------------------------------------------
@@ -236,21 +277,39 @@ def fix_content(paths: ServerPaths) -> str | None:
     return said
 
 
-def fix_game_path(settings: Settings, paths: ServerPaths, plays_kind: str) -> str | None:
-    """A game folder that isn't there, or has no Halo 3 at all: pointed at one here that has what it needs. A
-    folder with Halo 3 in it is never swapped (missing ODST or campaign files are added to it instead)."""
+def fix_game_path(settings: Settings, paths: ServerPaths, plays_kind: str,
+                  kinds: list[str] | None = None) -> str | None:
+    """A game folder that isn't there, or has no Halo 3 at all: pointed at one here that has what it needs (`kinds`:
+    every kind it needs, the one with the most of them first). A folder with Halo 3 in it is never swapped, whatever
+    other game it lacks (ODST's, the campaign's, Reach's… files are added to it instead)."""
     from ..core.tomledit import set_top_key
 
     if (paths.game / "halo3" / "halo3.dll").is_file():
         return None
-    for game in game_folders(settings):
-        if game == paths.game or not has_game_files(game):
-            continue
-        if plays_kind == "odst" and not has_odst_files(game):
-            continue
+    candidates = [game for game in game_folders(settings) if game != paths.game and has_game_files(game)]
+    if plays_kind == "odst":
+        candidates = [game for game in candidates if has_odst_files(game)]
+    if kinds:  # the one with the most of what it needs, the first of those on a tie (the shared game/ comes first)
+        candidates.sort(key=lambda game: -sum(1 for kind in kinds if has(game, kind)))
+    for game in candidates:
         set_top_key(paths.config, "game", relative_posix(game, paths.folder))
         return f"its game folder ({paths.game_raw}) has no Halo 3 files here: it uses {game} now"
     return None
+
+
+def fix_reach_variants(settings: Settings, paths: ServerPaths) -> str | None:
+    """A game folder with Reach's files but not its game and map variants (0.10.0's `dedicated init --maps reach`
+    leaves them out, and with them Reach's own game types): added from MCC on this PC, when there is one. MCC's own
+    folder is never written to."""
+    reach = paths.game / "haloreach"
+    if not (reach / "haloreach.dll").is_file() or (reach / "hopper_game_variants").is_dir() or into_mcc(paths.game):
+        return None
+    from ..steam import find_mcc
+
+    mcc = find_mcc(settings.setup.mcc_folder)
+    if mcc is None or not (added := add_reach_variants(paths.game, mcc)):
+        return None
+    return f"Halo: Reach's game and map variants added to {paths.game} from MCC ({added} files)"
 
 
 def fix_steamcmd(settings: Settings, paths: ServerPaths) -> str | None:
@@ -275,8 +334,11 @@ def quick_repairs(settings: Settings, server: ServerConfig) -> list[str]:
     if paths is None:
         return []
     done = []
+    block = paths.block(server.name)
+    kinds = needed_by(block, paths.folder) if block else None  # no program asked: quick
     for fix in (lambda: fix_bans(settings, paths), lambda: fix_content(paths),
-                lambda: fix_game_path(settings, paths, server.plays_kind), lambda: fix_steamcmd(settings, paths)):
+                lambda: fix_game_path(settings, paths, server.plays_kind, kinds),
+                lambda: fix_steamcmd(settings, paths), lambda: fix_reach_variants(settings, paths)):
         try:
             said = fix()
         except OSError as error:  # TomlEditError too: the file is as it was
@@ -305,22 +367,35 @@ class Source:
 
 
 def mcc_source(settings: Settings, kind: str) -> Path | None:
+    """MCC on this PC, when it has `kind` installed (and Halo 3: `dedicated init` copies it with every game)."""
     from ..steam import find_mcc
 
     mcc = find_mcc(settings.setup.mcc_folder)
-    if mcc is None:
-        return None
-    needed = {"halo3": mcc / "halo3" / "halo3.dll", "campaign": mcc / "halo3" / "maps" / "010_jungle.map",
-              "odst": mcc / "halo3odst" / "halo3odst.dll"}[kind]
-    return mcc if needed.is_file() else None
+    return mcc if in_mcc(mcc, kind) else None
+
+
+def mcc_only(kind: str) -> str:
+    """Why a kind with no known SteamCMD depot can't be got here: Reach's, CE's and Halo 2's come from MCC."""
+    game = GAMES[GAME_OF_KIND[kind]]
+    return (f"{LABELS[kind]} come from your own MCC installation for now (no SteamCMD download yet): install "
+            f"{game.title} in MCC on this PC (Steam, MCC, Properties, DLC), or name MCC's folder as [setup] "
+            "mcc_folder in settings.toml")
+
+
+def no_way(kind: str, why: str) -> str:
+    """Why there's no way to get `kind` here, from sources()' why."""
+    return f"MCC isn't on this PC and {why}" if kind in DEPOTS else why
 
 
 def sources(settings: Settings, kind: str, *, downloads: bool | None = None) -> tuple[list[Source], str]:
-    """Every way to get `kind` here, best first, and why there's no SteamCMD way when there isn't."""
+    """Every way to get `kind` here, best first, and why there's no SteamCMD way when there isn't (for a kind
+    SteamCMD can't get: why MCC is the only way)."""
     found: list[Source] = []
     mcc = mcc_source(settings, kind)
     if mcc is not None:
         found.append(Source("mcc", mcc))
+    if kind not in DEPOTS:
+        return found, mcc_only(kind)
     allowed = settings.setup.download_game_files if downloads is None else downloads
     executable, _ = steam.find_steamcmd(settings.home, settings.setup.steamcmd)
     username = settings.setup.steam_username
@@ -346,10 +421,20 @@ def gather(settings: Settings, kind: str, source: Source, stage: Path, tool: Cal
     if stage.exists():
         shutil.rmtree(stage)
     if source.how == "mcc":
+        program = tool()
+        if GAME_OF_KIND[kind] not in ("halo3", "odst"):  # `--maps reach` is 0.10's: an older one takes it for a map
+            version = program_version_of(program)
+            if not plays_on(kind, version):
+                raise OSError(f"the server program here is {version}: {LABELS[kind]} need Project Reclaimer "
+                              f"{GAMES[GAME_OF_KIND[kind]].since} or later (U updates it)")
         say(f"{LABELS[kind]}: {source.text(kind)}")
-        result = tool().init(stage, mcc=str(source.path), maps=MAPS_FOR[kind])
+        result = program.init(stage, mcc=str(source.path), maps=MAPS_FOR[kind])
         if not result.ok:
             raise OSError(f"dedicated init couldn't copy them: {result.problem}")
+        if GAME_OF_KIND[kind] == "reach":
+            add_reach_variants(stage / "game", source.path)
+    elif kind not in DEPOTS:
+        raise OSError(mcc_only(kind))
     else:
         depot = DEPOTS[kind]
         need = depot.download + 0.5e9
@@ -368,10 +453,18 @@ def gather(settings: Settings, kind: str, source: Source, stage: Path, tool: Cal
         say(f"{LABELS[kind]}: {kept} files kept (sound and video left out)")
         shutil.rmtree(downloaded, ignore_errors=True)
     files = stage / "game"
-    ready = {"halo3": has_game_files, "odst": has_odst_files, "campaign": has_campaign}[kind]
-    if not ready(files):
+    if not HAS[kind](files):
         raise OSError(f"{LABELS[kind]} didn't arrive complete")
     return files
+
+
+def program_version_of(program: Dedicated) -> str | None:
+    """A runner's program version (`--version`, asked once per file), or None when it doesn't say."""
+    from ..program.dedicated import cached_version
+    from ..program.releases import readable
+
+    version = cached_version(program.executable, program.template)
+    return version if readable(version) else None
 
 
 def fetch(settings: Settings, kind: str, source: Source, target: Path, tool: Callable[[], Dedicated],
@@ -413,7 +506,7 @@ MCC_REFUSED = ("{folder} is MCC's own folder (or a link to it), and Huragok neve
 
 
 def shared_target(settings: Settings, kind: str) -> tuple[Path | None, str]:
-    """Where I puts `kind`: this folder's shared game/ (Halo 3 first: ODST and the campaign go beside it)."""
+    """Where I puts `kind`: this folder's shared game/ (Halo 3 first: every other game goes beside it)."""
     game = settings.home / "game"
     if into_mcc(game):
         return None, MCC_REFUSED.format(folder=game, what=LABELS[kind])
@@ -422,10 +515,42 @@ def shared_target(settings: Settings, kind: str) -> tuple[Path | None, str]:
     return game, ""
 
 
-def game_status(settings: Settings) -> list[tuple[str, str, str]]:
-    """What I shows: (what, how it stands, colour) for this folder's shared game/ and every server's game folder."""
+def root_version(settings: Settings) -> str | None:
+    """The version of the program this folder's commands run (the newest copy here), or None when it isn't known."""
+    from ..program.dedicated import DedicatedError, tool_for
+
+    try:
+        return program_version_of(tool_for(settings))
+    except (DedicatedError, OSError):
+        return None
+
+
+def games_text(game: Path, version: str | None = None) -> str:
+    """One game folder's games as I says them: "Halo 3, 27 multiplayer maps · campaign · ODST · Reach · no CE ·
+    no Halo 2". Reach's, CE's and Halo 2's only for a program that plays them (`version`; None: unknown, it does)."""
+    maps = game / "halo3" / "maps"
+    forge = (maps / "campaign.map").is_file() and (maps / "040_voi.map").is_file()
+    bits = [f"Halo 3, {multiplayer_maps(game)} multiplayer maps",
+            "every campaign mission" if has_campaign(game) else
+            "Forge's campaign files (no missions)" if forge else "no campaign files",
+            "ODST" if has_odst_files(game) else "no ODST"]
+    for key in ("reach", "halo1", "halo2"):
+        if not plays_on(key, version):
+            continue
+        short = GAMES[key].short
+        if not has(game, key):
+            bits.append(f"no {short}")
+        else:
+            bits.append(f"{short} with its campaign" if key == "reach" and has_reach_campaign(game) else short)
+    return " · ".join(bits)
+
+
+def game_status(settings: Settings, version: str | None = None) -> list[tuple[str, str, str]]:
+    """What I shows: (what, how it stands, colour) for this folder's shared game/ and every server's game folder.
+    `version`: the program's (None: the newest copy here is asked, once per file). Slow-ish: run it in a thread."""
     from .upkeep import servers_using
 
+    version = version or root_version(settings)
     rows: list[tuple[str, str, str]] = []
     folders: dict[Path, list[str]] = {}
     lacking: list[str] = []
@@ -434,7 +559,7 @@ def game_status(settings: Settings) -> list[tuple[str, str, str]]:
         if paths is None:
             continue
         folders.setdefault(paths.game, []).append(server.name)
-        if missing := missing_kinds(paths, server.plays_kind):
+        if missing := server_missing(settings, server, paths):
             lacking.append(f"{server.name} ({', '.join(LABELS[k] for k in missing)})")
     shared = (settings.home / "game").resolve()
     for game in [shared, *[g for g in folders if g != shared]]:
@@ -444,13 +569,7 @@ def game_status(settings: Settings) -> list[tuple[str, str, str]]:
         if not has_game_files(game):
             state, colour = "no Halo 3 files" + ("" if game.exists() else " (not there)"), "yellow" if users else "gray"
         else:
-            maps = game / "halo3" / "maps"
-            forge = (maps / "campaign.map").is_file() and (maps / "040_voi.map").is_file()
-            bits = [f"Halo 3, {multiplayer_maps(game)} multiplayer maps",
-                    "every campaign mission" if has_campaign(game) else
-                    "Forge's campaign files (no missions)" if forge else "no campaign files",
-                    "ODST" if has_odst_files(game) else "no ODST"]
-            state, colour = " · ".join(bits), "green"
+            state, colour = games_text(game, version), "green"
         used = f" · used by {len(users)} server(s)" if users else " · no server uses it"
         label = "shared game/" if game == shared else "game folder"
         rows.append((label, f"{game}: {state}{used}", colour))
@@ -501,7 +620,39 @@ class GameFiles:
         self.fetched: dict[str, float] = {}  # kind -> when its files last arrived
         self.forced: dict[str, set[str]] = {}  # server -> kinds a failed start said are missing
         self.tasks: set[asyncio.Task[None]] = set()
+        self.versions: dict[tuple[str, int, int], str | None] = {}  # a program file (as it is) -> its version
         bus.subscribe("server.start_failed", self._on_start_failed)
+
+    def _version(self, server: ServerConfig) -> str | None:
+        """The version of the program the server runs, once it's known; None (plays everything) until then: the
+        first `--version` runs in a thread, never on the loop, and a new program file is asked again."""
+        from ..program.releases import program_of
+
+        program = program_of(self.settings, server)
+        try:
+            info = program.stat() if program is not None else None
+        except OSError:
+            info = None
+        if program is None or info is None:
+            return None
+        key = (str(program), info.st_mtime_ns, info.st_size)
+        if key not in self.versions:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # no loop (the command line): asked here
+                self.versions[key] = server_version(self.settings, server)
+                return self.versions[key]
+            self.versions[key] = None
+
+            async def look() -> None:
+                self.versions[key] = await asyncio.to_thread(server_version, self.settings, server)
+                if self.release is not None:
+                    self.release()  # the servers waiting look again with it
+
+            task = loop.create_task(look())
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+        return self.versions[key]
 
     @property
     def here(self) -> bool:
@@ -545,8 +696,8 @@ class GameFiles:
         paths = read_paths(server.folder, self.settings.config_name)
         if paths is None:
             return None, []
-        kinds = missing_kinds(paths, server.plays_kind)
-        for kind in sorted(self.forced.get(server.name, set())):
+        kinds = server_missing(self.settings, server, paths, lambda: self._version(server))
+        for kind in sorted(self.forced.get(server.name, set()), key=KINDS.index):
             if kind not in kinds:
                 kinds.append(kind)
         return paths, kinds
@@ -593,10 +744,11 @@ class GameFiles:
             if source is None:
                 found, why = await asyncio.to_thread(sources, self.settings, kind)
                 if not found:
-                    self.failed[kind] = (time.monotonic(), f"MCC isn't on this PC and {why}")
-                    log.error("%s are missing and there's no way to get them here: MCC isn't on this PC and %s. The "
-                              "servers that need them wait; press I (copy them from MCC on a PC that has it, or set "
-                              "up SteamCMD to download them)", LABELS[kind], why)
+                    self.failed[kind] = (time.monotonic(), no_way(kind, why))
+                    log.error("%s are missing and there's no way to get them here: %s. The servers that need them "
+                              "wait; press I (%s)", LABELS[kind], no_way(kind, why),
+                              "copy them from MCC on a PC that has it, or set up SteamCMD to download them"
+                              if kind in DEPOTS else "it copies them once MCC has them")
                     return
                 source = found[0]
             self.getting[kind] = source.text(kind)

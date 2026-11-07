@@ -398,7 +398,7 @@ class ProgramUpdateService:
                 return path
             folder = self.settings.records / DOWNLOADS
             path = await asyncio.to_thread(releases.download_program, release, folder)
-            for other in folder.glob("*.exe"):
+            for other in [*folder.glob("*.exe"), *folder.glob(f"*{releases.ARCHIVE}")]:  # Linux's own: a .tar.gz
                 if other != path:
                     other.unlink(missing_ok=True)
             self.downloads = {release.version: path}

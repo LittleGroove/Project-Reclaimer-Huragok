@@ -1,7 +1,10 @@
 """Read the server's files by path, the same way on Windows and Linux.
 
 - data/<server>/server.log: known lines become log.* events (PATTERNS). It rolls
-  over to server.log.old at 20 MB; the tail follows. Lines start with the UTC time.
+  over to server.log.old at 20 MB (0.10: to server.previous.log as the server starts);
+  the tail follows. Lines start with the UTC time (0.9), or from 0.10 with what
+  they're about ("[server] ", "[rcon] ", "[online] ", "[looks] "…): some in new words
+  (TAGGED), some as before with a small first letter ("[server] playlist selected: …").
 - data/<server>/status.json: rewritten every 5 s while the server runs. Its
   `updated` going stale is the surest sign of a stuck server.
 - the built-in supervisor's console (when our backend runs it): CONSOLE_PATTERNS.
@@ -29,6 +32,35 @@ from .state import ServerState
 log = logging.getLogger(__name__)
 
 CLOCK = r"(?:(?P<clock>\d\d:\d\d:\d\d) )?"
+
+# 0.10's "[server] ", "[rcon] "… at the start of every line. A line of chat carries what players typed: never one
+# of the server's own lines, whatever it says (0.10's "[chat] line …", and "[all] Bravo: …" as the simulated servers
+# write one).
+TAG = re.compile(r"\[(?P<tag>[a-z][a-z0-9_-]*)\] ")
+SAYS = {"chat", "all", "team"}
+
+# 0.10's own lines, by their tag: (tag, event name, pattern), looked at before the others. Looked at for their tag
+# alone, so what someone typed (a command echoed) can never pass for another tag's line.
+TAGGED: list[tuple[str, str, re.Pattern[str]]] = [
+    # A console command echoed ("[rcon] 127.0.0.1:59795: immune list"), then a tool signing in.
+    ("rcon", "log.rcon_command", re.compile(r"^(?P<address>\S+?)(?: as (?P<by>.+?))?: (?P<command>.+)$")),
+    ("rcon", "log.rcon_signin", re.compile(r"^(?P<address>\S+) signed in \((?P<how>[^)]*)\)")),
+    # A player getting in: their machine connecting (its handle), the server letting them in under a number and their
+    # network key (0.10's player ID; no name yet), the name once they've proved who they are, and their leaving.
+    ("online", "log.connected", re.compile(r"^connected to (?P<handle>0x[0-9a-fA-F]+) at (?P<address>\S+?)\.?$")),
+    ("server", "log.admitted", re.compile(
+        r"^player #(?P<number>\d+) joined: (?P<id>[0-9a-fA-F]{64}) from (?P<address>\S+?)[.,]?(?: .*)?$")),
+    ("looks", "log.identified", re.compile(
+        r"^(?P<handle>0x[0-9a-fA-F]+)'s player (?P<name>.+) proved their identity\.?$")),
+    ("server", "log.left", re.compile(r"^player #(?P<number>\d+) \((?P<name>.*?)\) left(?:: (?P<reason>.+?))?\.?$")),
+    ("online", "log.online", re.compile(r"^taking joins\.?$")),
+    # The ballot names its games after the playlist: "Race Tests (Race on Road Course, Death Race on Grand Prix)".
+    ("server", "log.ballot_opened", re.compile(r"^playlist lobby voting opened: (?P<playlist>.+?) \((?P<choices>.+)\)$")),
+    ("server", "log.countdown", re.compile(
+        r"^(?P<players>\d+) player\(s\) in the lobby: (?P<game>.+) starts in (?P<seconds>\d+) s\.?$")),
+    ("server", "log.early_end", re.compile(r"^(?P<text>every player left: ending the game)\.?$")),
+    ("stats", "log.stats_reporting", re.compile(r"^reporting to (?P<url>\S+?) as (?P<key>\S+?)\.?$")),
+]
 
 # Lines that carry someone's own words: a console command echoed ("RCON 127.0.0.1:60106: say …", or "… as
 # Alice: …"), a refused join with the ban's reason, a kick or ban with its reason. They're looked at first, so
@@ -94,6 +126,10 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("log.player_time", re.compile(r"^Shell player-time notification: slot=(?P<slot>\d+), seconds=(?P<seconds>[\d.]+)")),
 ]
 
+# PATTERNS' lines only 0.9 writes that start with a name ("Bravo connected from …"): never looked for in a 0.10 line,
+# where a kick's reason or a vote's text could say anything (0.10 says these its own way: TAGGED).
+OLD_ONLY = {"log.connected", "log.joined", "log.vote_refused"}
+
 # server.log: what the program says about mods and content it couldn't use, as log.mod_problem events (kind, text).
 # Some come again every couple of minutes, as the program looks at its content again: the Supervisor says each once a
 # start. (A "Refused custom cache data of …" line can't be told from a refused player's here: see ECHOES.)
@@ -148,7 +184,8 @@ CRASH_KINDS = [
 
 # Groups that are text even when they're all digits: a player called "007" is not the number 7.
 TEXT_GROUPS = {"clock", "id", "name", "caller", "by", "text", "reason", "server", "address", "command", "details",
-               "path", "version", "how", "unit", "playlist", "picked", "kind", "mode"}  # names: "1.10" stays "1.10"
+               "path", "version", "how", "unit", "playlist", "picked", "kind", "mode", "handle", "game", "choices",
+               "url", "key"}  # names: "1.10" stays "1.10"
 
 
 def _clean(groups: dict[str, Any]) -> dict[str, Any]:
@@ -167,28 +204,45 @@ def _clean(groups: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _event(name: str, data: dict[str, Any], clock: str | None) -> tuple[str, dict[str, Any]]:
+    if name == "log.rcon_signin":
+        data["host_slot"] = "server's machine" in data.get("how", "")
+    if name == "log.countdown":
+        data.setdefault("what", "started")  # 0.10's "1 player(s) in the lobby: … starts in 3 s"
+    if "id" in data:
+        data["id"] = data["id"].lower()
+    if clock:
+        data["clock"] = clock
+    return name, data
+
+
 def parse_log_line(line: str) -> tuple[str, dict[str, Any]] | None:
     """A server.log line -> (event name, data), or None if it isn't one we know."""
     clock = None
     if re.match(r"\d\d:\d\d:\d\d ", line):
         clock, line = line[:8], line[9:]
+    tag = None
+    if found := TAG.match(line):
+        tag, line = found["tag"], line[found.end():]
+        if tag in SAYS:
+            return None
+        for of, name, pattern in TAGGED:
+            if of == tag and (match := pattern.match(line)):
+                return _event(name, _clean(match.groupdict()), clock)
+    # 0.9's words, which 0.10 writes with a small first letter after its tag ("[server] playlist selected: …")
+    text = line[:1].upper() + line[1:] if tag else line
     for name, pattern in ECHOES:
-        if match := pattern.match(line):
+        if match := pattern.match(text):
             if name is None:
                 return None
             return name, {**_clean(match.groupdict()), **({"clock": clock} if clock else {})}
     for name, pattern in PATTERNS:
-        if match := pattern.match(line):
-            data = _clean(match.groupdict())
-            if name == "log.rcon_signin":
-                data["host_slot"] = "server's machine" in data.get("how", "")
-            if name == "log.connected":
-                data["id"] = data["id"].lower()
-            if clock:
-                data["clock"] = clock
-            return name, data
+        if tag and name in OLD_ONLY:
+            continue
+        if match := pattern.match(text):
+            return _event(name, _clean(match.groupdict()), clock)
     for kind, pattern in MOD_LINES:
-        if match := pattern.match(line):
+        if match := pattern.match(text):
             data = {key: value for key, value in match.groupdict().items() if value is not None}
             return "log.mod_problem", {**data, "kind": kind, "text": line.strip(),
                                        **({"clock": clock} if clock else {})}
@@ -255,9 +309,9 @@ class FileTail:
     it's read from its start (a new server's first `Online:` and connections).
     """
 
-    def __init__(self, path: Path, rotated: Path | None = None, from_start: bool = False) -> None:
+    def __init__(self, path: Path, rotated: Path | tuple[Path, ...] | None = None, from_start: bool = False) -> None:
         self.path = path
-        self.rotated = rotated
+        self.rotated = (rotated,) if isinstance(rotated, Path) else tuple(rotated or ())  # where it may be renamed to
         self._offset: int | None = 0 if from_start else None
         self._identity: tuple[int, int] | None = None
         self._partial = b""
@@ -300,17 +354,19 @@ class FileTail:
 
     def _rest_of_rotated(self) -> bytes | None:
         """What was added to the file we followed after our last look, now that it's been renamed."""
-        if self.rotated is None or self._identity is None or self._offset is None:
+        if self._identity is None or self._offset is None:
             return None
-        try:
-            old = self.rotated.stat()
-            if (old.st_dev, old.st_ino) != self._identity:
-                return None
-            with open_shared(self.rotated) as file:
-                file.seek(self._offset)
-                return file.read()
-        except OSError:
-            return None
+        for rotated in self.rotated:
+            try:
+                old = rotated.stat()
+                if (old.st_dev, old.st_ino) != self._identity:
+                    continue
+                with open_shared(rotated) as file:
+                    file.seek(self._offset)
+                    return file.read()
+            except OSError:
+                continue
+        return None
 
 
 def read_status(path: Path) -> dict[str, Any] | None:
@@ -332,13 +388,21 @@ class FileWatcher:
         self.bus = bus
         self.poll_seconds = poll_seconds
         self.status_seconds = status_seconds
-        self.tail = FileTail(server.log_path, server.data_dir / "server.log.old")
+        # 0.9 rolls it over to server.log.old at 20 MB; 0.10 moves it to server.previous.log as it starts
+        self.tail = FileTail(server.log_path, (server.data_dir / "server.log.old",
+                                               server.data_dir / "server.previous.log"))
+        self.keys: dict[int, str] = {}  # 0.10: each player number's network key, from the line letting them in
 
     def poll_log(self) -> None:
         for line in self.tail.read_lines():
             parsed = parse_log_line(line)
             if parsed:
                 name, data = parsed
+                # 0.10's leave names the player by number and name: their key goes with it, as the console's has it
+                if name == "log.admitted":
+                    self.keys[data["number"]] = data["id"]
+                elif name == "log.left" and (key := self.keys.pop(data["number"], None)):
+                    data["id"] = key
                 self.bus.emit(name, self.server.name, **data)
 
     def poll_status(self) -> None:

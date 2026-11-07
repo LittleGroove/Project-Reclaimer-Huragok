@@ -44,3 +44,36 @@ def test_stop_calls_off_what_is_still_running_but_never_its_caller(run) -> None:
         assert slow.cancelled() and not background.running()
 
     run(scenario())
+
+
+def test_a_wait_ends_with_its_task_even_as_what_it_waits_for_comes() -> None:
+    """The Linux check, 6 November 2026: asyncio.wait_for(event.wait(), t) on Python 3.11 swallowed a cancel that came
+    as the event was set, so a loop waiting so (the Discord outbox, a console's reconnect) never ended, and Huragok's
+    stop waited for it for good. wait_until is cancelled whatever comes with the cancel."""
+
+    async def scenario() -> None:
+        event = asyncio.Event()
+        ended: list[str] = []
+
+        async def loop() -> None:
+            while True:
+                await background.wait_until(event, 30)
+                ended.append("woken")
+                event.clear()
+
+        for _ in range(50):
+            task = asyncio.ensure_future(loop())
+            await asyncio.sleep(0)  # waiting now
+            event.set()
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, 2)
+            except asyncio.CancelledError:
+                pass
+            assert task.cancelled()
+        event.clear()
+        assert await background.wait_until(event, 0.01) is False
+        event.set()
+        assert await background.wait_until(event, None) is True
+
+    asyncio.run(scenario())

@@ -17,7 +17,12 @@ that answers but is broken, or runs badly. Each minute it looks for these cases:
              admitted who was still on JOIN_GRACE after connecting: that event
              comes as the player is let in, and a dead server keeps letting players
              in and dropping each about 20 s later (none of 300 such connections on
-             the live log's dead stretches lasted 80 s).
+             the live log's dead stretches lasted 80 s). On 0.10 a connection is
+             the log's "[online] connected to 0x… at …" (a player's machine), and
+             there's no roster line: a join is a player let in who stayed, the
+             console's join event or the log's own "[server] player #N joined: …"
+             (one admission when both say it), with the log's "[server] player #N
+             (…) left" as a leave, so it's judged with the console away too.
   stuck      on the scoreboard after a game with players waiting, for stuck_minutes.
              When healthy, the live server had its next game loaded and running
              within 109 s of a game ending (51 game ends; 10 s of that is the load).
@@ -187,9 +192,9 @@ class Watchdog(Part):
         self.samples: dict[str, deque[Sample]] = {}
         self.upload: dict[str, Event] = {}
         self.drops: dict[str, Event] = {}
-        self.connects: dict[str, deque[tuple[float, str]]] = {}  # (when, player ID from the log line)
+        self.connects: dict[str, deque[tuple[float, str]]] = {}  # (when, player ID from the log line; 0.10's has none)
         self.joins: dict[str, deque[float]] = {}  # the log's roster lines (and ODST's)
-        self.admitted: dict[str, deque[Admission]] = {}  # the console's join events
+        self.admitted: dict[str, deque[Admission]] = {}  # the console's join events (and 0.10's log lines for them)
         self.memory: dict[str, float] = {}
         # What each run used once settled: the memory case is growth past memory_mb from there, not a limit below what
         # a fresh server uses (that restarted it after every game, the host's call 2 Nov 2026)
@@ -215,22 +220,26 @@ class Watchdog(Part):
         self.connects.setdefault(event.server or "", deque(maxlen=500)).append(
             (event.time, str(event.get("id") or "").lower()))
 
-    @on("log.joined", "rcon.join")
+    @on("log.joined", "rcon.join", "log.admitted")
     async def joined(self, event: Event) -> None:
-        """A player got in (the log's roster line, or ODST's own), or the console let one in (its join event, the one
-        an ODST server is sure to send whatever its log says): that one counts once they've stayed (findings)."""
+        """A player got in (the log's roster line, or ODST's own), or the server let one in (the console's join event,
+        the one an ODST server is sure to send whatever its log says, or 0.10's log line for it): that one counts once
+        they've stayed (findings)."""
         server = event.server or ""
-        if event.name != "rcon.join":
+        if event.name == "log.joined":
             self.joins.setdefault(server, deque(maxlen=500)).append(event.time)
             return
         number, player_id = _number(event.get("number")), str(event.get("id") or "").lower()
         admitted = self.admitted.setdefault(server, deque(maxlen=500))
-        for earlier in admitted:  # let in again: whatever they were on before has ended
+        for earlier in admitted:
             if earlier.left is None and earlier.same(number, player_id):
-                earlier.left = event.time
+                if (abs(event.time - earlier.time) <= CONNECT_SLACK and earlier.number == number
+                        and earlier.id == player_id):
+                    return  # the same admission: the console's join event and 0.10's log line both say it
+                earlier.left = event.time  # let in again: whatever they were on before has ended
         admitted.append(Admission(event.time, number, player_id))
 
-    @on("rcon.leave")
+    @on("rcon.leave", "log.left")
     async def left(self, event: Event) -> None:
         number, player_id = _number(event.get("number")), str(event.get("id") or "").lower()
         for admission in reversed(self.admitted.get(event.server or "", ())):

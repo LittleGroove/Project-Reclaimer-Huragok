@@ -1,0 +1,16 @@
+# A starter package: Halo 3's, Halo: Reach's, Halo: Combat Evolved's and Halo 2's maps in one vote (Project
+# Reclaimer 0.10 and later). Combat Evolved's and Halo 2's maps play only their own game types. The server needs
+# each game's files beside Halo 3's: Huragok adds them from your MCC as the server is made (each game installed
+# in MCC: Steam, MCC, Properties, DLC), or later with I (Add Halo: Reach's files, and the others).
+name = "Every Halo"
+description = "Halo 3, Reach, Combat Evolved and Halo 2 maps in one vote, 16 players (Project Reclaimer 0.10)"
+version = 1
+needs_maps = ["Guardian", "The Pit", "Narrows"]
+needs_games = ["reach", "halo1", "halo2"]
+
+[server]
+playlist = "playlists/every-halo.playlist.json"
+max_players = 16
+
+[workshop]
+items = []

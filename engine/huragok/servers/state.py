@@ -7,6 +7,12 @@ way wins over it: the reply may have been made before the event happened.
 
 While RCON is disconnected the picture stays as it was last seen (the window shows
 it), but `connected` is False: nothing should be judged on it then.
+
+From Project Reclaimer 0.10 a player joins with no name (the console's `join` says
+""): it's known once they've proved who they are, which the server's log says
+("[looks] 0x…'s player Bravo proved their identity", log.identified). The console's
+`players` is asked then, and every NAMELESS_SECONDS while someone who joined lately
+has none; the name, once there, is said as a state.named event (number, id, name).
 """
 
 from __future__ import annotations
@@ -17,12 +23,15 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..core.background import wait_until
 from ..core.events import Event, EventBus
 from ..core.text import PLAYER_ID
 from ..rcon import RconClient, RconError
 
 log = logging.getLogger(__name__)
 
+NAMELESS_SECONDS = 5.0  # `players` this often while a player who joined lately has no name yet (0.10)…
+NAMELESS_FOR = 60.0  # …for this long after their join: one whose name never comes isn't asked about all game
 
 
 @dataclass
@@ -120,11 +129,13 @@ class StateTracker:
         self._refresh_now: dict[str, asyncio.Event] = {}
         self._loops: dict[str, asyncio.Task[None]] | None = None  # None until run()
         self._meanwhile: dict[str, list[Event]] = {}  # join, leave and phase events while a refresh is under way
+        self._unnamed: dict[str, set[str]] = {}  # player IDs that joined with no name (0.10), until it's known
         for name, client in list(clients.items()):
             self.add(name, client)
         bus.subscribe("rcon.*", self._on_event)
         for name in ("log.ballot_opened", "log.ballot_picked", "log.game_overrides"):
             bus.subscribe(name, self._on_ballot)
+        bus.subscribe("log.identified", self._on_identified)
 
     def add(self, name: str, client: RconClient) -> ServerState:
         self.clients[name] = client
@@ -140,6 +151,7 @@ class StateTracker:
             task.cancel()
         self.states.pop(name, None)
         self._refresh_now.pop(name, None)
+        self._unnamed.pop(name, None)
         self.clients.pop(name, None)
 
     def _on_ballot(self, event: Event) -> None:
@@ -170,6 +182,7 @@ class StateTracker:
             self._refresh_now[state.name].set()
         elif name in ("rcon.join", "rcon.leave"):
             self._apply_player_event(state, event)
+            self._await_name(state, event)
         elif name in ("rcon.mute", "rcon.unmute"):
             player = state.player_by_id(str(data.get("id", "")))
             if player:
@@ -189,6 +202,49 @@ class StateTracker:
                 state.phase, state.phase_since = data.get("phase"), event.time
             state.map, state.mode = data.get("map", state.map), data.get("mode", state.mode)
 
+    # 0.10: names that come after the join ---------------------------------------------------------------------------
+
+    def _await_name(self, state: ServerState, event: Event) -> None:
+        """A join with no name (0.10) waits for it: `players` is asked again in NAMELESS_SECONDS, sooner if the log says
+        they've proved who they are. A join with a name, a leave, or a player a `players` reply named already (the
+        join's listeners find it in the picture), waits for nothing."""
+        player_id = str(event.get("id") or "").lower()
+        waiting = self._unnamed.setdefault(state.name, set())
+        player = state.player_by_id(player_id) if player_id else None
+        if event.name != "rcon.join" or player is None or player.name:
+            waiting.discard(player_id)
+            return
+        waiting.add(player_id)
+        wake = self._refresh_now.get(state.name)
+        try:
+            if wake is not None:
+                asyncio.get_running_loop().call_later(NAMELESS_SECONDS, wake.set)
+        except RuntimeError:  # no loop running (a test feeding events by hand): the next refresh asks
+            pass
+
+    def _on_identified(self, event: Event) -> None:
+        """The log says a player proved who they are: their name is the console's to give now."""
+        wake = self._refresh_now.get(event.server or "")
+        if wake is not None and self._unnamed.get(event.server or ""):
+            wake.set()
+
+    def _names_known(self, state: ServerState) -> None:
+        """Each player who joined with no name and has one now: a state.named event, once."""
+        waiting = self._unnamed.get(state.name)
+        if not waiting:
+            return
+        for player in list(state.players.values()):
+            if player.name and player.id in waiting:
+                waiting.discard(player.id)
+                self.bus.emit("state.named", state.name, number=player.number, id=player.id, name=player.name)
+
+    def _wait(self, name: str) -> float:
+        """Seconds to the next refresh: sooner while someone who joined lately has no name yet (0.10)."""
+        state, now = self.states.get(name), time.time()
+        if state is not None and any(not p.name and now - p.joined < NAMELESS_FOR for p in state.players.values()):
+            return min(self.refresh_seconds, NAMELESS_SECONDS)
+        return self.refresh_seconds
+
     async def run(self) -> None:
         self._loops = {name: asyncio.ensure_future(self._refresh_loop(name)) for name in self.clients}
         try:
@@ -201,10 +257,7 @@ class StateTracker:
     async def _refresh_loop(self, name: str) -> None:
         wake = self._refresh_now[name]
         while True:
-            try:
-                await asyncio.wait_for(wake.wait(), self.refresh_seconds)
-            except TimeoutError:
-                pass
+            await wait_until(wake, self._wait(name))
             wake.clear()
             client = self.clients.get(name)
             if client is not None and client.connected:
@@ -232,6 +285,9 @@ class StateTracker:
                 for event in meanwhile:  # joins and leaves since we asked happened after the reply was made
                     if event.name != "rcon.phase":
                         self._apply_player_event(state, event)
+                self._names_known(state)
+                if waiting := self._unnamed.get(name):  # whoever isn't on any more waits for nothing
+                    waiting &= {p.id for p in state.players.values()}
             admins = await client.command("admin")
             state.last_rcon_ok = time.monotonic()
             if admins.ok and isinstance(admins.data, dict):
@@ -246,9 +302,11 @@ class StateTracker:
     def _apply_player_event(state: ServerState, event: Event) -> None:
         data = event.data
         if event.name == "rcon.join":
-            number = int(data.get("number", 0))
-            state.players[number] = Player(number, str(data.get("name", "")), str(data.get("id", "")).lower(),
-                                           data.get("ip"), bool(data.get("admin")))
+            number, player_id = int(data.get("number", 0)), str(data.get("id", "")).lower()
+            name, old = str(data.get("name") or ""), state.players.get(number)
+            if not name and old is not None and old.id == player_id:
+                name = old.name  # 0.10's join names nobody: the name `players` gave them stays
+            state.players[number] = Player(number, name, player_id, data.get("ip"), bool(data.get("admin")))
         elif event.name == "rcon.leave":
             state.players.pop(int(data.get("number", -1)), None)
 

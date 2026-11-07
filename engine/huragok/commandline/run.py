@@ -144,13 +144,26 @@ def run_huragok(args: argparse.Namespace) -> int:
 def bring_files_up_to_date(args: argparse.Namespace, settings: Settings) -> Settings:
     """The host's files in this version's form (updates/hostfiles.py), under the lock and before anything looks after a
     server: settings.toml read again when a step changed it. Nothing here may keep Huragok from starting."""
+    from ..core.serverfolders import find_server_folders
+    from ..program.environment import take_over
     from ..updates.hostfiles import bring_up_to_date
 
     try:
         changed = bring_up_to_date(settings.path, settings.records, settings.packages_folder)
     except Exception:  # noqa: BLE001 - the files as they are still work: this version reads every older form
         logging.getLogger("huragok").exception("Couldn't bring the files up to date; carrying on with them as they are")
-        return settings
+        changed = False
+    try:
+        # A content folder (or Workshop items…) set in the environment, into the servers' files before any is looked
+        # after: Huragok and the program must agree where the mods are. Every server folder there is, not only those
+        # running: one switched on later used the variable's folder too (audit 6 November).
+        # Not with docker: the containers' environment is compose's, not Huragok's (the host's call, 6 November).
+        if settings.backend != "docker":
+            folders = find_server_folders(settings.home, settings.servers_folder, settings.single_folder,
+                                          settings.config_name)
+            changed = bool(take_over(folders, settings.config_name, settings.records)) or changed
+    except Exception:  # noqa: BLE001 - never kept from starting: the variables are left out all the same
+        logging.getLogger("huragok").exception("Couldn't take over the RECLAIMER_DEDICATED_ settings set here")
     if not changed:
         return settings
     try:

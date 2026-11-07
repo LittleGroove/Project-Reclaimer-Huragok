@@ -58,8 +58,11 @@ room for every time listed (`3` or more here). It counts every strike, kicks or 
 on a line that kicks by then, each strike after it removes them, then mutes them for
 good once they're back (`mean` above). Without it, the mutes are as they always were:
 the last time repeats until the kicks, and `perm` as the last time is muted for good
-from that mute on (use one or the other). A line can still ban after it (`| 12 |`), as
-long as the ban comes later.
+from that mute on (use one or the other). A line can still ban after it (`| 12 |`); a
+ban at or before that number comes first, so the mute for good is never reached:
+`1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5` mutes twice, kicks for 1 day then mutes
+7 days once they're back on the 3rd, the same with 3 days and 30 days on the 4th, and 5
+days and 180 days on the 5th, and bans on the 6th.
 
 **A mute and a kick on the same strike.** List more mute times than there are
 strikes before the kicks, and the ones past the start of the kicks go with them:
@@ -343,9 +346,10 @@ of its own, so it doesn't matter what order you fill them in:
   the words with its own steps (leave `mutes`, `kicks` and `bans` empty, or give the same
   ones); a new name makes a new list with the steps given, and with all three empty it's a
   list that only reports. Without `listname` it asks which list, and writes nothing.
-- `/changebanword`: `listname` (its name, or a word on it), then the new `mutes`,
-  `kicks` and `bans`. Empty boxes are none, so all three empty makes it a list that only
-  reports.
+- `/changebanword`: `listname` (its name, or a word on it), then what changes: `mutes`,
+  `kicks` and `bans`. A box left empty keeps that part as it is; `none` clears it, so
+  `none` in all three makes it a list that only reports. All three left empty is refused.
+  (`!changebanword` in game is the whole new line, as typed: an empty part there is none.)
 - `/unbanword`: `words` takes them off wherever they're listed; with `listname`, off
   that list only; `listname` alone takes off the whole list, after asking.
 - `/banname` and `/unbanname`: as in game; `/unbanname` suggests the banned names as you
@@ -421,12 +425,12 @@ and so does the status card (V → Safety → Vergil).
 | --- | --- | --- |
 | `!strikes` | everyone | Your own strikes, what happens next, and how long a mute has left |
 | `!strikes <player>` | moderator | Someone else's |
-| `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
+| `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban. Only Huragok and admins ban: a moderator's strike whose next step is the ban goes to the admins as a request (`!requests`, `!confirm`, `!deny`), and nothing happens until one confirms it. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
 | `!banword <words> \| [mutes] \| [kicks] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
 | `!unbanword <words> [\| line]` | admin | Takes words off `automod.txt` (a line left with no words goes too); `!unbanword \| <line>` takes off the whole line |
 | `!banname <#number \| name>` | admin | Bans a player's name (kicking them), or a name itself, in `names.txt`. No strike, no ban. A moderator's command up to 0.4.4 |
-| `!pardonplayer <player \| player ID> [rule \| all] [reason]` | admin | Clears their strikes (all, or one named line's) and lifts what automod did: unbans, unmutes, and lets a kicked player back in |
+| `!pardonplayer <player \| player ID> [rule \| all] [reason]` | admin | Clears their strikes (all, or one named line's) and lifts what automod did: unbans, unmutes, and lets a kicked player back in. The line as `!banword` names it (`slur` is `slurs`), or a line taken off that they still have strikes on. Any other word is refused ("did you mean slurs?" when it's close): a reason for clearing everything comes after `all` |
 | `!unbanname <name \| @number>` | admin | Takes a name off `names.txt`; `@number` from `!bannames` |
 | `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do (the answer is yours alone); `!rules slurs` shows one line in full. `/bannedwords` in Discord, every word of every list |
 | `!bannames [text]` | moderator | The banned names in `names.txt`, newest first, numbered for `!unbanname`. `/bannednames` in Discord, all of them and the names the staff allowed |

@@ -38,6 +38,13 @@ written next to it first (<name>.new), the old file is moved aside, then the new
 renamed into place, so a crash never leaves half a program; when one copy of several
 can't be replaced, the ones already replaced are put back.
 
+On Linux a release from 0.10 on has a program of Linux's own for each machine
+(`project-reclaimer-dedicated-v<version>-linux-x86_64.tar.gz`, or -aarch64), which runs
+without wine: that is what's downloaded and checked, its `project-reclaimer` unpacked
+(that one file, by that name) into a temporary folder beside where it goes, and put in
+place as above; 0.9's Windows program there goes with the old files. A release without
+one (0.9) is the .exe, as before. Windows always gets the .exe.
+
 The newest release is whatever GitHub says is the latest, even when that goes back (a
 release pulled for a fault): its download, take-overs and jobs are dropped. A swap that
 keeps failing (an antivirus holding the file, say) is tried again after 1, 4 and 12
@@ -50,16 +57,19 @@ import errno
 import hashlib
 import logging
 import os
+import platform
 import shutil
+import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, Iterator
 
 from ..core import web
 from ..core.web import MAX_PROGRAM_DOWNLOAD, UpdateError, parse_version
-from .dedicated import cached_version, find_executable, server_program
+from .dedicated import NATIVE, cached_version, find_executable, native_name, server_program, windows_program
 
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
@@ -70,6 +80,9 @@ log = logging.getLogger(__name__)
 RELEASES = "ProjectReclaimer/project-reclaimer-releases"
 PROGRAM_PREFIX = "project-reclaimer-dedicated"
 SUMS = "SHA256SUMS.txt"
+ARCHIVE = ".tar.gz"  # Linux's own program comes in one (0.10 on)
+MACHINES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
+MAX_UNPACKED = 1 << 30  # the program unpacked (85 MB in 0.10.0)
 
 
 def _get(url: str, timeout: float, accept: str = "application/vnd.github+json", **options: Any) -> bytes:
@@ -83,7 +96,7 @@ class ProgramRelease:
     version: str
     page: str
     notes: str
-    exe_url: str
+    exe_url: str  # the program's download: the .exe, or on Linux from 0.10 its .tar.gz
     exe_name: str
     sums_url: str | None = None
     published: float | None = None  # Unix seconds, GitHub's published_at
@@ -95,6 +108,19 @@ def _published(text: Any) -> float | None:
         return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+
+def linux_download() -> str | None:
+    """How a release names its Linux program for this machine ("-linux-x86_64.tar.gz"); None on Windows (the .exe,
+    always) and on any other system or machine."""
+    if os.name == "nt" or not sys.platform.startswith("linux"):
+        return None
+    machine = MACHINES.get(platform.machine().lower())
+    return f"-linux-{machine}{ARCHIVE}" if machine else None
+
+
+def is_archive(path: Path | str) -> bool:
+    return str(path).lower().endswith(ARCHIVE)
 
 
 def latest_program_release(repository: str = RELEASES, timeout: float = 10.0) -> ProgramRelease | None:
@@ -112,6 +138,9 @@ def latest_program_release(repository: str = RELEASES, timeout: float = 10.0) ->
     listed = [a for a in data.get("assets") or [] if isinstance(a, dict)]
     assets = {str(a.get("name", "")): str(a.get("browser_download_url", "")) for a in listed}
     exe = next((n for n in assets if n.startswith(PROGRAM_PREFIX) and n.endswith(".exe")), None)
+    ending = linux_download()
+    if ending:  # Linux: its own program when the release has one (0.10 on), else the .exe through wine (0.9)
+        exe = next((n for n in assets if n.startswith(PROGRAM_PREFIX) and n.endswith(ending)), exe)
     if exe is None:
         return None
     size = next((a.get("size") for a in listed if str(a.get("name", "")) == exe), None)
@@ -218,14 +247,67 @@ def as_new_as(settings: Settings, path: Path, version: str) -> str | None:
     return theirs if parse_version(theirs) >= parse_version(version) else None
 
 
+def unpack_program(archive: Path, folder: Path) -> Path:
+    """Linux's own program from a release's .tar.gz, written to folder/project-reclaimer: that one file (a plain
+    file called project-reclaimer, the outermost), by that name, never at a path the archive gives (no ../, no
+    links). Returns it, runnable."""
+    import tarfile
+
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / NATIVE
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            found = [m for m in tar.getmembers() if m.isreg() and PurePosixPath(m.name).name == NATIVE]
+            if not found:
+                raise UpdateError(f"{archive.name} has no {NATIVE} in it; nothing was changed")
+            member = min(found, key=lambda m: len(PurePosixPath(m.name).parts))
+            if member.size > MAX_UNPACKED:
+                raise UpdateError(f"{archive.name}'s {NATIVE} is {member.size} bytes, more than a program can be; "
+                                  "nothing was changed")
+            source = tar.extractfile(member)
+            if source is None:
+                raise UpdateError(f"{archive.name}'s {NATIVE} can't be read; nothing was changed")
+            with source, target.open("wb") as out:
+                shutil.copyfileobj(source, out)
+    except (tarfile.TarError, EOFError) as error:
+        raise UpdateError(f"{archive.name} can't be unpacked ({error}); nothing was changed") from None
+    target.chmod(0o755)
+    return target
+
+
+@contextmanager
+def _program_file(downloaded: Path, beside: Path) -> Iterator[Path]:
+    """The program to put in place: the download itself (an .exe), or Linux's own unpacked from a .tar.gz into a
+    temporary folder in `beside` (where it goes: the same drive), which goes afterwards."""
+    if not is_archive(downloaded):
+        yield downloaded
+        return
+    folder = beside / f".huragok-unpacked-{time.time_ns()}"
+    try:
+        yield unpack_program(downloaded, folder)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _target_for(settings: Settings, target: Path, program: Path) -> Path:
+    """Where `program` goes for the copy at `target`: there, or for Linux's own program in place of 0.9's Windows one,
+    beside it under its own name (project-reclaimer); the Windows one goes with the old files."""
+    if program.suffix.lower() == ".exe" or not windows_program(target):
+        return target
+    return target.with_name(native_name(program_name(settings)))
+
+
 def _staged(target: Path) -> Path:
     return target.with_name(target.name + ".new")
 
 
-def _put_in_place(source: Path, target: Path, keep: Path | None, *, link_from: Path | None = None) -> None:
+def _put_in_place(source: Path, target: Path, keep: Path | None, *, link_from: Path | None = None,
+                  replaces: Path | None = None) -> None:
     """`source` at `target`, never half written: copied (or hard-linked) to <target>.new first, the old file moved
     to `keep` (a running program can be renamed, not overwritten), then <target>.new renamed into place. On an
-    error the old file is back and the .new one gone."""
+    error the old file is back and the .new one gone. replaces: the old file when it isn't at `target` (0.9's
+    Windows program, which Linux's own takes over from)."""
+    replaced = replaces or target
     staged = _staged(target)
     staged.unlink(missing_ok=True)
     try:
@@ -242,13 +324,13 @@ def _put_in_place(source: Path, target: Path, keep: Path | None, *, link_from: P
     _clear_old_asides(target)
     old: Path | None = None  # where the old file is now, to put it back on an error
     try:
-        if keep is not None and target.exists():
-            old = _move_aside(target, keep)
+        if keep is not None and replaced.exists():
+            old = _move_aside(replaced, keep)
         os.replace(staged, target)
     except OSError:
         staged.unlink(missing_ok=True)
-        if old is not None and not target.exists():
-            _move_back(old, target)
+        if old is not None and not replaced.exists():
+            _move_back(old, replaced)
         raise
 
 
@@ -321,29 +403,36 @@ def install_program(settings: Settings, downloaded: Path, version: str) -> list[
         raise UpdateError(f"every copy is Project Reclaimer {version} or newer already; nothing was changed")
     backup = settings.records / "previous-program" / time.strftime("%Y-%m-%d-%H%M%S")
     first: Path | None = None
-    replaced: list[tuple[Path, Path]] = []  # (target, where its old file is)
-    for target in targets:
-        keep = backup / target.parent.name / target.name
-        try:
-            _put_in_place(downloaded, target, keep, link_from=first)
-        except OSError as error:
-            left = []
-            if not replaced and backup.is_dir() and not any(p.is_file() for p in backup.rglob("*")):
-                shutil.rmtree(backup, ignore_errors=True)  # nothing was set aside: no empty set for Clean up
-            for done, old in reversed(replaced):  # all or nothing: the copies already replaced go back
+    replaced: list[tuple[Path, Path, Path]] = []  # (where the new one is, the old file's place, where it is now)
+    try:
+        with _program_file(downloaded, targets[0].parent) as program:
+            for target in targets:
+                new = _target_for(settings, target, program)
+                keep = backup / target.parent.name / target.name
                 try:
-                    _move_back(old, done)  # copied back when it's on another drive: a rename can't get there (audit 2026-11, 7.8)
-                except OSError as undo:
-                    left.append(f"{done} (its old file is in {old}: {undo})")
-            if left:
-                raise UpdateError(f"couldn't put the new program at {target} ({error}); and these copies are "
-                                  f"{version} now, the others still the old one: {'; '.join(left)}") from None
-            raise UpdateError(f"couldn't put the new program at {target}: {error}; nothing was changed") from None
-        first = first or target
-        replaced.append((target, keep))
+                    _put_in_place(program, new, keep, link_from=first, replaces=target)
+                except OSError as error:
+                    left = []
+                    if not replaced and backup.is_dir() and not any(p.is_file() for p in backup.rglob("*")):
+                        shutil.rmtree(backup, ignore_errors=True)  # nothing was set aside: no empty set for Clean up
+                    for done, place, old in reversed(replaced):  # all or nothing: the copies already replaced go back
+                        try:
+                            _move_back(old, place)  # copied back when it's on another drive: a rename can't get there (audit 2026-11, 7.8)
+                            if done != place:
+                                done.unlink(missing_ok=True)  # Linux's own program, where a Windows one was
+                        except OSError as undo:
+                            left.append(f"{done} (its old file is in {old}: {undo})")
+                    if left:
+                        raise UpdateError(f"couldn't put the new program at {new} ({error}); and these copies are "
+                                          f"{version} now, the others still the old one: {'; '.join(left)}") from None
+                    raise UpdateError(f"couldn't put the new program at {new}: {error}; nothing was changed") from None
+                first = first or new
+                replaced.append((new, target, keep))
+    except OSError as error:  # unpacking it
+        raise UpdateError(f"couldn't unpack the new program: {error}; nothing was changed") from None
     (backup / "version.txt").write_text(f"replaced by {version}\n", encoding="utf-8")
     log.info("Server program %s installed in %d place(s); the old files are in %s", version, len(replaced), backup)
-    return [target for target, _ in replaced]
+    return [new for new, _, _ in replaced]
 
 
 def swap_program(settings: Settings, server: ServerConfig, downloaded: Path, version: str) -> str:
@@ -351,17 +440,21 @@ def swap_program(settings: Settings, server: ServerConfig, downloaded: Path, ver
     records/previous-program/). A root copy other servers run too stays as it is: the server gets its own."""
     name = program_name(settings)
     target = program_of(settings, server)
-    if target is not None and target.is_file() and file_hash(target) == file_hash(downloaded):
-        return f"its program file is Project Reclaimer {version} already"
-    if target is None or (target.parent != server.folder and any(
-            other is not server and program_of(settings, other) == target for other in settings.servers)):
-        target = server.folder / name  # its own copy from now on, found before the root's
-    backup = settings.records / "previous-program" / time.strftime("%Y-%m-%d-%H%M%S") / server.folder.name
-    had = target.exists()
-    try:
-        _put_in_place(downloaded, target, backup / target.name if had else None)
-    except OSError as error:
-        raise UpdateError(f"couldn't put the new program at {target}: {error}; the old one is as it was") from None
+    with _program_file(downloaded, server.folder) as program:
+        if target is not None and target.is_file() and file_hash(target) == file_hash(program):
+            return f"its program file is Project Reclaimer {version} already"
+        if target is None or (target.parent != server.folder and any(
+                other is not server and program_of(settings, other) == target for other in settings.servers)):
+            # its own copy from now on, found before the root's
+            target = server.folder / (name if program.suffix.lower() == ".exe" else native_name(name))
+        new = _target_for(settings, target, program)
+        backup = settings.records / "previous-program" / time.strftime("%Y-%m-%d-%H%M%S") / server.folder.name
+        had = target.exists()
+        try:
+            _put_in_place(program, new, backup / target.name if had else None, replaces=target)
+        except OSError as error:
+            raise UpdateError(f"couldn't put the new program at {new}: {error}; the old one is as it was") from None
+        target = new
     if had:
         (backup / "version.txt").write_text(f"replaced by {version}\n", encoding="utf-8")
     remove_old_files(server.folder)

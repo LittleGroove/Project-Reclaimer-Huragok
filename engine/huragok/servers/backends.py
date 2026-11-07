@@ -4,7 +4,8 @@ A backend starts and stops server processes; it decides nothing. The decisions
 (when to start, warn, restart, give up) are the per-server managers' (server.py).
 
   process  one `dedicated` per server, run by the supervisor, on Windows (the exe
-           itself) or Linux (through `wine`, or whatever [process] command says)
+           itself) or Linux (its own program from 0.10, 0.9's exe through `wine`, or
+           whatever [process] command says)
   docker   one container per server, through `docker compose`
   command  commands the host gives (systemd units, scripts...), Windows or Linux
   attach   the host's own setup runs them; Huragok watches and moderates only
@@ -36,7 +37,8 @@ from ..core.priority import PriorityKeeper
 from ..core.serverfolders import ServerConfig
 from ..core.settings import Settings, launcher
 from ..core.tables import ConfigError, Table
-from ..program.dedicated import server_program
+from ..program.dedicated import server_program, windows_program, without_wine
+from ..program.environment import server_environment
 from .logs import FileTail, parse_console_line
 from .state import ServerState
 
@@ -53,7 +55,8 @@ class LifecycleError(Exception):
 
 
 def _on_windows() -> bool:
-    """The server program runs natively here (on Linux it runs through wine)."""
+    """Windows: the server program (project-reclaimer.exe) runs as it is. On Linux 0.10's own program does too, and
+    0.9's Windows one runs through wine."""
     return os.name == "nt"
 
 
@@ -199,6 +202,10 @@ class CommandBackend(Backend):
 
     name = "command"
     DEFAULTS: dict[str, Any] = {}
+    # The server program started by the host's command reads RECLAIMER_DEDICATED_CONTENT and the rest over its
+    # dedicated.toml as the process backend's does: left out, as there (audit 6 November). Docker's compose file may use
+    # them itself, for the containers' folders, so it keeps them (the containers' own environment is compose's).
+    leaves_out_the_environment = True
 
     def __init__(self, settings: Settings, bus: EventBus, states: dict[str, ServerState]) -> None:
         super().__init__(settings, bus, states)
@@ -246,8 +253,9 @@ class CommandBackend(Backend):
             await self._run_into(action, server, command, said)
 
     async def _run_into(self, action: str, server: ServerConfig, command: str, said: Any) -> None:
-        process = await asyncio.create_subprocess_shell(command, cwd=server.folder, stdout=said,
-                                                        stderr=asyncio.subprocess.STDOUT)
+        process = await asyncio.create_subprocess_shell(command, cwd=server.folder, stdin=asyncio.subprocess.DEVNULL,
+                                                        stdout=said, stderr=asyncio.subprocess.STDOUT,
+                                                        env=server_environment() if self.leaves_out_the_environment else None)
         try:
             await asyncio.wait_for(process.wait(), self.timeout)
             said.seek(0)
@@ -329,6 +337,7 @@ class DockerBackend(CommandBackend):
     """One container per server, as the official Docker setup runs them."""
 
     name = "docker"
+    leaves_out_the_environment = False
     DEFAULTS = {
         "compose_file": "compose.yaml",
         "start": "docker compose -f {compose_file} up -d {service}",
@@ -358,7 +367,8 @@ class ProcessBackend(Backend):
     window of its own, output to logs/console-<server>.log, stdin from nowhere. A
     clean stop is Ctrl+Break (Windows) or SIGINT (Linux): `dedicated` prints
     "Stopping every server... All servers stopped." and exits in under a second.
-    On Linux the program runs through `wine` unless [process] command says otherwise.
+    On Linux 0.10's own program runs as it is, and 0.9's Windows one through `wine`, unless [process] command says
+    otherwise (a `wine` before {executable} there is left out for 0.10's own program, which wine can't run).
     Its processes are kept at [process] priority (High unless set otherwise; priority.py).
     """
 
@@ -390,34 +400,42 @@ class ProcessBackend(Backend):
         copy at the root for every server (they must all be on the same version anyway)."""
         return server_program(server.folder, self.settings.home, self.executable)
 
+    def template_for(self, server: ServerConfig) -> list[str]:
+        """[process] command for this server: a `wine` before {executable} left out when the program is Linux's own
+        (0.10 on), so a command written for 0.9 on Linux keeps working."""
+        return without_wine(self.command_template, self.executable_for(server), windows=_on_windows())
+
     def command_for(self, server: ServerConfig) -> list[str]:
         exe = self.executable_for(server)
         values = {"executable": str(exe) if exe else str(server.folder / self.executable),
                   "config": server.config_path.name, "folder": str(server.folder), "name": server.name}
         if self.command_template:
-            return [part.format(**values) for part in self.command_template]
+            return [part.format(**values) for part in self.template_for(server)]
         if exe is None:
             raise LifecycleError(f"{server.folder / self.executable} not found: put the server program in the "
                                  f"server's folder or at {self.settings.home} (one copy for every server), or set "
                                  "[process] command")
-        program = [str(exe)] if _on_windows() else ["wine", str(exe)]
+        program = [str(exe)] if _on_windows() or not windows_program(exe) else ["wine", str(exe)]
         return [*program, "dedicated", "run", "--config", server.config_path.name]
 
     def problems(self, server: ServerConfig) -> list[str]:
         found = []
-        if not self.command_template:
-            if self.executable_for(server) is None:
+        template = self.template_for(server)
+        if not template:
+            exe = self.executable_for(server)
+            if exe is None:
                 found.append(f"{self.executable} is not in {server.folder} or at {self.settings.home} "
                              "(set [process] command to run it another way)")
-            if not _on_windows() and shutil.which("wine") is None:
-                found.append("wine is not installed, and on Linux the server program runs through it "
-                             "(or set [process] command)")
-        elif "{executable}" in self.command_template[0]:  # the program itself, through whatever the words say
+            elif not _on_windows() and windows_program(exe) and shutil.which("wine") is None:
+                found.append(f"wine is not installed, and on Linux {exe.name} (a Windows program: Project Reclaimer "
+                             "0.9) runs through it. Project Reclaimer 0.10 has a Linux program of its own (or set "
+                             "[process] command)")
+        elif "{executable}" in template[0]:  # the program itself, through whatever the words say
             if self.executable_for(server) is None:
-                found.append(f"[process] command starts with {self.command_template[0]}, but {self.executable} is "
+                found.append(f"[process] command starts with {template[0]}, but {self.executable} is "
                              f"not in {server.folder} or at {self.settings.home}")
-        elif shutil.which(self.command_template[0]) is None and not Path(self.command_template[0]).is_file():
-            found.append(f"[process] command: {self.command_template[0]} was not found")
+        elif shutil.which(template[0]) is None and not Path(template[0]).is_file():
+            found.append(f"[process] command: {template[0]} was not found")
         if server.auto_update and not self.command_template:
             found.extend(self.auto_update_problems(server))
         return found
@@ -562,7 +580,7 @@ class ProcessBackend(Backend):
         console_path.touch()
         tail = FileTail(console_path, from_start=False)
         tail.read_lines()  # start reading at today's end of the file
-        env = dict(os.environ, RECLAIMER_DEDICATED_ONLY=server.name)
+        env = server_environment(RECLAIMER_DEDICATED_ONLY=server.name)  # content, items…: its dedicated.toml says
         env.pop("RECLAIMER_DEDICATED_AUTO_UPDATE", None)  # the server's own auto_update (dedicated.toml) decides
         stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         try:

@@ -6,7 +6,7 @@ The supervisor's folder (the root) holds:
   commands.toml   who's who and who may use which command (commandsfile.py)
   automod.txt     the word list (players/automod)
   SERVERS/        one folder per Project Reclaimer server: what `dedicated init` makes
-                  (dedicated.toml, project-reclaimer.exe, game/, data/, ...)
+                  (dedicated.toml, project-reclaimer.exe or on Linux project-reclaimer, game/, data/, ...)
   records/        its database and what it remembers; logs/  its logs
 
 Each server folder's dedicated.toml names that folder's servers ([[server]] blocks,
@@ -668,8 +668,8 @@ def check_backend_options(backend: str, options: dict[str, Any]) -> None:
         table.path("executable", "")
         command = options.get("command", [])
         if not isinstance(command, list) or not all(isinstance(word, str) for word in command):
-            raise ConfigError('process.command must be a list of words in quotes, like ["wine", "{executable}", '
-                              '"dedicated", "run", "--config", "{config}"], or [] for the usual way')
+            raise ConfigError('process.command must be a list of words in quotes, like ["{executable}", "dedicated", '
+                              '"run", "--config", "{config}"], or [] for the usual way')
         for word in command:
             _check_placeholders(word, set(PROCESS_PLACEHOLDERS), "[process] command")
         table.at_least("stop_timeout", 30.0, MIN_STOP_TIMEOUT)

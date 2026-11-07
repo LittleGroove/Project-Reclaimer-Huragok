@@ -9,9 +9,13 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
+from ..core.background import wait_until
 from ..core.events import Event, EventBus
 from ..core.text import one_line
 from ..games import halo3_mapfile
+from ..games.bungie import GAMES
+from ..games.halo3_options import version_tuple
+from ..program.releases import program_of, program_version, readable
 from . import modcheck
 from .gamefiles import read_paths
 
@@ -69,7 +73,31 @@ WORKSHOP_TROUBLE = [
     ("cannot put the new version in place", "the new version couldn't replace the old (a file in use?): it's tried "
                                             "again later"),
 ]
+# From Project Reclaimer 0.10 the server plays Halo: Reach's, Combat Evolved's and Halo 2's mods too, but its Workshop
+# installer still says "This Workshop item targets an engine other than Halo 3." (0.10.0's own words): what to do then.
+NEWER_ADVICE = {
+    "engine other than halo 3": "it's a mod for another game in MCC, which the server's Workshop installer doesn't "
+                                "take: remove it from the server's Workshop items. A Halo: Reach, Combat Evolved or "
+                                "Halo 2 mod plays from a copy in content/Mods instead, with that game's files in the "
+                                "game folder",
+    "no mcc mod package": "it isn't an MCC mod (no ModInfo.json): remove it from the server's Workshop items",
+}
 
+
+def workshop_advice(text: str, version: str | None = None) -> str | None:
+    """What to do about a Workshop line from the console, or None. version: the server's program (None: not known,
+    taken as 0.10 or newer)."""
+    lower = text.lower()
+    words, advice = next(((w, a) for w, a in WORKSHOP_TROUBLE if w in lower), (None, None))
+    if words in NEWER_ADVICE and GAMES["reach"].plays_on(version):
+        return NEWER_ADVICE[words]
+    return advice
+
+
+def is_font_package(path: str) -> bool:
+    """A mod's font package (…/maps/fonts/font_package_x2.bin), not a map or game variant."""
+    parts = path.replace("\\", "/").lower().split("/")
+    return len(parts) >= 2 and parts[-2] == "fonts" and parts[-1].startswith("font_package")
 
 class ModWatch:
     def __init__(self, settings: Settings, bus: EventBus,
@@ -79,6 +107,7 @@ class ModWatch:
         self._said: dict[str, set[str]] = {}  # per server, the mod lines said since its start
         self._reports: dict[str, tuple[Any, ...]] = {}  # per mod folder, its report as last logged
         self._changed: asyncio.Event | None = None  # set on a Workshop install: the mods are looked at again
+        self._versions: dict[str, str] = {}  # per server, its program's version as last looked at
         bus.subscribe("server.workshop", self._note_workshop)
         bus.subscribe("server.map_skipped", self._note_workshop)
         bus.subscribe("log.mod_problem", self._note_mod_problem)
@@ -96,7 +125,7 @@ class ModWatch:
             return
         text = str(event.get("text") or "")
         lower = text.lower()
-        advice = next((what for words, what in WORKSHOP_TROUBLE if words in lower), None)
+        advice = workshop_advice(text, self._versions.get(event.server or ""))
         failed = advice is not None or lower.startswith(("error", "failed", "could not", "cannot"))
         log.log(logging.WARNING if failed else logging.INFO, "[%s] Workshop %s: %s", event.server, event.get("item"),
                 one_line(text))
@@ -113,6 +142,11 @@ class ModWatch:
         if not text or text in said:
             return
         said.add(text)
+        if event.get("kind") == "content" and is_font_package(str(event.get("path") or "")):
+            # A mod's own fonts (halo3/maps/fonts/font_package*.bin, 30 of them in MCC's Workshop folder on the host's
+            # PC), which the server's scan of variant files skips: nothing is missing, so only noted.
+            log.debug("[%s] %s", event.server, one_line(text))
+            return
         log.warning("[%s] %s", event.server, one_line(text))
         if advice := MOD_ADVICE.get(str(event.get("kind") or "")):
             log.warning("[%s]   why: %s", event.server, advice)
@@ -131,14 +165,21 @@ class ModWatch:
         def say(text: str) -> None:
             log.warning("[%s]   why: %s", server, text)
 
+        def explained() -> str:
+            game = modcheck.game_of_map_file(path)
+            if game is not None and game.key == "halo3":
+                return halo3_mapfile.explain(path, reason, updates=updates)
+            return (f"it's {game.title}'s map, and Huragok reads Halo 3's only: the server's reason is all there is"
+                    if game is not None else "it's a map for a game the server doesn't play")
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:  # an event published with no loop running (tests): read it here
-            say(halo3_mapfile.explain(path, reason, updates=updates))
+            say(explained())
             return
 
         async def explain() -> None:
-            say(await asyncio.to_thread(halo3_mapfile.explain, path, reason, updates=updates))
+            say(await asyncio.to_thread(explained))
 
         self._spawn(f"[{server}] reading {path.name}", explain, restart=False)
 
@@ -151,21 +192,18 @@ class ModWatch:
         while True:
             for line, level in await asyncio.to_thread(self.changes):
                 log.log(level, "%s", line)
-            try:
-                await asyncio.wait_for(self._changed.wait(), MOD_CHECK_SECONDS)
+            if await wait_until(self._changed, MOD_CHECK_SECONDS):
                 await asyncio.sleep(MOD_SETTLE_SECONDS)  # the install's last files, and a burst of lines, settle first
-            except asyncio.TimeoutError:
-                pass
             self._changed.clear()
 
     def changes(self) -> list[tuple[str, int]]:
         """The mods whose report changed since it was last logged, as log lines: (text, level). In a thread."""
         lines: list[tuple[str, int]] = []
         seen: set[str] = set()
-        for root, names, game in self.content_roots():
+        for root, names, game, version in self.content_roots():
             label = ", ".join(names)
             try:
-                reports = modcheck.check_mods(root, game)
+                reports = modcheck.check_mods(root, game, version)
             except Exception as error:  # noqa: BLE001 - one content folder mustn't stop the others being looked at
                 lines.append((f"[{label}] couldn't look at its mods: {error}", logging.WARNING))
                 seen.update(key for key in self._reports if Path(key).is_relative_to(root))
@@ -185,17 +223,32 @@ class ModWatch:
             del self._reports[key]
         return lines
 
-    def content_roots(self) -> list[tuple[Path, list[str], Path | None]]:
-        """Each content folder the servers use, the servers using it and their game folder."""
-        roots: dict[Path, tuple[list[str], Path | None]] = {}
+    def content_roots(self) -> list[tuple[Path, list[str], Path | None, str | None]]:
+        """Each content folder the servers use, the servers using it, their game folder and the oldest program
+        version they run (None: not known). In a thread: a program file new to Huragok is asked its version."""
+        roots: dict[Path, tuple[list[str], Path | None, list[str]]] = {}
         for server in self.settings.servers:
             paths = read_paths(server.folder, self.settings.config_name)
             root = server.content_dir or (paths.content if paths else None)
             if root is None:
                 continue
-            names, game = roots.setdefault(root, ([], paths.game if paths else None))
+            names, game, versions = roots.setdefault(root, ([], paths.game if paths else None, []))
             names.append(server.name)
-        return [(root, names, game) for root, (names, game) in roots.items()]
+            if version := self._version_of(server):
+                versions.append(version)
+        return [(root, names, game, min(versions, key=lambda v: version_tuple(v) or ()) if versions else None)
+                for root, (names, game, versions) in roots.items()]
+
+    def _version_of(self, server: Any) -> str | None:
+        """The version of the program file the server runs (`--version`, asked once per file), remembered for what
+        its console says about its Workshop items; None when it isn't known."""
+        program = program_of(self.settings, server)
+        version = program_version(self.settings, program) if program is not None else None
+        if not readable(version):
+            self._versions.pop(server.name, None)
+            return None
+        self._versions[server.name] = str(version)
+        return str(version)
 
 
-__all__ = ["MOD_ADVICE", "ModWatch", "WORKSHOP_TROUBLE"]
+__all__ = ["MOD_ADVICE", "ModWatch", "NEWER_ADVICE", "WORKSHOP_TROUBLE", "workshop_advice"]

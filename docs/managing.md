@@ -145,8 +145,9 @@ reads the file again within seconds.
 `automod.txt`, one rule per line, shown as players meet it: its name, its words, and
 what each strike does (`1st: muted for 1 day; 2nd: muted for 7 days; 3rd: kicked for
 1 day; 4th: banned for good`). **Add a rule**: the words, then what each strike does,
-from four ready-made ladders (kicked every time; muted 1 day, 3 days, then 7 days;
-muted 1 day, 7 days, then out 1 day, then banned; banned the first time) or your
+from five ready-made ladders (kicked every time; muted 1 day, 3 days, then 7 days;
+muted 1 day, 7 days, then out 1 day, then banned; banned the first time; only reports, a
+ticket for the staff on Discord and nothing in game) or your
 own, asked a part at a time (whether it mutes and how long each mute lasts, whether
 muted for good comes and when, whether and when the kicks start and how long each
 keeps them out, whether and when the ban comes), then its name. The line and

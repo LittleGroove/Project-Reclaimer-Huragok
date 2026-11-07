@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from conftest import ALICE, BRAVO, MOD
+from test_bot_running import OTHER
 from test_tickets import LOGS, STAFF, bot_file, buttons_of, fake, posts_in, row_of, said_back, up  # noqa: F401
 from testkit.fake_discord import ADMIN_ROLE, MOD_ROLE, FakeDiscord
 from testkit.running import SERVER, running, tells_to, wait_for
@@ -210,6 +211,51 @@ def test_banword_has_a_box_for_each_part_in_any_order(tmp_path: Path, run: Any, 
             fake.pick(opened, yes, 2, [])
             await wait_for(lambda: "badwords" not in words.read_text(encoding="utf-8"), timeout=15)
             assert "friend" not in words.read_text(encoding="utf-8")
+
+    run(scenario())
+
+
+def test_strike_offers_the_lists_there_are(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """The host's ask (6 November): /strike's rule box offers the lists of the word list as they are now, the host's own (slurs), with what a strike would do; /clearstrikes the lists
+    someone has strikes on. Only staff are offered anything."""
+
+    async def offered(command: str, typed: str = "", **others: Any) -> list[dict[str, Any]]:
+        _, token = fake.typing_command(command, "rule", typed, **others)
+        await wait_for(lambda: any(c.get("token") == token for c in fake.callbacks), timeout=10)
+        return next(c for c in fake.callbacks if c.get("token") == token)["data"]["choices"]
+
+    async def scenario() -> None:
+        commands_file(tmp_path)
+        (tmp_path / "automod.txt").write_text("badword | 1d, 3d | 2, 1h | 4 | slurs\nrudeword | | | | rude\nmeanword | 10m | | | insults\n", encoding="utf-8")
+        async with running(tmp_path, "[automod]\nenabled = true\ncooldown_seconds = 0\n") as (huragok, rcon, _):
+            await up(huragok)
+            await wait_for(lambda: "strike" in {command["name"] for commands in fake.commands.values() for command in commands}, timeout=15)
+            commands = {command["name"]: command for commands in fake.commands.values() for command in commands}
+            for name in ("strike", "clearstrikes"):
+                assert next(option for option in commands[name]["options"] if option["name"] == "rule")["autocomplete"] is True, name
+            # Nobody picked yet: each list a strike does something on, with its first steps, then name. rude only reports.
+            choices = await offered("strike")
+            assert [choice["value"] for choice in choices] == ["slurs", "insults", "name"]
+            assert choices[0]["name"] == "slurs · 1st: muted for 1 day; 2nd: muted for 3 days; 3rd and 4th: kicked for 1 hour…"
+            assert [choice["value"] for choice in await offered("strike", "sl")] == ["slurs"]  # as it's typed
+            # Someone picked: what a strike would do to them now.
+            await rcon.join(3, "Alice", ALICE)
+            await wait_for(lambda: huragok.superintendent.states[SERVER].players, timeout=10)
+            await rcon.chat(ALICE, "Alice", "badword")
+            await wait_for(lambda: huragok.storage.query("SELECT 1 FROM automod_strikes"), timeout=15)
+            choices = await offered("strike", player=ALICE)
+            assert choices[0]["name"] == "slurs · Strike 2: muted for 3 days" and choices[1]["name"] == "insults · Strike 1: muted for 10 minutes"
+            assert [choice["name"] for choice in await offered("strike", player="Alice")][:1] == ["slurs · Strike 2: muted for 3 days"]  # by the name only she has
+            # /clearstrikes: the lists they have strikes on, then all; every list before anyone's picked.
+            assert [choice["name"] for choice in await offered("clearstrikes", player=ALICE)] == ["slurs · 1 strike", "all · every strike they have (1)"]
+            assert [choice["value"] for choice in await offered("clearstrikes")] == ["slurs", "rude", "insults", "all"]
+            assert await offered("strike", user=OTHER) == [] and await offered("clearstrikes", user=OTHER) == []  # not staff
+            # The host's example line, from /banword: the ban before muted for good, the 6th strike.
+            _, token = fake.command("banword", words="theword, otherword", mutes="1d, 3d, 7d, 30d, 180d, 5", kicks="2, 1d, 3d, 5d", bans="5", listname="badwords")
+            back = await said_back(fake, token)
+            assert "Added" in back and "kicked for 1 day, then muted for 7 days" in back, back
+            assert "theword, otherword | 1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5 | badwords" in (tmp_path / "automod.txt").read_text(encoding="utf-8")
+            assert "badwords" in [choice["value"] for choice in await offered("strike")]  # offered at once
 
     run(scenario())
 

@@ -578,10 +578,14 @@ class FileScreens(Screens):
                 return None
         ban_after: int | None = None
         if await self.prompt_yes_no("  Banned for good at some point?", False):
-            least = least_ban(mutes, forever_after, kick_after, kicks)
+            least = least_ban(mutes, kick_after, kicks)
+            # Enter: after muted for good, which they've just asked for; a ban at or before it comes first instead.
+            after = least if forever_after is None else max(least, forever_after + 1)
             ban_after = await self._strike_count(
-                f"How many strikes before the ban? (at least {least}, so every mute and kick comes first)"
-                if least else "How many strikes before the ban? (0: banned the first time)", least)
+                f"How many strikes before the ban? (at least {least}, so every mute and kick comes first"
+                + (f"; Enter: {after}, after muted for good" if after > least else "") + ")"
+                if least or after else "How many strikes before the ban? (0: banned the first time)", least,
+                default=after if after > least else None)
             if ban_after is None:
                 return None
         return mutes, forever_after, kick_after, kicks, ban_after
@@ -635,7 +639,12 @@ class FileScreens(Screens):
             self.note(f"That rule can't be used: {str(error).removeprefix('line 1: ')}.", "yellow")
             await self.wait_any_key(6)
             return False
-        assert rule is not None
+        if rule is None or (hashed := next((w for w in [*rule.words, *rule.allow] if w.startswith("#")), None)):
+            # First, a word starting with # makes the line a note; anywhere, it catches nothing more than without
+            self.note(f"That rule can't be used: {'a word' if rule is None else hashed} starts with #, and a line "
+                      "starting with # is a note. Leave the # off (badtag also catches #badtag).", "yellow")
+            await self.wait_any_key(6)
+            return False
         self.note(f"The line: {text}", None)
         for step in ladder(rule):
             self.note(f"  {step}", "cyan")

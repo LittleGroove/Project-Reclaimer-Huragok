@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 FILE_CHECK_SECONDS = 2.0  # commands.toml is looked at this often
+UNNAMED_FOR = 3600.0  # a join with no name (0.10) waits this long at most for its name to be recorded with
 
 
 class Vergil:
@@ -56,7 +57,10 @@ class Vergil:
         self.relay = Relay(settings, superintendent.clients, superintendent.states, bus)
         self.outbox = Outbox(superintendent.states)
         self.last_visit: dict[str, float | None] = {}  # player ID -> when they were here before this visit; None: first time
+        self.unnamed: dict[str, tuple[str | None, float]] = {}  # player ID -> (address, when) of a join with no name
         bus.subscribe("rcon.join", self._remember_player)
+        bus.subscribe("state.named", self._remember_name)
+        bus.subscribe("rcon.leave", self._remember_name)
         superintendent.listen(self)
 
     # Servers coming and going -------------------------------------------------------------------------------
@@ -74,10 +78,33 @@ class Vergil:
     # The players --------------------------------------------------------------------------------------------
 
     def _remember_player(self, event: Event) -> None:
-        if event.get("id"):
-            player_id = str(event["id"]).lower()
-            self.last_visit[player_id] = self.huragok.storage.record_join(player_id, str(event.get("name", "")), event.get("ip"),
-                                                                          event.time)
+        if not event.get("id"):
+            return
+        player_id = str(event["id"]).lower()
+        name = str(event.get("name") or "")
+        if not name:  # 0.10 names nobody as they join: the live picture may know them already
+            state = self.superintendent.states.get(event.server or "")
+            player = state.player_by_id(player_id) if state is not None else None
+            name = player.name if player is not None else ""
+        if name:
+            self.unnamed.pop(player_id, None)
+            self.last_visit[player_id] = self.huragok.storage.record_join(player_id, name, event.get("ip"), event.time)
+            return
+        # Recorded once their name is known (state.named, or their leave naming them): a blank name is no name to keep.
+        # When they were here before is known now.
+        rows = self.huragok.storage.query("SELECT last_seen FROM players WHERE id = ?", (player_id,))
+        self.last_visit[player_id] = float(rows[0]["last_seen"]) if rows else None
+        self.unnamed = {key: value for key, value in self.unnamed.items() if event.time - value[1] < UNNAMED_FOR}
+        self.unnamed[player_id] = (event.get("ip"), event.time)
+
+    def _remember_name(self, event: Event) -> None:
+        """A join that named nobody (0.10), recorded now its name is known: state.named, or a leave that names them.
+        A leave that doesn't, ends the wait."""
+        player_id = str(event.get("id") or "").lower()
+        waiting = self.unnamed.pop(player_id, None)
+        name = str(event.get("name") or "")
+        if waiting is not None and name:
+            self.huragok.storage.record_join(player_id, name, waiting[0], waiting[1])
 
     async def ban_everywhere(self, server: str, target: str, by: str) -> tuple[bool, str]:
         """One server's ban onto Huragok's own list, so every server has it (the window's B → E, `banall`)."""
@@ -227,13 +254,24 @@ class VergilContext(SuperintendentContext):
         part = self._automod()
         return bool(part.allow_name(name, by, server)) if part is not None else False
 
-    def next_strike(self, player_id: str, rule: str) -> str:
-        """What a strike on this rule would do to them now, in words: "" if that can't be said."""
+    def strike_removes(self, player_id: str, rule: str, server: str | None = None) -> bool:
+        """Whether a strike on this rule would take them off the server now (a kick, a kick before a mute, the ban):
+        what reaches every server."""
+        part = self._automod()
+        found = getattr(part, "by_name", {}).get(rule)
+        if found is None:
+            return False
+        previous = part.active_strikes(player_id, found, dry=bool(server) and part.mode(server) == "dry_run")
+        return found.step_for(previous).removes
+
+    def next_strike(self, player_id: str, rule: str, server: str | None = None) -> str:
+        """What a strike on this rule would do to them now, in words: "" if that can't be said. On a server in dry run,
+        its strikes are counted apart, as the strike there would count them."""
         part = self._automod()
         found = getattr(part, "by_name", {}).get(rule)
         if found is None:
             return ""
-        previous = part.active_strikes(player_id, found, dry=False)
+        previous = part.active_strikes(player_id, found, dry=bool(server) and part.mode(server) == "dry_run")
         return f"Strike {previous + 1}: {found.step_for(previous).describe()}"
 
     def command_there(self, name: str) -> bool:
@@ -244,6 +282,17 @@ class VergilContext(SuperintendentContext):
 
     def pick_of(self, caller: str, number: int) -> Any:
         return self._vergil.commands.pick_of(caller, number)
+
+    async def ask_an_admin(self, call: Any, target: Player, words: list[str]) -> bool:
+        """The command, held for an admin (or faculty) to confirm, as a probationary moderator's requests are: a
+        moderator's strike whose next step is the ban for good. False when nothing takes requests (the commands part
+        is off)."""
+        router = self._vergil.commands
+        registered = router.commands.get(call.name)
+        if router.on_request is None or registered is None:
+            return False
+        await router.on_request(call, registered, target, words, needs="admin")
+        return True
 
     async def run_as(self, name: str, target: Player | None, words: list[str], **kwargs: Any) -> str | None:
         """A command run for someone, on a server, as if they'd typed it there (a confirmed request, a button in Discord)."""

@@ -1,7 +1,8 @@
 """The server program's own commands, run for a server folder: `dedicated init`, `check`,
 `content`, `playlist`, `mods`, `reload`...
 
-Windows runs project-reclaimer.exe itself; Linux runs it through wine, or through
+Windows runs project-reclaimer.exe itself. Linux runs its own program (project-reclaimer,
+from 0.10) itself too, and 0.9's Windows program through wine; or either through
 whatever [process] command names before the word `dedicated`. Every call is a short
 process; the servers keep running.
 
@@ -12,36 +13,47 @@ mode-check) run where [setup] program points, or else the newest copy among the
 root's and the servers' (by `--version`): a root copy nothing updates goes stale, and
 an old program can't even read a newer dedicated.toml.
 
-A `dedicated mods` or `check` may start SteamCMD, which keeps the output pipe open
-after `dedicated` itself has gone. So a timeout or a cancel ends the whole process
-tree, and nothing ever waits on the pipe without a limit.
+Its output goes to a temporary file, never a pipe: 0.10's commands do their work, print
+it all, then never end while their output is a pipe (into a file they end at once), and
+wait for a line while their input is one, so their input is nothing. A streamed
+command's file is followed as it grows. A `dedicated mods` or `check` may start
+SteamCMD, which may outlive `dedicated`: a timeout or a cancel ends the whole process
+tree, and nothing ever waits on what it started.
 """
 
 from __future__ import annotations
 
 import asyncio
+import codecs
 import os
 import re
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import psutil
 
 from ..core import closing
+from .environment import server_environment
 
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
     from ..core.settings import Settings
 
 EXECUTABLE = "project-reclaimer.exe"
+NATIVE = "project-reclaimer"  # the program's own name on Linux (0.10 on: a program of its own, no wine)
+WINE = ("wine", "wine64")
 SLOW = 900.0  # seconds for check and mods, which may download Workshop items
 QUICK = 120.0
 READER_GRACE = 5.0  # after the program has ended, how long its output may still take to arrive
+FOLLOW_SECONDS = 0.1  # how often a streamed command's output file is looked at for new lines
+OUTPUT_PREFIX = "huragok-dedicated-"  # its output files, in the system's temporary folder
+OLD_OUTPUT = 86400.0  # an output file a program's child kept open (Windows can't remove it then) goes after a day
 CREATE_NEW_PROCESS_GROUP = 0x00000200  # Windows: so Ctrl+Break reaches it (and SteamCMD) and nothing else
 RELEASE_NAME = re.compile(r"project-reclaimer-dedicated-?v?(\d+(?:\.\d+)*)", re.IGNORECASE)
 VERSION_ANSWER = re.compile(r"project[-_ ]?reclaimer\b\D*?\bv?(\d+(?:\.\d+)+)", re.IGNORECASE)
@@ -50,6 +62,10 @@ BARE_VERSION = re.compile(r"^\s*v?(\d+(?:\.\d+)+)\b")
 
 class DedicatedError(Exception):
     pass
+
+
+# How 0.10 refuses a setting: of a server (`[[server]] "Alpha": …`, `"Alpha": …`) or of a file (`dedicated.toml: …`).
+REFUSED = re.compile(r'^(?:\[\[server\]\] )?"[^"]+": |^\S+\.(?:toml|json): ')
 
 
 @dataclass
@@ -65,9 +81,14 @@ class ToolResult:
 
     @property
     def problem(self) -> str:
-        """What went wrong, in one line, for a result that isn't ok."""
+        """What went wrong, in one line, for a result that isn't ok. 0.9 starts it with "Error"; 0.10 puts it on the
+        line after "Not ready:", or says it of the server or the file: `[[server]] "Alpha": …`, `"Alpha": …`,
+        `dedicated.toml: …`."""
         lines = self.lines
         errors = [line for line in lines if line.lower().startswith("error")]
+        if not errors:
+            after = [lines[n + 1] for n, line in enumerate(lines[:-1]) if line.strip() == "Not ready:"]
+            errors = after or [line for line in lines if REFUSED.match(line)]
         return (errors or lines or [f"exit code {self.code}"])[0].strip()
 
 
@@ -96,10 +117,41 @@ def _release_order(path: Path) -> tuple[int, tuple[int, ...], str]:
     return (1 if match else 0, numbers, path.name)
 
 
+def native_name(name: str) -> str:
+    """The Linux program's file name for a configured one: project-reclaimer for project-reclaimer.exe (or any
+    Windows name), the name itself when it isn't a Windows one."""
+    return NATIVE if name.lower().endswith(".exe") else name
+
+
+def windows_program(path: Path) -> bool:
+    """A Windows program, which Linux runs through wine (0.9's): named .exe and a PE file (it starts with "MZ"), or
+    one too short to tell. Anything else (0.10's Linux program) runs by itself."""
+    if path.suffix.lower() != ".exe":
+        return False
+    try:
+        with open(path, "rb") as file:
+            head = file.read(2)
+    except OSError:
+        return True
+    return len(head) < 2 or head == b"MZ"
+
+
+def without_wine(words: list[str], executable: Path | None, *, windows: bool | None = None) -> list[str]:
+    """[process] command's words ({executable} not filled in yet) with a leading `wine` left out when the program is
+    Linux's own (0.10 on), which wine can't run: a command written for 0.9 on Linux keeps working after the update.
+    On Windows, for a Windows program and for any other command, the words as they are."""
+    windows = os.name == "nt" if windows is None else windows
+    if windows or executable is None or len(words) < 2 or words[1] != "{executable}"             or Path(words[0]).name.lower() not in WINE or windows_program(executable):
+        return list(words)
+    return list(words[1:])
+
+
 def find_executable(folder: Path, name: str = EXECUTABLE) -> Path | None:
-    """The server program in a folder: the configured name, or the release's own name for it (the newest)."""
-    if (folder / name).is_file():
-        return folder / name
+    """The server program in a folder: the configured name, or the release's own name for it (the newest). On Linux
+    the program of its own (project-reclaimer, 0.10 on) comes first: an update to 0.10 puts it beside 0.9's."""
+    for each in [name] if os.name == "nt" else list(dict.fromkeys((native_name(name), name))):
+        if (folder / each).is_file():
+            return folder / each
     found = sorted(folder.glob("project-reclaimer-dedicated*.exe"), key=_release_order)
     return found[-1] if found else None
 
@@ -169,11 +221,12 @@ def cached_version(path: Path, template: list[str] | None = None) -> str | None:
 
 
 def program_prefix(executable: Path, template: list[str] | None = None) -> list[str]:
-    """How the program is run: [exe] on Windows, [wine, exe] on Linux, or the template's words before `dedicated`."""
+    """How the program is run: [exe] on Windows, and on Linux [exe] for its own program (0.10 on) or [wine, exe] for
+    a Windows one (0.9); or the template's words before `dedicated`."""
     if template and "dedicated" in template:
-        words = template[: template.index("dedicated")]
+        words = without_wine(template[: template.index("dedicated")], executable)
         return [w.replace("{executable}", str(executable)) for w in words] or [str(executable)]
-    return [str(executable)] if os.name == "nt" else ["wine", str(executable)]
+    return [str(executable)] if os.name == "nt" or not windows_program(executable) else ["wine", str(executable)]
 
 
 def tool_for(settings: Settings, server: ServerConfig | None = None) -> Dedicated:
@@ -189,10 +242,12 @@ def tool_for(settings: Settings, server: ServerConfig | None = None) -> Dedicate
         program = find_program(settings.home, settings.server_folders, name, settings.setup.program,
                                template=template)
     if program is None:
+        put = f"rename it {name} and put it at the root" if os.name == "nt" else             f"put the {NATIVE} from its Linux download at the root"
         raise DedicatedError(
-            f"the server program ({name}) isn't in any server folder or at {settings.home}: download the dedicated "
-            "server release from https://github.com/ProjectReclaimer/project-reclaimer-releases/releases/latest, "
-            f"rename it {name} and put it at the root, or set [setup] program in {settings.path.name}")
+            f"the server program ({name if os.name == 'nt' else native_name(name)}) isn't in any server folder or at "
+            f"{settings.home}: download the dedicated server release from "
+            f"https://github.com/ProjectReclaimer/project-reclaimer-releases/releases/latest, {put}, or set [setup] "
+            f"program in {settings.path.name}")
     return Dedicated(program, template=template, config_name=settings.config_name, own_copies=name,
                      root=settings.home, server_folders=settings.server_folders)
 
@@ -204,17 +259,89 @@ def _resolved(folder: Path) -> Path:
         return Path(folder)
 
 
-def _start(command: list[str], folder: Path, *, group: bool = False) -> subprocess.Popen[str]:
-    """The program, its output (and errors) on one pipe. group: in a process group of its own, for end_tree's
-    gentle stop."""
-    env = dict(os.environ, RECLAIMER_DEDICATED_AUTO_UPDATE="false")
+def _start(command: list[str], folder: Path, output: Any, *, group: bool = False) -> subprocess.Popen[bytes]:
+    """The program, its output (and errors) into `output`, a file: on 0.10 a command whose output is a pipe never
+    ends, and one whose input is a pipe waits for a line, so its input is nothing. group: in a process group of its
+    own, for end_tree's gentle stop."""
+    env = server_environment(RECLAIMER_DEDICATED_AUTO_UPDATE="false")  # content, items…: its dedicated.toml says
     options: dict[str, Any] = {}
     if group and os.name == "nt":
         options["creationflags"] = CREATE_NEW_PROCESS_GROUP
     elif group:
         options["start_new_session"] = True
-    return subprocess.Popen(command, cwd=str(folder), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, encoding="utf-8", errors="replace", bufsize=1, **options)
+    return subprocess.Popen(command, cwd=str(folder), env=env, stdin=subprocess.DEVNULL, stdout=output,
+                            stderr=subprocess.STDOUT, **options)
+
+
+class Output:
+    """A command's output file, read back as text lines while it runs and after it (UTF-8, newlines as Python's text
+    mode reads them), through a handle of its own: never the program's, whose place in the file that would move.
+    close() removes the file."""
+
+    _cleared = False  # old output files looked for, once a run
+
+    def __init__(self) -> None:
+        if not Output._cleared:
+            Output._cleared = True
+            _clear_old_outputs()
+        descriptor, name = tempfile.mkstemp(prefix=OUTPUT_PREFIX, suffix=".txt")
+        self.path = Path(name)
+        self.writer: Any = os.fdopen(descriptor, "wb")  # what the program writes through; closed once it has its own
+        try:
+            self.file: Any = self.path.open("rb")
+        except OSError:
+            self.writer.close()
+            self.path.unlink(missing_ok=True)
+            raise
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self.pending = ""
+
+    def handed_over(self) -> None:
+        """The program has the file open itself (or never started): Huragok's writing handle goes."""
+        self.writer.close()
+
+    def lines(self, *, final: bool = False) -> list[str]:
+        """The whole lines written since the last look, each with its newline; final (the program has ended): the
+        last one without one too."""
+        try:
+            data = self.file.read()
+        except (OSError, ValueError):
+            data = b""
+        text = self.pending + self.decoder.decode(data, final=final)
+        held = ""
+        if not final and text.endswith("\r"):
+            text, held = text[:-1], "\r"  # maybe half of a "\r\n"
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        complete, newline, rest = text.rpartition("\n")
+        lines = [line + "\n" for line in complete.split("\n")] if newline else []
+        self.pending = rest + held
+        if final and self.pending:
+            lines.append(self.pending)
+            self.pending = ""
+        return lines
+
+    def close(self) -> None:
+        for handle in (self.writer, self.file):
+            try:
+                handle.close()
+            except (OSError, ValueError):
+                pass
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError:
+            pass  # a child of the program still has it open (Windows): it goes after OLD_OUTPUT
+
+
+def _clear_old_outputs() -> None:
+    try:
+        for path in Path(tempfile.gettempdir()).glob(f"{OUTPUT_PREFIX}*.txt"):
+            try:
+                if time.time() - path.stat().st_mtime > OLD_OUTPUT:
+                    path.unlink()
+            except OSError:
+                continue
+    except OSError:
+        pass
 
 
 def end_tree(process: subprocess.Popen[Any], *, gently: bool = False, grace: float = 3.0) -> None:
@@ -246,23 +373,6 @@ def end_tree(process: subprocess.Popen[Any], *, gently: bool = False, grace: flo
         process.wait(5)
     except subprocess.TimeoutExpired:
         pass
-
-
-def _pump(stream: Any, collected: list[str], on_line: Callable[[str], None] | None = None) -> None:
-    """Read the output to its end, then close the pipe: the reader closes it, as only the reader knows when it
-    is done (one left waiting on a child that holds the pipe closes it once that child is gone)."""
-    try:
-        for line in stream:
-            collected.append(line)
-            if on_line is not None:
-                on_line(line)
-    except (OSError, ValueError):
-        pass
-    finally:
-        try:
-            stream.close()
-        except (OSError, ValueError):
-            pass
 
 
 def _wait(process: subprocess.Popen[Any], timeout: float, stop: threading.Event | None) -> str:
@@ -323,20 +433,24 @@ class Dedicated:
         ended, so a SteamCMD it started can't hold this up."""
         command = self.command(*words, config=config, program=program, folder=folder)
         try:
-            process = _start(command, folder)
-        except FileNotFoundError:
-            return ToolResult(False, 127, f"couldn't run {command[0]}: not found", command)
+            output = Output()
         except OSError as error:
-            return ToolResult(False, 126, f"couldn't run {command[0]}: {error}", command)
-        collected: list[str] = []
-        reader = threading.Thread(target=_pump, args=(process.stdout, collected), daemon=True,
-                                  name=f"dedicated {' '.join(words[:1])}")
-        reader.start()
-        ended = _wait(process, timeout, stop)
-        if ended:
-            end_tree(process)
-        reader.join(READER_GRACE)  # a child it left running may hold the pipe open: never wait on that
-        text = "".join(collected)
+            return ToolResult(False, 126, f"couldn't make a file for {command[0]}'s output: {error}", command)
+        try:
+            try:
+                process = _start(command, folder, output.writer)
+            except FileNotFoundError:
+                return ToolResult(False, 127, f"couldn't run {command[0]}: not found", command)
+            except OSError as error:
+                return ToolResult(False, 126, f"couldn't run {command[0]}: {error}", command)
+            finally:
+                output.handed_over()
+            ended = _wait(process, timeout, stop)
+            if ended:
+                end_tree(process)
+            text = "".join(output.lines(final=True))
+        finally:
+            output.close()
         if ended == "timeout":
             return ToolResult(False, 124, f"{' '.join(words)} took longer than {timeout:.0f} s and was stopped"
                               + (f"\n{text}" if text else ""), command)
@@ -369,16 +483,23 @@ class Dedicated:
         stays in control: Esc cancels. The program runs in a process group of its own, so
         it gets Ctrl+Break (it and SteamCMD stop cleanly, and SteamCMD lets go of the
         download the servers' own fetches wait on); whatever is left is then killed, and
-        nothing waits on its output pipe.
+        nothing waits on what it started. Its output file is followed as it grows.
         """
         command = self.command(*words, config=config, folder=folder)
         loop = asyncio.get_running_loop()
         try:
-            process = _start(command, folder, group=True)
+            output = Output()
+        except OSError as error:
+            return ToolResult(False, 126, f"couldn't make a file for {command[0]}'s output: {error}", command)
+        try:
+            process = _start(command, folder, output.writer, group=True)
         except FileNotFoundError:
+            output.close()
             return ToolResult(False, 127, f"couldn't run {command[0]}: not found", command)
         except OSError as error:
+            output.close()
             return ToolResult(False, 126, f"couldn't run {command[0]}: {error}", command)
+        output.handed_over()
         collected: list[str] = []
         finished: asyncio.Future[None] = loop.create_future()
         listening = [True]
@@ -391,18 +512,27 @@ class Dedicated:
             if not finished.done():
                 finished.set_result(None)
 
-        def pump() -> None:
+        def follow() -> None:
+            """New lines as the program writes them, until it has ended; then the file goes."""
             try:
-                _pump(process.stdout, collected, lambda line: loop.call_soon_threadsafe(deliver, line))
+                while True:
+                    running = process.poll() is None
+                    for line in output.lines(final=not running):
+                        collected.append(line)
+                        loop.call_soon_threadsafe(deliver, line)
+                    if not running:
+                        break
+                    time.sleep(FOLLOW_SECONDS)
             except RuntimeError:
                 pass  # the loop has closed
             finally:
+                output.close()
                 try:
                     loop.call_soon_threadsafe(done_reading)
                 except RuntimeError:
                     pass
 
-        threading.Thread(target=pump, daemon=True, name=f"dedicated {' '.join(words[:1])}").start()
+        threading.Thread(target=follow, daemon=True, name=f"dedicated {' '.join(words[:1])}").start()
         deadline = loop.time() + timeout
         ended = ""
         try:
@@ -425,7 +555,7 @@ class Dedicated:
         try:
             await asyncio.wait_for(asyncio.shield(finished), READER_GRACE)
         except (TimeoutError, asyncio.TimeoutError):
-            pass  # something it started still holds its output: left to end by itself
+            pass  # the last lines are still being read: left to end by themselves
         await asyncio.sleep(0)  # the lines already read reach on_line first
         listening[0] = False
         code = process.returncode if process.returncode is not None else -1

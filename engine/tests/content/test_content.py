@@ -657,10 +657,10 @@ def test_halo_3s_own_game_variants_are_offered_though_the_listing_only_counts_th
     class Tool:
         def content(self, folder: Path, words: list[str] | None = None) -> Any:
             asked.append(words)
-            return SimpleNamespace(ok=True, text=searched if words else main, problem="")
+            return SimpleNamespace(ok=True, text=searched if words and words[0] else main, problem="")
 
     catalogue = load_catalogue(Tool(), Path("."), Path("content"), Path("dedicated.toml"))  # type: ignore[arg-type]
-    assert asked == [None, *([w] for w in SEARCH_WORDS)]
+    assert asked == [[""], *([w] for w in SEARCH_WORDS)]  # 0.9 takes the empty word as none: its plain listing
     names = [e.name for e in catalogue.game_variants]
     assert names[:6] == ["Flood Infection", "Growth", "Gun Game", "One in the Chamber", "UNSC vs Covenant",
                          "Zone Control"]  # the content folder's first, as listed

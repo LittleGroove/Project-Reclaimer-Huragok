@@ -242,7 +242,8 @@ class Status:
                 field("Version", values["version"])
             if "votes" in show and row.get("voting"):
                 field("Vote", "under way")
-            everyone = sorted((p.name for p in getattr(state, "players", {}).values()), key=str.lower) if state is not None else []
+            # A 0.10 player has no name for the first seconds after joining: left out until it comes.
+            everyone = sorted((p.name for p in getattr(state, "players", {}).values() if p.name), key=str.lower) if state is not None else []
             if options.get("player_list") == "names" and everyone:
                 listed = clean(", ".join(everyone))
                 fields.append({"name": "On now", "value": listed if len(listed) <= NAMES_LIMIT else listed[:NAMES_LIMIT] + "…", "inline": False})

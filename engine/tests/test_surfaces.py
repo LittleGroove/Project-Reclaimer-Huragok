@@ -559,7 +559,7 @@ def test_saving_a_playlist_reports_what_the_server_program_cannot_play(tmp_path:
     for map_name in ("Guardian", "Valhalla", "The Pit"):
         fine.add(map_name, "Slayer")
 
-    def locked(self: Playlist) -> Path:
+    def locked(self: Playlist, program_version: str | None = None) -> Path:
         raise PlaylistError("locked")
 
     monkeypatch.setattr(Playlist, "save", locked)

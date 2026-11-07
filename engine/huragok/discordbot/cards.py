@@ -321,6 +321,8 @@ JOIN_TEXTS = {"first": "join.first", "joined": "join.joined", "left": "join.left
 
 
 def join(config: DiscordConfig, event: Event, kind: str, *, name: str = "") -> Card:
+    """The join's own `name`: on 0.10, where the console's join names nobody, the one that came after it (Feeds waits for
+    it, and fills in what's known if it never comes); with none known, their short ID."""
     return Card("joins", kind, say(config, JOIN_TEXTS[kind], player=player(event, "id", "name"), reason=clean(event.get("reason")), old=clean(name)),
                 heading(config, "welcome", "Joins"), server=event.server, merge=True)
 
@@ -333,7 +335,8 @@ def minutes_words(seconds: float) -> str:
 
 
 def watch(config: DiscordConfig, event: Event, kind: str, key: str, **values: Any) -> Card:
-    subject = "" if kind == "first-time-quiet" else str(event.get("id") or "").lower()  # someone new is only for the record
+    """About a join, its name filled in as join()'s is."""
+    subject ="" if kind == "first-time-quiet" else str(event.get("id") or "").lower()  # someone new is only for the record
     return Card("watch", kind, say(config, key, player=player(event, "id", "name"), **values), heading(config, "hero", "Keep an eye out"), server=event.server,
                 subject=subject, subject_name=str(event.get("name") or ""), problem=f"watch:{kind}:{subject}" if subject else "")  # joining again is the same story, on the same card
 
@@ -361,7 +364,8 @@ def seeding(config: DiscordConfig, server: str, players: int) -> Card:
 
 
 def request(config: DiscordConfig, event: Event) -> Card:
-    return Card("requests", "asked", say(config, "requests.asked", by=clean(event.get("by")), what=clean(event.get("what")), slot=event.get("slot") or event.get("number")), heading(config, "citizens", "A request"), server=event.server,
+    key = "requests.ban_asked" if event.get("needs") else "requests.asked"  # a moderator's strike that bans: an admin confirms it
+    return Card("requests", "asked", say(config, key, by=clean(event.get("by")), what=clean(event.get("what")), slot=event.get("slot") or event.get("number")), heading(config, "citizens", "A request"), server=event.server,
                 subject=str(event.get("target_id") or "").lower(), subject_name=str(event.get("target_name") or ""), owner=PEOPLE, problem=f"request:{event.get('number')}")
 
 

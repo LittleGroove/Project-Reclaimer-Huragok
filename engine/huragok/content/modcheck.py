@@ -14,15 +14,17 @@ What it reads, and where the rule comes from (0.9.21, 20 October 2026):
   or a folder under Mods (or Mods/Workshop) holding .map files without one: a single map, which
   the program plays with or without a .mapinfo (host guide, Mods).
 - ModInfo.json: readable; Engine "Halo3" (others are skipped silently: tried with `dedicated
-  content`); in Mods/Workshop/<item>, HostedModIds naming that item (else the program refuses to
-  install it: "ModInfo.json names a different Workshop item"); every MultiplayerMaps file there.
+  content`), or from 0.10 "HaloReach", "Halo1" or "Halo2" too, played as Halo 3's are, with that
+  game's files in the game folder (bungie.py); in Mods/Workshop/<item>, HostedModIds naming that
+  item (else the program refuses to install it: "ModInfo.json names a different Workshop item");
+  every MultiplayerMaps file there.
 - Pairing: a package's .map (in maps/ or its own folder; shared, campaign and mainmenu aside) is
   used only when a MultiplayerMaps description's ScenarioFile ends in the map's file name, in
   any case: tried with `dedicated content` (a file name off by "-old", a description naming the
   scenario's path instead, one not listed: each skipped). Campaign mods (CampaignInfo.json) pair
   their own way and aren't paired here.
 - Each map: halo3_mapfile's checks (a map the program can't read), a multiplayer scenario, and its
-  map ID for the clashes below.
+  map ID for the clashes below. Halo 3's maps only: another game's are listed, not read.
 - A Workshop item's reclaimer-installed.json: every file it lists there, at its size (else the
   program says the installation "is incomplete").
 - The host guide's limits: 8 maps and 512 files a mod; a map up to 4 GB, a sound bank or movie
@@ -32,7 +34,11 @@ What it reads, and where the rule comes from (0.9.21, 20 October 2026):
 - customization.json (character mods): readable, and all 27 of Halo 3's multiplayer maps in the
   game folder, which the program needs to make their packs.
 - Across mods: two maps with one map ID, or one file name in two mods (they can't share a session
-  or a playlist).
+  or a playlist). Halo 3's.
+
+Mods keep their maps in maps/ (Maps/ in some Reach and Combat Evolved mods: any case) or their
+own folder; other folders hold files they put in place of the game's (halo2/h2_maps_win64_dx11,
+halo1/maps), never maps to play (seen in MCC's Workshop folder, 6 November 2026).
 
 Maps are read through halo3_mapfile (a few hundred KB each) and remembered by path, size and time, so
 looking again costs nothing while nothing changed.
@@ -50,6 +56,7 @@ from typing import Any
 
 from ..core.text import size_text
 from ..games import halo3_mapfile
+from ..games.bungie import GAMES, NEW_GAMES, Game, game_of_engine
 from ..games.halo3 import HALO3_MAPS
 
 BROKEN = "broken"  # the server won't use it, or part of it
@@ -58,7 +65,7 @@ NOTE = "note"
 
 LAYOUTS = "Project Reclaimer Layouts"
 INSTALLED = "reclaimer-installed.json"  # the program's list of a Workshop item's files, with their sizes
-NOT_MAPS = {"shared", "campaign", "mainmenu"}
+NOT_MAPS = {"shared", "campaign", "mainmenu", "single_player_shared", "bitmaps", "sounds", "loc", "ui"}
 MAX_MAPS, MAX_FILES = 8, 512
 MAX_MAP, MAX_MEDIA, MAX_IMAGE = 4 << 30, 2 << 30, 8 << 20
 MEDIA = {".fsb", ".bik"}
@@ -80,6 +87,7 @@ class ModReport:
     maps: list[str] = field(default_factory=list)  # the maps the server plays from it (file names without .map)
     findings: list[Finding] = field(default_factory=list)
     disabled: bool = False
+    game: str = "halo3"  # the game it's made for (bungie.GAMES), from 0.10 not always Halo 3
 
     @property
     def good(self) -> bool:
@@ -136,9 +144,15 @@ def map_verdict(path: Path) -> halo3_mapfile.Verdict:
     return verdict
 
 
-def check_mods(content_root: Path, game: Path | None = None) -> list[ModReport]:
+def plays_mods_of(game: Game | None, version: str | None) -> bool:
+    """Whether program `version` plays mods made for `game` (None, unknown: one that plays every game it can)."""
+    return game is not None and (game.key == "halo3" or game.key in NEW_GAMES and game.plays_on(version))
+
+
+def check_mods(content_root: Path, game: Path | None = None, version: str | None = None) -> list[ModReport]:
     """Every mod in content_root/Mods, each with what's wrong in it (nothing: good to go). game: the server's game
-    folder, for what character mods need from it."""
+    folder, for what character mods and other games' mods need from it. version: the program version of the servers
+    using the folder (None: not known, taken as one that plays every game bungie.py names, as 0.10 does)."""
     root = content_root / "Mods"
     if not root.is_dir():
         return []
@@ -146,7 +160,7 @@ def check_mods(content_root: Path, game: Path | None = None) -> list[ModReport]:
     reports: list[ModReport] = []
     ids: list[tuple[int, str, ModReport]] = []  # (map ID, map file name, its mod) for the clashes
     for folder in packages(root):
-        report = _check_package(folder, content_root, disabled, ids)
+        report = _check_package(folder, content_root, disabled, ids, game, version)
         reports.append(report)
     _check_across(reports, ids)
     _check_layouts(reports, ids)
@@ -179,8 +193,8 @@ def packages(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def _check_package(folder: Path, content_root: Path, disabled: list[str], ids: list[tuple[int, str, ModReport]]
-                   ) -> ModReport:
+def _check_package(folder: Path, content_root: Path, disabled: list[str], ids: list[tuple[int, str, ModReport]],
+                   game_folder: Path | None = None, version: str | None = None) -> ModReport:
     workshop = int(folder.name) if folder.parent.name.lower() == "workshop" and folder.name.isdecimal() else None
     report = ModReport(folder, folder.name, workshop)
     try:
@@ -209,13 +223,23 @@ def _check_package(folder: Path, content_root: Path, disabled: list[str], ids: l
                                 "item\"); the item's own packaging, ask its author")
         report.workshop = report.workshop or named
         engine = info.get("Engine")
-        if isinstance(engine, str) and engine.strip().lower() not in ("halo3", ""):
-            report.add(BROKEN, f"it is made for {engine}, not Halo 3: the server ignores it without a word")
+        made_for = game_of_engine(engine if isinstance(engine, str) else None)
+        report.game = made_for.key if made_for is not None else ""
+        if not plays_mods_of(made_for, version):
+            report.add(BROKEN, _not_played(str(engine), made_for, version))
             return report
+        assert made_for is not None
+        if made_for.key != "halo3":
+            _check_game_files(report, made_for, game_folder)
         contents = info.get("GameModContents") if isinstance(info.get("GameModContents"), dict) else {}
         campaign = campaign or contents.get("HasCampaign") is True
         listed = contents.get("MultiplayerMaps")
-        for relative in listed if isinstance(listed, list) else []:
+        firefight = contents.get("FirefightMaps") if made_for.key != "halo3" else None  # Reach's
+        firefight = [str(f) for f in firefight] if isinstance(firefight, list) else []
+        if firefight:
+            report.add(NOTE, f"{len(firefight)} of its maps {'is' if len(firefight) == 1 else 'are'} for Firefight, "
+                             "which no server setting plays yet (Project Reclaimer 0.10.0)")
+        for relative in [*(listed if isinstance(listed, list) else []), *firefight]:
             path = folder / str(relative).replace("\\", "/")
             description = _json(path)
             if description is None:
@@ -244,18 +268,44 @@ def _check_package(folder: Path, content_root: Path, disabled: list[str], ids: l
                                         f"{size}")
                 else:
                     report.add(BROKEN, f"{path.name} is skipped by the server (\"Map needs matching .mapinfo "
-                                       f"metadata\"): none of the descriptions ModInfo.json lists (MultiplayerMaps) "
+                                       f"metadata\"): none of the descriptions ModInfo.json lists (MultiplayerMaps"
+                                       f"{', FirefightMaps' if firefight else ''}) "
                                        f"has a ScenarioFile ending in {path.stem}; the item's own packaging, ask its "
                                        "author")
             maps = [m for m in maps if m.stem.lower() in described]
     for path in maps:
-        _check_map(report, path, campaign, ids)
+        if report.game == "halo3":
+            _check_map(report, path, campaign, ids)
+        else:
+            report.maps.append(path.stem)  # another game's map: halo3_mapfile reads Halo 3's only
     _check_installed(report, folder)
     _check_limits(report, folder, maps)
     customization = folder / "customization.json"
     if customization.is_file() and not isinstance(_json(customization), dict):
         report.add(BROKEN, "its customization.json can't be read: its characters are left out")
     return report
+
+
+def _not_played(engine: str, game: Game | None, version: str | None) -> str:
+    """Why the server leaves a mod for another game out: the words 0.9 earned, or 0.10's (which plays more)."""
+    if (game is not None and game.key in NEW_GAMES) or not GAMES["reach"].plays_on(version):
+        return f"it is made for {engine}, not Halo 3: the server ignores it without a word"
+    return (f"it is made for {engine}: the server plays Halo 3's, Halo: Reach's, Combat Evolved's and Halo 2's mods "
+            "only, and ignores it without a word")
+
+
+def _check_game_files(report: ModReport, game: Game, game_folder: Path | None) -> None:
+    """A mod for Reach, Combat Evolved or Halo 2 (0.10 on) plays only with that game's files in the game folder; its
+    maps aren't read here."""
+    unread = "its maps aren't checked here (Huragok reads Halo 3's maps only)"
+    if game_folder is not None and not (game_folder / game.engine).is_file():
+        report.add(WARNING, f"it is made for {game.title}, whose files aren't in the server's game folder "
+                            f"({game.folder}): the server can't play it until they are; {unread}")
+    elif game_folder is not None:
+        report.add(NOTE, f"made for {game.title}, played with {game.short}'s files in the game folder; {unread}")
+    else:
+        report.add(NOTE, f"made for {game.title}: it plays only with {game.short}'s files in the server's game folder "
+                         f"({game.folder}); {unread}")
 
 
 def _check_map(report: ModReport, path: Path, campaign: bool, ids: list[tuple[int, str, ModReport]]) -> None:
@@ -347,7 +397,7 @@ def _check_across(reports: list[ModReport], ids: list[tuple[int, str, ModReport]
                                        "can't both be played in one session or playlist (the server leaves one out)")
     by_stem: dict[str, list[ModReport]] = {}
     for report in reports:
-        if not report.disabled:
+        if not report.disabled and report.game == "halo3":  # other games' maps are named apart (halo1_…, halo2_…)
             for stem in report.maps:
                 by_stem.setdefault(stem.lower(), []).append(report)
     for stem, owners in by_stem.items():
@@ -384,13 +434,40 @@ def _check_layouts(reports: list[ModReport], ids: list[tuple[int, str, ModReport
                                     f"{made_on}; the installed one is {map_ids[stem.lower()]}), so it may not load")
 
 
-def _maps_in(folder: Path) -> list[Path]:
-    """A package's maps: in its maps folder and its own (shared, campaign and mainmenu aside)."""
+def maps_folder(folder: Path) -> Path | None:
+    """A mod's maps folder: maps/, in any case (Maps/ in some Reach and Combat Evolved mods, which Linux tells apart)."""
+    if (folder / "maps").is_dir():
+        return folder / "maps"
     try:
-        found = [*folder.glob("*.map"), *(folder / "maps").glob("*.map")]
+        return next((p for p in sorted(folder.iterdir()) if p.name.casefold() == "maps" and p.is_dir()), None)
     except OSError:
-        return []
+        return None
+
+
+def _maps_in(folder: Path) -> list[Path]:
+    """A package's maps: in its maps folder and its own (the games' shared files aside: shared, campaign, mainmenu…).
+    Whatever the game: Reach's, Combat Evolved's and Halo 2's mods keep theirs there too."""
+    found: list[Path] = []
+    for place in (folder, maps_folder(folder)):
+        try:
+            found += [p for p in place.iterdir() if p.suffix.lower() == ".map"] if place is not None else []
+        except OSError:
+            continue
     return sorted(p for p in found if p.is_file() and p.stem.lower() not in NOT_MAPS)
+
+
+def game_of_map_file(path: Path) -> Game | None:
+    """The game a map file is for: its mod's (the nearest ModInfo.json above it: None for a game no version plays), the
+    game folder's it sits in (haloreach/maps), else Halo 3's."""
+    folders = {game.folder.casefold(): game for game in GAMES.values()}
+    for folder in list(path.parents)[:3]:
+        info = _json(folder / "ModInfo.json")
+        if isinstance(info, dict):
+            engine = info.get("Engine")
+            return game_of_engine(engine if isinstance(engine, str) else None)
+        if folder.name.casefold() in folders:
+            return folders[folder.name.casefold()]
+    return GAMES["halo3"]
 
 
 def _uploaded(folder: Path) -> int | None:

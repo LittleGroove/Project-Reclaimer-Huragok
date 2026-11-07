@@ -2,10 +2,13 @@
 campaign's missions and difficulties, and its 27 multiplayer maps.
 
 A playlist (`playlists/<name>.playlist.json`, version 2) is a rotation players vote on: 3 to
-128 games, each a map and a game type (plus a display name, a weight, rules and options).
-The server program's `dedicated playlist new` makes every map with every game type; the
-window's builder lets the host pick which pairs, then checks the file with
-`dedicated playlist show`.
+128 games before Project Reclaimer 0.10, 1 to 256 from it (voted on from three up), each a map
+and a game type (plus a display name, a weight, rules and options). From 0.10 one playlist may
+mix Halo 3's maps with Reach's, Combat Evolved's and Halo 2's; CE's and Halo 2's play only their
+own game types, and the program refuses `options` and `rules` on them, so Halo 3's option
+catalogue never touches those games (entry_game). The server program's `dedicated playlist new`
+makes every map with every game type; the window's builder lets the host pick which pairs, then
+checks the file with `dedicated playlist show`.
 """
 
 from __future__ import annotations
@@ -18,7 +21,8 @@ from typing import Any
 
 from ..core.files import write_atomic
 from ..core.text import slug
-from .halo3_options import LABEL_CHANGES, NEWEST, choices_as_numbers
+from .bungie import GAMES, SINCE, Game, game_of_map
+from .halo3_options import LABEL_CHANGES, NEWEST, choices_as_numbers, version_tuple
 
 
 HALO3_MAPS = {"armory", "bunkerworld", "chill", "chillout", "construct", "cyberdyne", "deadlock", "descent", "docks",
@@ -39,7 +43,40 @@ MISSION_STARTS = {3010: 2, 3020: 2, 3030: 1, 3040: 1, 3050: 1, 3070: 2, 3100: 2,
 DIFFICULTIES = ("easy", "normal", "heroic", "legendary")
 
 
-MIN_GAMES, MAX_GAMES = 3, 128
+MIN_GAMES, MAX_GAMES = 3, 256  # what Huragok's builder asks for; the most any program takes (0.10's)
+GAMES_BEFORE_0_10 = (3, 128)  # 0.9's playlists
+GAMES_FROM_0_10 = (1, 256)  # 0.10.0: "1 to 256 games", voted on from three up (a 2-game playlist checked: taken)
+
+
+def games_range(program_version: str | None) -> tuple[int, int]:
+    """(fewest, most) games a playlist may hold on a server running `program_version`. Not known: 3 (what every
+    version takes, and a vote needs) to 256 (0.10's most): the server's own program refuses at its check what its
+    version can't take (check_plays asks it before every save)."""
+    have = version_tuple(program_version)
+    if have is None:
+        return MIN_GAMES, MAX_GAMES
+    return GAMES_BEFORE_0_10 if have < (version_tuple(SINCE) or ()) else GAMES_FROM_0_10
+
+
+def entry_game(game: dict[str, Any]) -> Game | None:
+    """The game whose map a playlist game names: its stock map's (by title, file name or ID), else by MCC's file
+    name for Combat Evolved's and Halo 2's maps, their mods' too (`halo1_bloodgulch_6381b55e`, as 0.10's `dedicated
+    content` lists them); None: a Halo 3 mod map, a saved map, a typo (Halo 3's, as far as Huragok knows)."""
+    name = str(game.get("map") or "").strip()
+    found = game_of_map(name)
+    if found is not None:
+        return found
+    for key in ("halo1", "halo2"):
+        if name.casefold().startswith(f"{key}_"):
+            return GAMES[key]
+    return None
+
+
+def own_rules_only(game: dict[str, Any]) -> bool:
+    """A Combat Evolved or Halo 2 game: it plays only its own game types, and the program refuses `options` and
+    `rules` on it, so Halo 3's option catalogue leaves it as it is written."""
+    found = entry_game(game)
+    return found is not None and found.own_rules_only
 
 
 class PlaylistError(Exception):
@@ -79,6 +116,9 @@ class Playlist:
             if game.get("name") and game.get("game"):
                 label += f" ({game['game']})"
             bits = [label]
+            other = entry_game(game)
+            if other is not None and other.key != "halo3":
+                bits.append(other.short)
             weight = game.get("weight", 1)
             if weight != 1:
                 # As it's written: "two" or 1.5 broke every playlist screen (int() raised), and the program's check says
@@ -126,12 +166,16 @@ class Playlist:
         else:
             game["weight"] = weight
 
-    def problems(self) -> list[str]:
+    def problems(self, program_version: str | None = None) -> list[str]:
+        """What Huragok can tell at once the server program won't take, for a server on `program_version` (None:
+        not known: games_range's; its own check says the rest)."""
         found = []
-        if len(self.games) < MIN_GAMES:
-            found.append(f"a playlist needs {MIN_GAMES} or more games (this one has {len(self.games)})")
-        if len(self.games) > MAX_GAMES:
-            found.append(f"a playlist takes at most {MAX_GAMES} games")
+        fewest, most = games_range(program_version)
+        if len(self.games) < fewest:
+            found.append(f"a playlist needs {fewest} or more games (this one has {len(self.games)})")
+        if len(self.games) > most:
+            found.append(f"a playlist takes at most {most} games" + (
+                f" before Project Reclaimer {SINCE}" if most < MAX_GAMES else ""))
         if not 5 <= self.vote_seconds <= 120:
             found.append("vote_seconds is 5 to 120")
         return found
@@ -148,7 +192,8 @@ class Playlist:
         found: dict[int, int] = {}
         for number, game in enumerate(self.games, 1):
             copy = json.loads(json.dumps(game))  # a deep copy: choices_as_numbers rewrites its options in place
-            choices_as_numbers(copy)
+            if not own_rules_only(copy):  # CE's and Halo 2's: as written (Halo 3's options aren't theirs)
+                choices_as_numbers(copy)
             key = json.dumps([str(copy.get("map", "")).casefold(), str(copy.get("game", "")).casefold(),
                               str(copy.get("base_map", "")).casefold(), copy.get("rules") or {},
                               copy.get("options") or {}, copy.get("world") or {}], sort_keys=True)
@@ -159,12 +204,14 @@ class Playlist:
         return found
 
     def number_choices(self) -> None:
-        """Every option choice as its number, as Huragok writes playlists (labels only on screen)."""
+        """Every option choice as its number, as Huragok writes playlists (labels only on screen). Combat Evolved's
+        and Halo 2's games are left as they are written: Halo 3's options aren't theirs."""
         for game in self.games:
-            choices_as_numbers(game)
+            if not own_rules_only(game):
+                choices_as_numbers(game)
 
-    def save(self) -> Path:
-        if problems := self.problems():
+    def save(self, program_version: str | None = None) -> Path:
+        if problems := self.problems(program_version):
             raise PlaylistError("; ".join(problems))
         self.number_choices()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,11 +220,29 @@ class Playlist:
         return self.path
 
 
+GAME_PARTS = re.compile(r"(?:^|;\s*)game (\d+):\s*")  # 0.10: "<file>: game 2: why; game 6: why"
+
+
+def game_problems(text: str) -> dict[int, str] | None:
+    """0.10's way of naming a playlist's games that can't be played, on one line: "game 2: no multiplayer map
+    "Atlantiss" is installed; …; game 6: Guardian Slayer is listed twice (…)" -> {2: "no multiplayer map …", 6: …};
+    None when the text doesn't start with a game."""
+    if not GAME_PARTS.match(text):
+        return None
+    parts = GAME_PARTS.split(text)
+    return {int(number): why.strip() for number, why in zip(parts[1::2], parts[2::2])}
+
+
 def problems_from_show(text: str) -> dict[int, str]:
-    """What `dedicated playlist show` says can't be played: game number -> its PROBLEM line."""
+    """What `dedicated playlist show` says can't be played: game number -> its PROBLEM line (0.9), or its part of
+    the one line 0.10 says them on ("playlists/x.playlist.json: game 2: …; game 6: …")."""
     found: dict[int, str] = {}
     current: int | None = None
     for line in text.splitlines():
+        on_one_line = re.match(r"^\S+\.json:\s*(game \d+:.*)$", line.strip())
+        if on_one_line:
+            found.update(game_problems(on_one_line.group(1)) or {})
+            continue
         numbered = re.match(r"^\s*(\d+)\.\s", line)
         if numbered:
             current = int(numbered.group(1))
@@ -205,6 +270,8 @@ def _label_fixes(data: Any, program_version: str | None) -> list[tuple[str, str,
     fixes = []
     games = data.get("games") if isinstance(data, dict) else None
     for game in games if isinstance(games, list) else []:
+        if isinstance(game, dict) and own_rules_only(game):
+            continue  # CE's and Halo 2's: not Halo 3's options, left as written
         options = game.get("options") if isinstance(game, dict) else None
         for key, value in list(options.items()) if isinstance(options, dict) else []:
             for change in LABEL_CHANGES:

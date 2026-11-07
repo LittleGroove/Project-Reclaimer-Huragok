@@ -781,7 +781,7 @@ def test_the_output_pipe_is_closed_once_read(tmp_path: Path, monkeypatch, run) -
     assert tool.run_sync(tmp_path, "content").text == "a line\n"
     lines: list[str] = []
     assert run(tool.stream(tmp_path, "content", on_line=lines.append)).ok and lines == ["a line"]
-    assert len(started) == 2 and all(process.stdout.closed for process in started)
+    assert len(started) == 2 and all(process.stdout is None for process in started)  # a file, never a pipe
 
 
 def test_each_server_folder_runs_its_own_copy_of_the_program(tmp_path: Path, monkeypatch) -> None:

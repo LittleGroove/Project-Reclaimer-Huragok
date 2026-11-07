@@ -1,7 +1,8 @@
 """The window's setup screens: N new server, G game content (what's there, playlists built from
 numbered lists or from a mod's maps, each playlist game's own rules and options, custom games,
-Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop account and Halo 3's
-files), and the list of each server's files that O opens.
+Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop account and every game's
+files: Halo 3's, the campaign's, ODST's, and from Project Reclaimer 0.10 Reach's, CE's and Halo 2's), and the
+list of each server's files that O opens.
 
 Everything the host picks from is listed first, numbered: maps, map variants, game types
 and variants, mods, packages, playlists. Nothing has to be typed from memory. The screens
@@ -37,18 +38,21 @@ from ...core.text import slug
 from ...games import halo3_mapfile
 from ...games import files as game_files
 from ...games.files import has_odst_files
-from ...games.halo3 import MIN_GAMES, Playlist, PlaylistError, load_playlist, new_playlist, playlist_files
+from ...games.halo3 import Playlist, PlaylistError, games_range, load_playlist, new_playlist, playlist_files
 from ...players.messages.intervals import own_file
 from ...program.dedicated import Dedicated, DedicatedError, tool_for
 from ...program.plays import applies_when, check_plays, write_plays
 from ...program.settings import path_setting
 from .. import statuscard
 from ..controllers import Row
-from .base import PAGE, Screens
+from .base import PAGE, Screens, fits, map_sections
 
 PORTS = (1024, 65535)  # a new server's UDP game port
 PLAYERS = (1, 127)  # players at once
 CONSOLE_TAIL = 256 * 1024  # how much of the end of a console log is read for what it said lately
+BROWSE_KEYS = "123456789ABCDEFGHIJKLNOPQRSTUV"  # G's lists (M is the mods, W the Workshop items)
+MORE = {"mod maps": "mod maps (installed mods and Workshop items)",
+        "map variants (each plays on its own map)": "map variants (Forge layouts, .mvar files; each plays on its map)"}
 
 
 class SetupScreens(Screens):
@@ -84,11 +88,17 @@ class SetupScreens(Screens):
     @staticmethod
     def _mod_health(server: ServerConfig, settings: Settings) -> list[tuple[str, str]]:
         """Is each mod good to go (modcheck.py)? Lines with their colours; read in a thread (it opens the maps)."""
-        from ...content.gamefiles import read_paths
+        from ...content.gamefiles import read_paths, server_version
+        from ...games.halo3_options import version_tuple
 
         paths = read_paths(server.folder, settings.config_name)
         root = server.content_dir or content_root_of(server.folder, settings.config_name)
-        reports = modcheck.check_mods(root, paths.game if paths else None)
+        # The oldest program of the servers on that content folder: a Reach, CE or Halo 2 mod is fine on 0.10 only
+        sharing = [s for s in settings.servers
+                   if (s.content_dir or content_root_of(s.folder, settings.config_name)).resolve() == root.resolve()]
+        known = [v for v in (server_version(settings, s) for s in sharing or [server]) if version_tuple(v) is not None]
+        version = min(known, key=lambda v: version_tuple(v) or ()) if known else None
+        reports = modcheck.check_mods(root, paths.game if paths else None, version)
         if not reports:
             return []
         lines = [("Is each mod good to go?", "white")]
@@ -178,7 +188,12 @@ class SetupScreens(Screens):
         if password is None:
             return
         default_players = str((package.server.get("max_players") if package else None) or 16)
-        players_text = await self._number_line("  Players at once (1-127)", default_players, PLAYERS, "a player count")
+        from ...content.gamefiles import program_version_of
+        from ...content.newserver import most_players
+
+        most = most_players(await asyncio.to_thread(program_version_of, tool))  # 128 from 0.10, 127 before
+        players_text = await self._number_line(f"  Players at once (1-{most})", default_players, (PLAYERS[0], most),
+                                               "a player count")
         if players_text is None:
             return
         share = set(settings.setup.share)
@@ -191,11 +206,14 @@ class SetupScreens(Screens):
             if answer is None:
                 return
             mcc_folder = unquote(answer)
+        games = await self._pick_games(settings, tool, share, mcc_folder, package)
+        if games is None:
+            return
         # The game folder to link Halo 3's files from (when `game` isn't shared) is create_server's to find
         # (newserver.game_to_link: the root's, then the servers' own), as for the `new` command.
         spec = NewServer(name=name, port=int(port_text), package=package, hidden=hidden, password=password,
                          max_players=int(players_text) if players_text != default_players else None,
-                         share=share, mcc_folder=mcc_folder)
+                         share=share, mcc_folder=mcc_folder, games=games)
         self.heading(name, note=f"UDP {port_text} · {package.summary() if package else 'the example rotation'}"
                                 f"{' · hidden' if hidden else ''}{' · join password' if password else ''}")
         if not await self.prompt_yes_no("  Make it?", True):
@@ -224,6 +242,41 @@ class SetupScreens(Screens):
                 if not result.ok:
                     self.note("(it appears on the dashboard within 10 s; press S then)")
         await self.wait_any_key(10)
+
+    async def _pick_games(self, settings: Settings, tool: Dedicated, share: set[str], mcc_folder: str | None,
+                          package: Package | None) -> list[str] | None:
+        """Which other games' files the new server's game folder gets from MCC, beside Halo 3's (always): those MCC
+        has installed and the folder lacks, as far as this program plays them; every game MCC has, by default (not
+        the campaigns: they're for co-op). [] when there's nothing to offer; None when the host backs out."""
+        from ...content import gamefiles
+        from ...content.newserver import game_link_source, mcc_kinds
+
+        mcc = await asyncio.to_thread(steam.find_mcc, mcc_folder)  # Steam's records: in a thread
+        if mcc is None:
+            return []  # nothing to copy from (the package's games: create_server says so)
+        version = await asyncio.to_thread(gamefiles.program_version_of, tool)  # `--version`, once per file
+        game =settings.home / "game" if "game" in share else await asyncio.to_thread(game_link_source, settings)
+        wanted = package.file_kinds if package else []  # added anyway when MCC has them
+        offered = [kind for kind in await asyncio.to_thread(mcc_kinds, mcc, version)
+                   if kind not in wanted and not (game is not None and game_files.has(game, kind))]
+        if not offered:
+            return []
+        self.heading("Games", note=f"Halo 3's files always; these come from MCC at {mcc} too (hard links on the same "
+                                   "drive: no space used)")
+        rows = [(game_files.LABELS[kind], f"{game_files.HOLDS[kind]} ({gamefiles.gb(game_files.SIZES[kind])})")
+                for kind in offered]
+        self.listing(rows, keys=[str(n) for n in range(1, len(rows) + 1)])
+        default = [str(n) for n, kind in enumerate(offered, 1) if kind not in ("campaign", "reach-campaign")]
+        while True:
+            answer = await self.prompt_line("  Which? (numbers, e.g. 1,3; 0 for none)", ",".join(default) or "0")
+            if answer is None:
+                return None
+            picks = [word for word in re.split(r"[,\s]+", answer.strip()) if word]
+            if picks == ["0"]:
+                return []
+            if picks and all(word.isdecimal() and 1 <= int(word) <= len(offered) for word in picks):
+                return [offered[int(word) - 1] for word in dict.fromkeys(picks)]
+            self.note(f"Numbers from 1 to {len(offered)}, separated by commas.", "yellow")
 
     # G: what a server plays ------------------------------------------------------------------
 
@@ -311,22 +364,37 @@ class SetupScreens(Screens):
                     catalogue = fresh
 
     async def _browse(self, server: ServerConfig, catalogue: Catalogue) -> None:
-        sections = [("Halo 3's maps", catalogue.maps), ("mod maps (installed mods and Workshop items)", catalogue.mod_maps),
-                    ("map variants (Forge layouts, .mvar files)", catalogue.map_variants),
-                    ("game types", catalogue.game_types), ("game variants (.bin, saved and scripted game types)",
-                                                           catalogue.game_variants)]
+        # Each game's maps and its mods' maps (0.10: Reach's, CE's, Halo 2's beside Halo 3's), as the pickers head
+        # them (map_sections), each heading a list of its own; before 0.10 Halo 3's maps, mod maps, map variants
+        sections: list[tuple[str, list[Entry]]] = []
+        for _, entries, headings in map_sections(catalogue):
+            for number, (heading, start) in enumerate(headings):
+                end = headings[number + 1][1] - 1 if number + 1 < len(headings) else len(entries)
+                sections.append((heading, entries[start - 1:end]))
+        names = [name for name, _ in sections]
+        if "Halo 3's maps" not in names:
+            sections.insert(0, ("Halo 3's maps", []))
+        if getattr(catalogue, "shape", "0.9") != "0.10" and "mod maps" not in names:
+            sections.insert(1, ("mod maps", []))
+        if not any(name.startswith("map variants") for name in names):
+            sections.append(("map variants (each plays on its own map)", []))
+        sections = [(MORE.get(name, name), entries) for name, entries in sections]
+        if catalogue.canvases:
+            sections.append(("campaign canvases (campaign missions' areas, for Forge)", catalogue.canvases))
+        sections += [("game types", catalogue.game_types),
+                     ("game variants (.bin, saved and scripted game types)", catalogue.game_variants)]
         while True:
             self.heading(server.name, "What it plays", "Browse",
                          note="the first name on a line is what playlists and map = / game = take; [brackets] show "
                               "the file reference when names collide")
-            options = [(str(n), f"{len(entries):>4}  {name}") for n, (name, entries) in enumerate(sections, 1)]
-            options.append(("6", f"{len(catalogue.mods):>4}  mods in the content folder (what each brings)"))
-            options.append(("7", f"{len(catalogue.workshop_items):>4}  Workshop items in dedicated.toml"))
+            options = [(key, f"{len(entries):>4}  {name}") for key, (name, entries) in zip(BROWSE_KEYS, sections)]
+            options.append(("M", f"{len(catalogue.mods):>4}  mods in the content folder (what each brings)"))
+            options.append(("W", f"{len(catalogue.workshop_items):>4}  Workshop items in dedicated.toml"))
             choice = await self.choose("Which list?", options, columns=1)
             if choice is None:
                 return
-            if choice in "12345":
-                name, entries = sections[int(choice) - 1]
+            if choice in BROWSE_KEYS:
+                name, entries = sections[BROWSE_KEYS.index(choice)]
                 self.heading(server.name, name)
                 shown = entries
                 if len(entries) > PAGE:
@@ -336,11 +404,11 @@ class SetupScreens(Screens):
                     if words.strip():
                         shown = [e for e in entries if all(w in e.label.lower() for w in words.lower().split())]
                 await self._pages(self._numbered(shown) or ["(none)"])
-            elif choice == "6":
+            elif choice == "M":
                 self.heading(server.name, "mods in the content folder")
                 await self._pages([f"[{n}] {m.label}  ({m.folder.name})" for n, m in enumerate(catalogue.mods, 1)]
                                   or ["(no mods in the content folder)"])
-            elif choice == "7":
+            elif choice == "W":
                 self.heading(server.name, "Workshop items")
                 self.note(f"[workshop] items = {catalogue.workshop_items or '[]'}", None)
 
@@ -468,12 +536,13 @@ class SetupScreens(Screens):
             except DedicatedError as error:
                 self.note(f"{target.name}: not copied: {error}", "yellow")
                 continue
-            check = await asyncio.to_thread(check_plays, tool, target, {"playlist": copy.relative}, copy)
+            version = await self._row_version(settings, target)
+            check = await asyncio.to_thread(check_plays, tool, target, {"playlist": copy.relative}, copy, version)
             if not check.ok:
                 self.note(f"{target.name}: not copied: its server program won't play it:", "yellow")
                 self._show_problems(copy, check.problems)
                 continue
-            if self._write_playlist(target, copy, "copied", f"{server.name}'s {path.name}"):
+            if self._write_playlist(target, copy, "copied", f"{server.name}'s {path.name}", version):
                 self.note(f"{target.name}: copied to playlists/{path.name} " + (
                     "(it plays it: from its next vote)" if _plays_playlist(target, copy.path)
                     else "(not used yet: G -> Playlists -> U)"), "green")
@@ -562,7 +631,9 @@ class SetupScreens(Screens):
         """Whether the server program can play a playlist file as it is, as this server's (check_plays): what it
         can't is named, and it isn't used (a playlist the server refuses holds up every other change to its file,
         and its start)."""
-        check = await asyncio.to_thread(check_plays, tool, server, {"playlist": f"playlists/{path.name}"})
+        version = await self._row_version(self._settings(), server)
+        check = await asyncio.to_thread(check_plays, tool, server, {"playlist": f"playlists/{path.name}"}, None,
+                                        version)
         if check.ok:
             if not check.asked:
                 self.note(f"Not checked by the server program: {check.unasked}.", "yellow")
@@ -585,23 +656,34 @@ class SetupScreens(Screens):
         self.note(f"{server.name} now plays {relative}: {applies_when(before, 'playlist')} (auto_reload); the "
                   "dashboard's events say when it's applied.", "green")
 
-    async def _pick_pairs(self, catalogue: Catalogue,
-                          maps_from: list[Entry] | None = None) -> list[tuple[Entry, Entry]] | None:
+    async def _pick_pairs(self, catalogue: Catalogue, maps_from: list[Entry] | None = None, *,
+                          settings: Settings | None = None,
+                          server: ServerConfig | None = None) -> list[tuple[Entry, Entry]] | None:
+        """Maps, then the game types or variants they play; every pair a map plays becomes a game (0.10: Combat
+        Evolved's and Halo 2's maps their own game types only). The maps offered are the games the server's program
+        plays (its version; no server: every game)."""
         self.note("Maps first:", "white")
         if maps_from is not None:
             maps = await self._pick(maps_from, "mod maps")
         else:
-            maps = await self._pick(catalogue.all_maps, "maps", groups=self._map_groups(catalogue))
+            version = None
+            if settings is not None and server is not None:
+                version = await self._row_version(settings, server)
+            maps = await self._pick_maps(catalogue, version)
         if not maps:
             self.note("No maps picked, so nothing was built.", "yellow")
             return None
         self.note("Then game types or variants; every map × game pair becomes a game:", "white")
-        games = await self._pick(catalogue.all_games, "game types or variants", groups=self._game_groups(catalogue))
+        games = await self._pick_game_types(catalogue, maps)
         if not games:
             self.note("No game types picked, so nothing was built.", "yellow")
             return None
-        pairs = [(m, g) for m in maps for g in games]
-        self.note(f"{len(maps)} map(s) × {len(games)} game(s) = {len(pairs)} entries:", "white")
+        pairs = [(m, g) for m in maps for g in games if fits(m, g, catalogue)]
+        if not pairs:
+            self.note("None of those maps plays those game types, so nothing was built.", "yellow")
+            return None
+        self.note(f"{len(maps)} map(s) × {len(games)} game(s): {len(pairs)} entries (each map with what it "
+                  "plays):", "white")
         await self._pages([f"[{n:>3}] {g.name} on {m.name}" for n, (m, g) in enumerate(pairs, 1)])
         answer = await self.prompt_line("  Leave out which? (numbers; Enter keeps them all)")
         if answer is None:
@@ -611,8 +693,9 @@ class SetupScreens(Screens):
 
     async def _build_playlist(self, settings: Settings, tool: Dedicated, server: ServerConfig,
                               catalogue: Catalogue, maps: list[Entry] | None = None) -> None:
+        fewest, most = games_range(await self._row_version(settings, server))
         self.note("Pick maps, then game types; every pair becomes a game players can vote for. "
-                  "3 to 128 games; a map variant plays on its own map.")
+                  f"{fewest} to {most} games; a map variant plays on its own map.")
         if maps is not None:
             self.note("Mod maps are written the way the server names them (workshop:<item>/<map>), so the right "
                       "mod is found; a playlist takes up to 23 mod maps from 16 mods.")
@@ -626,7 +709,7 @@ class SetupScreens(Screens):
         if vote is None:
             return
         playlist.vote_seconds = int(vote) if vote.isdecimal() else 20
-        pairs = await self._pick_pairs(catalogue, maps)
+        pairs = await self._pick_pairs(catalogue, maps, settings=settings, server=server)
         if not pairs:
             return
         for map_entry, game_entry in pairs:
@@ -652,15 +735,17 @@ class SetupScreens(Screens):
         and its reload make), so a playlist it would refuse is never written. When it can't, each problem is shown
         with the game it's about, and the fixes are offered there: take those games out and check again, or change
         them in the editor. Leaving keeps the draft in the playlist's history, unsaved."""
+        version = await self._row_version(self._settings(), server)  # 0.10 takes 1-256 games, 0.9 3-128
         while True:
             self.note(f"Checking {playlist.relative} ({len(playlist.games)} games) with the server program before "
                       "it's saved:", "cyan")
-            check = await asyncio.to_thread(check_plays, tool, server, {"playlist": playlist.relative}, playlist)
+            check = await asyncio.to_thread(check_plays, tool, server, {"playlist": playlist.relative}, playlist,
+                                            version)
             if check.ok:
                 if not check.asked:
                     self.note(f"The server program couldn't be asked ({check.unasked}); Huragok's own checks passed.",
                               "yellow")
-                if not self._write_playlist(server, playlist, how, source):
+                if not self._write_playlist(server, playlist, how, source, version):
                     return False
                 if await self.prompt_yes_no(f"  Use it for {server.name} now?", True) and \
                         await self._by_players_before_use(server, playlist.relative):
@@ -671,7 +756,7 @@ class SetupScreens(Screens):
             self._show_problems(playlist, check.problems)
             games = sorted({p.game for p in check.problems if p.game is not None and p.game <= len(playlist.games)})
             fixes: list[tuple[str, str]] = []
-            if games and len(playlist.games) - len(games) >= MIN_GAMES:
+            if games and len(playlist.games) - len(games) >= games_range(version)[0]:
                 fixes.append(("T", f"Take out game{'s' if len(games) > 1 else ''} {', '.join(map(str, games))}, "
                                    "and check again"))
             if from_editor:
@@ -711,13 +796,15 @@ class SetupScreens(Screens):
         self.note(f"Not saved: {playlist.relative} stays as it was"
                   + ("; the draft is in its history (Playlists -> H)." if kept else "."), "yellow")
 
-    def _write_playlist(self, server: ServerConfig, playlist: Playlist, how: str = "saved in G", source: str = "") -> bool:
-        """Saved, with the version it replaces and the one it writes kept in the history."""
+    def _write_playlist(self, server: ServerConfig, playlist: Playlist, how: str = "saved in G", source: str = "",
+                        program_version: str | None = None) -> bool:
+        """Saved, with the version it replaces and the one it writes kept in the history. `program_version`: the
+        server's (how many games it takes)."""
         records = self._settings().records
         if playlist.path.is_file():
             versions.seen(records, "playlists", server.slug, playlist.path)
         try:
-            playlist.save()
+            playlist.save(program_version)
         except (PlaylistError, OSError) as error:
             self.note(f"Not saved: {error}", "yellow")
             return False
@@ -745,7 +832,7 @@ class SetupScreens(Screens):
                     self.note("Changes dropped.")
                 return
             if choice == "A":
-                pairs = await self._pick_pairs(catalogue)
+                pairs = await self._pick_pairs(catalogue, settings=self._settings(), server=server)
                 for map_entry, game_entry in pairs or []:
                     changed |= playlist.add(map_entry.reference, game_entry.reference)
             elif choice == "R":
@@ -870,31 +957,40 @@ class SetupScreens(Screens):
     # I: SteamCMD -----------------------------------------------------------------------------
 
     async def screen_steam(self) -> None:
-        """SteamCMD and everything it does for the servers: the Workshop account, and Halo 3's files."""
+        """SteamCMD and everything it does for the servers: the Workshop account, and every game's files."""
         from ...content import gamefiles
 
         while True:
-            self.title("STEAMCMD", "Workshop items and Halo 3's files, with one Steam account that owns MCC, signed in "
-                                   "once (never a password in any file)")
+            self.title("STEAMCMD", "Workshop items and the games' files, with one Steam account that owns MCC, signed "
+                                   "in once (never a password in any file)")
             settings = self._settings()
             status = await asyncio.to_thread(steam.status, settings)
             self.heading("SteamCMD")
             self.note(status.summary(), "green" if status.ready else "yellow")
-            self.heading("Halo 3's files")
-            rows = await asyncio.to_thread(gamefiles.game_status, settings)
+            self.heading("Game files")
+            version = await asyncio.to_thread(gamefiles.root_version, settings)  # `--version`, once per file
+            rows = await asyncio.to_thread(gamefiles.game_status, settings, version)
             for label, text, colour in rows or [("shared game/", "no server folders yet", "gray")]:
                 self.note(f"{label:<13} {text}", colour)
-            choice = await self.choose("Which?", [
-                ("1", "SteamCMD and the Steam account", "find or install it, sign in once, tell every server"),
-                ("2", "Get Halo 3's files", f"{game_files.DEPOTS['halo3'].holds}"),
-                ("3", "Add the campaign missions", "co-op campaign, and every Forge map's campaign vehicles"),
-                ("4", "Add Halo 3: ODST's files", "for ODST servers (Firefight, campaign)")])
+            rows_for = {
+                "halo3": ("Get Halo 3's files", game_files.HOLDS["halo3"]),
+                "campaign": ("Add the campaign missions", "co-op campaign, and every Forge map's campaign vehicles"),
+                "odst": ("Add Halo 3: ODST's files", "for ODST servers (Firefight, campaign)"),
+                "reach": ("Add Halo: Reach's files", "its multiplayer and Firefight maps (from MCC)"),
+                "reach-campaign": ("Add Halo: Reach's campaign", "its missions, for a Reach co-op server (from MCC)"),
+                "halo1": ("Add Halo: Combat Evolved's files", "its multiplayer maps (from MCC)"),
+                "halo2": ("Add Halo 2's files", "its multiplayer maps (from MCC)"),
+            }
+            kinds = game_files.kinds_for(version)  # Reach, CE and Halo 2 only on a program that plays them (0.10)
+            options = [("1", "SteamCMD and the Steam account", "find or install it, sign in once, tell every server")]
+            options += [(str(n), *rows_for[kind]) for n, kind in enumerate(kinds, 2)]
+            choice = await self.choose("Which?", options)
             if choice is None:
                 return
             if choice == "1":
                 await self._steam_account()
             else:
-                await self._game_files({"2": "halo3", "3": "campaign", "4": "odst"}[choice])
+                await self._game_files(kinds[int(choice) - 2])
 
     async def _steam_account(self) -> None:
         self.heading("SteamCMD", "the Steam account", note="servers download Workshop items (and Huragok Halo 3's "
@@ -983,22 +1079,28 @@ class SetupScreens(Screens):
             self.note(why, "yellow")
             await self.wait_any_key(10)
             return
-        depot = game_files.DEPOTS[kind]
+        depot = game_files.DEPOTS.get(kind)
         found, no_download = await asyncio.to_thread(gamefiles.sources, settings, kind, downloads=True)
-        self.note(f"Into {target}: {depot.holds}. What's there stays as it is, and running servers keep running.")
+        self.note(f"Into {target}: {game_files.HOLDS[kind]}. What's there stays as it is, and running servers keep "
+                  "running.")
         options = []
         for number, source in enumerate(found, 1):
             if source.how == "mcc":
                 options.append((str(number), f"Copy them from MCC at {source.path}",
-                                "hard links on the same drive: no space used"))
-            else:
+                                f"hard links on the same drive: no space used ({gamefiles.gb(game_files.SIZES[kind])} "
+                                "otherwise)"))
+            elif depot is not None:
                 options.append((str(number), f"Download them with SteamCMD as {source.username}",
                                 f"{gamefiles.gb(depot.download)} down, {gamefiles.gb(depot.kept)} kept (no sound or video)"))
-        if not any(source.how == "mcc" for source in found):
-            self.note("MCC with these files isn't on this PC (Steam's own records say where it is: Steam, MCC, "
-                      "Properties, DLC adds Halo 3 and ODST).", "yellow")
-        if not any(source.how == "steamcmd" for source in found):
-            self.note(f"No download: {no_download} (1 sets SteamCMD up).", "yellow")
+        if depot is None:  # Reach's, CE's, Halo 2's: MCC is the only way for now
+            if not found:
+                self.note(f"{no_download}.", "yellow")
+        else:
+            if not any(source.how == "mcc" for source in found):
+                self.note("MCC with these files isn't on this PC (Steam's own records say where it is: Steam, MCC, "
+                          "Properties, DLC adds each game).", "yellow")
+            if not any(source.how == "steamcmd" for source in found):
+                self.note(f"No download: {no_download} (1 sets SteamCMD up).", "yellow")
         if not found:
             await self.wait_any_key(15)
             return

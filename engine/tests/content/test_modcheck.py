@@ -83,7 +83,7 @@ def test_what_the_program_refuses_or_ignores(tmp_path: Path) -> None:
     (item / "maps" / "quebec.map").write_bytes(a_map(9107) + b"more")
     (mods / "unreadable").mkdir()
     (mods / "unreadable" / "ModInfo.json").write_text("{\"Title\": ", encoding="utf-8")
-    reports = {r.folder.name: r for r in check_mods(tmp_path / "content")}
+    reports = {r.folder.name: r for r in check_mods(tmp_path / "content", version="0.9.23")}  # 0.10 plays Reach's
     assert texts(reports["reach"]) == "it is made for HaloReach, not Halo 3: the server ignores it without a word"
     assert "names Workshop item 999, not 123457 (this folder's): the server refuses to install or update it" in texts(
         reports["123457"], WARNING)

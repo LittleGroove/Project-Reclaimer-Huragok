@@ -801,7 +801,8 @@ def test_check_says_whether_each_mod_is_good_to_go(tmp_path: Path, capsys) -> No
     out = capsys.readouterr().out
     assert "Mods (LG Test Server: " in out and "Canyon: good to go · 1 map" in out
     assert "Reach Pack: 1 problem" in out
-    assert "broken: it is made for HaloReach, not Halo 3: the server ignores it without a word" in out
+    assert ("warning: it is made for Halo: Reach, whose files aren't in the server's game folder (haloreach): the "
+            "server can't play it until they are") in out  # 0.10 plays Reach's mods; 0.9 ignores them
 
 
 def test_check_runs_each_parts_own_check(tmp_path: Path, capsys) -> None:

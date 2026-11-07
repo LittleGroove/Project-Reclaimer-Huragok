@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "name": "Every Halo",
+  "vote_seconds": 20,
+  "games": [
+    {
+      "map": "Guardian",
+      "game": "Slayer"
+    },
+    {
+      "map": "The Pit",
+      "game": "ctf"
+    },
+    {
+      "map": "Narrows",
+      "game": "koth"
+    },
+    {
+      "map": "Sword Base",
+      "game": "Slayer"
+    },
+    {
+      "map": "Countdown",
+      "game": "headhunter_054"
+    },
+    {
+      "map": "Powerhouse",
+      "game": "ctf"
+    },
+    {
+      "map": "Blood Gulch",
+      "game": "ctf"
+    },
+    {
+      "map": "Hang 'Em High",
+      "game": "slayer"
+    },
+    {
+      "map": "Prisoner",
+      "game": "oddball"
+    },
+    {
+      "map": "halo2_lockout",
+      "game": "slayer"
+    },
+    {
+      "map": "halo2_midship",
+      "game": "ctf"
+    },
+    {
+      "map": "Ascension",
+      "game": "koth"
+    }
+  ]
+}

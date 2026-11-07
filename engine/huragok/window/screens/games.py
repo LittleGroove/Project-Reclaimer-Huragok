@@ -19,9 +19,11 @@ from typing import Any, Callable
 
 from ...content.mccimport import copy_replacing
 from ...games import halo3_options as go
+from ...games.halo3 import entry_game
 from .base import Screens
 from .setup import unquote
 
+CHOICE_KEYS = "1234567890BCDEFGHIJKLMNOPQRSTUVWYZ"  # a list's keys in order (A for all, X for none, never used)
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")
 IMAGE_MAX = 4 * 1024 * 1024
 PLAYLIST_IMAGES_MAX = 32
@@ -140,17 +142,27 @@ class GameScreens(Screens):
     # One game of a playlist -------------------------------------------------------------------
 
     async def _edit_entry(self, server: Any, catalogue: Any, playlist: Any, index: int) -> bool:
-        """A playlist game's name, weight, rules and options, vote image, base map, anti-cheat. True: changed."""
+        """A playlist game's name, weight, rules and options, vote image, base map, anti-cheat. True: changed.
+        Halo 3's rules and options aren't offered for a game the program takes none on, or that isn't Halo 3's:
+        on Combat Evolved's and Halo 2's maps (0.10 refuses them there), or a Reach variant (0.10 lists each with
+        the base Slayer, whatever it plays, so its options can't be known)."""
         game = playlist.games[index]
-        base_of = {e.reference.lower(): e.base for e in catalogue.game_variants if e.base}
-        base_of.update({e.name.lower(): e.base for e in catalogue.game_variants if e.base})
+        # A Reach variant's base is no guide (0.10 says Slayer for its CTF and Headhunter too): only Halo 3's count.
+        halo3_variants = [e for e in catalogue.game_variants if e.base and getattr(e, "game", "") != "reach"]
+        base_of = {e.reference.lower(): e.base for e in halo3_variants}
+        base_of.update({e.name.lower(): e.base for e in halo3_variants})
         mode = go.entry_mode(game, base_of)
+        not_halo3 = _not_halo3_options(game, catalogue)
         target = Target(lambda option: go.entry_get(game, option), lambda option, value: go.entry_set(game, option, value))
         changed = False
         crumbs = (server.name, "Playlists", playlist.relative, f"game {index + 1}")
         while True:
             label = playlist.labels()[index]
-            overrides = go.describe(mode, game.get("options") or {}, game.get("rules"), game.get("world"))
+            if not_halo3:  # as written: Halo 3's catalogue doesn't read them
+                overrides = [f"{where}.{key}: {value}" for where in ("rules", "options", "world")
+                             for key, value in (game.get(where) or {}).items()]
+            else:
+                overrides = go.describe(mode, game.get("options") or {}, game.get("rules"), game.get("world"))
             self.heading(*crumbs, note=label)
             for line in overrides[:12]:
                 self.note(f"  {line}")
@@ -158,10 +170,14 @@ class GameScreens(Screens):
                 self.note(f"  … {len(overrides) - 12} more")
             if not overrides:
                 self.note("  (plays as its game type has it)")
+            if not_halo3:
+                self.note(not_halo3 + (": X takes the ones written here out" if overrides else ""),
+                          "yellow" if overrides else "gray")
+            options_row = [] if not_halo3 else [("O", "Rules and options", f"{len(overrides)} changed")]
             choice = await self.choose("Which?", [
                 ("N", "Name players see", str(game.get("name") or "(the game type's)")),
                 ("W", "Weight", f"{game.get('weight', 1)}: how often ballots offer it"),
-                ("O", "Rules and options", f"{len(overrides)} changed"),
+                *options_row,
                 ("I", "Vote image", str(game.get("preview_image") or "(none)")),
                 ("B", "Base map", str(game.get("base_map") or "only for a Forge map on a mod map")),
                 ("C", "Anti-cheat for this game", "off" if game.get("anti_cheat") is False else "on (the server's)"),
@@ -185,7 +201,7 @@ class GameScreens(Screens):
                         changed = True
                     except Exception as error:  # noqa: BLE001 - PlaylistError
                         self.note(str(error), "yellow")
-            elif choice == "O":
+            elif choice == "O" and not not_halo3:
                 changed |= await self._option_editor((*crumbs, "Rules and options"), mode, target)
             elif choice == "I":
                 changed |= await self._vote_image(server, playlist, game)
@@ -316,8 +332,12 @@ class GameScreens(Screens):
         reference = custom_game_reference(catalogue, info)
         self.note(f"Which maps does {info.name} play on? One map plays it every game; three or more make a playlist "
                   "players vote on before each game.", "white")
+        # A custom game is a Halo 3 game type with its own options: Halo 3's and Reach's maps play it, not Combat
+        # Evolved's or Halo 2's (0.10 refuses options there). The version matters only when other games are listed.
+        others = [key for key in getattr(catalogue, "games_present", lambda: [])() if key != "halo3"]
+        version = await self._row_version(settings, server) if others else None
         while True:
-            maps = await self._pick(catalogue.all_maps, "maps", groups=self._map_groups(catalogue))
+            maps = await self._pick_maps(catalogue, version, halo3_types=True)
             if not maps:
                 return None
             if len(maps) != 2:
@@ -356,12 +376,12 @@ class GameScreens(Screens):
             if choice is None:
                 return
             if choice == "N":
+                keys = CHOICE_KEYS[:len(go.GAME_TYPES)]  # 1-9, 0, then letters: however many game types there are
                 picked = await self.choose("Based on which game type?",
-                                           [(str(n), name) for n, (name, _) in enumerate(go.GAME_TYPES, 1)][:9]
-                                           + [("0", go.GAME_TYPES[9][0])])
+                                           [(key, name) for key, (name, _) in zip(keys, go.GAME_TYPES)])
                 if picked is None:
                     continue
-                name_, mode = go.GAME_TYPES[9 if picked == "0" else int(picked) - 1]
+                name_, mode = go.GAME_TYPES[keys.index(picked)]
                 title = await self.prompt_line("  Its name (players see it; 48 characters at most)", f"{name_} custom")
                 if not title:
                     continue
@@ -460,6 +480,22 @@ class GameScreens(Screens):
                   "within seconds (playlists and What it plays can name it).", "green")
         await self.wait_any_key(6)
         return True
+
+
+def _not_halo3_options(game: dict[str, Any], catalogue: Any) -> str:
+    """Why Halo 3's rules and options aren't offered for a playlist game, or "" when they are: a map of Combat
+    Evolved's or Halo 2's (0.10's guide: options and rules are refused there), or a game the catalogue knows only as
+    a Reach variant (its base type can't be known)."""
+    owner = entry_game(game)
+    if owner is not None and owner.own_rules_only:
+        return f"Rules and options: not on {owner.title}'s maps (the server program refuses them; name one of its " \
+               "variants instead)"
+    name = str(game.get("game") or "").casefold()
+    named = [e for e in [*catalogue.game_types, *catalogue.game_variants] if name in (e.name.casefold(),
+                                                                                      e.reference.casefold())]
+    if named and all(getattr(e, "game", "") == "reach" for e in named):
+        return "Rules and options: not for a Reach variant here (Halo 3's options are what Huragok knows)"
+    return ""
 
 
 def custom_game_reference(catalogue: Any, info: go.PresetInfo) -> str:

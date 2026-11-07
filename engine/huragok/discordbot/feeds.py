@@ -40,6 +40,8 @@ PERSONAS = {"moderation": "vergil", "vergil": "vergil", "votes": "vergil", "aler
             "seeding": "superintendent", "notify": "superintendent", "requests": "vergil", "tickets": "vergil", "reports": "vergil", "appeals": "vergil", "contact": "vergil"}
 LOOKALIKE = 0.85  # how like a staff member's a name has to be, to say so
 LOOKS_THE_SAME = str.maketrans({"0": "o", "1": "l", "i": "l", "|": "l", "!": "l", "3": "e", "4": "a", "@": "a", "5": "s", "$": "s", "7": "t"})
+NAME_WAIT_SECONDS = 60.0  # a join with no name (0.10) waits this long for it (state.named): then its cards go with what's known
+NAMED_BY_ID = {"rcon.leave", "rcon.refused", "rcon.cheat"}  # the player as `id` and `name`, which 0.10 may leave blank
 
 # Every event a feed cares about, and who makes its card. The ones that need more than the event are methods below.
 ABOUT_SOMEONE = (("target_id", "target_name"), ("player_id", "player_name"))
@@ -84,7 +86,7 @@ SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
 BACK_UP = {"server.ready", "server.adopted", "server.restarted", "server.recovered"}  # a server's problem is over
 TAKES_NEWS_DOWN = {"server.restarted", "server.crashed", "server.stopped", "server.countdown_cancelled", "server.plan_cancelled"}  # a restart that's been and gone, or a call to come and fill a server that's down
 NEWS_THAT_GOES = {"servers-restart-planned", "servers-countdown", "seeding-wanted"}
-EVENTS = (*SIMPLE, "server.countdown_cancelled", "server.plan_cancelled", "commands.request_decided", "moderation.action", "moderation.seen", "server.stopped", "server.recovered", "rcon.phase", "rcon.join", "rcon.leave", "rcon.refused", "rcon.connected", "stats.game", "stats.season")
+EVENTS = (*SIMPLE, "server.countdown_cancelled", "server.plan_cancelled", "commands.request_decided", "moderation.action", "moderation.seen", "server.stopped", "server.recovered", "rcon.phase", "rcon.join", "rcon.leave", "rcon.refused", "rcon.connected", "stats.game", "stats.season", "state.named")
 GALLERY_PER_POST = 10  # a message holds 10 cards
 
 
@@ -113,6 +115,11 @@ def _no_buttons(form: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in form.items() if key != "components"}
 
 
+def _with_name(event: Event, name: str) -> Event:
+    """A join as 0.9 says one: with its player's name."""
+    return Event(event.name, event.server, {**event.data, "name": name}, event.time)
+
+
 class Feeds:
     def __init__(self, part: DiscordPart, *, clock: Callable[[], float] = time.time) -> None:
         self.part = part
@@ -123,6 +130,7 @@ class Feeds:
         self.started: dict[str, float] = {}  # server -> when it last came up: the grace period
         self.games: dict[str, float] = {}  # server -> when its game started: a `finished` without one is the next game's
         self.blocked: dict[str, str] = {}  # where it's posted -> why Discord refused it
+        self.unnamed: dict[tuple[str, str], Event] = {}  # (server, player ID) -> a join with no name yet (0.10), until it has one
 
     @property
     def config(self) -> DiscordConfig:
@@ -133,12 +141,16 @@ class Feeds:
     def handle(self, event: Event) -> None:
         if self.config.mode == "off":
             return
+        if event.name in ("rcon.join", "state.named"):
+            joined = self._join_with_name(event)
+            if joined is not None:
+                self._joined(joined)
+            return
+        if event.name == "rcon.leave":
+            self._gone_unnamed(event)
         card = self.card_for(event)
         if card is not None:
             self.deliver(card)
-        if event.name == "rcon.join":
-            for found in self._watch(event):
-                self.deliver(found)
         if event.name in BACK_UP:
             back = self._recovered(event)
             if back is not None:
@@ -148,6 +160,10 @@ class Feeds:
         """Whoever a card's about goes by the name they were last seen under: not the one they did it under, nor the ID someone typed. A name that's itself what happened stays."""
         if event.name in NAME_IS_THE_NEWS:
             return event
+        if event.name in NAMED_BY_ID:  # 0.10 may name nobody: the name they go by now, or were last seen under
+            player_id = str(event.get("id") or "")
+            name = self.part.name_now(event.server or "", player_id, or_last=True) if player_id and not event.get("name") else ""
+            return _with_name(event, name) if name else event
         changes = {name_key: now for id_key, name_key in ABOUT_SOMEONE if (player_id := str(event.get(id_key) or "")) and (now := self.part.name_of(player_id, str(event.get(name_key) or ""))) != event.get(name_key)}
         return Event(event.name, event.server, {**event.data, **changes}, event.time) if changes else event
 
@@ -267,8 +283,41 @@ class Feeds:
                 card.fields.append((say(self.config, "moderation.said"), "\n".join(cards.clean(line) for line in said)[:cards.MAX_FIELD]))
         return card
 
-    def _watch(self, event: Event) -> list[Card]:
-        """What about someone joining is worth staff knowing."""
+    def _join_with_name(self, event: Event) -> Event | None:
+        """The join to post, with its player's name. 0.10's names nobody (it's known a few seconds later): unless the live
+        picture has it already, the join waits for the state.named that brings it. None: nothing to post now: it waits,
+        or it's a state.named for a join whose cards went already."""
+        key = (event.server or "", str(event.get("id") or "").lower())
+        if event.name == "state.named":
+            waited = self.unnamed.pop(key, None)
+            return _with_name(waited, str(event.get("name") or "")) if waited is not None else None
+        if event.get("name") or not key[1]:
+            return event
+        if name := self.part.name_now(*key):
+            return _with_name(event, name)
+        self.unnamed[key] = event
+        return None
+
+    def _gone_unnamed(self, event: Event) -> None:
+        """Gone before their name was known (0.10): their join's cards go now, before their leave's, by the name the leave
+        gives, else the one they were last seen under, else their short ID. So every visit is in the joins feed as on 0.9,
+        and the watch, which goes by ID, still says a kicked or banned player came back, however briefly."""
+        key = (event.server or "", str(event.get("id") or "").lower())
+        waited = self.unnamed.pop(key, None)
+        if waited is not None:
+            self._joined(_with_name(waited, str(event.get("name") or "") or self.part.name_now(*key, or_last=True)), gone=True)
+
+    def _joined(self, event: Event, *, gone: bool = False) -> None:
+        """A join's cards, its name known: the joins feed's, then the watch's."""
+        card = self.card_for(event)
+        if card is not None:
+            self.deliver(card)
+        for found in self._watch(event, gone=gone):
+            self.deliver(found)
+
+    def _watch(self, event: Event, *, gone: bool = False) -> list[Card]:
+        """What about someone joining is worth staff knowing. `gone`: they've left already, so someone new on a quiet
+        server is nobody to look out for."""
         config = self.config
         options = config.section("feed", "watch")
         player_id = str(event.get("id") or "").lower()
@@ -289,7 +338,7 @@ class Feeds:
         staff = self._lookalike(player_id, name)
         if staff:
             found.append(cards.watch(config, event, "staff-lookalike", "watch.lookalike", staff=cards.clean(staff)))
-        if self.part.last_visit(player_id) is None and len(self.part.players_on(event.server or "")) <= int(options.get("quiet_players", 2) or 0):
+        if not gone and self.part.last_visit(player_id) is None and len(self.part.players_on(event.server or "")) <= int(options.get("quiet_players", 2) or 0):
             found.append(cards.watch(config, event, "first-time-quiet", "watch.quiet", players=len(self.part.players_on(event.server or ""))))
         elsewhere = self.part.banned_elsewhere(player_id, event.server or "")
         if elsewhere:
@@ -347,7 +396,7 @@ class Feeds:
         return int(self.config.section("feed", "games").get("min_players", 0) or 0)
 
     def _join(self, event: Event) -> Card | None:
-        """Vergil has recorded the join by now, so it's Vergil who says when they were last here."""
+        """Vergil has recorded the join by now (on 0.10, as its name came), so it's Vergil who says when they were last here."""
         if event.name == "rcon.refused":
             return cards.join(self.config, event, "refused")
         if event.name == "rcon.leave":
@@ -462,8 +511,14 @@ class Feeds:
         return bool(channel) and f"channel:{channel}" not in self.blocked
 
     def flush(self, *, everything: bool = False) -> None:
-        """Bursts whose window is over (all of them, as Huragok stops), as one card each."""
+        """Bursts whose window is over (all of them, as Huragok stops), as one card each. And a join whose name never came
+        (0.10), with what's known."""
         now = self.clock()
+        for key, waited in list(self.unnamed.items()):
+            if now - waited.time >= NAME_WAIT_SECONDS:
+                del self.unnamed[key]
+                if self.config.mode != "off":
+                    self._joined(_with_name(waited, self.part.name_now(*key, or_last=True)))
         for key, burst in list(self.bursts.items()):
             if everything or now >= burst.until:
                 if burst.waiting:

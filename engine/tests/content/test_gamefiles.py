@@ -342,8 +342,8 @@ def test_what_i_shows_about_the_game_folders(tmp_path: Path) -> None:
     (settings.home / "game" / "halo3" / "maps" / "campaign.map").write_bytes(b"x")
     (settings.home / "game" / "halo3" / "maps" / "040_voi.map").write_bytes(b"x")
     rows = repair.game_status(settings)
-    assert any("Halo 3, 1 multiplayer maps · Forge's campaign files (no missions) · ODST · used by 1 server(s)"
-               in text for _, text, _ in rows)
+    assert any("Halo 3, 1 multiplayer maps · Forge's campaign files (no missions) · ODST · no Reach · no CE · "
+               "no Halo 2 · used by 1 server(s)" in text for _, text, _ in rows)  # the fake program's version: unknown
     assert repair.shared_target(settings, "odst") == (settings.home / "game", "")
     shutil.rmtree(settings.home / "game")
     target, why = repair.shared_target(settings, "campaign")

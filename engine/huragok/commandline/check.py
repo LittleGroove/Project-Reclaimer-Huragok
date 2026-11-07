@@ -27,15 +27,22 @@ def _check_mods(settings: Settings) -> None:
     from ..content import modcheck
     from ..content.gamefiles import read_paths
 
-    roots: dict[Path, tuple[list[str], Path | None]] = {}
+    from ..games.halo3_options import version_tuple
+
+    roots: dict[Path, tuple[list[str], Path | None, list[str]]] = {}
     for server in settings.servers:
         paths = read_paths(server.folder, settings.config_name)
         root = server.content_dir or (paths.content if paths else None)
         if root is not None:
-            roots.setdefault(root, ([], paths.game if paths else None))[0].append(server.name)
-    for root, (names, game) in roots.items():
+            names, _, versions = roots.setdefault(root, ([], paths.game if paths else None, []))
+            names.append(server.name)
+            if version := _program_version(settings, server):
+                versions.append(version)
+    for root, (names, game, versions) in roots.items():
+        # Another game's mods play from 0.10: judged by the oldest program among the servers sharing the folder.
+        oldest = min(versions, key=lambda v: version_tuple(v) or ()) if versions else None
         try:
-            reports = modcheck.check_mods(root, game)
+            reports = modcheck.check_mods(root, game, oldest)
         except OSError as error:
             out.heading(f"Mods ({', '.join(names)})")
             out.warn(f"couldn't look at them: {error}")

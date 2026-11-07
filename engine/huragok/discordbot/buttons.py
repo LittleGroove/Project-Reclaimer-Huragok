@@ -246,7 +246,12 @@ async def _strike(part: DiscordPart, interaction: discord.Interaction, number: i
     state = part.ctx.servers.get(where)
     by = who_pressed(part, interaction)
     heard, tell = _hear()
-    rank = game_rank(part.file, someone_from(interaction.user), where or None)
+    # A strike that would remove them or ban reaches every server: the rank held on all of them, as a kick with a time
+    rank = rank_to_run(part.file, someone_from(interaction.user), part.ctx.servers, where or None, "strike", timed=part.ctx.strike_removes(target_id, rule, where or None))
+    if rule not in part.ctx.strike_rules():  # taken off the word list, or it only reports now, since the form opened: !strike would read the list's name as part of the player's (audit 6 November)
+        await answer(interaction, f"The {cards.clean(rule, for_a_channel=False)} list isn't one a strike can be given on now: it's been taken off the word list, or it only reports. Lists: "
+                                  f"{cards.clean(', '.join(part.ctx.strike_rules()) or 'none', for_a_channel=False)}. Nothing was done.")
+        return
     words = [rule, *([f'"{note.replace(chr(34), chr(39))}"'] if note else [])]
     if rank == PROBATION:  # theirs is a request, as in game: on this card, and with a card of its own to answer
         refused = await part.ctx.run_line("strike", " ".join([target_id, *words]), server=where, player=by, role=rank, tell=tell)
@@ -254,7 +259,7 @@ async def _strike(part: DiscordPart, interaction: discord.Interaction, number: i
             part.came_from_card(by.id, number)
             part.tickets.add_line(number, say(part.file, "ticket.asked", who=cards.clean(named(interaction.user)), what=say(part.file, "button.strike").lower()))
             part.tickets.show(number)
-        await answer(interaction, cards.clean(refused or " ".join(heard) or "Asked.")[:MOST_SHOWN])
+        await answer(interaction, cards.clean(as_they_may_see(part.file, rank, refused or " ".join(heard) or "Asked."))[:MOST_SHOWN])
         return
 
     def strikes() -> int:
@@ -266,7 +271,7 @@ async def _strike(part: DiscordPart, interaction: discord.Interaction, number: i
     refused = await part.ctx.run_as("strike", live or Player(0, who_name, target_id), words, server=where, player=by, role=rank, tell=tell)
     if refused or strikes() == before:
         part.tickets.not_expected(target_id, by.id)
-        await answer(interaction, cards.clean(refused or " ".join(heard) or "That didn't go through.")[:MOST_SHOWN])
+        await answer(interaction, cards.clean(as_they_may_see(part.file, rank, refused or " ".join(heard) or "That didn't go through."))[:MOST_SHOWN])
         return
     part.reports.upheld(number)
     await _refresh(part, interaction, number)
@@ -284,7 +289,15 @@ async def _pardon_strike(part: DiscordPart, interaction: discord.Interaction, nu
         return sum(int(row["n"]) for row in _strikes(part, "SELECT COUNT(*) AS n FROM automod_strikes WHERE player_id = ? AND pardoned IS NULL", (target_id.lower(),)))
 
     before = standing()
-    refused = await part.ctx.run_as("pardonplayer", Player(0, who_name, target_id), [*([rule] if rule else []), *([f'"{why}"'] if why else [])], server=where, player=by, role=game_rank(part.file, someone_from(interaction.user), where or None), tell=tell)
+    # A card on more than one list clears the lists of the strikes that joined it, never the player's every strike: one from before the card isn't its to pardon (audit 6 November).
+    rules = [rule] if rule else part.tickets.struck_on_card(ticket)
+    if not rules:
+        await answer(interaction, "There are no strikes on this card to take off.")
+        return
+    refused = None
+    for one in rules:
+        refused = await part.ctx.run_as("pardonplayer", Player(0, who_name, target_id), [one, *([f'"{why}"'] if why else [])], server=where, player=by,
+                                        role=game_rank(part.file, someone_from(interaction.user), where or None), tell=tell) or refused
     if refused or standing() == before:
         await answer(interaction, cards.clean(refused or " ".join(heard) or "There were no strikes to take off.")[:MOST_SHOWN])
         return
@@ -349,7 +362,7 @@ class StrikeForm(SaysWhatWentWrong, discord.ui.Modal):
         super().__init__(title=f"Strike: {part.name_of(str(ticket['player_id']), str(ticket['player_name'] or ''))}"[:45], timeout=600)
         self.part, self.number = part, int(ticket["number"])
         self.player_id = target = str(ticket["player_id"])
-        self.rule: discord.ui.Select[Any] = discord.ui.Select(options=[discord.SelectOption(label=name[:100], value=name[:100], description=part.ctx.next_strike(target, name)[:100] or None) for name in rules[:25]])  # so it's known before it's done: it can reach a ban
+        self.rule: discord.ui.Select[Any] = discord.ui.Select(options=[discord.SelectOption(label=name[:100], value=name[:100], description=part.ctx.next_strike(target, name, part.where_to_run(target, str(ticket["server"])) or None)[:100] or None) for name in rules[:25]])  # so it's known before it's done: it can reach a ban
         self.add_item(discord.ui.Label(text="Which rule", component=self.rule))
         self.note = discord.ui.TextInput(required=False, max_length=300)
         self.add_item(discord.ui.Label(text="Why (they'll read this)", component=self.note))
@@ -365,10 +378,11 @@ class StrikeForm(SaysWhatWentWrong, discord.ui.Modal):
 class PardonStrikeForm(SaysWhatWentWrong, discord.ui.Modal):
     def __init__(self, part: DiscordPart, ticket: Any) -> None:
         rule = part.tickets.rule_of(ticket)
+        rules = [rule] if rule else part.tickets.struck_on_card(ticket)  # as _pardon_strike takes them off
         super().__init__(title="Pardon the strike", timeout=600)
         self.part, self.number, self.player_id = part, int(ticket["number"]), str(ticket["player_id"])
         self.why = discord.ui.TextInput(required=False, max_length=300)
-        self.add_item(discord.ui.Label(text="Why", description=(f"It clears every strike on {rule}, and lifts what they did" if rule else "It clears their strikes, and lifts what they did")[:100], component=self.why))
+        self.add_item(discord.ui.Label(text="Why", description=(f"It clears every strike on {', '.join(rules)}, and lifts what they did" if rules else "There are no strikes on this card to take off")[:100], component=self.why))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         if why := _someone_else_now(self.part, self.number, self.player_id):

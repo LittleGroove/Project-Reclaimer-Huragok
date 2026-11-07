@@ -7,7 +7,9 @@ players at most. Its game folder needs ODST's files (`dedicated init --from --ma
 newserver.add_odst_files puts them there.
 
 The program's own `dedicated content odst` lists what this ODST can play, with the setting for each; the tables
-below are that listing from 0.9.20, used when the program can't be asked and to name a setup in a few words.
+below are that listing from 0.9.20, used when the program can't be asked and to name a setup in a few words. From
+0.10.0 the listing no longer has ODST's sections, only "[odst] Halo 3: ODST installed in …" (or "not installed"), so
+the tables stand in for it there.
 
 What an ODST server does differently, as the program's guide and its answers on 0.9.20 have it:
 - it waits in its lobby for min_players, counts down and starts; when the game is over or its last player
@@ -27,6 +29,7 @@ import tomllib
 from dataclasses import dataclass
 from typing import Any
 
+from .bungie import installed_in_text
 from .halo3_options import version_tuple
 
 FILES_HINT = "dedicated init --from --maps odst"
@@ -115,7 +118,15 @@ STARTS = re.compile(r"\s*\(insertion 0 to (?P<high>\d+)\)$")
 
 def parse_listing(text: str) -> Listing:
     """`dedicated content odst` (or plain `dedicated content`): the ODST sections only. Empty when the program
-    lists none, which means the server's game folder has no ODST files."""
+    lists none, which means the server's game folder has no ODST files. 0.10 lists no ODST sections: there the
+    built-in tables when it says "[odst] Halo 3: ODST installed in …", empty when it says "not installed"."""
+    listing = _sections(text)
+    if listing.empty and installed_in_text(text).get("odst"):
+        return builtin()
+    return listing
+
+
+def _sections(text: str) -> Listing:
     listing = Listing([], [], [])
     section = ""
     for line in text.splitlines():

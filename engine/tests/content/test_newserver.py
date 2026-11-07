@@ -144,7 +144,7 @@ def test_starter_packages_load(tmp_path: Path) -> None:
     folder = starters(tmp_path)
     packages = list_packages(folder)
     assert {p.key for p in packages} == {"team-slayer", "big-team-battle", "mlg-hardcore", "infection",
-                                         "scripted-modes", "campaign-coop", "odst-firefight"}
+                                         "scripted-modes", "campaign-coop", "odst-firefight", "every-halo"}
     infection = load_package(folder / "infection")
     assert infection.plays == "playlist infection" and infection.server["max_players"] == 16
     assert [p.name for p in infection.playlists] == ["infection.playlist.json"] and not infection.workshop_items
@@ -374,9 +374,9 @@ def test_the_setup_screens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run)
     controller = SetupController(settings_path)
     port = free_port()
     keys = [
-        # N: package 3 (infection, in the starters' folder order), name, port, not hidden, no password, 16 players,
+        # N: package 4 (infection, in the starters' folder order), name, port, not hidden, no password, 16 players,
         # make it, start it, a key to return.
-        "N", "3", "ENTER", *"Night Server", "ENTER", *str(port), "ENTER", "N", "ENTER", "ENTER", "Y", "Y", "x",
+        "N", "4", "ENTER", *"Night Server", "ENTER", *str(port), "ENTER", "N", "ENTER", "ENTER", "Y", "Y", "x",
         # C: check both servers.
         "C", "A", "ENTER", "x",
         # G on server 2: browse its maps, playlists (show the first, then back), check, then back out.

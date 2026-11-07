@@ -385,13 +385,13 @@ same rules:
 | `!said <player> [lines]` | moderator | The last lines (5, up to 15) they typed in chat, on any server; kept 30 days |
 | `!rules [line \| word]` | moderator | The word list: each line's name, words and what its strikes do; one line in full |
 | `!bannames [text]` | moderator | The banned names (`names.txt`), numbered for `!unbanname` |
-| `!strike <player> <rule> [note]` | moderator | An automod strike, for something automod can't see, like voice: the rule's next mute, kick or ban. A line of the word list with no words is only for this: see [automod.md](automod.md#a-ladder-only-staff-climb) |
+| `!strike <player> <rule> [note]` | moderator | An automod strike, for something automod can't see, like voice: the rule's next mute, kick or ban (a ban from a moderator goes to the admins as a request first). A line of the word list with no words is only for this: see [automod.md](automod.md#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name (adds it to `names.txt`): they're kicked every time they join with it, until they change it. No strike, no ban |
 | `!health` | moderator | How the server is running |
 | `!promote <player>` | moderator | One step up the roles, up to the role below yours |
 | `!demote <player>` | moderator | One step down, for someone below you: admin to moderator, moderator to probationary moderator, then member, member to player |
 | `!roles` | moderator | Who has which role |
-| `!requests` | moderator | The probationary moderators' requests waiting, on every server |
+| `!requests` | moderator | The probationary moderators' requests waiting, on every server, and moderators' strikes that would ban (an admin's to confirm) |
 | `!reports` | moderator | What's open for staff on Discord: reports and calls for an admin, on every server, how long each has waited, and whether someone's on it. Only while the full bot takes reports or calls |
 | `!confirm <number> [command and its words]` | moderator | Confirm a request: it happens now, as yours; or name another command to do to that player instead (`!confirm 3 strike slurs`) |
 | `!deny <number> [why]` | moderator | Turn a request down; the probationary moderator is told why |
@@ -404,7 +404,7 @@ same rules:
 | `!banword <words> \| [mutes] \| [kicks] \| [ban] \| <name>` | admin | Make a new line: `!banword word \| 1d 7d \| 2, 1h 1d \| 5 \| slurs`. Applies at once, in chat and to names with the word in them. Mutes, kicks and ban all blank: a line that only reports, a ticket for the staff on Discord and nothing in game. See [automod.md](automod.md#changing-the-word-list-from-the-game) |
 | `!unbanword <words> [\| line]` | admin | Take words off `automod.txt` (a line left with no words goes too); `\| <line>` alone takes off the whole line |
 | `!banname <#number \| name>` | admin | Ban a name (`names.txt`): a player on by `#number` or name has theirs banned and is kicked; any other text is banned as the name itself. Whoever uses it is kicked as they join, until they change it. No strike, no ban. A moderator's up to 0.4.4 |
-| `!pardonplayer <player \| ID> [rule \| all] [reason]` | admin | Clear automod strikes and lift what automod did: unban (only Vergil's own bans), unmute |
+| `!pardonplayer <player \| ID> [rule \| all] [reason]` | admin | Clear automod strikes and lift what automod did: unban (only Vergil's own bans), unmute. A word that isn't a line, nor `all`, is refused: a reason for clearing everything comes after `all` |
 | `!unbanname <name>` | admin | Take a name off `names.txt` |
 | `!say <text>` | admin | A `[Server]` line for everyone |
 | `!map`, `!mode`, `!load`, `!nextmap` | admin | Change the game |

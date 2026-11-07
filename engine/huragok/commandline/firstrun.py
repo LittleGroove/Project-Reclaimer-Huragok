@@ -13,7 +13,7 @@ from ..core.serverfolders import SERVERS_FOLDER, find_server_folders
 from ..core.settings import COMMANDS_FILE, SETTINGS_FILE, load
 from ..core.tables import ConfigError
 from ..discordbot.config import FILE as DISCORD_FILE, make_file
-from ..program.dedicated import find_executable
+from ..program.dedicated import NATIVE, find_executable
 from . import common
 from .common import FAILED, LAUNCHER, SETTINGS_PROBLEM
 from .shell import console as out
@@ -39,6 +39,11 @@ def detect_layout(home: Path) -> tuple[str, str, list[Path]]:
     return SERVERS_FOLDER, "", []
 
 
+def program_file() -> str:
+    """The server program's file name as a host here sees it: Linux has a program of its own from 0.10."""
+    return "project-reclaimer.exe" if os.name == "nt" else NATIVE
+
+
 def pick_backend(folders: list[Path]) -> tuple[str, dict[str, str], str]:
     """(backend, its settings, why) for what the server folders hold."""
     for folder in folders:
@@ -47,7 +52,7 @@ def pick_backend(folders: list[Path]) -> tuple[str, dict[str, str], str]:
     for folder in folders:
         if exe := find_executable(folder):
             return "process", {"executable": exe.name}, f"found {exe.name}: the Superintendent runs the servers"
-    return "process", {}, "the Superintendent runs the servers: project-reclaimer.exe in each server folder"
+    return "process", {}, f"the Superintendent runs the servers: {program_file()} in each server folder"
 
 
 def _toml_text(value: str) -> str:
@@ -137,7 +142,7 @@ def write_files(home: Path, server_folder: str | None = None, backend: str | Non
 def layout_help(home: Path) -> list[str]:
     return [
         f"Each server is one folder in {home / SERVERS_FOLDER}: the folder `dedicated init` makes, with",
-        "dedicated.toml, project-reclaimer.exe and game/. For example:",
+        f"dedicated.toml, {program_file()} and game/. For example:",
         f"  {home / SERVERS_FOLDER / 'Big Team Battle'}",
         f"  {home / SERVERS_FOLDER / 'Slayer'}",
         "Switch RCON on in each dedicated.toml ([rcon] password). Folders added later are picked up while running.",

@@ -22,7 +22,9 @@ from ..core.serverfolders import ServerConfig
 from ..core.settings import Settings
 from ..core.text import slug
 from ..core.tomledit import read_toml, set_table_key
+from ..games import bungie
 from ..games import files as game_files
+from ..games.files import KINDS
 from ..lore import MOTTO
 from ..program.dedicated import SLOW, Dedicated, DedicatedError, ToolResult, parse_playlists, tool_for
 from .shell import console as out
@@ -85,6 +87,10 @@ def cmd_new(args: argparse.Namespace, load: Callable[[str], Settings], launcher:
     share = set() if args.own else set(settings.setup.share)
     if args.share is not None:
         share = {s.strip().lower() for s in args.share.split(",") if s.strip()}
+    games = [g.strip().lower() for g in (args.games or "").split(",") if g.strip()]
+    if unknown := [g for g in games if g not in KINDS]:
+        out.fail(f"--games: '{unknown[0]}' isn't one of {', '.join(k for k in KINDS if k != 'halo3')}")
+        return 2
     extra: dict[str, Any] = {}
     if args.map:
         extra["map"] = args.map
@@ -95,11 +101,14 @@ def cmd_new(args: argparse.Namespace, load: Callable[[str], Settings], launcher:
         max_players=args.max_players, share=share,
         mcc_folder=args.mcc if args.mcc is not None else settings.setup.mcc_folder,
         maps=[m.strip() for m in args.maps.split(",")] if args.maps else None,
+        games=[g for g in games if g != "halo3"] or None,
         link_from=Path(args.link_from).resolve() if args.link_from else None,
         host_name=args.host_name, welcome=[args.welcome] if args.welcome else None, extra=extra,
         auto_update=False if args.no_auto_update else None)
-    out.heading(args.name, note=f"UDP {spec.port or 'the next free port'} · "
-                                 f"{package.summary() if package else 'the example rotation'}")
+    from ..games.plays import plays_of
+
+    plays = package.summary() if package else plays_of(extra) if extra else "the example rotation"
+    out.heading(args.name, note=f"UDP {spec.port or 'the next free port'} · {plays}")
     try:
         outcome = create_server(settings, spec, tool, say=out.note)
     except SetupError as error:
@@ -460,25 +469,35 @@ def cmd_steam(args: argparse.Namespace, load: Callable[[str], Settings], launche
 
 
 def _steam_files(settings: Settings, args: argparse.Namespace, launcher: str) -> int:
-    """`steam files [halo3|campaign|odst] [--download]`: one kind of game files into the shared game/, copied from
-    MCC when it's on this PC, else (or with --download) downloaded with SteamCMD. Asked for by a person, so a
-    download happens whatever [setup] download_game_files says."""
+    """`steam files [halo3|campaign|odst|reach|reach-campaign|halo1|halo2] [--download]`: one kind of game files
+    into the shared game/, copied from MCC when it's on this PC, else (or with --download) downloaded with SteamCMD
+    (Halo 3's, the campaign's and ODST's only: Reach's, CE's and Halo 2's come from MCC alone for now). Asked for
+    by a person, so a download happens whatever [setup] download_game_files says."""
     from ..content import gamefiles
     from .. import steam as steam
 
     kind = (args.account or "halo3").lower()
-    if kind not in game_files.DEPOTS:
-        out.fail(f"'{kind}' isn't one of {', '.join(game_files.DEPOTS)}: {launcher} steam files [halo3|campaign|odst]")
+    if kind not in game_files.KINDS:
+        out.fail(f"'{kind}' isn't one of {', '.join(game_files.KINDS)}: {launcher} steam files [{'|'.join(KINDS)}]")
         return 2
-    out.heading("Halo 3's files")
-    for label, text, colour in gamefiles.game_status(settings):
+    out.heading("Game files")
+    version = gamefiles.root_version(settings)
+    for label, text, colour in gamefiles.game_status(settings, version):
         (out.ok if colour == "green" else out.warn if colour == "yellow" else out.say)(f"{label:<13} {text}")
+    if not game_files.plays_on(kind, version):
+        out.fail(f"{game_files.LABELS[kind]} need Project Reclaimer {bungie.GAMES[game_files.GAME_OF_KIND[kind]].since}"
+                 f" or later; the program here is {version}: {launcher} update --program")
+        return 1
     target, why = gamefiles.shared_target(settings, kind)
     if target is None:
         out.fail(why)
         return 1
     found, no_download = gamefiles.sources(settings, kind, downloads=True)
-    if args.download:
+    if kind not in game_files.DEPOTS:
+        if args.download or not found:
+            out.fail(f"No way to get {game_files.LABELS[kind]} here: {no_download}")
+            return 1
+    elif args.download:
         found = [source for source in found if source.how == "steamcmd"]
     if not found:
         why = no_download or "SteamCMD can download them, but --download leaves MCC out and there's no SteamCMD way"
@@ -523,7 +542,7 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     new.add_argument("--port", type=int, help="its UDP game port (default: the next free one)")
     new.add_argument("--hidden", action="store_true", help="not listed in the server browser")
     new.add_argument("--password", help="the join password")
-    new.add_argument("--max-players", type=int, help="players at once (1-127)")
+    new.add_argument("--max-players", type=int, help="players at once (1-127; 1-128 from Project Reclaimer 0.10)")
     new.add_argument("--map", help="one map for every game (instead of a package or the example playlist)")
     new.add_argument("--game", help="the game type with --map")
     new.add_argument("--welcome", help="the chat line players read as they join")
@@ -533,7 +552,11 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     new.add_argument("--own", action="store_true", help="its own game folder, content and ban list")
     new.add_argument("--from", dest="mcc", nargs="?", const="", help="copy Halo 3's files from this MCC folder "
                      "(no folder: Steam's default) when none can be shared or linked")
-    new.add_argument("--maps", help="with --from: only these maps, e.g. \"Guardian,Valhalla\"")
+    new.add_argument("--maps", help="with --from: only these Halo 3 maps, e.g. \"Guardian,Valhalla\" (the other "
+                                    "games: --games)")
+    new.add_argument("--games", help="also copy these games' files from MCC beside Halo 3's, e.g. "
+                                     "\"reach,halo1,halo2\" (Project Reclaimer 0.10; odst, campaign and "
+                                     "reach-campaign too)")
     new.add_argument("--link-from", help="a server folder whose game/ is hard-linked into the new one")
     new.add_argument("--no-start", action="store_true", help="don't start it")
     new.add_argument("--no-auto-update", action="store_true",
@@ -582,12 +605,14 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     workshop.add_argument("ids", nargs="*", help="item IDs or Workshop addresses")
     workshop.set_defaults(func=bind(cmd_workshop))
 
-    steam = commands.add_parser("steam", help="SteamCMD: status, install, login <account>, files [halo3|campaign|odst], "
-                                              "path")
+    steam = commands.add_parser("steam", help="SteamCMD: status, install, login <account>, files [halo3|campaign|odst|"
+                                              "reach|reach-campaign|halo1|halo2], path")
     steam.add_argument("action", nargs="?", default="status", choices=["status", "install", "login", "files", "path"])
     steam.add_argument("account", nargs="?", help="login: the Steam account that owns MCC; files: halo3 (the default), "
-                                                  "campaign or odst")
-    steam.add_argument("--download", action="store_true", help="files: download with SteamCMD even when MCC is here")
+                                                  "campaign, odst, or from Project Reclaimer 0.10 reach, "
+                                                  "reach-campaign, halo1 or halo2 (those from MCC only)")
+    steam.add_argument("--download", action="store_true", help="files: download with SteamCMD even when MCC is here "
+                                                               "(Halo 3's, the campaign's and ODST's)")
     steam.add_argument("--standard", action="store_true", help="install: into SteamCMD's standard folder, not the root's")
     steam.add_argument("--into", help="install: into this folder")
     steam.add_argument("--force", action="store_true", help="install: even when one was found")

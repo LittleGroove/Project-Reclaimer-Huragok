@@ -22,6 +22,19 @@ STOP_SECONDS = 5.0  # what stop() waits for cancelled work to finish (a reply mi
 _running: set[asyncio.Task[Any]] = set()
 
 
+async def wait_until(event: asyncio.Event, seconds: float | None) -> bool:
+    """`event` set, or `seconds` gone by (None: no limit): whether it's set. For a loop that ends when its task is
+    cancelled. asyncio.wait_for(event.wait(), seconds) swallows, on Python 3.11, a cancel that comes as the event is
+    set, and the loop carried on: Huragok's stop waited for it for good (the Linux check, 6 November 2026: the Discord
+    outbox, woken as Huragok stopped). asyncio.timeout tells its own time running out from a cancel."""
+    try:
+        async with asyncio.timeout(seconds):
+            await event.wait()
+    except TimeoutError:
+        pass
+    return event.is_set()
+
+
 def background(work: Awaitable[Any], what: str, logger: logging.Logger | None = None) -> asyncio.Task[Any]:
     """Run `work` by itself, kept until it ends; a failure is logged at once as "<what> failed: …" (to `logger`, the
     caller's own, when given). Returns the task, for a caller that wants to wait for it or call it off."""

@@ -9,6 +9,7 @@ Their list is long, and most of it is staff's, so those only show to members wit
 
 from __future__ import annotations
 
+import difflib
 import inspect
 import io
 import logging
@@ -22,6 +23,7 @@ import discord
 from discord import app_commands, ui
 
 from ..core.commandsfile import PROBATION, ROLES
+from ..players.automod.rules import NAME_STRIKE
 from ..players.router import LOOKING, role_plural, split_words
 from ..players.targets import FULL_ID, NUMBER, PICK, ago
 from ..servers.state import Player
@@ -58,7 +60,7 @@ MOST_CHOICES = 25
 NAMED_FOR_DISCORD = {"rules": "bannedwords", "bannames": "bannednames", "pardon": "letback", "pardonplayer": "clearstrikes", "reload": "reloadserver"}
 # What Discord shows of a command whose help is written for typing it in game.
 DESCRIBED = {"banword": "Add words to a list of the word list, or make a new list with its mutes, kicks and bans",
-             "changebanword": "New steps for a list of the word list: its mutes, kicks and bans",
+             "changebanword": "Change a list's mutes, kicks or bans: a box left empty stays as it is",
              "unbanword": "Take words off the word list, or a whole list",
              "rules": "Every list of the word list: its words, and what each strike does",
              "bannames": "Every banned name, and the names the staff allowed"}
@@ -70,6 +72,10 @@ TIME_SUGGESTED = ("10m", "30m", "1h", "12h", "1d", "7d", "30d", "perm")
 MUTES_HINT = "Each mute's time from the 1st strike: 1d, 3d, 7d. A number last: strikes before muted for good"
 KICKS_HINT = "Strikes before the kicks, then each kick's time: 2, 1h, 1d. 0 alone: the server's kick every time"
 BANS_HINT = "Strikes before the ban for good: 0 bans the first time. Mutes, kicks, bans all empty: only reports"
+# /changebanword's: a box left empty keeps that part, none clears it (the host's call, 6 November)
+CHANGE_MUTES_HINT = "Each mute's time from the 1st strike: 1d, 3d, 7d. Empty: as it is; none: never muted"
+CHANGE_KICKS_HINT = "Strikes before the kicks, then each kick's time: 2, 1h, 1d. Empty: as it is; none: never kicked"
+CHANGE_BANS_HINT = "Strikes before the ban for good: 0 bans the first time. Empty: as it is; none: never banned"
 RESTART_SUGGESTED = ("gameover", "5m", "10m", "30m", "1h")
 
 
@@ -78,7 +84,7 @@ class Option:
     name: str
     description: str
     required: bool = False
-    kind: str = "text"  # player, time, reason, number, server, one (one thing, however many words), list (the word list's), listed (its words) or text
+    kind: str = "text"  # player, time, reason, number, server, one (one thing, however many words), list (the word list's), listed (its words), rule (a list a strike is given or cleared on) or text
     choices: tuple[str, ...] = ()
 
 
@@ -90,7 +96,8 @@ SHAPES = {"admin": [Option("action", "What to do", True, choices=("list", "add",
           "banword": [Option("words", "The words, separated by commas: badword, otherword. word* also catches longer words", True),
                       Option("mutes", MUTES_HINT), Option("kicks", KICKS_HINT), Option("bans", BANS_HINT),
                       Option("listname", "The list: one there already takes the words with its steps; a new name makes a list", kind="list")],
-          "changebanword": [Option("listname", "The list: its name, or a word on it", True, "list"), Option("mutes", MUTES_HINT), Option("kicks", KICKS_HINT), Option("bans", BANS_HINT)],
+          "changebanword": [Option("listname", "The list: its name, or a word on it", True, "list"), Option("mutes", CHANGE_MUTES_HINT), Option("kicks", CHANGE_KICKS_HINT),
+                            Option("bans", CHANGE_BANS_HINT)],
           "unbanword": [Option("words", "The words to take off, separated by commas. Empty, with a listname: the whole list", kind="listed"),
                         Option("listname", "Only off this list. With no words: the whole list goes", kind="list")]}
 
@@ -120,7 +127,7 @@ def _one(spec: CommandSpec, token: str, first: bool) -> Option:
     if "red" in words:
         return Option("team", "Which team", required, choices=tuple(words))
     if head == "rule":
-        return Option("rule", "Which rule: its name, or all" if "all" in words else "Which rule: its name, or name to ban their name", required)
+        return Option("rule", "Which rule: its name, or all" if "all" in words else "Which rule: its name, or name to ban their name", required, "rule")
     if head == "line":
         return Option("search", "Part of a rule's name or a word. Empty: all of it", required)
     if head == "milliseconds":
@@ -177,9 +184,11 @@ def _server_for(part: DiscordPart, spec: CommandSpec, given: str, player: str, a
         entry = part.ctx.pick_of(asker, int(pick[1]))
         if not isinstance(entry, str) and getattr(entry, "id", ""):
             return [part.where_it_lives(str(entry.id), LIFTING[spec.name])], ""
-    if spec.name in EVERYWHERE:
-        return [part.where_to_run(player)] if servers else [], ""
     up = {name: state for name, state in servers.items() if state.connected}
+    if spec.name in EVERYWHERE:
+        if NUMBER.fullmatch(player) and len(up) > 1:  # no server box to say which: the first server's #3 was acted on (audit 6 November)
+            return [], "A #number is different on each server: pick them from the list as you type, or use their name."
+        return [part.where_to_run(player)] if servers else [], ""
     if spec.name in EACH_SERVER:
         return list(up) or list(servers), ""
     if player:
@@ -230,8 +239,9 @@ def _line_of(part: DiscordPart, plan: list[Option], given: dict[str, Any], name:
             text = known or text.lower()
         elif option.kind == "reason":
             text = '"' + text.replace('"', "'") + '"'
-        elif " " in text and (option.kind == "one" or (option.kind == "player" and any(given.get(later.name) for later in plan[plan.index(option) + 1:] if later.kind != "server"))):
-            text = '"' + text.replace('"', "'") + '"'  # one thing, with something after it
+        elif " " in text and (option.kind == "one" or (option.kind == "player" and name != "banname")):
+            # One thing, with something after it. A player always: "Bob Smyth" alone read as Bob with the reason Smyth, and kicked him (audit 6 November). !banname takes the whole line as the name
+            text = '"' + text.replace('"', "'") + '"'
         pieces.append(text)
     return " ".join(pieces), ""
 
@@ -242,9 +252,14 @@ class _Sure(SaysWhatWentWrong, ui.View):
     def __init__(self, part: DiscordPart, spec: CommandSpec, line: str, servers: list[str], private: bool, timed: bool = False) -> None:
         super().__init__(timeout=120)
         self.part, self.spec, self.line, self.servers, self.private, self.timed = part, spec, line, servers, private, timed
+        self.sent = False
 
     @ui.button(label="Yes", style=discord.ButtonStyle.danger)
     async def yes(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
+        if self.sent:  # a second press before the first took the buttons away: it ran twice (audit 6 November)
+            await answer(interaction, "That's been sent already.")
+            return
+        self.sent = True
         self.stop()
         await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=f"`{self.spec.name} {self.part.named_in(self.line)}`"[:300], server=cards.clean(", ".join(self.servers))), view=None)
         await _go(self.part, interaction, self.spec, self.line, self.servers, self.private, timed=self.timed)
@@ -266,6 +281,14 @@ async def run(part: DiscordPart, interaction: discord.Interaction, spec: Command
     if spec.name == "banname" and FULL_ID.fullmatch(player):  # picked from the list: it's their name that's banned
         record = part.ctx.players.get(player.lower())
         given = {**given, "player": str(record.last_name) if record is not None else player}
+    if spec.name == "pardonplayer" and not str(given.get("rule") or "").strip() and str(given.get("reason") or "").strip():
+        given = {**given, "rule": "all"}  # in game a reason for clearing everything comes after `all`: here it has a box of its own
+    if spec.name in ("strike", "pardonplayer") and str(given.get("rule") or "").strip():
+        meant, why = _rule_meant(part, spec.name, str(given["rule"]))
+        if why:
+            await answer(interaction, why)
+            return
+        given = {**given, "rule": meant}
     line, why = _barred(spec.name, given) if spec.name in (*BARS, "unbanword") else _line_of(part, plan, given, spec.name)
     if why:
         await answer(interaction, why)
@@ -286,6 +309,9 @@ async def run(part: DiscordPart, interaction: discord.Interaction, spec: Command
     shown_name = name_of(spec, options.get("names") or {})
     timed = bool(given.get("time")) or times_a_kick(" ".join(str(value) for key, value in given.items()
                                                                if key not in ("server", "time")).split())
+    if spec.name == "strike":  # a strike that would remove them or ban reaches every server, as a kick with a time does
+        struck = _player_id_of(part, player)
+        timed = bool(struck) and part.ctx.strike_removes(struck, str(given.get("rule") or "").strip().lower(), servers[0])
     rank = rank_for(part, spec, someone, servers, timed=timed)
     needed = next((role for known, role in part.ctx.game_commands() if known.name == spec.name), spec.role)
     if rank != PROBATION and ROLES.index(rank) < ROLES.index(needed):
@@ -499,6 +525,76 @@ async def _list_choices(interaction: discord.Interaction, typed: str) -> list[ap
     return [app_commands.Choice(name=f"{name} · {does}"[:100], value=name[:100]) for name, does in part.ctx.word_lists() if wanted in name.casefold()][:MOST_CHOICES]
 
 
+def _picked_player(part: DiscordPart, interaction: discord.Interaction) -> str:
+    """The ID of whoever's in the command's `player` box so far: picked from the list, a whole ID, or a name only one player on a server has. "" if that can't be told."""
+    return _player_id_of(part, part.meant(str(getattr(interaction.namespace, "player", "") or "")))
+
+
+def _player_id_of(part: DiscordPart, given: str) -> str:
+    given = given.strip()
+    if FULL_ID.fullmatch(given):
+        return given.lower()
+    on = {someone.id for state in part.ctx.servers.values() if state.connected for someone in state.players.values() if given and someone.name.casefold() == given.casefold()}
+    return next(iter(on)) if len(on) == 1 else ""
+
+
+def _rule_meant(part: DiscordPart, command: str, typed: str) -> tuple[str, str]:
+    """What's in a rule box as the game takes it: (the list's name, or why not). A list by its name, or with an s more or less (slur is slurs); `name` for a strike, `all` or a list taken off
+    the word list that still has strikes for a pardon. Anything else is refused here: in game the word after the player that isn't a list is the reason, and a pardon's clears every strike."""
+    lists = [name for name, _ in part.ctx.word_lists()]
+    word = typed.strip().lower()
+    close = difflib.get_close_matches(word, lists, n=1, cutoff=0.6)
+    meant = f" Did you mean {close[0]}?" if close else ""
+    found = next((name for name in lists if name == word), "") or next((name for name in lists if name == word + "s" or (word.endswith("s") and name == word[:-1])), "")  # as the game's line_called
+    if command == "strike":
+        if found or word == NAME_STRIKE:
+            return found or word, ""
+        offered = ", ".join(part.ctx.strike_rules()) or "none"
+        return "", f"There's no list called {cards.clean(typed, for_a_channel=False)} to strike on.{meant} Lists: {cards.clean(offered, for_a_channel=False)}; or {NAME_STRIKE}, to ban their name. Nothing was done."
+    if found or word == "all":
+        return found or word, ""
+    try:
+        if part.ctx.db.query("SELECT 1 FROM automod_strikes WHERE grp = ? AND pardoned IS NULL LIMIT 1", (word,)):
+            return word, ""  # a list taken off the word list: its strikes are still kept under its name
+    except sqlite3.Error:  # Vergil's off, and always has been
+        pass
+    return "", f"There's no list called {cards.clean(typed, for_a_channel=False)}.{meant} Lists: {cards.clean(', '.join(lists) or 'none', for_a_channel=False)}; or all, to clear every strike. Nothing was done."
+
+
+def _struck_on(part: DiscordPart, player_id: str) -> dict[str, int]:
+    """Their strikes still standing, by the list they're on."""
+    try:
+        return {str(row["grp"]): int(row["n"]) for row in part.ctx.db.query("SELECT grp, COUNT(*) AS n FROM automod_strikes WHERE player_id = ? AND pardoned IS NULL GROUP BY grp", (player_id,))}
+    except sqlite3.Error:  # Vergil's off, and always has been
+        return {}
+
+
+async def _rule_choices(interaction: discord.Interaction, typed: str, *, command: str = "") -> list[app_commands.Choice[str]]:
+    """The word list's lists, for staff. /strike: those a strike can be given on (not one that only reports), each with what it would do to whoever's picked, or what its strikes do, then name, to
+    ban their name. /clearstrikes: the lists they have strikes on, or every list until someone's picked, then all. Only lists there now: a word the command doesn't know as one is read as the
+    reason, and clears every strike."""
+    part = part_of(interaction)
+    if not can_act(highest_rank(part.file, someone_from(interaction.user), part.ctx.servers)):
+        return []
+    wanted = typed.strip().casefold()
+    lists = dict(part.ctx.word_lists())
+    player_id = _picked_player(part, interaction)
+    found: list[tuple[str, str]] = []
+    if command == "pardonplayer":
+        struck = _struck_on(part, player_id) if player_id else {}
+        if player_id:  # a list taken off the word list too: its strikes are still kept under its name
+            found = [(name, f"{count} strike{'s' if count != 1 else ''}" + ("" if name in lists else ", a list taken off")) for name, count in struck.items()]
+        else:
+            found = list(lists.items())
+        last = ("all", f"every strike they have ({sum(struck.values())})" if player_id else "every strike they have")
+    else:
+        server = str(getattr(interaction.namespace, "server", "") or "").strip() or (part.where_to_run(player_id) if player_id else "")  # where the strike would land: dry run counts apart
+        found = [(name, part.ctx.next_strike(player_id, name, server or None) if player_id else lists.get(name, "")) for name in part.ctx.strike_rules()]
+        last = (NAME_STRIKE, "ban their name: kicked as they join until they change it")
+    shown = [(name, does) for name, does in found if wanted in name.casefold()][:MOST_CHOICES - 1] + ([last] if wanted in last[0] else [])  # never pushed off by a long list
+    return [app_commands.Choice(name=f"{name} · {does}"[:100] if does else name[:100], value=name[:100]) for name, does in shown]
+
+
 async def _word_choices(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
     """The words on the list with this in them, after the last comma: what's typed before it stays."""
     part = part_of(interaction)
@@ -555,6 +651,11 @@ def build(part: DiscordPart, spec: CommandSpec, role: str) -> app_commands.Comma
             command.autocomplete(option.name)(server_choices)
         elif option.kind == "list":
             command.autocomplete(option.name)(_list_choices)
+        elif option.kind == "rule":
+            async def rules(interaction: discord.Interaction, typed: str, command: str = spec.name) -> list[app_commands.Choice[str]]:
+                return await _rule_choices(interaction, typed, command=command)
+
+            command.autocomplete(option.name)(_two_arguments(rules))
         elif option.kind == "listed":
             command.autocomplete(option.name)(_word_choices)
         elif spec.name == "unbanname" and option.name == "name":

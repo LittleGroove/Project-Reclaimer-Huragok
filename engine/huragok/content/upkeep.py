@@ -1,4 +1,4 @@
-"""Upkeep that isn't about one setting: disk space, the firewall, and Halo 3's engine file after an MCC update.
+"""Upkeep that isn't about one setting: disk space, the firewall, and the games' engine files after an MCC update.
 
 Disk: what piles up and is safe to remove, each with its size: program files an update set aside
 (`project-reclaimer.exe.old`, records/previous-program/ but the newest), the old copies a Workshop update left
@@ -15,8 +15,9 @@ script's outcome is checked: a declined prompt or a failed rule is said as such.
 Engine: after a Steam update of MCC, `dedicated check` says to copy halo3.dll again once a Project Reclaimer
 release supports that MCC (and from 0.9.19 the start of an ODST server says the same of halo3odst.dll). The old
 file is renamed first (a running server holds it), then the new one is copied in; the servers pick it up as they
-restart. A game folder with Halo 3: ODST's files gets both. A game folder that is MCC's own (a link to it) is
-left alone: the file is the same one.
+restart. A game folder with other games' files gets theirs too: halo3odst.dll, and from Project Reclaimer 0.10
+haloreach.dll, halo1.dll and halo2.dll (games/files.py engine_files). A game folder that is MCC's own (a link to
+it) is left alone: the file is the same one.
 """
 
 from __future__ import annotations
@@ -280,7 +281,7 @@ def copy_engine(game_dir: Path, mcc_dir: Path, servers: list[str] | None = None)
         if not source.is_file():
             if relative.startswith("halo3/"):
                 raise FileNotFoundError(f"{source} isn't there: is that your MCC folder?")
-            continue  # ODST isn't installed in this MCC: its file stays as it is
+            continue  # that game (ODST, Reach, CE, Halo 2) isn't installed in this MCC: its file stays as it is
         if _same_file(source, target):
             same.append(target.name)  # renaming it would take MCC's own file away
             continue

@@ -116,8 +116,9 @@ def times_a_kick(words: Iterable[str]) -> bool:
 
 
 def rank_to_run(config: DiscordConfig, someone: Someone, servers: Iterable[Any], server: str | None, command: str, *, timed: bool = False) -> str:
-    """Their rank, for this command on this server."""
-    return lowest_rank(config, someone, servers) if command in REACHES_EVERY_SERVER or (command == "kick" and timed) else game_rank(config, someone, server)
+    """Their rank, for this command on this server. `timed`: a kick with a time, or a strike whose next step removes
+    them or bans (the host's call, 6 November), which reach every server."""
+    return lowest_rank(config, someone, servers) if command in REACHES_EVERY_SERVER or (command in ("kick", "strike") and timed) else game_rank(config, someone, server)
 
 
 def lowest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]) -> str:

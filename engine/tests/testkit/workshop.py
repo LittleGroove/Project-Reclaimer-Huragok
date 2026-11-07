@@ -34,6 +34,8 @@ class FakeLifecycle:
         self.restarts: list[tuple[str, str, str]] = []
         self.told: list[str] = []  # what players read while it waits for the game to end
         self.counts: dict[str, int] = {}  # players on, by server
+        self.planned: dict[str, str] = {}  # server -> the reason of its planned restart
+        self.called_off: list[tuple[str, str]] = []
 
     def add_job(self, server: str, job: StoppedJob) -> None:
         self.jobs[server] = [j for j in self.jobs.get(server, []) if j.key != job.key] + [job]
@@ -59,6 +61,14 @@ class FakeLifecycle:
                       tell: str = "") -> Any:
         self.restarts.append((server, when, reason))
         self.told.append(tell)
+        self.planned[server] = reason
+
+    def call_off(self, server: str, reason: str) -> bool:
+        if self.planned.get(server) != reason:
+            return False
+        del self.planned[server]
+        self.called_off.append((server, reason))
+        return True
 
 
 def workshop_root(tmp_path: Path, steam: int = OLD) -> tuple[Path, Path]:

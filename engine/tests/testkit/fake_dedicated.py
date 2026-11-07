@@ -192,8 +192,12 @@ class Folder:
         with config.open("rb") as file:
             self.settings = tomllib.load(file)
         self.game = (self.folder / str(self.settings.get("game") or "game")).resolve()
-        self.content = (self.folder / str(self.settings.get("content") or "content")).resolve()
-        self.bans = (self.folder / str(self.settings.get("bans") or "bans.json")).resolve()
+        # The environment over the file, as the program reads them (0.9.23: RECLAIMER_DEDICATED_CONTENT=content2 lists
+        # content2), relative to the file's folder all the same.
+        content = os.environ.get("RECLAIMER_DEDICATED_CONTENT") or self.settings.get("content") or "content"
+        bans = os.environ.get("RECLAIMER_DEDICATED_BANS") or self.settings.get("bans") or "bans.json"
+        self.content = (self.folder / str(content)).resolve()
+        self.bans = (self.folder / str(bans)).resolve()
 
     def has_game(self) -> bool:
         return (self.game / "halo3" / "halo3.dll").is_file() and (self.game / "halo3" / "maps" / "shared.map").is_file()

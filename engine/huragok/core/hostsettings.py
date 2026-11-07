@@ -94,7 +94,8 @@ SETTINGS: list[HostSetting] = [
     H("process", "executable", "str", "the server program, in each server's folder", "running",
       default="project-reclaimer.exe", backend="process"),
     H("process", "command", "words", "how it's run, as the whole command ({executable}, {config}, {folder} and "
-      "{name} are filled in); empty: the program itself on Windows, wine and the program on Linux", "running",
+      "{name} are filled in); empty: the program itself (on Linux its own program, project-reclaimer, from 0.10; "
+      "0.9's .exe through wine)", "running",
       default=[], backend="process"),
     H("process", "stop_timeout", "float", "seconds to wait for a clean stop before ending the process", "running",
       default=30, low=1, high=3600, backend="process"),
@@ -266,10 +267,12 @@ SETTINGS: list[HostSetting] = [
       "step with its new versions (one changed there by hand is left as it is)", "workshop_updates", default=True),
     # New servers and SteamCMD
     H("setup", "share", "share", "what new servers take from this folder instead of a copy of their own: game "
-      "(Halo 3's files), content (one content folder for every server). Never the ban list: every server keeps its "
-      "own, and Huragok puts its own bans on every one", "setup", default=["game"]),
-    H("setup", "mcc_folder", "path", "your MCC folder, for Halo 3's files when no server has them yet; empty: "
-      "Steam's own folder; left out: linked from a server that has them", "setup", optional=True),
+      "(the games' files: Halo 3's and the others the servers play), content (one content folder for every "
+      "server). Never the ban list: every server keeps its own, and Huragok puts its own bans on every one", "setup",
+      default=["game"]),
+    H("setup", "mcc_folder", "path", "your MCC folder, for the games' files: Halo 3's when no server has them yet, "
+      "and ODST's, Reach's, CE's and Halo 2's for the servers that play them; empty: Steam's own folder; left out: "
+      "linked from a server that has them", "setup", optional=True),
     H("setup", "packages_folder", "path", "where the packages are", "setup", default="PACKAGES"),
     H("setup", "program", "path", "the server program for what isn't one server's (making new folders, checking "
       "custom games); empty: the newest copy here", "setup", default=""),
@@ -277,8 +280,9 @@ SETTINGS: list[HostSetting] = [
       "C:\\steamcmd and PATH", "setup", default=""),
     H("setup", "steam_username", "str", "the Steam account SteamCMD signs in with; it must own MCC (never a password "
       "here)", "setup", default=""),
-    H("setup", "download_game_files", "bool", "a server missing Halo 3's files gets them by itself (copied from MCC, "
-      "or downloaded with SteamCMD)", "setup", default=True),
+    H("setup", "download_game_files", "bool", "a server missing a game's files (Halo 3's, or another game's its maps "
+      "need) gets them by itself (copied from MCC, or downloaded with SteamCMD: Halo 3's, the campaign's, ODST's)",
+      "setup", default=True),
     H("setup", "auto_update", "bool", "new servers install new Project Reclaimer releases themselves (auto_update "
       "in their dedicated.toml)", "setup", default=True),
     # Folders and files

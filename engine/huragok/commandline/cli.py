@@ -524,8 +524,9 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("variant [-s server] [list|show|check] [name]", "a server's saved custom games: what each changes, checked "
                                                          "by the server program"),
         ("workshop [-s server] [list|add|remove|install]", "a server's Workshop items"),
-        ("steam [status|install|login <account>|files [halo3|campaign|odst]|path]",
-         "SteamCMD: Workshop items, and Halo 3's files (copied from MCC here, or downloaded)"),
+        ("steam [status|install|login <account>|files [halo3|campaign|odst|reach|reach-campaign|halo1|halo2]|path]",
+         "SteamCMD: Workshop items, and every game's files (copied from MCC here, or downloaded: Halo 3's, the "
+         "campaign's and ODST's)"),
         ("dedicated [-s server] <command…>", "any of the server program's own commands, e.g. dedicated check"),
         ("init [--force]", "write settings.toml, commands.toml, automod.txt, names.txt and intervalmessages.txt (the "
                            "first start does this)"),

@@ -170,7 +170,7 @@ class CommandRouter:
         self._last_use: dict[tuple[str, str], float] = {}
         # A probationary moderator's request: (call, the command, its player, the words after them) -> the part that
         # keeps them (players/commands/requests.py). None: the rank isn't in use, and their commands are refused.
-        self.on_request: Callable[[CommandCall, Registered, Player, list[str]], Awaitable[None]] | None = None
+        self.on_request: Callable[..., Awaitable[None]] | None = None  # (call, registered, target, rest, needs="")
         self.register(HELP, None, self._help)
         bus.subscribe("rcon.chat", self._on_chat)
 

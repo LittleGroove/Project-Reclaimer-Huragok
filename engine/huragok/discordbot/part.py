@@ -254,7 +254,8 @@ class DiscordPart(Part):
         return self.ctx.last_visit(player_id) if player_id else None
 
     def old_name(self, player_id: str, name: str, when: float) -> str:
-        """A name they went by before, if this one is new since they joined; "" if it isn't."""
+        """A name they went by before, if this one is new since they joined; "" if it isn't. On 0.10 the join's name is
+        the one that came after it (feeds.py waits for it): Vergil records it as of the join, so it's new as it was."""
         record = self.ctx.players.get(player_id) if player_id and name else None
         if record is None or len(record.names) < 2:
             return ""
@@ -311,6 +312,16 @@ class DiscordPart(Part):
         """Who a player is to anyone reading: the name they were last seen under. An old one means nothing to whoever comes next, and an ID means nothing to anyone."""
         record = self.ctx.players.get(player_id.lower()) if player_id else None
         return str(record.last_name) if record is not None and record.last_name else given or player_id[:8]
+
+    def name_now(self, server: str, player_id: str, *, or_last: bool = False) -> str:
+        """The name a player goes by on a server now, as its live picture has it; "" if it has none: 0.10's join names
+        nobody, and it's known a few seconds later (state.named). `or_last`: else the name they were last seen under."""
+        state = self.ctx.servers.get(server)
+        player = state.player_by_id(player_id) if state is not None and player_id else None
+        if player is not None and player.name:
+            return str(player.name)
+        record = self.ctx.players.get(player_id.lower()) if or_last and player_id else None
+        return str(record.last_name) if record is not None and record.last_name else ""
 
     def named_in(self, text: str) -> str:
         """What a command answered, with whoever it's about by name: a server's answer often only has the ID it was given."""

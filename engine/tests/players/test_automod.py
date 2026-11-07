@@ -112,6 +112,28 @@ def test_a_number_last_in_the_mutes_is_the_strikes_before_muted_for_good() -> No
     assert rule("w | 1d, 3d, 7d, 8").mute_forever_after == 8
 
 
+def test_the_hosts_lines_how_many_strikes_before_the_kicks_and_the_ban_before_muted_for_good() -> None:
+    """The host's examples (6 November): the kicks' first number is how many strikes come before them, and the ban may
+    come at or before muted for good, which it then beats (refused up to 0.6.1)."""
+    usual = rule("theword, otherword | 1d, 3d, 7d, 30d, 180d, 5 | 5, 1d, 3d, 5d | 8 | badwords")
+    assert described(usual) == ["1st: muted for 1 day", "2nd: muted for 3 days", "3rd: muted for 7 days",
+                                "4th: muted for 30 days", "5th: muted for 180 days",
+                                "6th: kicked for 1 day, then muted for good", "7th: kicked for 3 days, then muted for good",
+                                "8th: kicked for 5 days, then muted for good", "9th: banned for good"]
+    # Muted twice; the 3rd strike kicks for a day, and once they're back they're muted 7 days; the 6th bans.
+    sooner = rule("theword, otherword | 1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5 | badwords")
+    assert sooner.mute_forever_after == 5 and sooner.kick_after == 2 and sooner.ban_after == 5
+    assert described(sooner) == ["1st: muted for 1 day", "2nd: muted for 3 days",
+                                 "3rd: kicked for 1 day, then muted for 7 days",
+                                 "4th: kicked for 3 days, then muted for 30 days",
+                                 "5th: kicked for 5 days, then muted for 180 days", "6th: banned for good"]
+    assert sooner.strike_text(5) == "strike 5 of 5" and line_of(sooner) == (
+        "theword, otherword | 1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5 | badwords")  # written back as it was
+    assert ladder("w | 1d, 3 | | 3", 5) == ["mute 1d", "mute 1d", "mute 1d", "ban", "ban"]  # the ban, never muted for good
+    assert ladder("w | 1d, 9 | | 3", 4) == ["mute 1d", "mute 1d", "mute 1d", "ban"]
+    assert rule("w | 1d, 3 | | 3").strike_text(3) == "strike 3 of 3"  # counted toward the ban, which comes first
+
+
 def test_a_0_in_the_kicks_alone_is_a_plain_kick_forever() -> None:
     r = rule("kickword | | 0")
     assert {r.step_for(n) for n in range(50)} == {Step("kick")} and r.step_for(0).describe() == "kicked"
@@ -211,7 +233,6 @@ def test_severity_order() -> None:
     ("w | 1d, 3, 7d", "'3' in mutes has no s, m, h, d or w.*can only be last"),
     ("w | 1d, 3, 7d, 8", "'3' in mutes has no s, m, h, d or w"),
     ("w | 1d, perm, 3", "perm and the 3 after it both say when the mutes are for good"),
-    ("w | 1d, 3 | | 3", "the mutes are for good after 3 strikes but the ban comes after 3"),
     ("w | 1d, \u00b2", "isn't a time"),  # ² isn't a count either
     ("w | 1d | 1, 1h, 3", "'3' in kicks has no s, m, h, d or w.*can only be first"),
     ("w | | 3, 1h", "the kicks start after 3 strikes, but no mutes come before them"),

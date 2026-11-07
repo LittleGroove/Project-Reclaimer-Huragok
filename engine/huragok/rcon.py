@@ -31,7 +31,7 @@ from typing import Any
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, WebSocketException
 
-from .core.background import background
+from .core.background import background, wait_until
 from .core.errors import ServerError
 from .core.events import Event, EventBus
 from .core.serverfolders import ServerConfig
@@ -166,10 +166,7 @@ class RconClient:
                 break
             delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
             failures += 1
-            try:
-                await asyncio.wait_for(self._wake.wait(), delay)
-            except TimeoutError:
-                pass
+            await wait_until(self._wake, delay)
             self._wake.clear()
 
     def _on_wrong_password(self, event: Event) -> None:
@@ -212,10 +209,7 @@ class RconClient:
         self._wake.clear()
         since = time.monotonic()
         while not self._stop.is_set():
-            try:
-                await asyncio.wait_for(self._wake.wait(), REFUSED_POLL)
-            except TimeoutError:
-                pass
+            await wait_until(self._wake, REFUSED_POLL)
             woken = self._wake.is_set()  # also a wake that came as the wait ran out
             self._wake.clear()
             if self._stop.is_set():

@@ -133,6 +133,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "past memory_mb once a run has settled (new in 0.6.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
+        "PACKAGES/every-halo: a new starter package",  # 0.6.2's, for Project Reclaimer 0.10
         AUTOMOD_ORDER, *FACULTY, *new_command_lines()]
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")

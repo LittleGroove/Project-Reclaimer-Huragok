@@ -559,3 +559,24 @@ def test_the_default_docker_service_keeps_its_number_as_folders_come_and_go(tmp_
     d = SimpleNamespace(name="D", slug="d", service=None, game_port=1, folder=tmp_path, config_path=tmp_path)
     settings.servers.append(d)  # a new folder
     assert backend.values(d)["service"] == "server-4"  # type: ignore[arg-type]
+
+
+def test_the_host_commands_start_a_server_without_what_its_file_says(tmp_path: Path, monkeypatch) -> None:
+    """Audit 6 November, 3.5: the command backend passed RECLAIMER_DEDICATED_CONTENT and the rest to the program it
+    started, which reads them over its dedicated.toml: the folder mismatch the take-over is for came back. (Docker's
+    compose file may use them for the containers' folders, so it keeps them.)"""
+    from huragok.servers.backends import CommandBackend, DockerBackend
+
+    out = tmp_path / "seen.txt"
+    code = ("import os,sys; open(sys.argv[1],'w').write(str(os.environ.get('RECLAIMER_DEDICATED_CONTENT')) + ' ' + "
+            "str(os.environ.get('RECLAIMER_DEDICATED_WORKSHOP_ITEMS')) + ' ' + str(os.environ.get('KEPT_HERE')))")
+    start = f'"{sys.executable}" -c "{code}" "{out}"'
+    path = write_root(tmp_path, [("Alpha", free_port())], f"backend = \"command\"\n[command]\nstart = '''{start}'''\nstop = 'echo stop'\n",
+                      backend=None)
+    monkeypatch.setenv("RECLAIMER_DEDICATED_CONTENT", "content2")
+    monkeypatch.setenv("RECLAIMER_DEDICATED_WORKSHOP_ITEMS", "1,2")
+    monkeypatch.setenv("KEPT_HERE", "yes")
+    settings = load(path)
+    asyncio.run(CommandBackend(settings, EventBus(), {}).start(settings.server("Alpha")))
+    assert out.read_text() == "None None yes"
+    assert not DockerBackend.leaves_out_the_environment

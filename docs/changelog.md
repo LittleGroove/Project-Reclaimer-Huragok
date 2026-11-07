@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.6.2
+**Huragok 0.6.2 runs Project Reclaimer 0.10 and every Bungie Halo it plays.** Halo: Reach, Halo: Combat Evolved and
+Halo 2 join Halo 3 and ODST: their files for a new server or an old one, their maps in every picker, the game types
+each game's maps take, their mods, and the settings 0.10 added. 0.9 servers keep working as before until you update
+them; Huragok offers the new games only to servers running 0.10.
+
+**Before you update the servers to 0.10:** 0.10 names every player by a new network key instead of the player ID
+their profile shows, and gives no way to tell which old ID a key belongs to. So Huragok meets everyone as a new
+player: roles given in commands.toml, notes, strikes, mutes, stats and Discord links kept under a 0.9 player ID don't
+follow them. Give your staff their roles again under the ID the window or `!whois` shows for them on 0.10. The
+server's own admins, bans and roles (bans.json, dedicated.toml) take either ID, so those still hold.
+- **Every program command finishes again.** On 0.10 the server program never ends a command (`init`, `check`,
+  `content`, `mods`, `playlist`) while Huragok reads its output through a pipe: each one waited out its time limit (2
+  to 15 minutes) and was reported as failed, and `new` hung making the server folder (seen on the host's test server, 6
+  November 2026). Huragok now has the program write to a file and reads that: `content` takes 3 to 6 seconds.
+- **Every game's files, from MCC.** The new-server wizard (N) lists the games MCC on this PC has and the game folder
+  lacks, and copies the ones you pick (every game by default, not the campaigns): Halo 3 as before, then Reach (its
+  multiplayer and Firefight maps, 7 GB), Reach's campaign (11 GB), Combat Evolved (3.3 GB) and Halo 2 (3.2 GB). On the
+  same drive as MCC they're linked, not copied, and take about a second. **I** has a row for each (2 to 8) on 0.10,
+  and `huragok steam files reach|reach-campaign|halo1|halo2` and `huragok new --games` do the same from the command
+  line. Reach's, Combat Evolved's and Halo 2's files come from MCC only for now: there's no SteamCMD download for
+  them yet. Reach's own game and map variants come along: 0.10's `init` leaves them out, and a server without them
+  can't play Reach's own game types (`headhunter_054`); a game folder that has Reach without them gets them from
+  MCC before its next start.
+- **A server gets the games it plays.** Before each start Huragok works out which games a server's map, playlist or
+  ODST setting needs (Halo 3 always: every game's maps are built on Guardian) and, when one is missing, holds the
+  server and adds it from MCC, as it did for ODST. A failed start that says `this game folder has no Halo: Reach`
+  fetches Reach, never Halo 3 again. A game folder that has Halo 3 is never pointed elsewhere because another game is
+  missing. **I** and the window say which games each game folder has ("Halo 3, 27 multiplayer maps · campaign · ODST ·
+  Reach with its campaign · no CE · no Halo 2").
+- **An Every Halo starter package**: a playlist of twelve games, three each from Halo 3, Reach, Combat Evolved and
+  Halo 2, each with game types its map takes; checked on 0.10. Packages can say which games they need
+  (`needs_games = ["reach", "halo1"]`), and a server saved as a package says it for you.
+- **The pickers list what a 0.10 server plays.** 0.10 lists its maps and game types in a new shape, which Huragok
+  read as nothing at all: every map and game picker came up empty. It reads both shapes now. On 0.10, one listing
+  gives every game's maps (Halo 3's, Reach's, Combat Evolved's, Halo 2's), the mods' maps, Halo 3's game types and
+  every map and game variant, in about 4 seconds. A variant listed several times under one name (Reach's matchmaking
+  has eleven "Slayer DMRs") shows once, with how many copies there are. 0.10 doesn't list Halo 3 mods' maps in that
+  listing, so Huragok adds them from the content folder's mods. Campaign canvases are kept out of the map pickers.
+- **Maps by game.** The pickers ask whose maps first (Halo 3, Reach, Combat Evolved, Halo 2, mods), then the maps. A
+  map is written by its file name where titles clash: Halo 2's Lockout is `halo2_lockout`, as plain `Lockout` is
+  Halo 3's Blackout, the way the program reads it.
+- **Each map takes its own game's game types.** Combat Evolved's maps take only Combat Evolved's (Slayer, Capture the
+  Flag, Oddball, King of the Hill, Race) and Halo 2's only Halo 2's (Slayer, Capture the Flag, Assault, Oddball, King
+  of the Hill, Juggernaut, Territories); Reach's take Halo 3's game types or Reach's own variants. Rules and options
+  aren't offered for Combat Evolved and Halo 2 games (the program refuses them there) or for Reach's variants, and
+  Huragok saves those games as written, never renumbering their choices through Halo 3's options.
+- **Playlists of 1 to 256 games on 0.10** (voted on from three up); 0.9 still takes 3 to 128. The status card says
+  which games a playlist mixes ("· Halo 3, Reach, CE"), and a server playing one map says whose it is ("Slayer on
+  Sword Base (Reach)").
+- **0.10's refusals are shown in its own words.** A playlist or setting the program refuses is named by its reason
+  (`game 2: no multiplayer map "Valhala" is installed`, `launch_timeout: 0 to 300 seconds`), not by the first line it
+  printed.
+- **The settings 0.10 added, in D**, for servers on 0.10 only: who gets in (`joins`, `join_gates`, `launch_timeout`),
+  the next-game queue (`queue_mode`), the time after a game and before one (`post_game_seconds`,
+  `start_countdown_seconds`), `tick_rate` (60, or 30 to save the host's processor), `stock_map_defaults`, other games'
+  Forge objects on Halo 3's maps (`reach_objects`, `halo1_objects`, `halo2_objects`, `odst_objects`,
+  `halo3_objects`, `forge_primitives`), voice (`voice_quality`, `voice_mute`, `command_echo`), `vote_kick_immune`,
+  `kick_blocks`, `allow_bots`, `bind_address`, `network_model` and `coop_network`. `max_players` goes up to 128 on 0.10.
+- **Reach, Combat Evolved and Halo 2 mods are mods.** The mod check called every mod not made for Halo 3 broken ("the
+  server ignores it without a word"), and Huragok left them out of the Workshop mods it keeps up to date. On 0.10 each
+  says which game it's for, and warns when the server's game folder hasn't that game's files. On 0.9 they're still
+  refused, as 0.9 refuses them; a mod for a game no Reclaimer plays (Halo 4) is refused on both. Other games' maps
+  aren't run through Halo 3's map checks.
+- **0.10's server log is read again.** Every line now starts with a tag (`[server] `, `[rcon] `…) and some wordings
+  changed, so most of what Huragok reads from the log went unseen: joins, the ballot, the countdown, uploads, sign-ins.
+  Both shapes are read. The log a 0.10 server leaves from its last run, `server.previous.log`, is followed as
+  `server.log.old` was.
+- **A player's name is checked once it's known.** On 0.10 a player joins with no name; it comes a few seconds later.
+  The word list's name check (`name_match`, banned names) ran at the join, on nothing, so a banned name walked in.
+  It now runs the moment the name is known (Huragok asks for it as soon as the log says the player proved who they
+  are), once per player and name. Vergil records the visit under that name, never a blank one, and a vote to kick
+  "nobody yet" matches nobody.
+- **Discord's join cards wait for the name too.** A 0.10 join is posted once its name is known, with the staff
+  lookalike check; one who leaves before that is posted as they go, under the best name known. Every join is still
+  posted once.
+- **The watchdog counts 0.10's joins.** A player who connects but is never let in still counts as a failed join; on
+  0.10 the log's join line counts as getting in, so a healthy 0.10 server isn't restarted when the console is away.
+- **Joins at** (the window, Discord's Join button) comes from the server's status file on 0.10, whose log no longer
+  says the address.
+- **Linux runs 0.10's own program.** 0.10 ships a native Linux server and no longer runs under Wine. Huragok runs a
+  native program directly (Wine only for a Windows `.exe`, as 0.9 needed), and its updater fetches the Linux download
+  for the machine (x86-64 or ARM64) when a release has one. Windows is unchanged.
+- **/strike offers your word list's lists.** Its `rule` box lists them as you type (`slurs`, `insults`…), each with
+  what a strike would do to whoever's in the `player` box ("Strike 3: kicked for 1 day, then muted for 7 days"), or
+  what its first strikes do; then `name`, to ban their name. A list that only reports isn't offered: a strike there
+  does nothing. `/clearstrikes` offers the lists the player has strikes on, then `all`.
+- **The ban can come before muted for good.** `1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5` was refused ("the mutes are
+  for good after 5 strikes but the ban comes after 5"). Now it's taken: muted twice; on the 3rd strike kicked for 1
+  day, then muted 7 days once they're back (3 days then 30 days on the 4th, 5 days then 180 days on the 5th); banned
+  on the 6th, before muted for good would have started. As before, the kicks' first number is how many strikes come
+  before them: `5, 3d, 7d, 30d` kicks for 3 days on the 6th strike, then 7 days, then 30 days.
+- **Pardons clear what they say.** `!pardonplayer Bravo slur` cleared every strike Bravo had: only a list's exact name
+  counted, and anything else was read as the reason. A list is named as `!banword` names it now (`slur` is `slurs`), or
+  by the name of a list taken off the word list that they still have strikes on. **Any other word is refused**, never
+  read as the reason, and one close to a list's name asks "did you mean slurs?": a reason for clearing every strike
+  comes after `all` (`!pardonplayer Bravo all he apologised`). In Discord, `/clearstrikes` with only a reason clears
+  everything, and a `rule` box that isn't a list is refused the same way. Pardon strike on a card clears the lists of
+  that card's strikes, not older ones (a card that only heard a word offered to clear yesterday's strike). A pardon
+  after "kicked, then muted" lets them back on too.
+- **Only Huragok and admins ban.** A moderator's strike (`!strike`, `/strike`, Strike on a card) whose next step is
+  the ban for good doesn't ban: it goes to the admins as a request, as a probationary moderator's do, to confirm or
+  deny (`!requests`, `!confirm`, `!deny`; in Discord its card, with `[feed.requests]` on). The admins may well ban them
+  anyway. A Discord rank held on one server can't give a strike that would remove someone or ban (that reaches every
+  server, as a kick with a time does); one that mutes, it can.
+- **Discord: a player's name with a space is one player.** `/kick player:"Bob Smyth"`, with only Bob on, kicked Bob for
+  "Smyth". A `#3` in a command with no server box (`/clearstrikes`, `/promote`…) is refused with more than one server
+  up: it was the first server's #3. "Are you sure?" pressed twice runs once. `/changebanword` with every box empty asks
+  first: it makes the list only report.
+- **`/changebanword` changes only what you fill in.** A box left empty keeps that part of the list's steps, and `none`
+  clears it (`bans: 5` alone used to take the mutes and kicks away). All three left empty is refused. In game,
+  `!changebanword slurs | 1d | | 3` is still the whole new line, as typed.
+- **A word starting with `#`** (`!banword #tag slurs`) is refused, and why: a line starting with `#` is a note. It
+  crashed the command, and taking a line's first word off could turn the rest of it into a note.
+- **Huragok always finishes stopping on Python 3.11.** A wait that a stop cancelled at the moment it was woken (the
+  Discord queue, a console reconnecting, a server's refresh, the mod check) carried on instead, and the stop waited for
+  it for good. Found by the Linux check; Python 3.12 and later never had it.
+- **Huragok and the servers agree where the mods are.** The server program takes its content folder (and its
+  Workshop items, SteamCMD and a few other settings) from a `RECLAIMER_DEDICATED_…` environment variable over its
+  dedicated.toml. Huragok only read the file, so with one set, the server fetched and loaded mods in one folder
+  while Huragok checked for, and swapped in, new versions in another: a mod update never went in. Huragok now takes
+  these over as it starts: each one set is written into every server folder's dedicated.toml once (a switched-off
+  server's too, and one made later), so they keep the folder they've been using, and it's no longer passed to the
+  servers (with `backend = "command"` too). With `backend = "docker"` nothing is taken over: the containers'
+  environment is compose's. Change them in the file from then on (G, D):
+  a start with the variable unset forgets nothing. A server whose file can't be written is tried again at the next
+  start. Servers given one absolute folder this way share it, as any servers sharing a content folder do (their mod
+  updates go in once nobody's on). `RECLAIMER_DEDICATED_WORKSHOP_UPDATE_CHECK_MINUTES` is only left out:
+  `[workshop_updates] check_minutes` sets that for every server. Other variables of the program's that are set are
+  named in the log.
+- **No restart for a mod update the server already put in.** The server program installs a Workshop mod's new
+  version by itself during a game that doesn't use the mod. The restart Huragok had planned for it still ran after the
+  game, or after half an hour of it, telling players it was installing the mod (seen on 3 November 2026). It's called
+  off now. A restart planned for anything else (an admin's `!restartserver`, an update of the program) is never
+  called off with it: the mod update waits for that one instead of planning over it.
+
 ## 0.6.1
 **Huragok 0.6.1 starts players' stats.** Every game a server reports to the stats service is kept, from each
 player's totals to the game's own medals, kills by weapon and who killed whom. Nothing to set: the servers already send

@@ -3,6 +3,7 @@
     Running    RUNNING up 3h 12m · RCON 4 ms · status 2 s old · process 1234 · 610 MB
     Joins at   203.0.113.9:49177 · listed · password set · 12/16 players
     Plays      playlist hugegrassremix: "HugegrassRemix", 3 games, 20 s votes · now CTF on Hugegrass
+               (one that mixes in Reach's, CE's or Halo 2's maps names them: · Halo 3, Reach, CE)
     Program    Project Reclaimer 0.9.18 · installs its own releases (auto_update) · newest 0.9.18
     Mods       2 Workshop items · new versions after the game · the server looks every 5 min
     ...
@@ -26,7 +27,7 @@ from ..core.tomledit import read_toml
 from ..games.byplayers import FILE as BY_PLAYERS
 from ..games.byplayers import ByPlayersError, describe_range, same_playlist, setup_of
 from ..games.halo3 import PlaylistError, load_playlist
-from ..games.plays import is_co_op, plays_of
+from ..games.plays import games_in, is_co_op, plays_of
 from ..program.settings import current, find, path_setting, show
 from ..steam import MCC_APP
 
@@ -118,8 +119,10 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
     if "playlist" in block:
         try:
             playlist = load_playlist(server.folder / str(block["playlist"]))
-            plays.append(("", f'"{playlist.name}" · {len(playlist.games)} games · {playlist.vote_seconds} s votes',
-                          "gray"))
+            games = games_in(playlist.games)  # named when it mixes in another game's maps (0.10)
+            mixed = f" · {', '.join(g.short for g in games)}" if any(g.key != "halo3" for g in games) else ""
+            plays.append(("", f'"{playlist.name}" · {len(playlist.games)} games · {playlist.vote_seconds} s votes'
+                              f"{mixed}", "gray"))
         except PlaylistError as error:
             plays.append(("", f"the playlist can't be read: {error}", "red"))
     plays += _by_players(server, block)

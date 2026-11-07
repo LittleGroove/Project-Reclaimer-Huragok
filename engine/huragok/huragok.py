@@ -37,7 +37,7 @@ from .core.requests import Result
 from .core.runner import PartRunner, handler_time_limit
 from .core.settings import Settings
 from .core.storage import Storage
-from .games.files import DEPOTS, LABELS
+from .games.files import DEPOTS, KINDS, LABELS
 from .lore import SUPERINTENDENT
 from .parts import PARTS
 from .program.dedicated import tool_for
@@ -268,17 +268,20 @@ class Huragok:
         return Result(False, f"unknown request '{verb}'")
 
     async def _get_game_files(self, kind: str, how: str) -> Result:
-        """I's "get Halo 3's files": in the background, so the window stays free; the servers waiting for them start
+        """I's "get a game's files" (Halo 3's, the campaign's, ODST's, Reach's, CE's, Halo 2's): in the background, so
+        the window stays free; the servers waiting for them start
         once they're in. `how`: "mcc" or "steamcmd" (asked by a person: a download is allowed whatever
         [setup] download_game_files says), or "" for the best way there is."""
-        if kind not in DEPOTS:
-            return Result(False, f"'{kind}' isn't one of {', '.join(DEPOTS)}")
+        if kind not in KINDS:
+            return Result(False, f"'{kind}' isn't one of {', '.join(KINDS)}")
         target, why = shared_target(self.settings, kind)
         if target is None:
             return Result(False, why)
         found, no_download = await asyncio.to_thread(sources, self.settings, kind, downloads=True)
         source = next((s for s in found if not how or s.how == how), None)
         if source is None:
+            if kind not in DEPOTS:  # Reach's, CE's, Halo 2's: from MCC alone for now
+                return Result(False, f"no way to get {LABELS[kind]} here: {no_download}")
             return Result(False, f"no way to get {LABELS[kind]} here: " + ("MCC isn't on this PC" if how != "steamcmd"
                                                                             else no_download))
         if not self.game_files.get(kind, target, source):

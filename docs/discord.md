@@ -303,7 +303,7 @@ Superintendent, Vergil and Huragok for plain words and the bot's own name.
 | **Unban** | instead of Ban | at once, every server. Another server's own `/ban` stays | nothing |
 | **Ban everywhere** | someone banned on another server joining | puts that ban on every server | as for a ban |
 | **Strike** | a report, or wherever `buttons` says | asks which rule and why. It goes on the word list's ladder, for what the word list can't hear, like voice | as for what the ladder does next |
-| **Pardon strike** | a strike from Vergil | asks why. Clears every strike on that rule, or every rule if the card has strikes on several, and lifts what they did: unmuting alone leaves it counting | nothing |
+| **Pardon strike** | a strike from Vergil, or a strike that joined a card | asks why. Clears every strike on that rule, or on each rule the card's strikes are on if it has several (never a strike from before the card), and lifts what they did: unmuting alone leaves it counting | nothing |
 | **Warn** | a report, while they're on | asks why (needed) | a private warning |
 | **Whois** | a player's ticket | their record, for you alone | nothing |
 | **Said** | wherever `buttons` says | their last lines of chat, for you alone | nothing |

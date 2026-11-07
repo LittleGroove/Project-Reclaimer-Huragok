@@ -18,7 +18,8 @@ mutes    how long each mute lasts, in order from the first strike; the last
          repeats until the kicks, and `perm` (last only) is muted for good. A
          number last, with no s, m, h, d or w, is how many strikes come before
          muted for good, as the ban counts them: the last time repeats until
-         then, and every strike after it mutes for good, kicks or not. Empty:
+         then, and every strike after it mutes for good, kicks or not (with the
+         ban at or before that number, the ban comes first instead). Empty:
          never muted. A muted player stays in the game; nobody hears their voice
          or reads their chat.
 kicks    how many strikes come before the kicks (left out: once every mute time
@@ -335,9 +336,9 @@ def parse_line(text: str, number: int) -> Rule | None:
         if len(mutes) > ban_after:
             raise RuleError(f"{where}: {_many(len(mutes), 'mute time')} but only {_many(ban_after, 'mute')} before "
                             f"the ban; one time per mute at most")
-        if forever_after is not None and forever_after >= ban_after:
-            raise RuleError(f"{where}: the mutes are for good after {forever_after} strikes but the ban comes after "
-                            f"{ban_after}, so they never would be")
+        # Muted for good at or past the ban: the ban comes first, so that number is never reached. Refused up to
+        # 0.6.1; the host's call (6 November): a line like "1d, 3d, 7d, 30d, 180d, 5 | 2, 1d, 3d, 5d | 5" is theirs
+        # to write, its 6th strike the ban.
         if mutes and kick_after is not None and kick_after >= ban_after:
             raise RuleError(f"{where}: the kicks start after {kick_after} strikes but the ban comes after "
                             f"{ban_after}, so they never would")
@@ -633,11 +634,11 @@ def ladder(rule: Rule) -> list[str]:
     return out
 
 
-def least_ban(mutes: list[str], forever_after: int | None, kick_after: int | None, kicks: list[str]) -> int:
-    """The fewest strikes before the ban that leave room for every mute and kick time, for muted for good, and for
-    the kicks to start."""
+def least_ban(mutes: list[str], kick_after: int | None, kicks: list[str]) -> int:
+    """The fewest strikes before the ban that leave room for every mute and kick time, and for the kicks to start.
+    Muted for good needn't come first: with the ban at or before it, the ban does."""
     kicked = 0 if kick_after is None else kick_after + len(kicks) + (1 if mutes and not kicks else 0)
-    return max(len(mutes), kicked, 0 if forever_after is None else forever_after + 1)
+    return max(len(mutes), kicked)
 
 
 def least_forever(mutes: list[str]) -> int:
@@ -697,7 +698,12 @@ def change_rule(path: Path, line: int | None, text: str | None) -> list[Rule]:
         del lines[line - 1]
     else:
         lines[line - 1] = text
-    if text is not None and (rule := parse_line(text, line or len(lines))) is not None and rule.zero_times():
+    if text is not None and (rule := parse_line(text, line or len(lines))) is None:
+        # A word first that starts with # makes the whole line a note, and Vergil skips it (audit 6 November: a new
+        # line, or a line whose first word was taken off).
+        raise RuleError(f"a line starting with {text.strip().split(',')[0].split('|')[0].strip() or 'nothing'} is a "
+                        f"note, not a rule: leave the # off (badtag also catches #badtag)")
+    if text is not None and rule is not None and rule.zero_times():
         raise RuleError(f"{rule.zero_times()[0]} is no time at all: write how long (10m, 1h, 7d), or perm for good")
     new = "\n".join(lines) + "\n"
     rules, left = parse_lenient(new)

@@ -32,6 +32,7 @@ import base64
 import gzip
 import json
 import logging
+import re
 import tomllib
 import zlib
 import urllib.error
@@ -107,9 +108,35 @@ def relayed(url: str | None) -> bool:
     return head == "127.0.0.1" and port.isdigit() and int(port) in PORTS
 
 
+# 0.10 moved the project's public stats service to a port of its own, beside 0.9's; a 0.10 server given 0.9's address
+# reports to the new one ("Saved 0.9 addresses follow them"), and so does Huragok when it passes a 0.10 server's on.
+MOVED_IN_0_10 = {"http://148.251.153.44:8790": "http://148.251.153.44:8792"}
+PROGRAM_LINE = re.compile(r"Project Reclaimer v?(\d+(?:\.\d+)+)")
+
+
+def program_in_log(log_path: Path | None) -> str | None:
+    """The program version the server's current run started with, from its server.log's first lines (0.10's first
+    line: "[host] Project Reclaimer 0.10.0 (rcl-engine)"), or None."""
+    if log_path is None:
+        return None
+    try:
+        with log_path.open("rb") as file:
+            head = file.read(4096).decode("utf-8", "replace")
+    except OSError:
+        return None
+    found = PROGRAM_LINE.search(head)
+    return found.group(1) if found else None
+
+
+def service_for(upstream: str, version: str | None) -> str:
+    """Where a report goes: 0.9's address of the public service is 0.10's own for a server running 0.10."""
+    number = tuple(int(part) for part in version.split(".")) if version else ()
+    return MOVED_IN_0_10.get(upstream.rstrip("/"), upstream) if number >= (0, 10) else upstream
+
+
 def last_reported_to(log_path: Path | None, own: set[str]) -> str | None:
     """The stats service the server last said it reports to, from the end of its server.log (not one of ours, nor any
-    relay's address)."""
+    relay's address). 0.9 says "Stats reporting to <url>; server key …", 0.10 "[stats] reporting to <url> as <key>"."""
     if log_path is None:
         return None
     found = None
@@ -123,10 +150,12 @@ def last_reported_to(log_path: Path | None, own: set[str]) -> str | None:
         except OSError:
             continue
         for line in text.splitlines():
-            at = line.find("Stats reporting to ")
-            if at < 0:
+            if (at := line.find("Stats reporting to ")) >= 0:
+                url = line[at + len("Stats reporting to "):].split(";", 1)[0].strip()
+            elif line.startswith("[stats] reporting to "):
+                url = line[len("[stats] reporting to "):].split(" as ", 1)[0].strip()
+            else:
                 continue
-            url = line[at + len("Stats reporting to "):].split(";", 1)[0].strip()
             if url.startswith(("http://", "https://")) and url.rstrip("/") not in own and not relayed(url):
                 found = url.rstrip("/")
     return found
@@ -243,6 +272,8 @@ class StatsCapture:
                               "say yet where it reports)")
             return
         entry["config"] = str(config_path)
+        if log_path is not None:
+            entry["log"] = str(log_path)
         entry.pop("released", None)
         listener = self.listeners.get(name) or await self._listen(name, entry)
         entry["port"] = listener.sockets[0].getsockname()[1]
@@ -376,7 +407,10 @@ class StatsCapture:
         self._save()
 
     async def _serve(self, name: str, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        upstream = (self.saved["servers"].get(name) or {}).get("upstream")
+        entry = self.saved["servers"].get(name) or {}
+        upstream = entry.get("upstream")
+        if upstream and entry.get("log"):
+            upstream = service_for(upstream, program_in_log(Path(entry["log"])))
         try:
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), TIMEOUT)
             lines = head.decode("latin-1").split("\r\n")

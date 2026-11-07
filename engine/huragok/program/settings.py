@@ -1,5 +1,6 @@
 """Everything a host can change about a server, in one catalogue: what each setting is, how it's typed,
-its default, where it lives and when it applies (Project Reclaimer 0.9.20, auto_reload on).
+its default, where it lives and when it applies (Project Reclaimer 0.9.20, auto_reload on; the settings 0.10.0
+adds carry `since`, so a server on an older program neither offers nor takes them).
 
 The window's D screen shows this catalogue in groups (joining, what it plays, gameplay, voice and chat,
 safety, mods, updates, listing and network, the remote console, folders, and Huragok's own per-server
@@ -80,12 +81,13 @@ APPLIES = {
 }
 
 GROUPS: list[tuple[str, str, str]] = [  # (key, title, what's in it)
-    ("joining", "Joining", "password, hidden, player limits, ping limit, welcome lines"),
+    ("joining", "Joining", "password, hidden, player limits, ping limit, welcome lines, who gets in when"),
     ("plays", "What it plays", "a playlist, one map and game type, a saved custom game, campaign co-op or "
-                               "Halo 3: ODST"),
-    ("gameplay", "Gameplay", "friendly fire, team changing, the camera, votes"),
-    ("voice", "Voice and chat", "voice channels, text chat, chat log"),
-    ("safety", "Safety and admins", "anti-cheat, the VPN block and its lists, admins"),
+                               "Halo 3: ODST; from 0.10 Reach's, Combat Evolved's and Halo 2's maps too"),
+    ("gameplay", "Gameplay", "friendly fire, team changing, the camera, votes, the lobby's timings, tick rate, other "
+                             "games' objects"),
+    ("voice", "Voice and chat", "voice channels, text chat, chat log, voice quality"),
+    ("safety", "Safety and admins", "anti-cheat, the VPN block and its lists, admins, kicks, vote-kick immunity"),
     ("mods", "Mods and the Workshop", "sharing mods, character mods, Workshop items, SteamCMD"),
     ("updates", "Updates", "Project Reclaimer's own updates, Workshop update checks and installs"),
     ("network", "Listing and network", "names in the browser, port, address, UPnP, the discovery master, stats"),
@@ -130,15 +132,18 @@ def S(key: str, scope: str, kind: str, applies: str, help: str, group: str, **mo
     return Setting(key, scope, kind, applies, help, group, **more)
 
 
+SINCE = "0.10.0"  # Reach, Combat Evolved and Halo 2, and the settings that came with them
+MAX_PLAYERS, MAX_PLAYERS_BEFORE = 128, 127  # max_players's top: 0.10.0's check says "1 through 128"; 127 before
+
+
 SETTINGS: list[Setting] = [
     # Joining
     S("password", "server", "str", "now", "the join password; empty lets anyone join", "joining", default=""),
     S("hidden", "server", "bool", "when empty", "never listed; players join by address", "joining", default=False),
-    S("max_players", "server", "int", "now", "players at once (campaign co-op and ODST at most 16)", "joining",
-      low=1, high=127,
-      default=16),
-    S("min_players", "server", "int", "now", "wait in the lobby until this many join", "joining", low=1, high=127,
-      default=1),
+    S("max_players", "server", "int", "now", "players at once (campaign co-op and ODST at most 16; 127 at most "
+      "before Project Reclaimer 0.10, 128 from it)", "joining", low=1, high=MAX_PLAYERS, default=16),
+    S("min_players", "server", "int", "now", "wait in the lobby until this many join", "joining", low=1,
+      high=MAX_PLAYERS, default=1),
     S("max_ping", "server", "int", "now", "turn away players joining with a higher ping, ms; 0 takes everyone",
       "joining", low=0, high=1000, default=0),
     S("load_timeout", "server", "int", "now", "seconds a player may hold up the next game; 0 waits", "joining",
@@ -147,10 +152,18 @@ SETTINGS: list[Setting] = [
       "joining", default=""),
     S("enabled", "server", "bool", "when empty", "false stops this server once it's empty and keeps it off",
       "joining", default=True),
+    S("joins", "server", "choice", "now", "whether new players get in: open, closed or queue (they wait their "
+      "turn); kept-out players' games ask again by themselves", "joining", choices=("open", "closed", "queue"),
+      default="open", since=SINCE),
+    S("join_gates", "server", "list", "now", "the phases new players wait out before they get in: vote, countdown, "
+      "loading, in_game, post_game; none: they join any time", "joining", default=[], since=SINCE),
+    S("launch_timeout", "server", "int", "now", "seconds a started game may take to begin before the launch watchdog "
+      "asks again, then removes who holds it up if load_timeout is up by then; 0: no steps (a start that comes to "
+      "nothing still ends after 20 s)", "joining", low=0, high=300, default=20, since=SINCE),
     # What it plays
-    S("plays", "plays", "plays", "next vote", "a playlist (from the next vote), or one map and game type, a saved "
-      "custom game, campaign co-op or Halo 3: ODST (switching between those restarts it once nobody is on)",
-      "plays", label="what it plays"),
+    S("plays", "plays", "plays", "next vote", "a playlist (from the next vote), or one map and game type (from 0.10 "
+      "Reach's, Combat Evolved's and Halo 2's maps too), a saved custom game, campaign co-op or Halo 3: ODST "
+      "(switching between those restarts it once nobody is on)", "plays", label="what it plays"),
     # Gameplay
     S("friendly_fire", "server", "bool", "next game", "teammates can hurt each other (a campaign or ODST server "
       "restarts once nobody is on)", "gameplay", default=True),
@@ -164,6 +177,32 @@ SETTINGS: list[Setting] = [
       default=True),
     S("trust_player_games", "server", "bool", "now", "campaign and ODST: when every player's game goes out of step, "
       "take one player's game instead of reloading all", "gameplay", default=True, since="0.9.18"),
+    S("queue_mode", "server", "choice", "now", "the next-game queue (the console's queue): play plays queued games in "
+      "turn, ballot puts the first two on each playlist ballot", "gameplay", choices=("play", "ballot"),
+      default="play", since=SINCE),
+    S("post_game_seconds", "server", "int", "next game", "seconds the post-game screen stays before the next game",
+      "gameplay", low=0, high=3600, default=15, since=SINCE),
+    S("start_countdown_seconds", "server", "int", "next game", "seconds the lobby counts down once min_players are "
+      "in it (and its ballot chose the game); 3, Reclaimer's 3-2-1, by default", "gameplay", low=0, high=3600,
+      default=3, since=SINCE),
+    S("tick_rate", "server", "choice", "next game", "game ticks a second in its multiplayer games: 60, or 30, which "
+      "saves processor time when one PC runs many servers (players' games stay at 60; at 30 they get 30 updates a "
+      "second and a round trip about 8 ms longer); co-op, ODST and Firefight always stay at 60", "gameplay",
+      choices=("60", "30"), default=60, since=SINCE),
+    S("stock_map_defaults", "server", "bool", "next game", "the stock maps' own defaults (on unless set off)",
+      "gameplay", default=True, since=SINCE),
+    S("halo3_objects", "server", "bool", "next game", "its games may use Halo 3's objects (players need them "
+      "installed)", "gameplay", since=SINCE),
+    S("odst_objects", "server", "bool", "next game", "its games may use Halo 3: ODST's objects (players need ODST "
+      "installed)", "gameplay", since=SINCE),
+    S("reach_objects", "server", "bool", "next game", "its games may use Halo: Reach's objects (players need Reach "
+      "installed)", "gameplay", since=SINCE),
+    S("halo1_objects", "server", "bool", "next game", "its games may use Halo: Combat Evolved's objects (players "
+      "need CE installed)", "gameplay", since=SINCE),
+    S("halo2_objects", "server", "bool", "next game", "its games may use Halo 2's objects (players need Halo 2 "
+      "installed)", "gameplay", since=SINCE),
+    S("forge_primitives", "server", "bool", "next game", "Reclaimer's own Forge primitives in its games",
+      "gameplay", since=SINCE),
     # Voice and chat
     S("voice", "server", "bool", "now", "voice chat at all", "voice", default=True),
     S("voice_global", "server", "bool", "now", "the V key: everyone hears", "voice", default=True),
@@ -171,6 +210,13 @@ SETTINGS: list[Setting] = [
     S("voice_proximity", "server", "bool", "now", "the N key: players nearby hear", "voice", default=True),
     S("text_chat", "server", "bool", "now", "text chat", "voice", default=True),
     S("chat_log", "server", "bool", "when empty", "keep the chat in data/<server>/chat", "voice", default=True),
+    S("voice_quality", "server", "choice", "now", "what players' voice sends: standard (16 kHz) or high (24 kHz); "
+      "bots and roles with voice.music send music whatever it is", "voice", choices=("standard", "high"),
+      default="standard", since=SINCE),
+    S("voice_mute", "server", "choice", "now", "a voice mute turns the player's microphone off (deny) or relays "
+      "nothing they say (drop)", "voice", choices=("deny", "drop"), default="deny", since=SINCE),
+    S("command_echo", "server", "choice", "now", "who reads the commands players type: staff, or none", "voice",
+      choices=("staff", "none"), default="staff", since=SINCE),
     # Safety and admins
     S("anti_cheat", "server", "choice", "when empty", "reject impossible game data: enforce kicks, detect logs",
       "safety", choices=("enforce", "detect", "off"), default="enforce"),
@@ -182,6 +228,15 @@ SETTINGS: list[Setting] = [
       label="admins (every server here)"),
     S("admins", "server", "list", "now", "extra player IDs who may kick and ban on this server only", "safety",
       default=[], label="admins (this server only)"),
+    S("vote_kick_immune", "folder", "list", "now", "player IDs no vote can kick, on every server here (without admin "
+      "rights)", "safety", default=[], label="vote_kick_immune (every server here)", since=SINCE),
+    S("vote_kick_immune", "server", "list", "now", "player IDs no vote can kick on this server only", "safety",
+      default=[], label="vote_kick_immune (this server only)", since=SINCE),
+    S("kick_blocks", "server", "list", "now", "how long successive kicks keep a player out: up to 8 rising steps "
+      "such as 10m, 2h or 1d (a week at most); none: a kick blocks nobody (the console's kick <player> 45m names "
+      "its own)", "safety", default=["10m", "30m", "60m", "120m"], since=SINCE),
+    S("allow_bots", "server", "bool", "now", "bots (reclaimer-bot) may join while their player IDs hold a role with "
+      "bots.run: chat and voice members with no part in the game", "safety", default=False, since=SINCE),
     # Mods and the Workshop
     S("share_mods", "server", "bool", "now", "players without a mod download it from this server", "mods",
       default=False),
@@ -218,6 +273,13 @@ SETTINGS: list[Setting] = [
       high=65535),
     S("public_address", "folder", "str", "restart", "the address players connect to; empty detects it", "network",
       default=""),
+    S("bind_address", "folder", "str", "restart", "the local address the game ports (and this PC's master) listen "
+      "on: :: every network, 127.0.0.1 this PC only, or one of this PC's addresses", "network", default="::",
+      since=SINCE),
+    S("network_model", "server", "choice", "when empty", "how its multiplayer games are networked: enhanced "
+      "(Reclaimer's) or classic", "network", choices=("enhanced", "classic"), default="enhanced", since=SINCE),
+    S("coop_network", "server", "choice", "when empty", "how its co-op games are networked: lockstep, or host (the "
+      "server's game decides)", "network", choices=("lockstep", "host"), default="lockstep", since=SINCE),
     S("upnp", "folder", "bool", "when empty", "ask the router to forward the ports", "network", default=False),
     S("stats_server", "folder", "str", "when empty", "where finished games are reported; \"off\" nowhere; empty the "
       "public service", "network", default=""),
@@ -237,7 +299,8 @@ SETTINGS: list[Setting] = [
       low=1024, high=65535),
     S("rcon_password", "server", "str", "when empty", "this server's own console password (8-128 characters)", "rcon"),
     # Folders and files
-    S("game", "folder", "path", "restart", "Halo 3's files (`dedicated` must restart; nothing is applied live)",
+    S("game", "folder", "path", "restart", "the games' files: Halo 3's always, with Reach's, Combat Evolved's and "
+      "Halo 2's beside them for their maps from 0.10 (`dedicated` must restart; nothing is applied live)",
       "files", default="game"),
     S("content", "folder", "path", "restart", "maps, game types, mods and images (`dedicated` must restart)", "files",
       default="content"),
@@ -263,6 +326,8 @@ SETTINGS: list[Setting] = [
 ]
 
 SERVER_SETTINGS = [s for s in SETTINGS if s.scope == "server"]
+KICK_STEPS = 8  # kick_blocks: "at most 8 steps", each as long as the one before or longer, a week at most (0.10)
+JOIN_GATES = ("vote", "countdown", "loading", "in_game", "post_game")
 FOLDER_SETTINGS = [s for s in SETTINGS if s.scope in ("folder", "rcon", "master", "workshop", "vpn")]
 PER_SERVER_DEFAULTS = {s.key for s in SERVER_SETTINGS if s.key not in ("password", "port", "enabled")}
 MAX_WELCOME_LINES = 5
@@ -270,6 +335,11 @@ MAX_WELCOME_LINES = 5
 
 def group_settings(group: str) -> list[Setting]:
     return [s for s in SETTINGS if s.group == group]
+
+
+def offered(setting: Setting, program_version: str | None) -> bool:
+    """Whether D offers a setting for a server on `program_version`: one its program has (not known: every one)."""
+    return version_problem(setting.key, setting.since, program_version) is None
 
 
 def find(key: str, scope: str | None = None) -> Setting:
@@ -327,6 +397,9 @@ def check_value(setting: Setting, value: Any, config: Path, server_name: str, se
             return f"min_players ({low}) can't be more than max_players ({high})"
         if key == "max_players" and is_co_op(block) and value > CO_OP_MAX_PLAYERS:
             return f"a campaign or ODST server holds {CO_OP_MAX_PLAYERS} players at most"
+        if isinstance(value, int) and value > MAX_PLAYERS_BEFORE and version_problem(key, SINCE, program_version):
+            return f"{key} is {MAX_PLAYERS_BEFORE} at most before Project Reclaimer {SINCE} (this server has " \
+                   f"{program_version}); 0.10 takes {MAX_PLAYERS}"
     if key == "host_name" and isinstance(value, str):
         if len(value) > HOST_NAME_MAX:
             return f"host_name is {len(value)} characters; the server program takes {HOST_NAME_MAX} at most"
@@ -342,6 +415,8 @@ def check_value(setting: Setting, value: Any, config: Path, server_name: str, se
         return "public_address must be an IPv4 address or a DNS name, or empty to detect it"
     if setting.scope == "rcon" and key == "address" and not _ip(str(value)):
         return "[rcon] address must be an IP address: 127.0.0.1 (this machine only) or 0.0.0.0 (every network)"
+    if setting.scope == "folder" and key == "bind_address" and not _ip(str(value)):
+        return "bind_address must be an IP address: :: (every network), 127.0.0.1 (this PC only) or one of its own"
     if setting.scope == "server" and key in ("port", "rcon_port") and isinstance(value, int):
         master = data.get("master") if isinstance(data.get("master"), dict) else {}
         if value == master.get("port", find("port", "master").default):
@@ -448,7 +523,7 @@ def parse(setting: Setting, text: str) -> Any:
     if setting.kind == "choice":
         if text.lower() not in setting.choices:
             raise ValueError("one of " + ", ".join(setting.choices))
-        return text.lower()
+        return int(text) if text.isdecimal() else text.lower()  # tick_rate's 60 or 30: a number in the file
     if setting.kind == "lines":
         lines = [part.strip() for part in text.split("|") if part.strip()]
         if len(lines) > MAX_WELCOME_LINES:
@@ -474,18 +549,39 @@ def parse(setting: Setting, text: str) -> Any:
         return ids
     if setting.kind in ("list", "urls"):
         values = [part.strip() for part in text.replace(";", ",").split(",") if part.strip()]
-        if setting.key == "admins" and (bad := [v for v in values if not STORED_ID.fullmatch(v.lower())]):
+        ids = setting.key in ("admins", "vote_kick_immune")
+        if ids and (bad := [v for v in values if not STORED_ID.fullmatch(v.lower())]):
             raise ValueError(f"{bad[0][:20]} is not a player ID (64 hexadecimal characters, from the game's "
                              "Settings > Online services > Your player ID)")
         if setting.kind == "urls" and (bad := [v for v in values if not v.startswith(("https://", "http://"))]):
             raise ValueError(f"{bad[0][:30]} isn't an https:// address")
-        return [v.lower() for v in values] if setting.key == "admins" else values
+        if setting.key == "kick_blocks":
+            _kick_blocks(values)
+        if setting.key == "join_gates" and (bad := [v for v in values if v.lower() not in JOIN_GATES]):
+            raise ValueError(f"{bad[0][:20]} is no phase ({', '.join(JOIN_GATES)})")
+        return [v.lower() for v in values] if ids or setting.key == "join_gates" else values
     console_password = setting.scope == "rcon" and setting.key == "password" or setting.key == "rcon_password"
     if console_password and text and not 8 <= len(text) <= 128:
         raise ValueError("8 to 128 characters")
     if setting.key == "password" and len(text.encode("utf-8")) > 128:
         raise ValueError("128 bytes at most")
     return text
+
+
+def _kick_blocks(values: list[str]) -> None:
+    """kick_blocks as 0.10's check takes them: up to 8 lengths (10m, 2h, 1d: a week at most), each as long as the
+    one before or longer. Raises ValueError."""
+    if len(values) > KICK_STEPS:
+        raise ValueError(f"{KICK_STEPS} steps at most")
+    minutes_before = 0
+    for value in values:
+        match = re.fullmatch(r"(\d+)([mhd])", value.strip().lower())
+        minutes = int(match.group(1)) * {"m": 1, "h": 60, "d": 1440}[match.group(2)] if match else 0
+        if not match or not 0 < minutes <= 7 * 1440:
+            raise ValueError(f"{value[:20]} is no length such as 10m, 2h or 1d (a week at most)")
+        if minutes < minutes_before:
+            raise ValueError("each step is as long as the one before or longer")
+        minutes_before = minutes
 
 
 def check_path(setting: Setting, folder: Path, text: str) -> str | None:
@@ -547,4 +643,4 @@ def effective(data: dict[str, Any], key: str, server_name: str, scope: str = "se
 
 __all__ = ["APPLIES", "GROUPS", "SETTINGS", "SERVER_SETTINGS", "FOLDER_SETTINGS", "Setting", "catalogue", "current",
            "parse", "show", "display", "write", "can_reset", "reset", "group_settings", "find", "plays_of", "plays_kind",
-           "effective", "check_path", "summary", "CO_OP_MAX_PLAYERS"]
+           "effective", "check_path", "summary", "offered", "CO_OP_MAX_PLAYERS", "MAX_PLAYERS"]

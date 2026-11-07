@@ -72,6 +72,7 @@ RECEIPT = "reclaimer-workshop-version.json"
 ASIDE = ".huragok-workshop-previous"  # next to the content folder: same drive, so moving a 2 GB map is instant
 JOB = "workshop"
 FLAG = "workshop"
+PLANNED_FOR = "installing a new version of "  # a restart's reason, when it's the Workshop update's own
 SIGN_IN_FLAG = "steamcmd"
 SIGN_IN_FAILED = re.compile(r"signing in as \S+ failed|sign in to steamcmd again|no key for mcc", re.IGNORECASE)
 QUIET_ERRORS = 3600.0  # a failing look at Steam is logged again after this long
@@ -170,6 +171,7 @@ class WorkshopUpdateService:
         self.done: dict[tuple[str, int], int | None] = {}  # (server, item) -> Steam's version when it was swapped in
         self.failures: dict[tuple[str, int], tuple[int | str, int]] = {}  # (server, item) -> (version, fetches failed)
         self.installing: set[str] = set()  # servers whose job is running right now
+        self.planned: dict[str, str] = {}  # server -> the reason of the restart planned for its new versions
         self.last_check: float | None = None
         self.last_error = ""
         self._error_logged = 0.0
@@ -330,9 +332,19 @@ class WorkshopUpdateService:
         waiting = self.waiting.get(server.name, {})
         was = waiting.pop(item, None)
         self.failures.pop((server.name, item), None)
+        if was is not None:
+            # Planned for once more if a later version waits: the console's next "update downloaded" is one (Hidden
+            # items, which Steam's check never sees, are only ever "console").
+            self.asked.pop((server.name, item), None)
         if not waiting:
             self.waiting.pop(server.name, None)
             self.lifecycle.drop_job(server.name, JOB)
+            reason = self.planned.pop(server.name, None)
+            if was is not None and reason and self.lifecycle.call_off(server.name, reason):
+                # The server installed it itself (the game didn't use the mod): no restart for nothing after the game,
+                # or after half an hour of it (seen on FullDeployTest, 3 Nov 2026).
+                log.info("[%s] the restart after this game is called off: the server has the new version already",
+                         server.name)
         self._show(server)
         return was is not None
 
@@ -383,11 +395,23 @@ class WorkshopUpdateService:
             return
         for w in fresh:
             self.asked[(server.name, w.item)] = w.newest or "console"
+        already = self.lifecycle.planned.get(server.name)
+        theirs = str(getattr(already, "reason", already) or "")
+        if already is not None and not theirs.startswith(PLANNED_FOR) and getattr(already, "when", "") != "when_empty":
+            # A restart planned for something else (an admin's !restartserver, an update of the program) runs the job
+            # too, as the program's own update does: planned over, it was the one called off once the server put the
+            # mod in itself, and never happened (audit 6 November).
+            return
         names = ", ".join(w.title or f"Workshop {w.item}" for w in fresh)
-        background(self._plan(server.name, f"installing a new version of {names}", tell_players(names)),
-                   f"[{server.name}] planning its Workshop update", log)
+        reason = self.planned[server.name] = f"{PLANNED_FOR}{names}"
+        background(self._plan(server.name, reason, tell_players(names)), f"[{server.name}] planning its Workshop update",
+                   log)
 
     async def _plan(self, name: str, reason: str, tell: str = "") -> None:
+        if self.planned.get(name) != reason:
+            # Settled before this ran: both console lines ("update downloaded", then "updated") came in one read, and
+            # the server has it already. Planned anyway, it restarted for nothing (audit 6 November).
+            return
         try:
             await self.lifecycle.restart(name, when="after_game", reason=reason, by=self.settings.name, tell=tell)
         except Exception as error:  # noqa: BLE001 - LifecycleUnavailable, LifecycleError: it installs at its next start
@@ -448,6 +472,7 @@ class WorkshopUpdateService:
         """The job, with the server stopped: each waiting item's old copy aside, `dedicated mods`, check, start.
 
         It never adds itself again: an item that didn't install stays waiting for a later game."""
+        self.planned.pop(server.name, None)  # the restart it was planned for is this one
         self.recover(server)
         if shared := self.shared_with(server):
             return f"left to the server program: its content folder is shared with {', '.join(shared)}"
@@ -649,9 +674,9 @@ class WorkshopUpdateService:
             self.failures.pop((name, item), None)  # a person asked: tried again, however often it failed
         self.lifecycle.add_job(name, StoppedJob(JOB, "installing new Workshop versions", lambda: self.install(server)))
         names = ", ".join(w.title or f"Workshop {w.item}" for w in self.waiting[name].values())
+        reason = self.planned[name] = "installing new Workshop versions"
         try:
-            await self.lifecycle.restart(name, when=when, reason="installing new Workshop versions",
-                                         by=self.settings.name, tell=tell_players(names))
+            await self.lifecycle.restart(name, when=when, reason=reason, by=self.settings.name, tell=tell_players(names))
         except Exception as error:  # noqa: BLE001
             return True, f"it installs at its next start ({error})"
         return True, f"installing {'after this game' if when == 'after_game' else 'now'}"

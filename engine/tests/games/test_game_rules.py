@@ -33,7 +33,7 @@ def game_folder(root: Path, *kinds: str) -> Path:
 ])
 def test_every_server_needs_halo_3s_files_and_some_more(plays_kind: str, needed: list[str]) -> None:
     assert files.needed(plays_kind) == needed
-    assert set(needed) <= set(files.DEPOTS) == set(files.LABELS) == set(files.MAPS_FOR)
+    assert set(needed) <= set(files.DEPOTS) <= set(files.KINDS) == set(files.LABELS) == set(files.MAPS_FOR)
 
 
 def test_what_a_game_folder_lacks_comes_halo_3s_first(tmp_path: Path) -> None:

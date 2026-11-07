@@ -17,6 +17,9 @@ A package is a folder (PACKAGES/<folder>/ at the root; zipped to share):
     needs_campaign = false                   # the campaign missions too (`dedicated init --maps campaign`)
     needs_odst = false                       # Halo 3: ODST's files too (`--maps odst`); a server with
                                              # odst = { … } needs them anyway, and Huragok adds them from MCC
+    needs_games = ["reach", "halo1"]         # each game's files beside Halo 3's (Project Reclaimer 0.10:
+                                             # reach, halo1, halo2; odst too), added from MCC as the
+                                             # server is made
 
     [server]                                 # goes into the server's [[server]] block
     playlist = "playlists/infection.playlist.json"
@@ -44,6 +47,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from ..games.bungie import GAMES
 from ..games.odst import describe as describe_odst
 from ..program.settings import path_setting
 
@@ -69,6 +73,7 @@ class Package:
     needs_maps: list[str] = field(default_factory=list)
     needs_campaign: bool = False
     needs_odst: bool = False
+    needs_games: list[str] = field(default_factory=list)  # bungie.GAMES keys: "reach", "halo1", "halo2", "odst"
     server: dict[str, Any] = field(default_factory=dict)
     defaults: dict[str, Any] = field(default_factory=dict)
     workshop_items: list[int] = field(default_factory=list)
@@ -104,6 +109,15 @@ class Package:
             return f"{server.get('game', 'Slayer')} on {server.get('map', 'Guardian')}"
         return "Slayer on Guardian (nothing chosen)"
 
+    @property
+    def file_kinds(self) -> list[str]:
+        """The kinds of game files (games/files.py) it needs beside Halo 3's multiplayer ones."""
+        kinds = ["campaign"] if self.needs_campaign else []
+        if self.needs_odst or "odst" in self.server:
+            kinds.append("odst")
+        kinds += [key for key in self.needs_games if key not in ("halo3", *kinds)]
+        return kinds
+
     def summary(self) -> str:
         bits = [self.plays]
         if self.workshop_items:
@@ -112,6 +126,9 @@ class Package:
             bits.append("needs the campaign files")
         if self.needs_odst or "odst" in self.server:
             bits.append("needs Halo 3: ODST's files")
+        if others := [f"{GAMES[key].title}'s" for key in self.needs_games if key not in ("halo3", "odst")]:
+            listed = ", ".join(others[:-1]) + " and " + others[-1] if len(others) > 1 else others[0]
+            bits.append(f"needs {listed} files (Project Reclaimer 0.10)")
         return "; ".join(bits)
 
 
@@ -149,6 +166,9 @@ def load_package(folder: Path) -> Package:
     needs = data.get("needs_maps", [])
     if not isinstance(needs, list) or not all(isinstance(m, str) for m in needs):
         raise PackageError(f"{path}: needs_maps must be a list of map names")
+    games = data.get("needs_games", [])
+    if not isinstance(games, list) or not all(isinstance(g, str) and g.strip().lower() in GAMES for g in games):
+        raise PackageError(f"{path}: needs_games must be a list of these: {', '.join(GAMES)}")
     package = Package(
         folder=folder,
         name=str(data.get("name") or folder.name),
@@ -158,6 +178,7 @@ def load_package(folder: Path) -> Package:
         needs_maps=[str(m) for m in needs],
         needs_campaign=bool(data.get("needs_campaign", False)),
         needs_odst=bool(data.get("needs_odst", False)),
+        needs_games=list(dict.fromkeys(g.strip().lower() for g in games)),
         server=dict(server),
         defaults=dict(data.get("defaults", {})) if isinstance(data.get("defaults", {}), dict) else {},
         workshop_items=[int(i) for i in items],
@@ -229,6 +250,8 @@ def write_package_toml(package: Package) -> Path:
         lines.append("needs_campaign = true")
     if package.needs_odst:
         lines.append("needs_odst = true")
+    if package.needs_games:
+        lines.append(f"needs_games = {_toml_value(package.needs_games)}")
     lines += ["", "[server]"]
     server = package.server
     for key in [*(k for k in SERVER_KEYS_FIRST if k in server), *(k for k in server if k not in SERVER_KEYS_FIRST)]:
@@ -314,8 +337,13 @@ def save_package(server_folder: Path, server_name: str, dest: Path, *, config_na
     content_root = path_setting(server_folder, data, "content")
     defaults = data.get("defaults")
     kept = {k: v for k, v in defaults.items() if k not in HOST_SPECIFIC} if isinstance(defaults, dict) else {}
+    from ..games.files import GAME_OF_KIND, needed_by
+
+    games = list(dict.fromkeys(GAME_OF_KIND[kind] for kind in needed_by(block, server_folder)
+                               if GAME_OF_KIND[kind] not in ("halo3", "odst")))  # Reach's, CE's, Halo 2's maps
     package = Package(dest, name or server_name, description, author, 1, needs_campaign="campaign" in server,
-                      needs_odst="odst" in server, server=server, defaults=kept, workshop_items=items)
+                      needs_odst="odst" in server, needs_games=games, server=server, defaults=kept,
+                      workshop_items=items)
     dest.mkdir(parents=True, exist_ok=True)
     if "playlist" in server:
         source = server_folder / str(server["playlist"])

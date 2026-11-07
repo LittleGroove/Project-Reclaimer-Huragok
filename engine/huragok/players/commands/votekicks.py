@@ -47,6 +47,8 @@ def _named(state: ServerState, name: str) -> list[Player]:
     starts with it, or whose service tag it is, when only one does. So a player whose votes are away can't call one
     under the name of someone else on (the host's call, 2 Nov 2026: tied to the player ID, not the name)."""
     folded = name.strip().casefold()
+    if not folded:
+        return []  # no name: not the players whose names aren't known yet (0.10's join names nobody)
     exact = [p for p in state.players.values() if p.name.casefold() == folded]
     if exact or not (match := SUFFIX.fullmatch(name.strip())):
         return exact

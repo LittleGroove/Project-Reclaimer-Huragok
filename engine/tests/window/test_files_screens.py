@@ -488,6 +488,7 @@ def test_d_word_list_mutes_for_good_after_a_number_of_strikes(tmp_path: Path, ru
     assert "at least 3, so every mute time comes first" in text and "A number, 3 or more." in text
     assert "6th to 8th: kicked" in text and "9th and after: kicked, then muted for good" in text
     assert "2nd: muted for good" in text and "3rd: banned for good" in text
+    assert "at least 1, so every mute and kick comes first; Enter: 2, after muted for good" in text  # a ban before it may be typed: it comes first
     assert "(no: 7d each time from then on)" in text and "(no: perm each time" not in text
 
 

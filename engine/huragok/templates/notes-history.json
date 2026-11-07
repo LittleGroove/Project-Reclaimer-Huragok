@@ -13,7 +13,8 @@
   "0.6.0-beta.1",
   "0.6.0-beta.2",
   "0.6.0",
-  "0.6.1"
+  "0.6.1",
+  "0.6.2"
  ],
  "files": {
   "settings.toml": {
@@ -57,7 +58,9 @@
      "#            server's container (see [docker] below).",
      "#   command  your own commands, such as systemd units (see [command] below).",
      "#   attach   something else (a startup task, a window you opened). Huragok watches",
-     "#            and moderates, but can't restart anything."
+     "#            and moderates, but can't restart anything.",
+     "#            on. Windows runs project-reclaimer.exe itself; Linux runs its own program",
+     "#            (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine."
     ],
     "|servers": [
      "# Which servers, by name as in their dedicated.toml. Empty: every enabled server found."
@@ -283,13 +286,20 @@
      "#            server that shares one its own copy: hard links, no space used)",
      "# Every server keeps a ban list of its own (bans.json in its folder): a /ban in game",
      "# is that server's. Huragok keeps its own list of the bans it gives (! commands,",
-     "# Vergil) and the admins it makes, and puts them on every server's."
+     "# Vergil) and the admins it makes, and puts them on every server's.",
+     "#   game     the games' files, once, at game/ (Halo 3's 5.5 GB, and each other game's",
+     "#            the servers play beside it): linked from a server that has them, or",
+     "#            copied from MCC with dedicated init"
     ],
     "setup|packages_folder": [
      "# Your MCC folder, for copying Halo 3's files when no server has them yet. Empty",
      "# means Steam's default folder; leave the line out to link from an existing server.",
      "# mcc_folder = 'D:\\SteamLibrary\\steamapps\\common\\Halo The Master Chief Collection'",
-     "# Where the packages are."
+     "# Where the packages are.",
+     "# Your MCC folder, for copying the games' files: Halo 3's when no server has them yet,",
+     "# and ODST's, Reach's, Combat Evolved's and Halo 2's for the servers that play them",
+     "# (Reach's, CE's and Halo 2's come from MCC alone for now). Empty means Steam's",
+     "# default folder; leave the line out to link from an existing server."
     ],
     "setup|program": [
      "# The server program used for what isn't one server's (making new server folders,",
@@ -325,7 +335,13 @@
      "# another way, give the whole command; {executable}, {config}, {folder} and",
      "# {name} are filled in. Each server's process gets RECLAIMER_DEDICATED_ONLY, so it",
      "# runs that server alone.",
-     "# command = [\"wine\", \"{executable}\", \"dedicated\", \"run\", \"--config\", \"{config}\"]"
+     "# command = [\"wine\", \"{executable}\", \"dedicated\", \"run\", \"--config\", \"{config}\"]",
+     "# How it's run. Empty: the program itself (on Linux its own program, project-reclaimer,",
+     "# from 0.10; 0.9's .exe through `wine`), as `dedicated run --config dedicated.toml` in",
+     "# the server's folder. To run it another way, give the whole command; {executable},",
+     "# {config}, {folder} and {name} are filled in. Each server's process gets",
+     "# RECLAIMER_DEDICATED_ONLY, so it runs that server alone.",
+     "# command = [\"{executable}\", \"dedicated\", \"run\", \"--config\", \"{config}\"]"
     ],
     "process|stop_timeout": [
      "# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux) before",

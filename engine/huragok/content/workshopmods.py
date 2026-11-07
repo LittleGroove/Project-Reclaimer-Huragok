@@ -12,7 +12,10 @@ LOOK_SECONDS, on the files alone (Steam is asked only about a mod that's new to 
    runs (`dedicated mods` on a dedicated.toml of its own: 33 s for 1.1 GB, tested), then with the server stopped
    after its game (at once when nobody's on) the hand copy goes to `content set aside`, the fetched copy takes its
    place in Mods/Workshop/<item>, the item is listed, and the server starts on it. Playlists keep working: they name
-   the item's maps the same way. Left as they are: a mod switched off (disabled-mods.json), one for another game, one
+   the item's maps the same way. From 0.10 the program's own copies of Halo: Reach's, Combat Evolved's and Halo 2's
+   mods are listed and kept up to date too. Left as they are: a mod switched off (disabled-mods.json), one for a game
+   the server's program doesn't play, a hand copy of a mod for another game than Halo 3 (0.10.0's Workshop installer
+   still says "This Workshop item targets an engine other than Halo 3.", so fetching it could only fail), one
    Steam doesn't list publicly (an author's own hidden upload), one whose maps aren't the item's (made from it, like
    a host's own version of a map that kept the item's ID), one in a content folder several servers share (they'd all
    have to stop at once), and every one on a server whose Workshop updates are off.
@@ -43,11 +46,14 @@ from ..core.files import write_atomic
 from ..core.jobs import StoppedJob
 from ..core.tomledit import read_toml, set_table_key
 from ..core.web import UpdateError
+from ..games.bungie import game_of_engine
 from ..lore import callout
+from ..program.releases import program_of, program_version, readable
 from ..updates.workshop import RECEIPT, date_text, installed_version
 from .catalogue import DISABLED_MODS, DisabledModsError, Mod, disabled_mods, installed_mods, is_disabled, \
     mod_package, set_aside, set_mod_disabled, sync_layouts
 from .gamefiles import read_paths
+from .modcheck import maps_folder, plays_mods_of
 
 if TYPE_CHECKING:
     from ..core.events import EventBus
@@ -103,21 +109,30 @@ def is_managed(mod: Mod, content_root: Path) -> bool:
             and parts[2].isdecimal() and (mod.folder / RECEIPT).is_file())
 
 
-def look_through(content_root: Path) -> Found:
+def look_through(content_root: Path, version: str | None | Callable[[], str | None] = None) -> Found:
     """The mods in a content folder, sorted: the program's copies, hand copies naming an item, and every one switched
     on. A disabled-mods.json that can't be read switches nothing off here, and no hand copy is taken over: what the
-    server leaves out can't be told."""
+    server leaves out can't be told. version: the server's program version, or how to learn it (asked only for a mod
+    for another game than Halo 3); None: not known, taken as 0.10 or newer."""
     found = Found()
     try:
         disabled: list[str] | None = disabled_mods(content_root)
     except DisabledModsError:
         disabled = None
+    known: list[str | None] = [] if callable(version) else [version]
     for mod in installed_mods(content_root):
         if disabled is not None and is_disabled(disabled, mod_package(content_root, mod)):
             continue
         found.mods.append(mod)
-        if mod.engine and mod.engine.casefold() != "halo3":
-            continue
+        game = game_of_engine(mod.engine)
+        if game is None or game.key != "halo3":
+            if not known:
+                known.append(version())  # type: ignore[operator]
+            if not plays_mods_of(game, known[0]):
+                continue  # a game this program doesn't play
+            if is_managed(mod, content_root):
+                found.managed[int(mod.folder.name)] = mod
+            continue  # a hand copy: left, as 0.10.0's installer still says "targets an engine other than Halo 3"
         if is_managed(mod, content_root):
             found.managed[int(mod.folder.name)] = mod
         elif mod.workshop_id is not None and disabled is not None:
@@ -129,8 +144,12 @@ def look_through(content_root: Path) -> Found:
 
 
 def map_files(folder: Path) -> set[str]:
-    maps = folder / "maps"
-    return {p.stem.casefold() for p in maps.glob("*.map")} if maps.is_dir() else set()
+    """A mod's maps, by file name: in its maps folder (maps/, or Maps/ in some Reach and Combat Evolved mods)."""
+    maps = maps_folder(folder)
+    try:
+        return {p.stem.casefold() for p in maps.iterdir() if p.suffix.lower() == ".map"} if maps is not None else set()
+    except OSError:
+        return set()
 
 
 def same_mod(hand: list[Path], fetched: Path) -> bool:
@@ -205,7 +224,7 @@ class WorkshopKeeper:
             return
         self.looking.add(server.name)
         try:
-            found = await asyncio.to_thread(look_through, server.content_dir)
+            found = await asyncio.to_thread(look_through, server.content_dir, lambda: self.version_of(server))
             if self.config.adopt and self._updated(server):
                 await asyncio.to_thread(self.list_unlisted, server, found)
             await self.fetch_missing(server)
@@ -227,6 +246,13 @@ class WorkshopKeeper:
             self.tries.pop((server.name, item), None)  # a person added it: tried again however often it failed
         background(self.look_at(server), f"[{name}] looking at its Workshop mods", log)
         return True, "Huragok fetches what's new now; the log says when it's in"
+
+    def version_of(self, server: ServerConfig) -> str | None:
+        """The version of the program file the server runs (`--version`, asked once per file); None: not known. In a
+        thread."""
+        program = program_of(self.settings, server)
+        version = program_version(self.settings, program) if program is not None else None
+        return str(version) if readable(version) else None
 
     def _updated(self, server: ServerConfig) -> bool:
         return self.settings.of(server).workshop_updates != "off"

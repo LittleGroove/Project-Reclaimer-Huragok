@@ -83,4 +83,10 @@ MIGRATIONS = [
         by TEXT, reason TEXT, seconds REAL NOT NULL, console INTEGER NOT NULL, everywhere INTEGER NOT NULL);
     CREATE INDEX commands_kicks_time ON commands_kicks (time);
     """,
+    # 11 (the host's call, 6 Nov 2026): a request only a rank of this or above confirms ("admin": a moderator's strike
+    # whose next step is the ban for good, as only Huragok and admins ban). '': a probationary moderator's, any
+    # moderator's to confirm. An older version reads it as one of those, and drops it (its asker isn't on probation).
+    """
+    ALTER TABLE commands_requests ADD COLUMN needs TEXT NOT NULL DEFAULT '';
+    """,
 ]

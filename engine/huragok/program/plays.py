@@ -28,7 +28,7 @@ from ..core.tomledit import (
     TomlEditError, change_server_settings, read_toml, remove_table_key, replace_server_blocks, set_table_key,
     set_top_key,
 )
-from ..games.halo3 import problems_from_show
+from ..games.halo3 import entry_game, game_problems, problems_from_show
 from ..games.plays import PLAYS_KEYS
 from .settings import version_problem
 
@@ -37,12 +37,17 @@ if TYPE_CHECKING:
 
 # What-it-plays keys and campaign modifiers older programs don't have (0.9.18 refuses each as an unknown field).
 PLAYS_SINCE = {"odst": "0.9.19", "sprint": "0.9.19", "sprint_speed_percent": "0.9.19",
-               "sprint_stamina_seconds": "0.9.19", "skulls": "0.9.19"}
+               "sprint_stamina_seconds": "0.9.19", "skulls": "0.9.19", "reach": "0.10.0"}
 ODST_SINCE = {"story_characters": "0.9.21", "options": "0.9.21"}  # keys of an `odst = { … }` setup, by version
 
 
 def plays_problem(values: dict[str, Any], program_version: str | None) -> str | None:
-    """What-it-plays values (odst, campaign modifiers) a server on `program_version` can't take, or None."""
+    """What-it-plays values (odst, campaign modifiers, a map of Reach's, Combat Evolved's or Halo 2's) a server on
+    `program_version` can't take, or None."""
+    game = entry_game(values) if "map" in values else None
+    if game is not None and not game.plays_on(program_version):
+        return (f"{values['map']} is {game.title}'s map: it needs Project Reclaimer {game.since} or newer (this server "
+                f"has {program_version})")
     keys = [k for k in values if k in PLAYS_SINCE]
     for kind in ("campaign", "odst"):
         modifiers = values.get(kind, {}).get("modifiers") if isinstance(values.get(kind), dict) else None
@@ -82,11 +87,13 @@ class PlaysCheck:
         return not self.problems
 
 
-def check_plays(tool: Any, server: ServerConfig, values: dict[str, Any], playlist: Any = None) -> PlaysCheck:
+def check_plays(tool: Any, server: ServerConfig, values: dict[str, Any], playlist: Any = None,
+                program_version: str | None = None) -> PlaysCheck:
     """What the server's own program says of playing `values` (the [[server]] keys write_plays writes), before any
     of it is written: the check its start and its reload make, which a refusal there would hold up (a reload
     applies nothing while a check fails). `playlist`: a draft of the playlist `values` names, checked as it would
-    be saved. Huragok's own checks come first (a playlist's game count, weights, two games the same), at once;
+    be saved. Huragok's own checks come first (a playlist's game count for `program_version`, the server's: not
+    known, the widest any version takes; weights, two games the same), at once;
     then `dedicated check` on a draft config beside the real one (CHECK_FILE: this server's block alone, with
     `values`, a port of its own, the master and self-update off), removed afterwards, as is the draft playlist.
 
@@ -95,7 +102,7 @@ def check_plays(tool: Any, server: ServerConfig, values: dict[str, Any], playlis
     playlist's own games' problems always count, so a playlist the server can't play is never saved."""
     if playlist is not None:
         playlist.number_choices()
-        local = [Problem(text) for text in playlist.problems()]
+        local = [Problem(text) for text in playlist.problems(program_version)]
         local += [Problem(f"the same game as game {first} (a different name doesn't make it another game): take "
                           "one out, or raise one's weight to play it more often", number)
                   for number, first in playlist.duplicates().items()]
@@ -158,22 +165,49 @@ def _run_check(tool: Any, server: ServerConfig, block: dict[str, Any]) -> Any:
         check.unlink(missing_ok=True)
 
 
+LONG_LIST = re.compile(r",? expected one of .{80,}$")  # 0.10's "unknown field `rules`, expected one of `name`, …"
+
+
 def _refusals(text: str, server_name: str) -> list[Problem]:
-    """`dedicated check`'s Error lines (and the lines under one), as problems, each tied to its game when it names
-    one: "Error: Server 'Alpha': playlists/x.playlist.json: Game 2 duplicates another map/game combination…"."""
+    """`dedicated check`'s refusals, as problems, each tied to its game when it names one. Two shapes:
+    0.9: Error lines (and the lines under one): "Error: Server 'Alpha': playlists/x.playlist.json: Game 2 duplicates
+    another map/game combination…".
+    0.10 (checked 2026-11-06): the servers that can't start under "Not ready:", one line each, a playlist's games on
+    it together ("  Alpha: playlists/x.playlist.json: game 2: no multiplayer map "Atlantiss" is installed; …; game 6:
+    Guardian Slayer is listed twice (raise its weight instead)"); a value the program won't take on its own line,
+    named by the server (`[[server]] "Alpha": launch_timeout: 0 to 300 seconds`, `"Alpha": max_players is 1
+    through 128`) or by the file, with where in it on the next line (`x.toml: tick_rate is 30 or 60, not 45` /
+    "in `server.tick_rate`")."""
     found: list[Problem] = []
-    under = False
+    name = re.escape(server_name)
+    under = ""  # error (0.9's Error lines), ready (0.10's Not ready list), file (0.10's file line, its `in` next)
     for line in text.splitlines():
         if line.startswith("Error:"):
-            text_ = line.removeprefix("Error:").strip()
-            under = True
-        elif under and line.startswith("       ") and line.strip():
+            text_, under = line.removeprefix("Error:").strip(), "error"
+        elif under == "error" and line.startswith("       ") and line.strip():
             text_ = line.strip()
-        else:
-            under = False
+        elif line.strip() == "Not ready:":
+            under = "ready"
             continue
-        text_ = re.sub(rf"^Server '{re.escape(server_name)}':\s*", "", text_, flags=re.IGNORECASE)
+        elif under == "ready" and line.startswith("  ") and line.strip():
+            text_ = re.sub(rf"^{name}:\s*", "", line.strip(), flags=re.IGNORECASE)  # the server it's about: this one
+        elif under == "file" and line.startswith("in `") and found:
+            found[-1] = Problem(f"{found[-1].text} (in {line.removeprefix('in ').strip('` ')})", found[-1].game)
+            under = ""
+            continue
+        elif match := re.match(rf'^(?:\[\[server\]\] )?"{name}":\s*(.+)$', line, re.IGNORECASE):
+            text_, under = match.group(1).strip(), ""
+        elif match := re.match(r"^\S+\.toml:\s*(.+)$", line):
+            text_, under = LONG_LIST.sub("", match.group(1).strip()), "file"
+        else:
+            under = ""
+            continue
+        text_ = re.sub(rf"^Server '{name}':\s*", "", text_, flags=re.IGNORECASE)
         text_ = re.sub(r"^\S+\.json:\s*", "", text_)
+        games = game_problems(text_)
+        if games:
+            found += [Problem(f"Game {number}: {why}", number) for number, why in games.items()]
+            continue
         game = re.match(r"^Game (\d+)\b", text_)
         found.append(Problem(text_, int(game.group(1)) if game else None))
     return found

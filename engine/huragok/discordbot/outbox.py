@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from ..core.background import wait_until
 from .rest import BadToken, DiscordError, Reply, SlowDown, Unreachable
 
 log = logging.getLogger(__name__)
@@ -101,10 +102,7 @@ class Outbox:
             job, wait = self._next(self.clock())
             if job is None:
                 self._wake.clear()
-                try:
-                    await asyncio.wait_for(self._wake.wait(), wait)
-                except TimeoutError:
-                    pass
+                await wait_until(self._wake, wait)  # a cancel always ends it (wait_for's, on 3.11, could be lost)
                 continue
             await self.send_one(job)
 

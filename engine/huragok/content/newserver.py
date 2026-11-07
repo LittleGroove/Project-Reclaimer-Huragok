@@ -6,6 +6,10 @@ dedicated.toml, then `dedicated check`.
                                Halo 3's files once, one content folder (never a ban list: every
                                server keeps its own, and Huragok puts its bans on each)
 
+Halo 3's multiplayer files always come first; the other games' (ODST's, the campaign missions, and from
+Project Reclaimer 0.10 Halo: Reach's, Combat Evolved's and Halo 2's) are copied from MCC beside them with
+`dedicated init --maps <words>`, for the games the host picks (N asks) and the ones its package needs.
+
 The folder is built as SERVERS/.new-<name>/ (folders starting with a dot are never
 picked up) and renamed when it's done, so a half-made server is never started. If
 its check fails, the folder stays, with autostart off and the problems reported, for
@@ -30,8 +34,12 @@ from ..core.settings import Settings
 from ..core.tomledit import (
     read_toml, remove_server_setting, replace_server_blocks, set_server_setting, set_table_key, set_top_key,
 )
-from ..games.files import has_game_files, has_odst_files
+from ..games.bungie import GAMES
+from ..games.files import (
+    GAME_OF_KIND, LABELS, MAPS_FOR, add_reach_variants, has, has_game_files, has_odst_files, in_mcc, plays_on,
+)
 from ..games.odst import FILES_HINT
+from ..games.halo3_options import version_tuple
 from ..games.plays import CO_OP_MAX_PLAYERS, is_co_op
 from ..program.dedicated import Dedicated, ToolResult, find_executable
 from ..program.settings import every_block, used_ports
@@ -43,7 +51,7 @@ SHAREABLE = ("game", "content")  # never the ban list: every server keeps its ow
 COPIED_FROM_EXISTING = ("host_name", "stats_server", "public_address", "upnp")
 MAX_NAME = 48  # the server program's limit for a [[server]] name
 MIN_PORT, MAX_PORT = 1024, 65535
-MAX_PLAYERS = 127
+MAX_PLAYERS, MAX_PLAYERS_010 = 127, 128  # max_players's top before Project Reclaimer 0.10, and from it
 WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
 Say = Callable[[str], None]
 
@@ -63,6 +71,8 @@ class NewServer:
     share: set[str] = field(default_factory=lambda: set(SHAREABLE))  # what comes from the root
     mcc_folder: str | None = None  # Halo 3's files from here ("" for Steam's default) when none can be shared or linked
     maps: list[str] | None = None  # with mcc_folder: only these maps
+    games: list[str] | None = None  # more games' files beside Halo 3's, from MCC: odst, campaign, reach,
+    #                                 reach-campaign, halo1, halo2 (games/files.py's kinds)
     link_from: Path | None = None  # a server folder whose game/ is hard-linked, or a game folder (same drive: no
     #                                space used); with neither this nor mcc_folder, the first game folder here
     host_name: str | None = None
@@ -139,9 +149,16 @@ def check_port(port: Any) -> str | None:
     return None
 
 
-def check_players(players: Any, *, co_op: bool = False) -> str | None:
-    """Why a max_players can't be used, or None: 1-127, at most 16 for campaign co-op and ODST."""
-    high = CO_OP_MAX_PLAYERS if co_op else MAX_PLAYERS
+def most_players(version: str | None) -> int:
+    """max_players's top on program `version`: 128 from 0.10, 127 before (and when it isn't known: safe on both)."""
+    have = version_tuple(version)
+    return MAX_PLAYERS_010 if have is not None and have >= (0, 10) else MAX_PLAYERS
+
+
+def check_players(players: Any, *, co_op: bool = False, version: str | None = None) -> str | None:
+    """Why a max_players can't be used, or None: 1-127 (1-128 from Project Reclaimer 0.10: `version`), at most 16 for
+    campaign co-op and ODST."""
+    high = CO_OP_MAX_PLAYERS if co_op else most_players(version)
     if not isinstance(players, int) or isinstance(players, bool) or not 1 <= players <= high:
         return f"max_players must be from 1 to {high}" + (" (campaign co-op and ODST hold 16)" if co_op else "")
     return None
@@ -200,6 +217,37 @@ def add_odst_files(tool: Dedicated, game: Path, mcc_folder: str, stage: Path, sa
         shutil.rmtree(stage, ignore_errors=True)
     say(f"Halo 3: ODST's files are in {game}: {linked} hard-linked, {copied} copied")
     return linked, copied
+
+
+def add_game_files(tool: Dedicated, game: Path, mcc_folder: str, kinds: list[str], stage: Path,
+                   say: Say) -> tuple[int, int]:
+    """Other games' files from MCC into a game folder that has Halo 3's (the root's shared one too): one `dedicated
+    init --maps reach,halo1,…` into a scratch folder, then linked in beside what's there, which stays as it is.
+    (linked, copied) files; raises SetupError when the program couldn't copy them all."""
+    if stage.exists():
+        shutil.rmtree(stage)
+    words = [word for kind in kinds for word in MAPS_FOR[kind] or []]
+    say(f"copying {', '.join(LABELS[k] for k in kinds)} from {mcc_folder or 'Steam'} with dedicated init --maps "
+        f"{','.join(words)} (hard links on the same drive)")
+    try:
+        result = tool.init(stage, mcc=mcc_folder, maps=words)
+        if not result.ok:
+            raise SetupError(f"dedicated init couldn't copy them: {result.problem or 'it failed'}")
+        if lacking := [kind for kind in kinds if not has(stage / "game", kind)]:
+            raise SetupError(f"dedicated init didn't copy {', '.join(LABELS[k] for k in lacking)}")
+        if mcc_folder and {"reach", "reach-campaign"} & set(kinds):
+            add_reach_variants(stage / "game", Path(mcc_folder))
+        linked, copied = link_tree(stage / "game", game)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    say(f"{', '.join(LABELS[k] for k in kinds)} are in {game}: {linked} hard-linked, {copied} copied")
+    return linked, copied
+
+
+def mcc_kinds(mcc: Path | None, version: str | None = None) -> list[str]:
+    """The kinds of game files besides Halo 3's that MCC's folder has installed, as far as program `version` plays
+    them (None: unknown, it does)."""
+    return [kind for kind in MAPS_FOR if kind != "halo3" and plays_on(kind, version) and in_mcc(mcc, kind)]
 
 
 def needs_odst(spec_server: dict[str, Any]) -> bool:
@@ -337,15 +385,17 @@ def create_server(settings: Settings, spec: NewServer, tool: Dedicated, say: Say
         raise SetupError(f"{final} exists already")
     if spec.port and (problem := check_port(spec.port)):
         raise SetupError(problem)
-    if spec.max_players is not None and (problem := check_players(spec.max_players, co_op=plays_co_op(spec))):
-        raise SetupError(problem)
+    if spec.max_players is not None:
+        from .gamefiles import program_version_of
+
+        version = program_version_of(tool) if spec.max_players == MAX_PLAYERS_010 else None  # only 128 needs it
+        if problem := check_players(spec.max_players, co_op=plays_co_op(spec), version=version):
+            raise SetupError(problem)
     port = spec.port or next_free_port(settings)
     if port in used_ports(settings):
         raise SetupError(f"port {port} is used by another server here (or a discovery master)")
     if not port_free(port):
         raise SetupError(f"something on this machine already listens on port {port}")
-    if spec.package is not None and spec.package.needs_campaign and not spec.maps:
-        say("this package needs the campaign missions: copy them with dedicated init --maps campaign if missing")
     staging = settings.servers_folder / f".new-{slugify(name)}"
     if staging.exists():
         shutil.rmtree(staging)
@@ -383,6 +433,9 @@ def _build(settings: Settings, spec: NewServer, tool: Dedicated, say: Say, name:
     notes: list[str] = []
     wants_odst = needs_odst(spec.extra) or spec.package is not None and (spec.package.needs_odst
                                                                        or needs_odst(spec.package.server))
+    wants_odst = wants_odst or "odst" in (spec.games or [])
+    others = list(dict.fromkeys(kind for kind in [*(spec.games or []), *(spec.package.file_kinds if spec.package
+                                                                         else [])] if kind not in ("halo3", "odst")))
     link_game = game_to_link(settings, spec) if "game" not in shared else None
     own_game_from_mcc = "game" not in shared and link_game is None and spec.mcc_folder is not None
     say(f"making {final.name} with dedicated init")
@@ -479,6 +532,8 @@ def _build(settings: Settings, spec: NewServer, tool: Dedicated, say: Say, name:
         if not mods.ok:
             notes.append(f"Workshop items not installed: {mods.problem}")
 
+    if others:
+        notes += _add_others(settings, spec, tool, shared.get("game") or staging / "game", others, say)
     if wants_odst:
         game = shared.get("game") or staging / "game"
         mcc = odst_mcc(spec.mcc_folder)
@@ -496,3 +551,34 @@ def _build(settings: Settings, spec: NewServer, tool: Dedicated, say: Say, name:
 
     say("checking it with dedicated check")
     return rcon_password, tool.check(staging), notes
+
+
+def _add_others(settings: Settings, spec: NewServer, tool: Dedicated, game: Path, kinds: list[str],
+                say: Say) -> list[str]:
+    """The other games' files the host picked or the package needs (not ODST's: those have their own words), from
+    MCC into the new server's game folder. Notes for the host on what couldn't be added."""
+    from .gamefiles import program_version_of
+
+    lacking = [kind for kind in kinds if not has(game, kind)]
+    for kind in kinds:
+        if kind not in lacking:
+            say(f"{LABELS[kind]}: already in {game}")
+    if not lacking:
+        return []
+    notes: list[str] = []
+    version = program_version_of(tool)
+    if old := [kind for kind in lacking if not plays_on(kind, version)]:
+        notes.append(f"{', '.join(LABELS[k] for k in old)} weren't added: they need Project Reclaimer "
+                     f"{GAMES[GAME_OF_KIND[old[0]]].since} or later, and this program is {version} (U updates it)")
+    mcc = find_mcc(spec.mcc_folder)
+    copy = [kind for kind in lacking if kind not in old and in_mcc(mcc, kind)]
+    if absent := [kind for kind in lacking if kind not in old and kind not in copy]:
+        notes.append(f"it needs {', '.join(LABELS[k] for k in absent)}, which aren't in {game}, and no MCC with "
+                     "them was found on this PC (install each game in MCC: Steam, MCC, Properties, DLC; [setup] "
+                     "mcc_folder names MCC's folder): I adds them once they're there")
+    if copy:
+        try:
+            add_game_files(tool, game, str(mcc), copy, settings.records / "games-stage", say)
+        except (SetupError, OSError) as error:
+            notes.append(f"{', '.join(LABELS[k] for k in copy)} weren't added: {error}")
+    return notes

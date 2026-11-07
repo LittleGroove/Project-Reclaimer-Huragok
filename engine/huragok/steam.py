@@ -218,8 +218,13 @@ def _mcc_candidates(hint: str | None) -> Iterator[Path]:
 
 def find_mcc(hint: str | None = None) -> Path | None:
     """Where MCC is: the hint ([setup] mcc_folder), else where Steam's own records say it's installed. The first
-    that has halo3/ wins; nothing past it is looked at, and nothing Steam doesn't name is looked at at all."""
+    that has halo3/ wins; with none, the first that has any game's folder (haloreach/, halo1/, halo2/, halo3odst/:
+    Project Reclaimer 0.10 plays them, though each still needs Halo 3). Nothing past the winner is looked at, and
+    nothing Steam doesn't name is looked at at all."""
+    from .games.bungie import GAMES
+
     seen: set[str] = set()
+    other: Path | None = None
     for path in _mcc_candidates(hint):
         if str(path).lower() in seen:
             continue
@@ -227,9 +232,11 @@ def find_mcc(hint: str | None = None) -> Path | None:
         try:
             if (path / "halo3").is_dir():
                 return path
+            if other is None and any((path / game.folder).is_dir() for game in GAMES.values()):
+                other = path
         except OSError:
             continue
-    return None
+    return other
 
 
 WINDOWS_INSTALLER = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"

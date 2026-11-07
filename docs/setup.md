@@ -61,7 +61,7 @@ What a new server can be:
 - **its port**: 1024 to 65535, not one another server here uses (disabled servers
   and folders Huragok left out count too, and so does a discovery master's), and
   nothing on this machine may be listening on it. N asks again for one out of range;
-- **its players**: 1 to 127, at most 16 for campaign co-op and Halo 3: ODST.
+- **its players**: 1 to 127 (128 on Project Reclaimer 0.10), at most 16 for campaign co-op and Halo 3: ODST.
 
 A name already used by any server here, disabled or not, is refused too.
 
@@ -147,14 +147,16 @@ it): the notes name any whose package copy differs. A package with a mistake in 
 the others list as usual.
 
 Host-specific things stay out (name, port, passwords, admins, `host_name`):
-Huragok asks for them. **Seven starter packages** are written to `PACKAGES/` on the
+Huragok asks for them. **Eight starter packages** are written to `PACKAGES/` on the
 first start (never replaced after that; edit them freely): *Team Slayer*, *Big Team
 Battle*, *MLG Hardcore* (Halo 3's own MLG map variants and Hardcore game variants),
 *Infection*, *Scripted Modes* (Gun Game, One in the Chamber, Growth, Zone Control,
 UNSC vs Covenant), *Campaign Co-op* (needs the campaign files:
 `dedicated init --from "<MCC>" --maps campaign`) and *ODST Firefight* (Project
-Reclaimer 0.9.19 and later: Firefight on Crater (Night), Heroic). A root made before
-0.4.0 has no ODST Firefight starter; `package save` makes one from an ODST server.
+Reclaimer 0.9.19 and later: Firefight on Crater (Night), Heroic) and *Every Halo*
+(Project Reclaimer 0.10: twelve games, three each from Halo 3, Reach, Combat Evolved
+and Halo 2). A root made before 0.4.0 has no ODST Firefight starter; `package save`
+makes one from an ODST server.
 
 A server that plays Halo 3: ODST (`odst = { … }` in its block, or a package with
 `needs_odst = true`) needs ODST's files beside Halo 3's, about 3.5 GB. Huragok adds
@@ -163,6 +165,18 @@ from the MCC on this PC that has ODST installed (`[setup] mcc_folder`, or Steam'
 folders), with `dedicated init --maps odst` into a scratch folder, then hard links;
 what's already there stays as it is. Without such an MCC the server is made all the
 same, with a note saying how to add them. An ODST server holds 16 players at most.
+
+**Halo: Reach, Halo: Combat Evolved and Halo 2** play on Project Reclaimer 0.10 and
+later. Their files go beside Halo 3's the same way, from MCC on this PC only for now
+(no SteamCMD download yet): Reach's multiplayer and Firefight maps (7 GB; its campaign
+too, 11 GB, with `reach-campaign`), Combat Evolved's (3.3 GB) and Halo 2's (3.2 GB).
+The wizard offers every game MCC has that the game folder lacks; `new --games
+reach,halo1,halo2` does it from the command line. Halo 3's files are always needed:
+every game's maps are built on Guardian. A playlist may mix every game's maps;
+Combat Evolved's and Halo 2's maps take only their own game types, and Reach's take
+Halo 3's or Reach's own variants. Before each start Huragok adds a game a server's
+maps need and its game folder lacks, as it does for ODST. Reach's, Combat Evolved's
+and Halo 2's campaigns and Reach's Firefight have no server setting in 0.10 yet.
 
 ```text
 start.cmd package list                      what's in PACKAGES/
@@ -399,7 +413,9 @@ can't fetch MCC's items (checked). It:
   restarts), and `[setup] steamcmd` / `steam_username` into `settings.toml`;
 - can put SteamCMD's folder on your PATH for other tools (`steam path`).
 
-**2 Halo 3's files, 3 the campaign missions, 4 Halo 3: ODST's files**, into this
+**2 Halo 3's files, 3 the campaign missions, 4 Halo 3: ODST's files**, and on Project
+Reclaimer 0.10 **5 Halo: Reach's, 6 Reach's campaign, 7 Halo: Combat Evolved's, 8 Halo
+2's** (from MCC only for now), into this
 folder's shared `game/`, beside what's there (running servers keep running). Each
 lists every way there is, with sizes, before asking:
 

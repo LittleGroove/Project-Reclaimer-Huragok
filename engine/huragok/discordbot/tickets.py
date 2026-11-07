@@ -83,6 +83,7 @@ BUTTON_STYLES = {"appealagain": 1, "lift": 3, "shorten": 1, "dismiss": 2, "mute"
 QUESTIONS = ("reports-", "appeals-", "requests-", "contact-", "tickets-", "calls-", "vergil-name-asked")
 NAME_ASKED = "vergil-name-asked"  # a name with a word of a list that only reports: its two answers are its only buttons
 BUTTONS_PER_ROW = 5
+CARD_OPENS_AFTER_SECONDS = 10  # a strike's card opens this long after the strike at most
 
 
 class Tickets:
@@ -614,7 +615,7 @@ class Tickets:
                 elif wanted == "strike" or wanted in ("whois", "said") or (wanted == "note" and features.BY_KEY["notes"].is_on(config)):
                     names.append(wanted)
             names += after
-            if not asking and not appealing and (str(ticket["kind"]) == "vergil-strike" or (str(ticket["kind"]) == "vergil-heard" and self._struck(player_id))):
+            if not asking and not appealing and (str(ticket["kind"]) == "vergil-strike" or (str(ticket["kind"]) == "vergil-heard" and self.struck_on_card(ticket))):
                 names.append("pardonstrike")  # a strike Vergil got wrong. Unmuting alone leaves it counting
             if str(ticket["kind"]) == "watch-banned-elsewhere":
                 names.append("banall")  # usually what this card is for
@@ -649,12 +650,15 @@ class Tickets:
         rows = self.db.query("SELECT outcome FROM discord_appeals WHERE ticket = ? ORDER BY number DESC LIMIT 1", (number,))
         return not rows or not rows[0]["outcome"]
 
-    def _struck(self, player_id: str) -> bool:
-        """Whether they've a strike to pardon: a card that only heard a word has nothing to take off, until a strike joins it."""
+    def struck_on_card(self, ticket: Any) -> list[str]:
+        """The lists of the strikes that joined this card, still standing: a card that only heard a word has nothing to take off until a strike joins it. A strike from before the card isn't
+        its to pardon (audit 6 November: Pardon strike on a heard word cleared yesterday's strike). The strike a card opens with comes a moment before the card."""
         try:
-            return bool(self.db.query("SELECT 1 FROM automod_strikes WHERE player_id = ? AND pardoned IS NULL LIMIT 1", (player_id.lower(),)))
+            rows = self.db.query("SELECT DISTINCT grp FROM automod_strikes WHERE player_id = ? AND pardoned IS NULL AND time >= ? ORDER BY grp",
+                                 (str(ticket["player_id"] or "").lower(), float(ticket["opened"]) - CARD_OPENS_AFTER_SECONDS))
         except sqlite3.Error:  # Vergil's never run
-            return False
+            return []
+        return [str(row["grp"]) for row in rows]
 
     def _acted_on_report(self, number: int) -> bool:
         return bool(self.db.query("SELECT 1 FROM discord_reports WHERE ticket = ? AND upheld = 1 LIMIT 1", (number,)))

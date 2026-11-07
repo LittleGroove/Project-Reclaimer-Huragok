@@ -14,9 +14,10 @@ from typing import Any, Callable
 from ...core.events import Event
 from ...program.plays import applies_when, check_plays, plays_problem, write_plays
 from ...program.settings import (
-    APPLIES, FOLDER_SETTINGS, GROUPS, SERVER_SETTINGS, can_reset, catalogue, check_path, check_value, display, parse,
-    reset, summary, write,
+    APPLIES, FOLDER_SETTINGS, GROUPS, SERVER_SETTINGS, can_reset, catalogue, check_path, check_value, display, offered,
+    parse, reset, summary, write,
 )
+from ...games.bungie import GAMES
 from ...rcon import masked as mask_console_line
 from ..controllers import Row
 from .base import Screens
@@ -162,9 +163,10 @@ class ManageScreens(Screens):
         server = self._server(settings, row)
         if server is None:
             return
+        version = await self._program_version(settings, server, row)  # a setting its program hasn't isn't offered
         while True:
             try:
-                entries = catalogue(server.config_path, server.name, settings)
+                entries = [e for e in catalogue(server.config_path, server.name, settings) if offered(e[0], version)]
             except (OSError, ValueError) as error:
                 self.note(f"Can't read {server.config_path}: {error}", "red")
                 await self.wait_any_key(8)
@@ -209,8 +211,10 @@ class ManageScreens(Screens):
 
     async def _settings_group(self, settings: Any, server: Any, row: Row, group: tuple[str, str, str]) -> None:
         key, title, what = group
+        version = await self._program_version(settings, server, row)
         while True:
-            entries = [(s, v, w) for s, v, w in catalogue(server.config_path, server.name, settings) if s.group == key]
+            entries = [(s, v, w) for s, v, w in catalogue(server.config_path, server.name, settings)
+                       if s.group == key and offered(s, version)]
             self.heading(server.name, "Settings", title, note=what)
             rows = []
             for setting, value, where in entries:
@@ -249,7 +253,8 @@ class ManageScreens(Screens):
                 return
             text = {"Y": "on", "N": "off", "D": "-"}[text]
         elif setting.kind == "choice":
-            options = [(str(n), choice, "now" if choice == value else "") for n, choice in enumerate(setting.choices, 1)]
+            options = [(str(n), choice, "now" if choice == str(value) else "")  # tick_rate's 60 is a number
+                       for n, choice in enumerate(setting.choices, 1)]
             if resettable:
                 options.append(("D", "use the default", ""))
             picked = await self.choose(f"{setting.name}?", options, back="Esc leaves it")
@@ -367,7 +372,14 @@ class ManageScreens(Screens):
         return version if readable(version) else None
 
     async def _edit_plays(self, settings: Any, server: Any, row: Row) -> None:
+        from ...games.bungie import NEW_GAMES, SINCE
+
         self.heading(server.name, "Settings", "What it plays", note=f"now: {server.plays}")
+        version = await self._program_version(settings, server, row)
+        if version and all(GAMES[key].plays_on(version) for key in NEW_GAMES):
+            self.note(f"Project Reclaimer {SINCE} plays Reach's, Combat Evolved's and Halo 2's maps too (2, or in a "
+                      "playlist). Their campaigns and Reach's Firefight: not yet (the program has no setting for "
+                      "them).")
         choice = await self.choose("Play what?", [
             ("1", "A playlist", "players vote on a rotation of 3 or more games; from the next vote"),
             ("2", "One map and game type", "the same game every time"),
@@ -408,11 +420,10 @@ class ManageScreens(Screens):
             if catalogue_ is None:
                 await self.wait_any_key(6)
                 return
-            maps = await self._pick(catalogue_.all_maps, "maps", groups=self._map_groups(catalogue_), single=True)
+            maps = await self._pick_maps(catalogue_, version, single=True)
             if not maps:
                 return
-            games = await self._pick(catalogue_.all_games, "game types or variants",
-                                     groups=self._game_groups(catalogue_), single=True)
+            games = await self._pick_game_types(catalogue_, maps, single=True)  # only what that map plays
             if not games:
                 return
             values = {"map": maps[0].reference, "game": games[0].reference}

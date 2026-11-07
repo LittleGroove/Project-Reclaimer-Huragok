@@ -33,7 +33,7 @@ from .rcon import RconClient
 from .servers.backends import make_backend
 from .servers.fleet import Fleet, Lifecycle
 from .servers.keepalive import Keepalive
-from .servers.logs import FileWatcher
+from .servers.logs import FileWatcher, read_status
 from .servers.server import BUSY, SETTLED, ServerManager
 from .servers.state import Player, ServerState, StateTracker
 
@@ -92,6 +92,7 @@ class Superintendent:
         bus.subscribe("server.started", self._wake_rcon)
         bus.subscribe("log.online", self._note_address)
         bus.subscribe("server.started", self._note_address)
+        bus.subscribe("rcon.connected", self._note_address)
         bus.subscribe("rcon.control", self._note_reload)
         bus.subscribe("log.ballot_picked", self._note_pick)
 
@@ -226,9 +227,17 @@ class Superintendent:
             client.wake()
 
     def _note_address(self, event: Event) -> None:
+        """Where players join, as the server says it as it starts ("players join at …"). 0.10's log doesn't say it:
+        its status.json does, read as it starts taking joins and again as its console signs in (a file from the run
+        before is put right then, and a server picked up already running gets one too)."""
         state = self.states.get(event.server or "")
-        if state is not None and event.get("address"):
-            state.address = str(event.get("address"))
+        address = event.get("address")
+        if not address and event.name in ("log.online", "rcon.connected"):
+            watcher = self.watchers.get(event.server or "")
+            status = read_status(watcher.server.status_path) if watcher is not None else None
+            address = status.get("address") if status is not None else None
+        if state is not None and address and isinstance(address, str):
+            state.address = address
 
     def _note_pick(self, event: Event) -> None:
         """A game players picked on a ballot, kept for what's popular and what never gets played (decision 7)."""

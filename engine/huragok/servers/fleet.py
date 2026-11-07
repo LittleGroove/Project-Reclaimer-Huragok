@@ -351,6 +351,14 @@ class Lifecycle:
         manager = self.fleet.managers.get(server)
         return bool(manager and manager.cancel().ok)
 
+    def call_off(self, server: str, reason: str) -> bool:
+        """The restart planned for `reason` called off, as what it was for is done another way. One planned since for
+        anything else stays, and a countdown already under way runs on: its players have been warned."""
+        manager = self.fleet.managers.get(server)
+        if manager is None or manager.phase != "running" or manager.planned is None or manager.planned.reason != reason:
+            return False
+        return manager.cancel().ok
+
     def add_job(self, server: str, job: StoppedJob) -> None:
         """Work that needs the server stopped, run at its next start (a restart's, or a person's)."""
         manager = self.fleet.managers.get(server)
