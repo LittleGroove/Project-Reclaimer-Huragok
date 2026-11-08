@@ -167,7 +167,8 @@ def test_a_moderators_strike_that_would_ban_goes_to_the_admins(tmp_path: Path, r
             await fake.chat(MOD, "Mod", "!strike bravo slurs again")
             await wait_for(lambda: "Sent to the admins as #1" in told(fake, MOD))
             assert not fake.named("ban") and len(huragok.storage.query("SELECT 1 FROM automod_strikes")) == 1
-            assert "asks an admin, #1" in told(fake, ADMIN) and "asks an admin" not in told(fake, MOD).replace("Sent to the admins", "")
+            await wait_for(lambda: "asks an admin, #1" in told(fake, ADMIN))  # the admins are told after the moderator
+            assert "asks an admin" not in told(fake, MOD).replace("Sent to the admins", "")
             assert any(e.name == "commands.request" and e.get("needs") == "admin" for e in seen)
             await asyncio.sleep(3.5)
             await fake.chat(MOD, "Mod", "!requests")

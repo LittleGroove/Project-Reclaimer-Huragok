@@ -29,9 +29,18 @@ def test_free_ports_are_never_the_real_servers_nor_in_use(monkeypatch: pytest.Mo
 
     handed = iter([49176, 49170, 49199, 40001, 49185, 40002, 40003])
     monkeypatch.setattr(conftest, "_ports_in_use", lambda: {40002})
+    udp_taken = {40006}  # Windows can hold a port's UDP side apart from its TCP side
+    datagram = socket.SOCK_DGRAM
 
     class Socket:
+        def __init__(self, family: int = 0, kind: int = 0) -> None:
+            self.udp = kind == datagram
+
         def bind(self, address: tuple[str, int]) -> None:
+            if self.udp:  # the game's side of a port already picked: taken or not
+                if address[1] in udp_taken:
+                    raise OSError("in use")
+                return
             self.port = next(handed)
 
         def getsockname(self) -> tuple[str, int]:
@@ -40,13 +49,21 @@ def test_free_ports_are_never_the_real_servers_nor_in_use(monkeypatch: pytest.Mo
         def close(self) -> None:
             pass
 
+        def __enter__(self) -> "Socket":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            pass
+
     monkeypatch.setattr(socket, "socket", Socket)
     assert free_ports(2) == [40001, 40003]
+    handed = iter([40006, 40007])  # its UDP side held: the next one
+    assert free_port() == 40007
     handed = iter([49180, 40002, 40004])
     assert free_port() == 40004
     handed = iter([45700, 40005])  # Huragok's own relay ports: an address there reads as a relay's (conftest.RELAY_PORTS)
     assert free_port() == 40005
-    handed = iter([49176] * 100)
+    handed = iter([49176] * 1000)
     with pytest.raises(RuntimeError, match="keeps handing out ports from 49170 to 49199"):
         free_port()
 

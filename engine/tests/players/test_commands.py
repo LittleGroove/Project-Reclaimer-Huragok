@@ -419,8 +419,12 @@ def test_bans_and_kicks_are_lists_to_lift_from_by_number(tmp_path: Path, run) ->
             await wait_for(lambda: any(t.startswith("@1 Bravo (kicked") for t in tells_to(fake, MOD)))
             listed = next(t for t in tells_to(fake, MOD) if t.startswith("@1 Bravo"))
             assert "by Mod: spamming; out 9m more" in listed or "by Mod: spamming; out 10m more" in listed
+            answers = len(tells_to(fake, MOD))
             await fake.chat(MOD, "Mod", "!pardon @1")
             assert (await wait_for(lambda: fake.named("pardon")))[0]["args"] == [BRAVO]
+            # Its answer comes once the pardon is done, its event on the way to the list: asked before it, the list
+            # could still have them (CI's slow runner).
+            await wait_for(lambda: len(tells_to(fake, MOD)) > answers)
             await fake.chat(FACULTY, "Faculty", "!kicks")  # pardoned: off the list
             await wait_for(lambda: any(t.startswith("Nobody has been kicked here") for t in tells_to(fake, FACULTY)))
 
