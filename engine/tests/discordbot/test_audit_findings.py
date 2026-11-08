@@ -827,7 +827,8 @@ def test_after_the_bot_is_removed_and_added_back_a_card_is_posted_again_once(tmp
             part.tickets.add_line(1, "something happened")
             part.tickets.show(1)
             await wait_for(lambda: len(posts_in(fake, STAFF)) == 2, timeout=15)
-            assert part.tickets.get(1)["message"] == posts_in(fake, STAFF)[1]["id"]
+            # The card's new message is kept once Discord has answered its post: a moment after the post is there.
+            await wait_for(lambda: part.tickets.get(1)["message"] == posts_in(fake, STAFF)[1]["id"], timeout=10)
             assert posts_in(fake, STAFF)[0]["id"] == post["id"]  # the old one stays: the bot can't touch it without Manage Messages
             part.tickets.show(1)
             await wait_for(lambda: fake.edits, timeout=15)  # and the new one edits as any other

@@ -58,10 +58,12 @@ def test_whois_calls_it_a_kick(tmp_path: Path, run: Any) -> None:
             await rcon.chat(FACULTY, "Faculty", "!kick Alice 7d team killing")
             await wait_for(lambda: rows_of(huragok, "ban"), timeout=10)
             await rcon.chat(FACULTY, "Faculty", f"!whois {ALICE}")
-            await wait_for(lambda: any("Record:" in line for line in tells_to(rcon, FACULTY)), timeout=10)
-            said = "\n".join(tells_to(rcon, FACULTY))
-            assert "Record: 1 kick" in said and ": kick 7d" in said and "!kick" in said
-            assert "1 ban" not in said
+            # The reply is several lines, each a tell of its own: wait for the last, not the first that names the record.
+            def said() -> str:
+                return "\n".join(tells_to(rcon, FACULTY))
+
+            await wait_for(lambda: all(part in said() for part in ("Record: 1 kick", ": kick 7d", "!kick")), timeout=10)
+            assert "1 ban" not in said()
 
     run(scenario())
 

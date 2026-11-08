@@ -68,8 +68,9 @@ def test_a_word_starting_with_a_hash_is_refused_and_said_so(tmp_path: Path, run:
         async with running(tmp_path, settings(tmp_path, words)) as (_, fake, _seen):
             await everyone_joins(fake)
             await fake.chat(FACULTY, "Faculty", typed)
-            await wait_for(lambda: "Not added" in told(fake, FACULTY), timeout=10)
-            assert "starts with #" in told(fake, FACULTY) and "badtag also catches #badtag" in told(fake, FACULTY)
+            # Its two lines come as two tells: wait for both.
+            await wait_for(lambda: "Not added" in told(fake, FACULTY) and "starts with #" in told(fake, FACULTY)
+                           and "badtag also catches #badtag" in told(fake, FACULTY), timeout=10)
             assert (tmp_path / "automod.txt").read_text(encoding="utf-8") == words
 
     run(scenario())

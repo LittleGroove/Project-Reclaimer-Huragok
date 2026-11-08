@@ -137,6 +137,17 @@ def _ports_in_use() -> set[int]:
         return set()
 
 
+def _udp_free(port: int) -> bool:
+    """Whether the game's side of the port, UDP on every address, can be had: what `new` asks too (port_free).
+    Windows can hold UDP ports apart from TCP's (CI's runner handed out TCP ports whose UDP side `new` refused)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(("0.0.0.0", port))
+    except OSError:
+        return False
+    return True
+
+
 def free_ports(count: int) -> list[int]:
     """Several ports nothing uses right now (TCP for RCON, UDP for the game), all different, none of
     REAL_SERVER_PORTS.
@@ -148,15 +159,16 @@ def free_ports(count: int) -> list[int]:
     ports: list[int] = []
     try:
         while len(ports) < count:
-            if len(held) >= count + len(REAL_SERVER_PORTS):  # a relay port's a rare pick: no more tries for those
+            # A relay port, or a run of ports whose UDP side is reserved, is a rare pick: no more tries than this
+            if len(held) >= count + len(REAL_SERVER_PORTS) + 500:
                 raise RuntimeError(f"the system keeps handing out ports from {REAL_SERVER_PORTS.start} to "
                                    f"{REAL_SERVER_PORTS.stop - 1}, or ports in use: "
-                                   f"{[s.getsockname()[1] for s in held]}")
+                                   f"{[s.getsockname()[1] for s in held][-20:]}")
             sock = socket.socket()
             held.append(sock)
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-            if port not in REAL_SERVER_PORTS and port not in RELAY_PORTS and port not in in_use:
+            if port not in REAL_SERVER_PORTS and port not in RELAY_PORTS and port not in in_use and _udp_free(port):
                 ports.append(port)
         return ports
     finally:

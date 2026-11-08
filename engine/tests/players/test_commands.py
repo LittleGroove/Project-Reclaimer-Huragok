@@ -1083,7 +1083,7 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             await said(ADMIN, "(a moderator at most)")
             await fake.chat(FACULTY, "Faculty", "!promote bravo")
             await wait_for(lambda: role() == "admin" and BRAVO in fake.admins)
-            assert BRAVO not in sup.settings.permissions.members["moderator"]
+            await wait_for(lambda: BRAVO not in sup.settings.permissions.members["moderator"])  # the file read back
             await fake.chat(FACULTY, "Faculty", "!promote bravo")
             await said(FACULTY, "Bravo is an admin: as high as a promotion goes")
             # Down: one step, only by someone above them.
@@ -1156,6 +1156,12 @@ def test_seen_players_by_any_name_in_any_case_and_by_a_long_enough_id_start() ->
 def _block(tmp_path: Path) -> dict[str, Any]:
     from huragok.core.tomledit import server_blocks
 
+    # Read as Huragok replaces the file, Windows refuses it for a moment (CI's runner): look again.
+    for _ in range(100):
+        try:
+            return next(b for b in server_blocks(tmp_path / "server" / "dedicated.toml") if b["name"] == SERVER)
+        except PermissionError:
+            time.sleep(0.02)
     return next(b for b in server_blocks(tmp_path / "server" / "dedicated.toml") if b["name"] == SERVER)
 
 

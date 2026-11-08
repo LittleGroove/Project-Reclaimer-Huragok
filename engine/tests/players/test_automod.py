@@ -1650,7 +1650,9 @@ def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Pat
             assert second[:2] == [BRAVO, "2h"]
             assert second[2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2): kicked for 2 hours, "
                                  "then muted for 1 day. Next time: kicked for 2 hours.")
-            assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "kick 2h + mute 1d"]
+            # The strike's event comes after its kick is sent: waited for.
+            await wait_for(lambda: [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d",
+                                                                                                "kick 2h + mute 1d"])
             await fake.leave(4)  # the server takes them out
             await wait_for(lambda: all(p.id != BRAVO for p in sup.superintendent.states[SERVER].players.values()))
             row = part.active_mute(BRAVO)

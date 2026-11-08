@@ -291,7 +291,7 @@ def test_setup_commands_refuse_with_the_reason(tmp_path: Path, capsys) -> None:
         text = both(capsys)
         if made == 0 or not ("already listens on port" in text or "is used by another server here" in text):
             break
-    assert made == 0
+    assert made == 0, text[-3000:]  # what `new` said: a CI run lost this with nothing to go by
     assert "Made" in text and "Feet first into hell." in text and "Start Huragok to run it:" in text
 
 

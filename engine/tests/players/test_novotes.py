@@ -47,8 +47,10 @@ def test_a_player_whose_votes_are_away_has_each_vote_cancelled_until_given_back(
             assert (await wait_for(lambda: fake.named("cancelvote")))[0]["by"] == "Vergil"
             await wait_for(lambda: told(fake, BRAVO, "[-_-] OBEY POSTED LIMITS! Your vote was cancelled: Mod took your "
                                                      "votes away for another 9 minutes"))
-            assert told(fake, BRAVO, "(spamming votes). You can still vote on other players' votes.")
-            assert "cancelled Bravo's vote to end the game: their votes are away for another" in caplog.text
+            # Each line of a reply is a tell of its own, and the log line comes beside them: waited for, not read at once.
+            await wait_for(lambda: told(fake, BRAVO, "(spamming votes). You can still vote on other players' votes."))
+            await wait_for(lambda: "cancelled Bravo's vote to end the game: their votes are away for another"
+                           in caplog.text)
 
             # Calling again at once: cancelled again, but told only once in a while.
             await fake.event("vote", state="called", subject="kick Alice", caller="Bravo")
@@ -63,12 +65,12 @@ def test_a_player_whose_votes_are_away_has_each_vote_cancelled_until_given_back(
             # The list, and giving them back by its @number.
             await fake.chat(MOD, "Mod", "!novotes")
             await wait_for(lambda: told(fake, MOD, "@1 #4 Bravo ("))
-            assert told(fake, MOD, "votes away for another 9 minutes, by Mod 0s ago: spamming votes")
-            assert told(fake, MOD, "!allowvote @number gives one their votes back.")
+            await wait_for(lambda: told(fake, MOD, "votes away for another 9 minutes, by Mod 0s ago: spamming votes"))
+            await wait_for(lambda: told(fake, MOD, "!allowvote @number gives one their votes back."))
             await fake.chat(MOD, "Mod", "!allowvote @1")
             await wait_for(lambda: told(fake, MOD, "Bravo can call votes again."))
-            assert told(fake, BRAVO, "[^_^] GOOD CITIZENS DO THEIR PART! Mod gave your votes back: you can call votes "
-                                     "again.")
+            await wait_for(lambda: told(fake, BRAVO, "[^_^] GOOD CITIZENS DO THEIR PART! Mod gave your votes back: you "
+                                                     "can call votes again."))
             assert rows(sup)[0]["lifted_by"] == "Mod"
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             await fake.chat(MOD, "Mod", "!allowvote Bravo")  # handled after the vote: nothing to give back
