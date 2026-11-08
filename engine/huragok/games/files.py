@@ -153,6 +153,20 @@ def plays_on(kind: str, version: str | None) -> bool:
     return GAMES[GAME_OF_KIND[kind]].plays_on(version)
 
 
+def odst_needs_campaign(version: str | None) -> bool:
+    """0.10 plays ODST only with Halo 3's campaign beside it: an ODST server whose game folder lacks it stops at
+    `halo3/maps/info/halo3.campaign: The system cannot find the file`, then `Halo 3's campaign missions are not
+    installed`, and `init --maps odst` brings neither (probed on 0.10.1, 7 November 2026). 0.9 didn't need it.
+    Unknown (None): 0.10's way, the version every server must be on now."""
+    if version is None:
+        return True
+    try:
+        numbers = tuple(int(n) for n in re.findall(r"\d+", version)[:2])
+    except ValueError:
+        return True
+    return len(numbers) < 2 or numbers >= (0, 10)
+
+
 def kinds_for(version: str | None) -> list[str]:
     """The kinds program `version` can use (Reach, CE and Halo 2 from 0.10, ODST from 0.9.19)."""
     return [kind for kind in KINDS if plays_on(kind, version)]
@@ -191,11 +205,13 @@ SKIPPED = {"fmod", "waves", "bink"}  # sound and video: a server plays neither
 
 def has_campaign(game: Path) -> bool:
     maps = game / "halo3" / "maps"
-    return all((maps / f"{name}.map").is_file() for name in ("campaign", "010_jungle", "040_voi"))
+    return all((maps / f"{name}.map").is_file() for name in ("campaign", "010_jungle", "040_voi"))         and (maps / "info" / "halo3.campaign").is_file()  # 0.10 reads it (ODST's start stops without it)
 
 
 NO_MAP = re.compile(r'no multiplayer map "([^"]+)" is installed')  # 0.10's word for a map its game folder lacks
 REACH_NEEDS_CAMPAIGN = "Halo 3's campaign is needed to host a game of Reach's"  # `--maps reach` brings it
+# 0.10, an ODST server without Halo 3's campaign (`--maps campaign` brings both).
+NO_CAMPAIGN = re.compile(r"Halo 3's campaign missions are not installed|halo3[/\\]maps[/\\]info[/\\]halo3\.campaign: ")
 
 
 def kinds_in_failure(lines: list[str]) -> list[str]:
@@ -233,12 +249,16 @@ def kinds_in_failure(lines: list[str]) -> list[str]:
             add(game.key)
     if REACH_NEEDS_CAMPAIGN in text:
         add("reach")
+    if NO_CAMPAIGN.search(text):
+        add("campaign")
     return kinds
 
 
-def needed(plays_kind: str) -> list[str]:
-    """The kinds of game files a server needs for what it plays: Halo 3's always, first."""
-    return ["halo3", *(["odst"] if plays_kind == "odst" else []), *(["campaign"] if plays_kind == "campaign" else [])]
+def needed(plays_kind: str, version: str | None = None) -> list[str]:
+    """The kinds of game files a server needs for what it plays: Halo 3's always, first. ODST on 0.10 (or an unknown
+    version) needs Halo 3's campaign too (odst_needs_campaign)."""
+    campaign = plays_kind == "campaign" or plays_kind == "odst" and odst_needs_campaign(version)
+    return [k for k in KINDS if k == "halo3" or k == "odst" and plays_kind == "odst" or k == "campaign" and campaign]
 
 
 def _map_kinds(entry: dict[str, Any]) -> list[str]:
@@ -273,7 +293,7 @@ def needed_by(block: dict[str, Any], folder: Path | None = None, version: str | 
     from .plays import plays_kind
 
     kind = plays_kind(block)
-    found = needed(kind)
+    found = needed(kind, version)
     if kind == "playlist" and folder is not None and isinstance(block.get("playlist"), str):
         found += playlist_kinds(folder / block["playlist"])
     elif kind in ("map", "variant"):
@@ -281,6 +301,8 @@ def needed_by(block: dict[str, Any], folder: Path | None = None, version: str | 
     elif kind == "reach":  # 0.10's undocumented `reach = { … }` (`--maps reach-campaign`: "for a Reach co-op server")
         setup = block["reach"] if isinstance(block["reach"], dict) else {}
         found += ["reach", *(["reach-campaign"] if setup.get("campaign") else [])]
+    if "odst" in found and odst_needs_campaign(version):
+        found.append("campaign")
     return [k for k in KINDS if k in found and plays_on(k, version)]
 
 

@@ -170,11 +170,38 @@ CONSOLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Workshop items being fetched or checked: "Workshop 2984061723: acquiring from Steam" / "ready (…)" /
     # "installed" / an Error line, and a mod map the server can't use.
     ("server.workshop", re.compile(CLOCK + r"(?:Error: )?Workshop (?P<item>\d+): (?P<text>.+?)\.?$")),
-    ("server.map_skipped", re.compile(CLOCK + r"Skipped map package (?P<path>.+?): (?P<reason>.+?)\.?$")),
+    ("server.map_skipped", re.compile(CLOCK + r"(?:\[[a-z]+\] )?Skipped map package (?P<path>.+?): (?P<reason>.+?)\.?$")),
+    # 0.10's supervisor: a tag first, a server named in quotes (strings of the 0.10.1 program; 0.10.0's alike).
+    ("server.started", re.compile(
+        CLOCK + r'\[server\] "(?P<server>[^"]+)" on port (?P<port>\d+): (?P<game>.+?) \(pid (?P<pid>\d+)\)$')),
+    ("server.crashed", re.compile(
+        CLOCK + r'\[server\] "(?P<server>[^"]+)" stopped after (?P<uptime>.+?) \((?P<reason>[^)]*)\): starting again in '
+                r'(?P<wait>.+?)\. See')),
+    ("server.crashed", re.compile(
+        CLOCK + r'\[server\] "(?P<server>[^"]+)" (?P<reason>stopped answering|ran out of memory again)\b')),
+    ("server.crashed", re.compile(
+        CLOCK + r'\[server\] "(?P<server>[^"]+)":? (?P<reason>the engine ended|stopped: .+?); starting it again with the '
+                r'next game')),
+    ("server.reloaded", re.compile(CLOCK + r"\[reload\] Configuration reloaded(?:: nothing changed)?\.")),
+    ("server.all_stopped", re.compile(CLOCK + r"\[server\] every server is stopped")),
+    ("server.updating", re.compile(
+        CLOCK + r"\[update\] Project Reclaimer v?(?P<version>\d[\w.+-]*) is in place: stopping every server")),
+    ("server.self_update", re.compile(
+        CLOCK + r"\[update\] (?P<text>(?:automatic updates: checking|auto_update is on, but this build has no release "
+                r"feed).*?)\.?$")),
+    ("server.update_downloading", re.compile(
+        CLOCK + r"\[update\] downloading Project Reclaimer v?(?P<version>\d[\w.+-]*?)\.*$")),
+    ("server.update_failed", re.compile(
+        CLOCK + r"\[update\] (?:the automatic update failed, trying again in an hour|v?(?P<version>\d[\w.+-]*) was not "
+                r"put in place, the servers keep running): (?P<reason>.+?)\.?$")),
+    ("server.workshop", re.compile(CLOCK + r"\[workshop\] (?P<item>\d+): (?P<text>.+?)\.?$")),
 ]
 
 CRASH_KINDS = [
     ("hang", "stopped responding"),
+    ("hang", "stopped answering"),  # 0.10
+    ("memory", "out of memory"),  # 0.10
+    ("engine_exit", "the engine ended"),  # 0.10
     ("menus", "return to MCC's menus"),
     ("error", "could not recover"),
     ("panic", "panic"),
@@ -256,6 +283,7 @@ def parse_console_line(line: str) -> tuple[str, dict[str, Any]] | None:
             data = _clean(match.groupdict())
             if name == "server.crashed":
                 data["kind"] = next((k for k, text in CRASH_KINDS if text in data["reason"]), "other")
+                data.setdefault("why", data["reason"])  # what the crash alert (Discord) says
             return name, data
     return None
 

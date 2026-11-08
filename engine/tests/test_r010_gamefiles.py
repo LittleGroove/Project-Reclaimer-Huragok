@@ -152,7 +152,8 @@ def test_a_server_needs_halo_3_and_each_game_its_maps_are_from(tmp_path: Path) -
     assert files.needed_by({"map": "halo2_lockout"}) == ["halo3", "halo2"]
     assert files.needed_by({"map": "Lockout"}) == ["halo3"]  # Halo 3's Blackout, by its file name
     assert files.needed_by({"map": "halo1_bloodgulch_6381b55e"}) == ["halo3", "halo1"]  # a CE mod's map
-    assert files.needed_by({"odst": {"mode": "firefight"}}) == ["halo3", "odst"]
+    assert files.needed_by({"odst": {"mode": "firefight"}}) == ["halo3", "campaign", "odst"]  # 0.10: Halo 3's too
+    assert files.needed_by({"odst": {"mode": "firefight"}}, version="0.9.23") == ["halo3", "odst"]
     assert files.needed_by({"reach": {"campaign": True}}) == ["halo3", "reach", "reach-campaign"]
     ref = playlist(tmp_path, {"map": "Guardian", "game": "Slayer"}, {"map": "Blood Gulch", "game": "ctf"},
                    {"map": "Sword Base", "game": "headhunter_054"}, {"campaign": {"mission": 3010}},
@@ -164,7 +165,7 @@ def test_a_server_needs_halo_3_and_each_game_its_maps_are_from(tmp_path: Path) -
     game = halo3(tmp_path / "game")
     assert files.missing(game, files.needed_by(block, tmp_path)) == ["campaign", "reach", "halo1", "halo2"]
     assert files.missing(tmp_path / "none", ["halo3", "reach"]) == ["halo3"]  # Halo 3's first, alone
-    assert files.missing(game, "odst") == ["odst"]  # the old way still works
+    assert files.missing(game, "odst") == ["campaign", "odst"]  # the old way still works (0.10's ODST: the campaign too)
 
 
 def test_a_failed_start_says_which_games_files_it_lacked() -> None:

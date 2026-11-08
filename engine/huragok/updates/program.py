@@ -76,7 +76,10 @@ class ProgramUpdateService:
         self.announced: str | None = None
         self.installing = False
         self.last_installed: str | None = None
-        self.versions: dict[str, str] = {}  # each server's version when its console last signed in
+        self.versions: dict[str, str] = {}  # each server's release when its console last signed in (identify())
+        self.said: dict[str, str] = {}  # the version each server's console gave then (0.10.1 says 0.10.0)
+        self.put_in_place: dict[str, str] = {}  # server -> the release its own updater said it put in place
+        self._told: dict[str, tuple[str, str]] = {}  # server -> (said, release) logged once
         self.since: dict[str, float] = {}  # each server's start as seen from here: its own updater looks then
         self.updater: dict[str, str] = {}  # what each server's console said about its own updater (on / off)
         self.failed: dict[str, str] = {}  # the reason each server's own update last failed
@@ -107,8 +110,53 @@ class ProgramUpdateService:
         return releases.self_updating(self.settings)
 
     def version_of(self, name: str) -> str | None:
+        """The release it runs: what its console said as Huragok signed in, or its program file's release when
+        that is a release which calls itself that (identify())."""
+        if name in self.versions:
+            return self.versions[name]
         client = self.clients.get(name)
-        return self.versions.get(name) or (client.version if client is not None else None) or None
+        said = str(client.version or "") if client is not None else ""
+        return self.identify(name, said) if said else None
+
+    def identify(self, name: str, said: str) -> str:
+        """The release a server runs whose console said `said` (Project Reclaimer 0.10.1's console says 0.10.0):
+        first what the running server writes in its status.json (`health.version`, 0.10.1 on: its release), while
+        that file is fresh; else its program file's checksum (releases.running_release); else what it said."""
+        server = self._server(name)
+        state = self.states.get(name)
+        pid = state.pid if state is not None and isinstance(getattr(state, "pid", None), int) else None
+        reported = status_release(server.status_path, pid) if server is not None else None
+        if reported is not None:
+            version, how = reported, "its status.json says so"
+        else:
+            path = releases.program_of(self.settings, server) if server is not None else None
+            version, how = releases.running_release(self.settings, path, said), "its program file is that release's " \
+                                                                                  "(by its checksum)"
+        if version != said and self._told.get(name) != (said, version):
+            self._told[name] = (said, version)
+            log.info("[%s] Project Reclaimer %s: %s, though its console gives its version as %s", name, version, how,
+                     said)
+        return version
+
+    def _learn_what_files_say(self) -> None:
+        """A thread's work: each signed-in server's program file that Huragok knows the release of, asked once what
+        it says it is (releases.learn_says), so identify() can tell whether the server runs it."""
+        for name in list(self.said):
+            server = self._server(name)
+            path = releases.program_of(self.settings, server) if server is not None else None
+            if path is not None:
+                releases.learn_says(self.settings, path)
+
+    def _identify_again(self) -> None:
+        """After Huragok learns a release's checksum: each running server's release, from what it said as it signed
+        in. One that turns out to be on the release Huragok was installing for it is done (no restart for it)."""
+        for name, said in list(self.said.items()):
+            version = self.identify(name, said)
+            if version == self.versions.get(name):
+                continue
+            self.versions[name] = version
+            if name in self.taken and not self.behind(name, self.taken[name]):
+                self._done(name)
 
     def behind(self, name: str, version: str | None = None) -> bool:
         """Its running version is older than `version` (the newest release seen); False while it isn't known."""
@@ -131,7 +179,8 @@ class ProgramUpdateService:
     def _on_self_update(self, event: Event) -> None:
         """At its start the server says whether its own updater is on."""
         name, text = event.server or "", str(event.get("text") or "")
-        if text.startswith("Automatic updates enabled"):
+        # 0.9: "Automatic updates enabled: …"; 0.10: "[update] automatic updates: checking now and hourly; …"
+        if text.lower().startswith(("automatic updates enabled", "automatic updates: checking")):
             self.updater[name] = "on"
             self.failed.pop(name, None)
             return
@@ -159,18 +208,29 @@ class ProgramUpdateService:
         self.review(only=name)
 
     def _on_updating(self, event: Event) -> None:
-        """'Update installed; restarting all servers.': the server's own auto_update is at work."""
+        """'Update installed; restarting all servers.' (0.9), '[update] Project Reclaimer 0.10.1 is in place: stopping
+        every server to start it' (0.10): the server's own auto_update is at work."""
         if event.server:
             self.updated_itself.add(event.server)
             self.failed.pop(event.server, None)
+            if event.get("version"):  # 0.10 names the release: its program file is that release's from now on
+                self.put_in_place[event.server] = str(event.get("version")).lstrip("v")
         log.warning("[%s] %s Project Reclaimer installed a new release by itself (auto_update): its game ended and "
                     "it is back in a few seconds", event.server, NOTICES["dust"])
 
     def _on_connected(self, event: Event) -> None:
-        name, version = event.server or "", str(event.get("version") or "")
-        if not version:
+        name, said = event.server or "", str(event.get("version") or "")
+        if not said:
             return
         self.since.setdefault(name, time.time())
+        installed = self.put_in_place.pop(name, None)
+        server = self._server(name)
+        if installed and server is not None and releases.readable(installed):
+            path = releases.program_of(self.settings, server)  # what its own updater put in place, and now runs
+            if path is not None and _same_line(said, installed):
+                releases.remember_file(self.settings, path, installed, says=said)
+        version = self.identify(name, said)
+        self.said[name] = said
         before, self.versions[name] = self.versions.get(name), version
         if name in self.taken:
             if not self.behind(name, self.taken[name]):
@@ -290,9 +350,9 @@ class ProgramUpdateService:
         unknown = f"`{setting}`" if what == "field" else f"the value `{setting}`"
         try:
             program = releases.program_of(self.settings, server)
-            mine = await asyncio.to_thread(releases.program_version, self.settings, program) if program else None
             if self.newest is None:
-                await self.check()
+                await self.check()  # first: it learns the newest release's checksum, which may be this file's
+            mine = await asyncio.to_thread(releases.file_version, self.settings, program) if program else None
             release = self.newest
             if release is None:
                 log.warning("[%s] it won't start: its program doesn't know %s in its %s, and the newest release "
@@ -501,12 +561,13 @@ class ProgramUpdateService:
         self.first_seen.pop(pulled, None)
 
     def copies_behind(self, version: str) -> list[Path]:
-        """The program files the servers with auto_update off run whose own `--version` is older than `version`
-        (one older than its dedicated.toml can't even start, so it never reports a version over RCON)."""
+        """The program files the servers with auto_update off run that are older than `version`: by their checksum
+        when Huragok knows the file, else their own `--version` (one older than its dedicated.toml can't even start,
+        so it never reports a version over RCON)."""
         runs = {releases.program_of(self.settings, s) for s in self.settings.servers if s.name not in self.self_updating()}
         behind = []
         for path in sorted(p for p in runs if p is not None):
-            theirs = releases.program_version(self.settings, path)
+            theirs = releases.file_version(self.settings, path)
             if releases.readable(theirs) and parse_version(str(theirs)) < parse_version(version):
                 behind.append(path)
         return behind
@@ -540,7 +601,12 @@ class ProgramUpdateService:
     # Releases -----------------------------------------------------------------------------------
 
     def running_versions(self) -> dict[str, str]:
-        return {name: client.version for name, client in self.clients.items() if client.version}
+        """Each running server's release (version_of: 0.10.1 is 0.10.1 here, though its console says 0.10.0)."""
+        found = {}
+        for name, client in self.clients.items():
+            if client.version and (version := self.version_of(name)):
+                found[name] = version
+        return found
 
     def oldest_running(self) -> str | None:
         versions = []
@@ -594,6 +660,11 @@ class ProgramUpdateService:
             log.info("The newest server program release has no version number (%s)", release.version or "empty")
             return None
         self.last_error = ""
+        if release.exe_sha256 and not releases.is_archive(release.exe_name):  # Linux's own: the archive's checksum
+            if await asyncio.to_thread(releases.remember_release, self.settings, release.exe_sha256, release.version):
+                log.info("Project Reclaimer %s's program file is known by its checksum from now on", release.version)
+        await asyncio.to_thread(self._learn_what_files_say)
+        self._identify_again()  # before anyone is judged behind: a server may say an older version than it runs
         self._follow_latest(release)
         self.first_seen.setdefault(release.version, time.time())
         self.review()
@@ -729,3 +800,39 @@ class ProgramUpdateService:
 
 def _hours(hours: float) -> str:
     return f"{hours:g} hour{'s' if hours != 1 else ''}"
+
+
+STATUS_FRESH = 30.0  # seconds: 0.10 writes status.json every 2 s; older, it is a stopped process's
+
+
+def status_release(path: Path, pid: int | None = None) -> str | None:
+    """The release a running 0.10.1+ server reports in its status.json (`health.version`: "0.10.1", where its console
+    and --version say 0.10.0), when the file was written in the last STATUS_FRESH seconds and, with `pid` (the server
+    process the console named as it started), by that process: never the one before its restart. None otherwise, and
+    for 0.9 (no health block)."""
+    import json
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if pid is not None and data.get("pid") != pid:
+        return None
+    health, updated = data.get("health"), data.get("updated")
+    version = health.get("version") if isinstance(health, dict) else None
+    if not isinstance(version, str) or not releases.readable(version):
+        return None
+    if not isinstance(updated, (int, float)) or isinstance(updated, bool) or abs(time.time() - updated) > STATUS_FRESH:
+        return None
+    return version
+
+
+def _same_line(said: str, release: str) -> bool:
+    """A program that says `said` can be release `release`: the same x.y, and not newer (0.10.1 says 0.10.0)."""
+    try:
+        mine, theirs = parse_version(said), parse_version(release)
+    except UpdateError:
+        return False
+    return mine[:2] == theirs[:2] and mine <= theirs

@@ -154,12 +154,13 @@ def missing_kinds(paths: ServerPaths, plays_kind: str) -> list[str]:
 
 
 def server_version(settings: Settings, server: ServerConfig) -> str | None:
-    """The version of the program the server runs (its `--version`, asked once per file), or None."""
-    from ..program.releases import program_of, program_version, readable
+    """The release of the program the server runs (by its checksum when Huragok knows the file, else its
+    `--version`, asked once per file: 0.10.1 says 0.10.0), or None."""
+    from ..program.releases import file_version, program_of, readable
 
     try:
         program = program_of(settings, server)
-        version = program_version(settings, program) if program is not None else None
+        version = file_version(settings, program) if program is not None else None
     except OSError:
         return None
     return version if readable(version) else None

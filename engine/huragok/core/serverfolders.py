@@ -25,6 +25,7 @@ SERVERS_FOLDER = "SERVERS"
 
 
 IGNORED_PREFIXES = (".", "_")  # SERVERS/.something and SERVERS/_something are never servers (set aside, being made)
+INSTANCE_SLACK = 120.0  # seconds: 0.9 writes instance.json and rcon-host.key within moments of each other at a start
 
 
 @dataclass(frozen=True)
@@ -94,10 +95,28 @@ class ServerConfig:
     def log_path(self) -> Path:
         return self.data_dir / "server.log"
 
+    def instance_current(self) -> bool:
+        """data/<server>/instance.json is the running server's: 0.9 writes it, with rcon-host.key, as it starts.
+        0.10 writes no instance.json, so on a server updated from 0.9 it is what 0.9 last wrote: older than the key
+        0.10 rewrites at every start, and its RCON password, port and address may be stale (a password changed in
+        dedicated.toml since would be refused again and again, and five refusals lock this machine out)."""
+        try:
+            written = (self.data_dir / "instance.json").stat().st_mtime
+        except OSError:
+            return False
+        try:
+            key = self.host_key_path.stat().st_mtime
+        except OSError:
+            return True  # no key to tell by (a 0.9 server before 0.9.15's key): as before
+        return written >= key - INSTANCE_SLACK
+
     def rcon_endpoint(self) -> RconEndpoint | None:
-        """Where and how to sign in, read fresh: a restart may have changed it."""
+        """Where and how to sign in, read fresh: a restart may have changed it. On 0.9 the server's instance.json
+        says (it is what the server runs with); on 0.10, and with a leftover 0.9 instance.json, dedicated.toml."""
         host, port, password = self.rcon_host, self.rcon_port, self.rcon_password
         try:
+            if not self.instance_current():
+                raise OSError("no instance.json written at this start")
             rcon = json.loads((self.data_dir / "instance.json").read_text(encoding="utf-8")).get("rcon") or {}
             host = host if self.rcon_host_set else rcon.get("address") or host
             port = port if self.rcon_port_set else int(rcon.get("port") or port)

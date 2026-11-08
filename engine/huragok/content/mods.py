@@ -126,12 +126,14 @@ class ModWatch:
         text = str(event.get("text") or "")
         lower = text.lower()
         advice = workshop_advice(text, self._versions.get(event.server or ""))
-        failed = advice is not None or lower.startswith(("error", "failed", "could not", "cannot"))
+        failed = advice is not None or lower.startswith(("error", "failed", "could not", "cannot")) \
+            or "update failed" in lower  # 0.10: "update failed: …", "installing the update failed (…); trying again"
         log.log(logging.WARNING if failed else logging.INFO, "[%s] Workshop %s: %s", event.server, event.get("item"),
                 one_line(text))
         if advice:
             log.warning("[%s]   why: %s", event.server, advice.replace("<item>", str(event.get("item"))))
-        if lower.startswith(("installed", "ready")) and self._changed is not None:
+        if lower.startswith(("installed", "ready", "updated", "a new version was downloaded")) \
+                and self._changed is not None:  # the last two: 0.10's
             self._changed.set()  # its files changed: the mods are looked at again
 
     def _note_mod_problem(self, event: Event) -> None:

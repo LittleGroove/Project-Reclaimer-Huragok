@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.3
+**Huragok 0.6.3 sees that servers on Project Reclaimer 0.10.1 are on 0.10.1.** The 0.10.1 program reports its version as 0.10.0, both in `--version` and as Huragok signs in to its console. That's a slip in the release: the program's own updater goes by the release (v0.10.1), so it doesn't update again. Huragok 0.6.2 believed the number, and every server that had updated itself to 0.10.1 got caught in a loop:
+- an hour later Huragok called it "still on 0.10.0", and restarted it to install 0.10.1 (at once when nobody was on, otherwise after its game);
+- it found the file was 0.10.1 already;
+- it then flagged the server "still on 0.10.0 after 0.10.1 was put in place: it runs another program file. Update that one by hand".
+
+Nothing was wrong with the servers. Huragok now goes by the program file itself: its SHA-256 against the release's own checksum, which GitHub lists. The flags go when Huragok restarts on 0.6.3.
+- **How Huragok knows a release.** It asks three sources, in this order:
+  1. What the running server writes in its status.json. 0.10.1 puts its real release there, `health.version`.
+  2. The checksum of its program file. Every release Huragok looks at or installs is kept in `records/program-releases.json`, and so is every release a server says it put in place itself.
+  3. Only then, what the program says.
+
+  That version is used everywhere in Huragok: the window, U, `check` and the update log.
+- **A server updated from 0.9 can't lock Huragok out of its console.** 0.9 wrote `data/<server>/instance.json` at each start, with the RCON address, port and password it was using, and Huragok trusted that file over dedicated.toml. 0.10 never writes it, so on every server updated from 0.9 it holds 0.9's last values.
+  - The risk: change the RCON password after updating, and Huragok would keep trying the old one. After five refusals the server locks this PC out of every console, all tools included, for 10 minutes at a time.
+  - The fix: Huragok now uses `instance.json` only when the server wrote it at its current start (0.9). Otherwise it goes by dedicated.toml.
+- **0.10's console is read again.** 0.10 reworded every line its supervisor prints, and 0.6.2 still looked for 0.9's. It missed:
+  - a server updating itself (`[update] Project Reclaimer 0.10.1 is in place`), and that update failing;
+  - the program restarting a server that crashed, stopped answering or ran out of memory;
+  - Workshop installs.
+
+  Each is read again:
+  - A self-update is logged and followed: the others restart after their game, and the server is restarted off its old program file once nobody is on.
+  - A crash the program restarts by itself reaches the log and Discord's crash alert.
+  - A Workshop update that went in makes Huragok look at the mods again.
+- **ODST servers start on 0.10.** 0.10 plays ODST, Firefight included, only with Halo 3's campaign beside it. An ODST server without it stops at once, every time:
+  - first with `halo3/maps/info/halo3.campaign: The system cannot find the file specified`;
+  - then with `Halo 3's campaign missions are not installed`.
+
+  0.6.2 gave an ODST server Halo 3's and ODST's files only, so it never started (found on our test servers). Huragok now gets Halo 3's campaign for an ODST server too: from MCC before its start, linked when on the same drive, and also when a start fails with either line.
+- **Classic networking is 0.10.1's default**, and D now says so (it showed enhanced as the default). `coop_network` takes 0.10.1's new `lockstep30` (30 ticks a second, as on the Xbox 360), beside `lockstep` and `host`. The master's port note says it's UDP too.
+
 ## 0.6.2
 **Huragok 0.6.2 runs Project Reclaimer 0.10 and every Bungie Halo it plays.** Halo: Reach, Halo: Combat Evolved and
 Halo 2 join Halo 3 and ODST: their files for a new server or an old one, their maps in every picker, the game types

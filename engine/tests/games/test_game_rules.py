@@ -20,6 +20,8 @@ def game_folder(root: Path, *kinds: str) -> Path:
     if "campaign" in kinds:
         for name in ("campaign", "010_jungle", "040_voi"):
             (root / "halo3" / "maps" / f"{name}.map").write_bytes(b"")
+        (root / "halo3" / "maps" / "info").mkdir(parents=True, exist_ok=True)
+        (root / "halo3" / "maps" / "info" / "halo3.campaign").write_bytes(b"")  # 0.10 reads it
     if "odst" in kinds:
         (root / "halo3odst" / "maps").mkdir(parents=True)
         (root / "halo3odst" / "halo3odst.dll").write_bytes(b"")
@@ -29,10 +31,11 @@ def game_folder(root: Path, *kinds: str) -> Path:
 
 @pytest.mark.parametrize("plays_kind, needed", [
     ("playlist", ["halo3"]), ("map", ["halo3"]), ("default", ["halo3"]),
-    ("campaign", ["halo3", "campaign"]), ("odst", ["halo3", "odst"]),
+    ("campaign", ["halo3", "campaign"]), ("odst", ["halo3", "campaign", "odst"]),  # 0.10's ODST: Halo 3's campaign too
 ])
 def test_every_server_needs_halo_3s_files_and_some_more(plays_kind: str, needed: list[str]) -> None:
     assert files.needed(plays_kind) == needed
+    assert files.needed(plays_kind, "0.9.23") == [k for k in needed if k != "campaign" or plays_kind == "campaign"]
     assert set(needed) <= set(files.DEPOTS) <= set(files.KINDS) == set(files.LABELS) == set(files.MAPS_FOR)
 
 
@@ -40,7 +43,7 @@ def test_what_a_game_folder_lacks_comes_halo_3s_first(tmp_path: Path) -> None:
     assert files.missing(tmp_path / "empty", "odst") == ["halo3"]  # the others go beside Halo 3's
     halo3 = game_folder(tmp_path / "h3", "halo3")
     assert files.missing(halo3, "playlist") == []
-    assert files.missing(halo3, "odst") == ["odst"] and files.missing(halo3, "campaign") == ["campaign"]
+    assert files.missing(halo3, "odst") == ["campaign", "odst"] and files.missing(halo3, "campaign") == ["campaign"]
     everything = game_folder(tmp_path / "all", "halo3", "campaign", "odst")
     assert all(files.has(everything, kind) for kind in files.DEPOTS)
     assert files.engine_files(everything) == ["halo3/halo3.dll", "halo3odst/halo3odst.dll"]
@@ -52,6 +55,10 @@ def test_a_failed_start_says_which_files_it_lacked() -> None:
     assert files.kinds_in_failure(said) == ["odst", "campaign"]
     assert files.kinds_in_failure([f"x {files.MISSING_FILES}", "  halo3/halo3.dll"]) == ["halo3"]
     assert files.kinds_in_failure(["Port 11774 is in use"]) == []
+    # 0.10.1, an ODST server without Halo 3's campaign (DEPLOY's LG ODST Firefight, 7 November 2026).
+    assert files.kinds_in_failure([r"H:\x\SERVERS\LG ODST Firefight\../../game\halo3/maps/info\halo3.campaign: The "
+                                   "system cannot find the file specified. (os error 2)"]) == ["campaign"]
+    assert files.kinds_in_failure(["Halo 3's campaign missions are not installed"]) == ["campaign"]
 
 
 @pytest.mark.parametrize("line", ["map Guardian", "mode Slayer", "load Guardian Slayer"])

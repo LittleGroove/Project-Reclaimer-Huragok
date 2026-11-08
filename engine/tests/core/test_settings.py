@@ -102,6 +102,30 @@ def test_instance_json_wins(tmp_path: Path) -> None:
     assert (endpoint.host, endpoint.port, endpoint.password) == ("127.0.0.1", 50000, "from-environment")
 
 
+def test_an_instance_json_left_from_09_never_wins(tmp_path: Path) -> None:
+    """0.10 writes no instance.json: on a server updated from 0.9 it is what 0.9 last wrote (DEPLOY's LG Test Server:
+    6 November, its key 7 November). Its old password, tried after the host changed dedicated.toml's, would be refused
+    until the machine is locked out. Written with the key at the same start (0.9), it still wins."""
+    import os
+    import time
+
+    server = tmp_path / "server"
+    data = write_server_folder(server, 39176)
+    (data / "instance.json").write_text(json.dumps(
+        {"name": "LG Test Server", "rcon": {"address": "127.0.0.1", "port": 50000, "password": "0.9's old one"}}),
+        encoding="utf-8")
+    (data / "rcon-host.key").write_text("k" * 64, encoding="utf-8")
+    long_ago = time.time() - 86400
+    os.utime(data / "instance.json", (long_ago, long_ago))  # 0.9's last start; the key is 0.10's, today
+    settings = load(write_settings(tmp_path, server))
+    server_config = settings.servers[0]
+    endpoint = server_config.rcon_endpoint()
+    assert not server_config.instance_current()
+    assert (endpoint.port, endpoint.password) == (39176, server_config.rcon_password) != (50000, "0.9's old one")
+    os.utime(data / "instance.json", None)  # written now, with the key: a 0.9 start
+    assert server_config.instance_current() and server_config.rcon_endpoint().password == "0.9's old one"
+
+
 def test_disabled_servers_and_selection(tmp_path: Path) -> None:
     server = tmp_path / "server"
     write_server_folder(server, 39176, extra_server='[[server]]\nname = "Off"\nport = 39177\nenabled = false\n'

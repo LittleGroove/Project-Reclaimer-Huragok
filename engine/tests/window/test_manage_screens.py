@@ -360,10 +360,11 @@ def test_servers_that_update_themselves_are_left_to_it(tmp_path: Path, monkeypat
         def __init__(self, version: str | None) -> None:
             self.version = version
 
-    release = ProgramRelease("0.9.19", "https://example/r", "", "https://example/x.exe",
-                             "project-reclaimer-dedicated-v0.9.19.exe", None)
+    # The next release (Alpha's copy is 0.9.19 now, and Huragok knows that file: it never puts 0.9.19 over it again).
+    release = ProgramRelease("0.9.20", "https://example/r", "", "https://example/x.exe",
+                             "project-reclaimer-dedicated-v0.9.20.exe", None)
     monkeypatch.setattr(serverupdates, "latest_program_release", lambda *a, **k: release)
-    monkeypatch.setattr(serverupdates, "_get", lambda url, timeout, accept="": b"the new program")
+    monkeypatch.setattr(serverupdates, "_get", lambda url, timeout, accept="": b"the newer program")
     lifecycle = Lifecycle()
     states = {"Alpha": ServerState("Alpha"), "Beta": ServerState("Beta")}
     bus = EventBus()
@@ -373,7 +374,7 @@ def test_servers_that_update_themselves_are_left_to_it(tmp_path: Path, monkeypat
     async def scenario() -> None:
         ok, message = await service.install(when="after_game")
         assert ok and "restarting Alpha after game" in message and "Beta update themselves" in message
-        assert lifecycle.restarts == [("Alpha", "after_game", "updating to 0.9.19")]
+        assert lifecycle.restarts == [("Alpha", "after_game", "updating to 0.9.20")]
         assert service.status()["self_updating"] == ["Beta"]
         # With every server updating itself there's nothing for Huragok to install.
         for server in settings.servers:

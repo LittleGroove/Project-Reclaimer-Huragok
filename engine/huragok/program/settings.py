@@ -276,16 +276,19 @@ SETTINGS: list[Setting] = [
     S("bind_address", "folder", "str", "restart", "the local address the game ports (and this PC's master) listen "
       "on: :: every network, 127.0.0.1 this PC only, or one of this PC's addresses", "network", default="::",
       since=SINCE),
-    S("network_model", "server", "choice", "when empty", "how its multiplayer games are networked: enhanced "
-      "(Reclaimer's) or classic", "network", choices=("enhanced", "classic"), default="enhanced", since=SINCE),
-    S("coop_network", "server", "choice", "when empty", "how its co-op games are networked: lockstep, or host (the "
-      "server's game decides)", "network", choices=("lockstep", "host"), default="lockstep", since=SINCE),
+    S("network_model", "server", "choice", "when empty", "how its multiplayer games are networked: classic (the "
+      "default from 0.10.1) or enhanced (Reclaimer's own, 0.10.0's default)", "network",
+      choices=("classic", "enhanced"), default="classic", since=SINCE),
+    S("coop_network", "server", "choice", "when empty", "how its co-op games are networked: lockstep (60 ticks, as "
+      "MCC), lockstep30 (30 ticks, as the Xbox 360; 0.10.1 on), or host (host-authoritative, experimental)",
+      "network", choices=("lockstep", "lockstep30", "host"), default="lockstep", since=SINCE),
     S("upnp", "folder", "bool", "when empty", "ask the router to forward the ports", "network", default=False),
     S("stats_server", "folder", "str", "when empty", "where finished games are reported; \"off\" nowhere; empty the "
       "public service", "network", default=""),
     S("enabled", "master", "bool", "restart", "run the discovery master the server browser asks", "network",
       default=True),
-    S("port", "master", "int", "restart", "the master's TCP port", "network", low=1024, high=65535, default=49175),
+    S("port", "master", "int", "restart", "the master's port (TCP, and UDP too from 0.10)", "network", low=1024,
+      high=65535, default=49175),
     S("peers", "master", "urls", "restart", "more masters (https:// addresses) to report to and share listings with",
       "network", default=[]),
     S("origin", "master", "str", "restart", "the address browsers use when an HTTPS reverse proxy is in front",

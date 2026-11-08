@@ -324,12 +324,12 @@ def _label_warnings(settings: Settings, server: ServerConfig) -> list[str]:
 
 
 def _program_version(settings: Settings, server: ServerConfig) -> str | None:
-    """The version of the program file the server runs, as its `--version` says (asked once per file); None when
-    it isn't known."""
-    from ..program.releases import program_of, program_version, readable
+    """The release of the program file the server runs: by its checksum when Huragok knows it, else as its
+    `--version` says (asked once per file; 0.10.1 says 0.10.0); None when it isn't known."""
+    from ..program.releases import file_version, program_of, readable
 
     program = program_of(settings, server)
-    version = program_version(settings, program) if program is not None else None
+    version = file_version(settings, program) if program is not None else None
     return version if readable(version) else None
 
 

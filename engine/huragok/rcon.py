@@ -197,11 +197,11 @@ class RconClient:
         else:
             self.stopped_reason = f"password refused: {error}"
             log.error("[%s] RCON refused the password (%s). Huragok won't keep trying it: five wrong passwords lock "
-                      "out every tool on this machine. It tries again as soon as data/%s/instance.json names a "
-                      "new one (the server writes it as it starts: a new password in dedicated.toml counts from "
-                      "the server's next start), once after the server restarts, and every 10 minutes. "
-                      "If the password is right, another tool on this machine may have locked this address out "
-                      "with wrong ones.", name, error, self.server.slug)
+                      "out every tool on this machine. It tries again as soon as the password in its files changes "
+                      "(dedicated.toml, or on 0.9 data/%s/instance.json, which the server writes as it starts: a "
+                      "new password in dedicated.toml counts from the server's next start), once after the server "
+                      "restarts, and every 10 minutes. If the password is right, another tool on this machine may "
+                      "have locked this address out with wrong ones.", name, error, self.server.slug)
         self.bus.emit("rcon.auth_failed", name, error=str(error), lockout=locked)
 
     async def _wait_after_refusal(self, refused: str | None) -> None:

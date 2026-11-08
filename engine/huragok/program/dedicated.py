@@ -220,6 +220,16 @@ def cached_version(path: Path, template: list[str] | None = None) -> str | None:
     return _VERSIONS[key]
 
 
+def peek_version(path: Path, template: list[str] | None = None) -> str | None:
+    """cached_version's answer when the file as it is has been asked already; None when it hasn't (or didn't
+    answer). Never runs the program: safe on the event loop."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return _VERSIONS.get((str(path), info.st_mtime_ns, info.st_size, tuple(template or ())))
+
+
 def program_prefix(executable: Path, template: list[str] | None = None) -> list[str]:
     """How the program is run: [exe] on Windows, and on Linux [exe] for its own program (0.10 on) or [wine, exe] for
     a Windows one (0.9); or the template's words before `dedicated`."""
