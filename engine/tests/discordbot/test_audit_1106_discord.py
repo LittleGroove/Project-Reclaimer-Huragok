@@ -104,9 +104,12 @@ def test_pardon_strike_on_a_card_whose_list_was_taken_off_clears_only_that_list(
             _, opened = fake.press(buttons_of(card)["Pardon strike"], card)
             form = await form_of(fake, opened)
             assert form["components"][0].get("description") == "It clears every strike on slurs, and lifts what they did"
+            edits = len(fake.original_edits)
             fake.fill_in(opened, card, {"Why": "misheard"})
             await wait_for(lambda: "slurs" not in standing(huragok), timeout=15)
             assert standing(huragok) == {"insults": 2}
+            # The card is shown again after the pardon: ended before that, its press lost its session (CI's runner).
+            await wait_for(lambda: len(fake.original_edits) > edits, timeout=15)
 
     run(scenario())
 

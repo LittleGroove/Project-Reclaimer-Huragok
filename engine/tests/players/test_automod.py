@@ -1473,10 +1473,13 @@ def test_a_moderators_mute_lasts_its_time_through_a_restart(tmp_path: Path, run,
             await wait_for(lambda: len(mutes_of(fake, BRAVO)) == 2)
             again = mutes_of(fake, BRAVO)[1]
             assert again[1].endswith("s") and 86000 < int(again[1][:-1]) <= 86400
-            assert again[2] == ("[-_-] KEEP IT CLEAN! You're still muted (muted by Mod: spamming the mic): 23 hours 59 "
-                                "minutes left.")
+            # What's left is said to the minute: 23 h 59 min 59.x s, a moment after a day's mute, reads as a whole day
+            # (CI's quick Windows run did), a few seconds later as 23 hours 59 minutes. Either is right.
+            assert again[2] in tuple("[-_-] KEEP IT CLEAN! You're still muted (muted by Mod: spamming the mic): "
+                                     f"{left} left." for left in ("23 hours 59 minutes", "1 day"))
             await fake.chat(MOD, "Mod", "!strikes bravo")
             await wait_for(lambda: any("Muted (!mute by Mod: spamming the mic): 23 hours" in t
+                                       or "Muted (!mute by Mod: spamming the mic): 1 day" in t
                                        for t in tells_to(fake, MOD)))
             # A newer mute replaces it; !unmute ends it for good.
             await fake.chat(MOD, "Mod", "!mute bravo 10m")
