@@ -1203,7 +1203,7 @@ def test_the_watchdog_reports_and_says_what_it_would_do(tmp_path: Path, caplog, 
     assert ("[Alpha] healthy → critical: falling behind for 3 minutes running; slow in 3 of the last 5 minutes "
             "(longest frame 133 ms)") in text
     assert '[Alpha] not restarted, as [watchdog] very_slow = "watch", slow = "watch"' in text
-    assert "[Alpha] still critical, and now also: 3 players connected in 5 minutes and none got in" in text
+    assert "[Alpha] still critical, and now also: 3 players tried to join in 5 minutes and none got in" in text
 
 
 def test_watchdog_settings_are_checked_and_the_old_switch_still_counts() -> None:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.4
+**The watchdog's `no_joins` counts only players really trying to get in.** On 7 Nov 2026 it restarted our test server three times in 16 minutes as "nobody can join" (22:53, 22:57 and 23:09). Each time, players were getting in, and twice a game was going on.
+
+On Project Reclaimer 0.10, every game looks at a server's mods before it joins: one connection, which the server logs as `a visit (mods or a bot)`, then the player's own connection from another port. A look from the server list stops after the first. `no_joins` counted every one of those looks as a player trying to join, so on a busy server, people looking added up to "3 players connected in 5 minutes and none got in".
+- **A visit is no try.** The connection a visit line is about no longer counts.
+- **A player counts once**, however often they try: by their player ID on 0.9, by their machine's address on 0.10. `no_joins_connections` (3) is now that many different players. Its note in settings.toml says so after the update.
+- **It says what it counted:** "3 players tried to join in 5 minutes and none got in".
+- Replayed over that night's record (40 minutes, 51 connections, 26 players getting in), the old rule fires at the same three times and the new one never does. A dead server is still caught the same way: different players connecting who are never let in, or let in and dropped within 2 minutes.
+
 ## 0.6.3
 **Huragok 0.6.3 sees that servers on Project Reclaimer 0.10.1 are on 0.10.1.** The 0.10.1 program reports its version as 0.10.0, both in `--version` and as Huragok signs in to its console. That's a slip in the release: the program's own updater goes by the release (v0.10.1), so it doesn't update again. Huragok 0.6.2 believed the number, and every server that had updated itself to 0.10.1 got caught in a loop:
 - an hour later Huragok called it "still on 0.10.0", and restarted it to install 0.10.1 (at once when nobody was on, otherwise after its game);

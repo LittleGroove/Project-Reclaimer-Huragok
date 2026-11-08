@@ -15,7 +15,8 @@
   "0.6.0",
   "0.6.1",
   "0.6.2",
-  "0.6.3"
+  "0.6.3",
+  "0.6.4"
  ],
  "files": {
   "settings.toml": {
@@ -140,7 +141,11 @@
     "watchdog|no_joins": [
      "# Nobody gets in: players keep connecting and none of them joins, while there's",
      "# room. Catches a dead server even when it doesn't say so (2 minutes more are",
-     "# allowed for loading the map)."
+     "# allowed for loading the map).",
+     "# Nobody gets in: players keep trying to join and none of them gets in, while",
+     "# there's room. Catches a dead server even when it doesn't say so (2 minutes more",
+     "# are allowed for loading the map). A player counts once, however often they",
+     "# try, and a game only looking at the server's mods (a visit) isn't trying."
     ],
     "watchdog|stuck": [
      "# Stuck: on the scoreboard after a game with players waiting. When healthy, the",
@@ -465,7 +470,8 @@
      "# and no more than this many were left"
     ],
     "watchdog|no_joins_connections": [
-     "# this many connections (0: never checked)"
+     "# this many connections (0: never checked)",
+     "# this many different players trying (0: never checked)"
     ],
     "watchdog|no_joins_minutes": [
      "# in this many minutes, and none joined"

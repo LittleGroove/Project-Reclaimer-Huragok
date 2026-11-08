@@ -229,7 +229,7 @@ def test_it_doesnt_restart_twice_and_only_actnow_replaces_a_plan(run) -> None:
         lifecycle.planned[SERVER] = SimpleNamespace(when="after_game")
         await watchdog._act(SERVER, {"memory": "using 4096 MB, over 1000 MB"})
         assert lifecycle.restarts == []  # after the game is already planned
-        await watchdog._act(SERVER, {"no_joins": "3 players connected in 5 minutes and none got in"})
+        await watchdog._act(SERVER, {"no_joins": "3 players tried to join in 5 minutes and none got in"})
         assert lifecycle.restarts == [(SERVER, "now", 30.0, "nobody can join")]  # actnow replaces it
         await watchdog._act(SERVER, {"dead": "dropped 28 of 28 players at once"})
         assert len(lifecycle.restarts) == 1  # now is already planned

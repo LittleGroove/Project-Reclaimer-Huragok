@@ -316,7 +316,7 @@ on anything else:
   | Case | What it is | Default | Its numbers |
   | --- | --- | --- | --- |
   | `dead` | every player dropped at once ("Host roster lost 112 of 112"), and nobody can join again | actnow | `drop_players`, `drop_share`, `drop_left` |
-  | `no_joins` | players keep connecting and none gets in, while there's room: a player counts as in once they're still on 2 minutes after connecting | actnow | `no_joins_connections` in `no_joins_minutes` |
+  | `no_joins` | different players keep trying to join and none gets in, while there's room: a player counts as in once they're still on 2 minutes after connecting. Each player counts once, and a game only looking at the server's mods (0.10's "a visit") isn't trying | actnow | `no_joins_connections` (different players) in `no_joins_minutes` |
   | `stuck` | on the scoreboard after a game, players waiting (judged only while Huragok's console is connected) | actnow | `stuck_minutes` (3) |
   | `slow` | the server falling behind (its log's "under 54 frames a second") for a good share of several minutes | watch | `slow_share`, `slow_minutes`, `slow_window_minutes` |
   | `very_slow` | falling behind nearly all the time, minutes on end | watch | `very_slow_share`, `very_slow_minutes` |

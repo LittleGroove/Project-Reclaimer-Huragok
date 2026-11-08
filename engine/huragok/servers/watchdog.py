@@ -8,7 +8,7 @@ that answers but is broken, or runs badly. Each minute it looks for these cases:
              game ended, after which it let nobody back in. A drop that leaves
              players on doesn't count (drop_left): the one seen mid-game (70 of 73)
              recovered by itself.
-  no_joins   players keep connecting and none of them gets in, while there's room.
+  no_joins   different players keep trying to get in and none of them does, while there's room.
              On the live log (7,652 connections) this happened only while the server
              was dead, also on versions that don't say "Host roster lost": one sat
              dead that way for six hours. Joining waits for the map to load, so a
@@ -23,6 +23,14 @@ that answers but is broken, or runs badly. Each minute it looks for these cases:
              console's join event or the log's own "[server] player #N joined: …"
              (one admission when both say it), with the log's "[server] player #N
              (…) left" as a leave, so it's judged with the console away too.
+             Only real tries count, by player: a player trying again and again
+             counts once (by their player ID on 0.9, their machine's address on
+             0.10), and 0.10's "[server] a visit (mods or a bot) from …" makes
+             the connection just made from that address no try at all. Every
+             game looks at the server's mods that way before it joins, and a
+             look from the server list stops there: counted as tries, a busy
+             server's visits restarted the LG Test Server three times in 16
+             minutes (7 Nov 2026), each time with players getting in.
   stuck      on the scoreboard after a game with players waiting, for stuck_minutes.
              When healthy, the live server had its next game loaded and running
              within 109 s of a game ending (51 game ends; 10 s of that is the load).
@@ -80,6 +88,7 @@ SHARES = ("drop_share", "slow_share", "very_slow_share")
 OLD_NAMES = {"slow_frames"}  # 0.2.1's single switch for both frame cases, still read
 JOIN_GRACE = 120.0  # seconds a connection gets to become a join: loading a 2 GB map takes a while
 CONNECT_SLACK = 5.0  # the console's join event may come a moment before the log's line for the same connection
+VISIT_SLACK = 10.0  # 0.10's visit line comes right after the connection it's about
 DROP_MEMORY = 300.0  # a roster loss counts as dead for this long
 NOW_WARNING = 30.0  # seconds of warning before an actnow restart, when there's anyone to warn
 
@@ -90,6 +99,29 @@ class Sample:
     share: float  # of the minute spent falling behind (the server's "under N frames a second")
     longest_ms: int
     players: int
+
+
+@dataclass
+class Connection:
+    """A player's machine connecting: 0.9's "X connected from …" (their player ID) or 0.10's "connected to 0x… at …"
+    (their address, with the port)."""
+    time: float
+    id: str = ""
+    address: str = ""
+
+    @property
+    def who(self) -> str:
+        """The player trying, whichever connection it is: their ID, else their machine's address without the port
+        (0.10's game looks at the mods from one port and joins from another)."""
+        return self.id or _host(self.address)
+
+
+def _host(address: str) -> str:
+    """An address without its port: 203.0.113.9:51234 -> 203.0.113.9, [2001:db8::1]:5 -> 2001:db8::1."""
+    if address.startswith("["):
+        return address[1:].partition("]")[0]
+    host, colon, port = address.rpartition(":")
+    return host if colon and ":" not in host and port.isdigit() else address
 
 
 @dataclass
@@ -128,7 +160,7 @@ class Watchdog(Part):
         "drop_share": 0.5,            # …and at least this share of those who were on…
         "drop_left": 0,               # …and no more than this many were left
         "no_joins": "actnow",         # players keep connecting, nobody gets in
-        "no_joins_connections": 3,    # this many connections (0: never checked)…
+        "no_joins_connections": 3,    # this many different players trying (0: never checked)…
         "no_joins_minutes": 5,        # …in this many minutes, and none of them joined
         "stuck": "actnow",            # on the scoreboard after a game, players waiting
         "stuck_minutes": 3,           # this long (0: never checked)
@@ -192,7 +224,7 @@ class Watchdog(Part):
         self.samples: dict[str, deque[Sample]] = {}
         self.upload: dict[str, Event] = {}
         self.drops: dict[str, Event] = {}
-        self.connects: dict[str, deque[tuple[float, str]]] = {}  # (when, player ID from the log line; 0.10's has none)
+        self.connects: dict[str, deque[Connection]] = {}  # tries to get in (not 0.10's visits)
         self.joins: dict[str, deque[float]] = {}  # the log's roster lines (and ODST's)
         self.admitted: dict[str, deque[Admission]] = {}  # the console's join events (and 0.10's log lines for them)
         self.memory: dict[str, float] = {}
@@ -218,7 +250,19 @@ class Watchdog(Part):
     @on("log.connected")
     async def connected(self, event: Event) -> None:
         self.connects.setdefault(event.server or "", deque(maxlen=500)).append(
-            (event.time, str(event.get("id") or "").lower()))
+            Connection(event.time, str(event.get("id") or "").lower(), str(event.get("address") or "")))
+
+    @on("log.visit")
+    async def visited(self, event: Event) -> None:
+        """0.10: the connection just made from this address was a look at the server's mods (or a bot's), no try."""
+        address = str(event.get("address") or "")
+        connects = self.connects.get(event.server or "")
+        if not address or not connects:
+            return
+        for connection in reversed(connects):
+            if connection.address == address and abs(event.time - connection.time) <= VISIT_SLACK:
+                connects.remove(connection)
+                return
 
     @on("log.joined", "rcon.join", "log.admitted")
     async def joined(self, event: Event) -> None:
@@ -290,13 +334,15 @@ class Watchdog(Part):
             found["dead"] = f"dropped {drop.get('lost')} of {drop.get('of')} players at once"
         if cfg["no_joins_connections"]:
             start = now - JOIN_GRACE - cfg["no_joins_minutes"] * 60
-            tried = [t for t, _ in self.connects.get(server, ()) if start <= t <= now - JOIN_GRACE]
+            tried = [c for c in self.connects.get(server, ()) if start <= c.time <= now - JOIN_GRACE]
+            # Each player once, however often they tried; a connection that names nobody counts by itself.
+            players = {c.who or f"#{n}" for n, c in enumerate(tried)}
             got_in = (any(t >= start for t in self.joins.get(server, ()))
                       or self._stayed(server, state, start, now))
             # A full server turns players away, so a full roster explains it; one frozen with the console away doesn't.
             room = not state.connected or not state.players_known or state.max_players is None                 or len(state.players) < state.max_players
-            if len(tried) >= cfg["no_joins_connections"] and not got_in and room:
-                found["no_joins"] = (f"{len(tried)} players connected in {cfg['no_joins_minutes']:g} minutes and "
+            if len(players) >= cfg["no_joins_connections"] and not got_in and room:
+                found["no_joins"] = (f"{len(players)} players tried to join in {cfg['no_joins_minutes']:g} minutes and "
                                      "none got in")
         # Judged on a picture read since the console connected: back after it dropped, its old "finished" and old
         # players restarted a server at once, with no warning (audit 2026-11, 8.2). Its players are read after its
@@ -338,8 +384,9 @@ class Watchdog(Part):
                 continue
             base = admission.time
             if admission.id:
-                linked = [t for t, player_id in connects if player_id == admission.id
-                          and (before is None or t > before + CONNECT_SLACK) and t <= admission.time + CONNECT_SLACK]
+                linked = [c.time for c in connects if c.id == admission.id
+                          and (before is None or c.time > before + CONNECT_SLACK)
+                          and c.time <= admission.time + CONNECT_SLACK]
                 if linked:
                     base = max(min(base, linked[-1]), admission.time - JOIN_GRACE)
             until = base + JOIN_GRACE

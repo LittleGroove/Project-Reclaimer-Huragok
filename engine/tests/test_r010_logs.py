@@ -68,8 +68,12 @@ def test_a_player_getting_in_on_010() -> None:
     assert parse_log_line("[server] player #1 (Bravo Two) left: closed by the peer (0)") == (
         "log.left", {"number": 1, "name": "Bravo Two", "reason": "closed by the peer (0)"})
     assert parse_log_line("[looks] 0x1's player 007 proved their identity")[1]["name"] == "007"  # a name, not 7
-    # A visit for mods (or a bot's) is no player getting in.
-    assert parse_log_line(f"[server] a visit (mods or a bot) from 203.0.113.9:51234: {KEY}") is None
+    # A visit for mods (or a bot's) is no player getting in: it says which connection was one.
+    assert parse_log_line(f"[server] a visit (mods or a bot) from 203.0.113.9:51234: {KEY}") == (
+        "log.visit", {"what": "mods or a bot", "address": "203.0.113.9:51234"})
+    assert parse_log_line("[server] a visit (mods) from [2001:db8::7]:5000") == (
+        "log.visit", {"what": "mods", "address": "[2001:db8::7]:5000"})
+    assert parse_log_line(f"[chat] line Bravo: [server] a visit (mods or a bot) from 203.0.113.9:1: {KEY}") is None
 
 
 def test_the_010_game_flow() -> None:
@@ -190,7 +194,8 @@ def feed(watchdog: Watchdog, *events: Event) -> None:
     async def go() -> None:
         for event in events:
             handler = {"log.connected": watchdog.connected, "log.admitted": watchdog.joined,
-                       "rcon.join": watchdog.joined, "rcon.leave": watchdog.left, "log.left": watchdog.left}[event.name]
+                       "log.visit": watchdog.visited, "rcon.join": watchdog.joined, "rcon.leave": watchdog.left,
+                       "log.left": watchdog.left}[event.name]
             await handler(event)
 
     asyncio.run(go())
@@ -253,6 +258,101 @@ def test_players_let_in_who_stay_have_joined_with_the_console_there_or_not() -> 
         feed(watchdog, connected(n, NOW - ago), let_in(n, NOW - ago))
     feed(watchdog, log_left(1, NOW - 400 + JOIN_GRACE + 30), log_left(2, NOW - 340), log_left(3, NOW - 290))
     assert "no_joins" not in watchdog.findings("Alpha", NOW)
+
+
+def visit(n: int, at: float, port: int = 6000) -> list[Event]:
+    """A game looking at the server's mods: its connection, then 0.10's visit line for it."""
+    address = f"203.0.113.{n}:{port}"
+    return [Event("log.connected", "Alpha", {"handle": f"0x{port:016x}", "address": address}, at),
+            Event("log.visit", "Alpha", {"what": "mods or a bot", "address": address}, at)]
+
+
+def from_log(*lines: tuple[float, str]) -> list[Event]:
+    """server.log's lines as the watchdog gets them, each this many seconds before NOW."""
+    events = []
+    for ago, line in lines:
+        parsed = parse_log_line(line)
+        assert parsed, line
+        events.append(Event(parsed[0], "Alpha", parsed[1], NOW - ago))
+    return events
+
+
+def test_a_look_at_the_servers_mods_is_no_try_to_get_in() -> None:
+    # 7 Nov 2026, 22:53 on the LG Test Server: six players mid-game, and three looks at the server (two of them one
+    # player's) restarted it, as "3 players connected in 5 minutes and none got in".
+    state = ServerState("Alpha", connected=True, max_players=16)
+    state.players = {n: Player(n, f"P{n}", key(n)) for n in range(10, 16)}
+    watchdog = dog(state)
+    feed(watchdog, *visit(1, NOW - 330), *visit(2, NOW - 186), *visit(2, NOW - 180, 6001))
+    assert "no_joins" not in watchdog.findings("Alpha", NOW)
+    assert not watchdog.connects["Alpha"]
+    # A visit takes away its own connection only: the player's own one after it still tries to get in.
+    watchdog = dog(state)
+    for n, ago in enumerate((400, 350, 300), 1):
+        feed(watchdog, *visit(n, NOW - ago), connected(n, NOW - ago + 1))
+    assert watchdog.findings("Alpha", NOW)["no_joins"] == "3 players tried to join in 5 minutes and none got in"
+    # A visit line with no connection of its own just before (another address, or too long ago) takes none.
+    watchdog = dog(state)
+    feed(watchdog, *(connected(n, NOW - ago) for n, ago in enumerate((400, 350, 300), 1)))
+    feed(watchdog, Event("log.visit", "Alpha", {"what": "mods", "address": "203.0.113.1:5000"}, NOW - 200),
+         Event("log.visit", "Alpha", {"what": "mods", "address": "198.51.100.1:5000"}, NOW - 300))
+    assert len(watchdog.connects["Alpha"]) == 3 and "no_joins" in watchdog.findings("Alpha", NOW)
+
+
+def test_a_player_trying_again_and_again_is_one_player() -> None:
+    watchdog = dog(ServerState("Alpha", connected=True, max_players=16))
+    feed(watchdog, *(Event("log.connected", "Alpha", {"handle": f"0x{n:016x}", "address": f"203.0.113.1:{5000 + n}"},
+                           NOW - 400 + n * 30) for n in range(5)))
+    assert "no_joins" not in watchdog.findings("Alpha", NOW)
+    feed(watchdog, connected(2, NOW - 300), connected(3, NOW - 250))
+    assert watchdog.findings("Alpha", NOW)["no_joins"] == "3 players tried to join in 5 minutes and none got in"
+    # 0.9's line names the player: the same ID is the same player, from any address.
+    watchdog = dog(ServerState("Alpha", connected=True, max_players=16))
+    feed(watchdog, *(Event("log.connected", "Alpha", {"name": "Bravo", "id": KEY}, NOW - ago) for ago in (400, 300, 200)))
+    assert "no_joins" not in watchdog.findings("Alpha", NOW)
+
+
+def test_the_three_restarts_of_7_november_were_players_getting_in() -> None:
+    """The LG Test Server, 7 Nov 2026, from its server.log and Huragok's record of the events (times kept, addresses,
+    handles and keys made up): each of these restarted it as "nobody can join"."""
+    # 22:57: a fresh run. Four looks at the mods, then the host joined and was on, 99 s before the check.
+    state = ServerState("Alpha", connected=True, max_players=16)
+    watchdog = dog(state)
+    feed(watchdog, *from_log(
+        (171, "[online] connected to 0x00000000000000a1 at 198.51.100.20:50329"),
+        (171, "[server] a visit (mods or a bot) from 198.51.100.20:50329: " + "a" * 64),
+        (161, "[online] connected to 0x00000000000000a2 at 198.51.100.21:61769"),
+        (161, "[server] a visit (mods or a bot) from 198.51.100.21:61769: " + "b" * 64),
+        (153, "[online] connected to 0x00000000000000a3 at 198.51.100.20:50248"),
+        (153, "[server] a visit (mods or a bot) from 198.51.100.20:50248: " + "c" * 64),
+        (138, "[online] connected to 0x00000000000000a4 at 198.51.100.20:50430"),
+        (138, "[server] a visit (mods or a bot) from 198.51.100.20:50430: " + "d" * 64),
+        (99, "[online] connected to 0x00000000000000a5 at 198.51.100.21:44330"),
+        (99, f"[server] player #1 joined: {KEY} from 198.51.100.21:44330")))
+    state.players = {1: Player(1, "Host", KEY)}
+    assert "no_joins" not in watchdog.findings("Alpha", NOW)
+    # 23:09: four players in a race. One player looked at the mods three times, joined, and timed out 47 s later.
+    watchdog = dog(state)
+    feed(watchdog, *from_log(
+        (408, "[online] connected to 0x00000000000000a6 at 198.51.100.30:51812"),
+        (408, "[server] a visit (mods or a bot) from 198.51.100.30:51812: " + "e" * 64),
+        (400, "[online] connected to 0x00000000000000a7 at 198.51.100.30:51818"),
+        (400, "[server] a visit (mods or a bot) from 198.51.100.30:51818: " + "f" * 64),
+        (336, "[online] connected to 0x00000000000000a8 at 198.51.100.30:65072"),
+        (336, "[server] a visit (mods or a bot) from 198.51.100.30:65072: " + "1" * 64),
+        (327, "[online] connected to 0x00000000000000a9 at 198.51.100.30:44330"),
+        (327, f"[server] player #7 joined: {OTHER} from 198.51.100.30:44330"),
+        (280, "[server] player #7 (Luigi) left: timed out")))
+    assert "no_joins" not in watchdog.findings("Alpha", NOW)
+    assert [c.who for c in watchdog.connects["Alpha"]] == ["198.51.100.30"]  # his own connection: one try
+
+
+def test_an_address_without_its_port() -> None:
+    from huragok.servers.watchdog import _host
+    assert _host("203.0.113.9:51234") == "203.0.113.9"
+    assert _host("[2001:db8::1]:5000") == "2001:db8::1"
+    assert _host("2001:db8::1") == "2001:db8::1"  # no port to take off
+    assert _host("203.0.113.9") == "203.0.113.9" and _host("") == ""
 
 
 # Names that come after the join -----------------------------------------------------------------------------------

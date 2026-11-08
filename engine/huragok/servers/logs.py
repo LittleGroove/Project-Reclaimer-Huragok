@@ -48,6 +48,9 @@ TAGGED: list[tuple[str, str, re.Pattern[str]]] = [
     # A player getting in: their machine connecting (its handle), the server letting them in under a number and their
     # network key (0.10's player ID; no name yet), the name once they've proved who they are, and their leaving.
     ("online", "log.connected", re.compile(r"^connected to (?P<handle>0x[0-9a-fA-F]+) at (?P<address>\S+?)\.?$")),
+    # A look from outside, on the connection just made from that address: a game checking the server's mods before it
+    # joins (its own connection comes next, from another port), or a bot. Nobody trying to get in.
+    ("server", "log.visit", re.compile(r"^a visit \((?P<what>[^)]*)\) from (?P<address>\S+?)(?:: \S+)?\.?$")),
     ("server", "log.admitted", re.compile(
         r"^player #(?P<number>\d+) joined: (?P<id>[0-9a-fA-F]{64}) from (?P<address>\S+?)[.,]?(?: .*)?$")),
     ("looks", "log.identified", re.compile(
