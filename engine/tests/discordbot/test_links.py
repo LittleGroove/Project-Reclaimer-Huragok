@@ -77,8 +77,12 @@ def test_a_code_told_in_game_links_them_here(tmp_path: Path, run: Any, fake: Fak
         async with running(tmp_path) as (huragok, rcon, _):
             part = await up(huragok)
             code = await code_in_game(huragok, rcon)
-            everything = " ".join(str(command) for command in rcon.named("tell"))  # game chat wraps a long line
-            assert "Only you can see this" in everything and "/link " + code in everything
+
+            def everything() -> str:  # game chat wraps a long line: its parts are tells of their own, one by one
+                return " ".join(str(command) for command in rcon.named("tell"))
+
+            await wait_for(lambda: "Only you can see this" in everything() and "/link " + code in everything(),
+                           timeout=10)
             _, token = fake.command("link", user=OTHER, code=code.lower().replace("-", " "))  # however they type it
             assert "Linked: **Alice** is you" in await answer_text(fake, token)
             assert part.links.of_player(ALICE)["member"] == OTHER
