@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.6.4
-**The watchdog's `no_joins` counts only players really trying to get in.** On 7 Nov 2026 it restarted our test server three times in 16 minutes as "nobody can join" (22:53, 22:57 and 23:09). Each time, players were getting in, and twice a game was going on.
+**The watchdog's `no_joins` counts only players really trying to get in.** On 7 Nov 2026 it restarted our test server three times in 16 minutes as "nobody can join" (22:53, 22:57 and 23:09). Each time, a game was going on and players were getting in.
 
 On Project Reclaimer 0.10, every game looks at a server's mods before it joins: one connection, which the server logs as `a visit (mods or a bot)`, then the player's own connection from another port. A look from the server list stops after the first. `no_joins` counted every one of those looks as a player trying to join, so on a busy server, people looking added up to "3 players connected in 5 minutes and none got in".
 - **A visit is no try.** The connection a visit line is about no longer counts.
