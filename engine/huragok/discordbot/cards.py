@@ -294,6 +294,23 @@ def alert(kind: str, key: str, notice: str = "emergency", **names: str) -> Calla
     return build
 
 
+WARNING_HEADINGS = {"refused": ("emergency", "Refused"), "seen": ("construction", "Seen while running"),
+                    "check": ("construction", "To check"), "info": ("citizens", "For your information")}
+
+
+def warning(config: DiscordConfig, event: Event) -> Card | None:
+    """A warning from Huragok's catalogue (core/serverwarnings.py) whose rule says the staff hear of it: only what the
+    host must act on (a file the server refuses, a game skipped, an update waiting). Said once, as it's raised."""
+    if not event.get("discord"):
+        return None
+    kind = str(event.get("kind") or "info")
+    notice, title = WARNING_HEADINGS.get(kind, WARNING_HEADINGS["info"])
+    text = clean(event.get("text"))[:MAX_FIELD]
+    fix = clean(event.get("fix"))[:MAX_FIELD]
+    return Card("alerts", f"warning-{kind}", text + (f" {fix}" if fix else ""), heading(config, notice, title),
+                server=event.server, urgent=kind == "refused")
+
+
 def health(config: DiscordConfig, event: Event) -> Card | None:
     """The watchdog's level changing: worse is an alert; back to healthy is what the recovery says."""
     level, previous = str(event.get("level") or ""), str(event.get("previous") or "")

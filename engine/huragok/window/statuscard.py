@@ -24,10 +24,9 @@ from ..core.files import folder_size
 from ..core.storage import read_picks
 from ..core.text import size_text
 from ..core.tomledit import read_toml
-from ..games.byplayers import FILE as BY_PLAYERS
-from ..games.byplayers import ByPlayersError, describe_range, same_playlist, setup_of
+from ..games.byplayers_retired import retired_warning
 from ..games.halo3 import PlaylistError, load_playlist
-from ..games.plays import games_in, is_co_op, plays_of
+from ..games.plays import games_in, is_co_op, playlist_refs, plays_block, plays_of
 from ..program.settings import current, find, path_setting, show
 from ..steam import MCC_APP
 
@@ -62,8 +61,8 @@ def _bans(path: Path) -> str:
 def self_update_text(settings: Settings) -> str:
     """How a server with auto_update on keeps up."""
     text = "installs its own releases (auto_update): at its start and hourly, restarting at once"
-    if settings.server_updates.fallback and settings.backend == "process":
-        text += "; if one doesn't arrive, Huragok installs it after the game"
+    if settings.server_updates.follow and settings.backend in ("process", "command"):
+        text += "; Huragok restarts it after its game once a release is out, so it installs it as it starts"
     return text
 
 def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: dict[str, Any] | None = None
@@ -80,6 +79,7 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
         return current(data, find(key, scope), server.name, settings)[0]
 
     block = next((b for b in data.get("server", []) if str(b.get("name", "")).lower() == server.name.lower()), {})
+    block = plays_block(block, data.get("defaults") if isinstance(data.get("defaults"), dict) else None)
     sections: list[tuple[str, list[Line]]] = []
 
     # Running
@@ -116,16 +116,17 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
 
     # Plays
     plays: list[Line] = [("Plays", plays_of(block) if block else server.plays, None)]
-    if "playlist" in block:
+    refs = playlist_refs(block)  # `playlist`, or each of 0.10.1's playlists by lobby size
+    for ref in refs:
+        lead = f"{ref.label}: " if ref.how == "playlists" else ""
         try:
-            playlist = load_playlist(server.folder / str(block["playlist"]))
+            playlist = load_playlist(ref.path(server.folder))
             games = games_in(playlist.games)  # named when it mixes in another game's maps (0.10)
             mixed = f" · {', '.join(g.short for g in games)}" if any(g.key != "halo3" for g in games) else ""
-            plays.append(("", f'"{playlist.name}" · {len(playlist.games)} games · {playlist.vote_seconds} s votes'
+            plays.append(("", f'{lead}"{playlist.name}" · {len(playlist.games)} games · {playlist.vote} votes'
                               f"{mixed}", "gray"))
         except PlaylistError as error:
-            plays.append(("", f"the playlist can't be read: {error}", "red"))
-    plays += _by_players(server, block)
+            plays.append(("", f"{lead}the playlist can't be read: {error}", "red"))
     if row.get("game"):
         plays.append(("Now", str(row["game"]), "gray"))
     if row.get("picked"):
@@ -136,9 +137,9 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
         plays.append(("Up next", f"{row['next']} (set from the console; the playlist goes on after it)", "gray"))
     elif row.get("voting"):
         plays.append(("Up next", "players are voting now", "gray"))
-    if "playlist" in block and settings.database is not None:
+    if refs and settings.database is not None:
         try:
-            name = load_playlist(server.folder / str(block["playlist"])).name
+            name = load_playlist(refs[0].path(server.folder)).name
         except PlaylistError:
             name = ""
         picks, _ = read_picks(settings.database, name) if name else ([], None)
@@ -146,14 +147,14 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
             plays.append(("Most picked", ", ".join(f"{label} ({times})" for label, times, _ in picks[:3]), "gray"))
     reload = row.get("reload")
     if isinstance(reload, list) and len(reload) >= 2 and not reload[0]:
-        plays.append(("Last change", f"refused by the server: {reload[1]}; it plays what it played before (G or D "
-                                     "puts it right)", "red"))
+        plays.append(("Last change", f"refused by the server: {reload[1]}; it plays what it played before (put its "
+                                     "files right: O opens them)", "red"))
     sections.append(("What it plays", plays))
 
     # Program
     program = [("Version", f"Project Reclaimer {row.get('version') or '?'}", None),
-               ("Updates", self_update_text(settings) if server.auto_update else "by Huragok (U), after the game",
-                "gray")]
+               ("Updates", self_update_text(settings) if server.auto_update else
+                "pinned to this version by its own file (auto_update off)", "gray")]
     if extra.get("release"):
         program.append(("Newest", f"Project Reclaimer {extra['release']}", "gray"))
     if extra.get("program_note"):
@@ -168,7 +169,8 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
         mods.append(("Workshop", f"{len(server.workshop_items)} item(s) · {how} · the server looks every "
                                  f"{minutes} min", None))
         for line in extra.get("workshop") or _receipt_lines(server):
-            mods.append(("", line.strip(), "yellow" if "WAITING" in line else "gray"))
+            mods.append(("", line.strip(), "yellow" if any(word in line for word in ("NEW VERSION", "DOWNLOADED"))
+                         else "gray"))  # an update not in yet (updates/workshop.py item_lines)
         steam = (data.get("workshop") or {}) if isinstance(data.get("workshop"), dict) else {}
         mods.append(("SteamCMD", f"as {steam['username']}" if steam.get("username") else
                      "no account set (I sets it up)", "gray" if steam.get("username") else "yellow"))
@@ -212,7 +214,7 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
          if value("block_vpn") else "off", "gray"),
         ("Admins", f"{admins} in {server.config_path.name} (plus any added from the console)", "gray"),
         ("Bans", _bans(bans_path) + ("" if bans_path.parent == server.folder.resolve() else
-                                     f" · shared until its next start gives it its own: {bans_path}"), "gray"),
+                                     f" · shared, as its dedicated.toml says: {bans_path}"), "gray"),
         ("Vergil", _vergil(settings, server), "gray"),
     ]))
 
@@ -247,27 +249,12 @@ def build(settings: Settings, server: ServerConfig, row: dict[str, Any], extra: 
         problems.insert(0, unreadable)
     notes = [f for f in row.get("flags") or [] if not f.startswith("!")]
     lines: list[Line] = [("", problem.lstrip("! "), "red") for problem in problems]
+    lines += [("", warning, "yellow") for warning in row.get("warnings") or []]
     lines += [("", note, "yellow") for note in notes]
+    retired = retired_warning(server.folder, server.name)  # playlists by player count, set up before 0.7.0
+    lines += [("", line, "yellow" if number == 0 else "gray") for number, line in enumerate(retired)]
     sections.append(("Problems and notes", lines or [("", "none", "green")]))
     return sections
-
-
-def _by_players(server: ServerConfig, block: dict[str, Any]) -> list[Line]:
-    """Playlists by player count (G -> P), when it's set up: on or off, how many playlists, which one plays now."""
-    try:
-        setup = setup_of(server.folder, server.name)
-    except ByPlayersError as error:
-        return [("By players", f"its {BY_PLAYERS} can't be read: {error}", "red")]
-    if setup is None:
-        return []
-    if not setup.on:
-        return [("By players", f"off: {len(setup.steps)} playlists set up; it plays the default (G -> P)", "gray")]
-    ranges = setup.ranges()
-    now = next((f"playlist {number} for {describe_range(*ranges[number - 1])}"
-                for number, step in enumerate(setup.steps, 1)
-                if same_playlist(server.folder, block.get("playlist"), step.playlist)), "")
-    return [("By players", f"on: {len(setup.steps)} playlists, picked by how many are on"
-             + (f"; now {now}" if now else "") + " (G -> P)", "green")]
 
 
 def _vergil(settings: Settings, server: ServerConfig) -> str:

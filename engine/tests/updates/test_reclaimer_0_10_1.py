@@ -25,7 +25,7 @@ from huragok.core.settings import load
 from huragok.program import releases
 from huragok.servers.logs import parse_console_line
 from huragok.servers.state import ServerState
-from huragok.updates.program import OVERDUE, ProgramUpdateService
+from huragok.updates.program import OVERDUE, REASON, ProgramUpdateService
 from testkit.manage import program_release, self_updating_root, serve_program
 
 NEW = b"the 0.10.1 program, which says 0.10.0"
@@ -111,16 +111,17 @@ def test_what_a_server_said_becomes_its_files_release_only_when_that_release_can
     assert releases.running_release(settings, other, "0.10.0") == "0.10.0"
 
 
-def test_a_copy_known_as_the_release_is_never_replaced_or_called_behind(tmp_path: Path, monkeypatch) -> None:
-    root = root_on(tmp_path, NEW)
+def test_a_pinned_copy_known_as_the_release_is_never_called_behind(tmp_path: Path, monkeypatch, run) -> None:
+    root = root_on(tmp_path, NEW)  # auto_update off on both: pinned, and not running
     settings = load(root / "settings.toml")
     monkeypatch.setattr(releases, "program_version", lambda settings, path: "0.10.0")  # what 0.10.1 answers
     program = root / "SERVERS" / "Alpha" / "project-reclaimer.exe"
-    assert releases.as_new_as(settings, program, "0.10.1") is None  # unknown file: older, by what it says
-    releases.remember_release(settings, digest(NEW), "0.10.1")
-    assert releases.as_new_as(settings, program, "0.10.1") == "0.10.1"
+    assert releases.file_version(settings, program) == "0.10.0"  # unknown file: by what it says
+    serve_program(monkeypatch, release_0101(), NEW)  # GitHub lists the program's checksum: Huragok learns it
     service, _, _ = service_for(root)
-    assert service.copies_behind("0.10.1") == []
+    assert run(service.check()) is None and service.newer is False
+    assert service.file_versions == {"Alpha": "0.10.1", "Beta": "0.10.1"}
+    assert service.warnings.of("Alpha") == [] and service.note("Alpha") == ""
 
 
 # The host's servers, 2026-11-07 ----------------------------------------------------------------------------------
@@ -140,7 +141,8 @@ def test_a_server_on_0101_saying_0100_is_on_the_newest_and_nobody_installs_it(tm
         await service.check()  # learns 0.10.1's checksum: both are on it
         assert service.versions == {"Alpha": "0.10.1", "Beta": "0.10.1"}
         assert not service.behind("Alpha") and service.note("Alpha") == ""
-        assert service.review(now=time.time() + OVERDUE * 10) == []
+        assert await service.review(now=time.time() + OVERDUE * 10) == []
+        assert service.warnings.of("Alpha") == []
         await service.check()
         assert len(asked) == 1  # the same program (one checksum) in both folders: asked once, then kept
 
@@ -166,8 +168,8 @@ def test_running_versions_and_the_newest_check_go_by_the_release(tmp_path: Path,
     assert run(service.check()) is None and service.newer is False  # nothing to install
 
 
-def test_a_server_huragok_put_0101_in_place_for_is_done_not_running_another_file(tmp_path: Path, monkeypatch, run,
-                                                                                  caplog) -> None:
+def test_a_server_restarted_for_0101_that_comes_back_saying_0100_is_on_it(tmp_path: Path, monkeypatch, run,
+                                                                           caplog) -> None:
     root = root_on(tmp_path, OLD, "Alpha")
     serve_program(monkeypatch, dataclasses.replace(release_0101(), exe_sha256=None), NEW)  # no checksum listed
     monkeypatch.setattr(releases, "program_version", lambda settings, path: "0.10.0")  # what 0.10.0 and 0.10.1 say
@@ -175,32 +177,34 @@ def test_a_server_huragok_put_0101_in_place_for_is_done_not_running_another_file
 
     async def scenario() -> None:
         bus.emit("rcon.connected", "Alpha", version="0.10.0")  # really 0.10.0 this time
-        await service.check()
-        assert service.review(now=time.time() + OVERDUE + 1) == ["Alpha"]
-        await wait_for(lambda: "program" in lifecycle.jobs.get("Alpha", {}))
-        said = await lifecycle.jobs["Alpha"].pop("program").run()  # swapped while it's stopped
-        assert said.startswith("Project Reclaimer 0.10.1 put in place at ")
+        await service.check()  # it restarts after its game, to install 0.10.1 as it starts
+        assert lifecycle.restarts == [("Alpha", "after_game", REASON.format(version="0.10.1"))]
+        bus.emit("server.updating", "Alpha", version="0.10.1")  # its own updater, as it starts
+        (root / "SERVERS" / "Alpha" / "project-reclaimer.exe").write_bytes(NEW)
         bus.emit("rcon.connected", "Alpha", version="0.10.0")  # back up, on 0.10.1, saying 0.10.0
+        await asyncio.sleep(0.05)
 
     with caplog.at_level(logging.INFO):
         run(scenario())
-    assert (root / "SERVERS" / "Alpha" / "project-reclaimer.exe").read_bytes() == NEW
-    assert service.versions["Alpha"] == "0.10.1" and service.taken == {} and lifecycle.flags == {}
-    assert "runs another program file" not in caplog.text
+    assert service.versions["Alpha"] == "0.10.1" and service.restarting == {} and lifecycle.flags == {}
+    assert "still on" not in caplog.text
     assert "[Alpha] now on Project Reclaimer 0.10.1 (was 0.10.0)" in caplog.text
 
 
-def test_a_flag_from_before_the_checksum_was_known_goes_once_it_is(tmp_path: Path, monkeypatch, run) -> None:
+def test_a_restart_planned_before_the_checksum_was_known_goes_once_it_is(tmp_path: Path, monkeypatch, run) -> None:
+    from types import SimpleNamespace
+
     root = root_on(tmp_path, NEW, "Alpha")
     service, lifecycle, bus = service_for(root, ("Alpha",))
-    service.taken["Alpha"] = "0.10.1"
-    lifecycle.set_flag("Alpha", "program", "! still on 0.10.0 after 0.10.1 was put in place")
     bus.emit("rcon.connected", "Alpha", version="0.10.0")  # the file isn't known yet: 0.10.0
     assert service.versions["Alpha"] == "0.10.0"
+    service.restarting["Alpha"] = "0.10.1"  # to restart after its game for 0.10.1, which it runs already
+    lifecycle.planned["Alpha"] = SimpleNamespace(when="after_game", reason=REASON.format(version="0.10.1"))
     serve_program(monkeypatch, release_0101(), NEW)
     monkeypatch.setattr(releases, "program_version", lambda settings, path: "0.10.0")
     run(service.check())
-    assert service.versions["Alpha"] == "0.10.1" and service.taken == {} and lifecycle.flags == {}
+    assert service.versions["Alpha"] == "0.10.1" and service.restarting == {} and lifecycle.cancelled == ["Alpha"]
+    assert lifecycle.restarts == []
 
 
 def test_a_09_server_whose_file_is_0101_already_is_still_on_09(tmp_path: Path, monkeypatch, run) -> None:

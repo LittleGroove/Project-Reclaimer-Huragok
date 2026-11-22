@@ -1,7 +1,8 @@
 """Every game's files, from Project Reclaimer 0.10 (Halo: Reach, Combat Evolved, Halo 2 beside Halo 3 and ODST): what a
 game folder holds of each, what a server needs for its map or playlist, what a failed start says is missing, getting
-them from MCC (no SteamCMD depot is known for them), I, N, `steam files`, `new --games`, the engine files, packages'
-needs_games and the Every Halo starter. The layouts are 0.10.0's `dedicated init --maps …`, probed 2026-11-06."""
+them from MCC (no SteamCMD depot is known for them) when the host asks, I, `steam files`, the engine files, and the
+Every Halo playlist (once a starter package, archived in 0.7.0). The layouts are 0.10.0's `dedicated init --maps …`,
+probed 2026-11-06."""
 
 from __future__ import annotations
 
@@ -15,15 +16,14 @@ from typing import Any
 
 import pytest
 
+from testkit import ENGINE
 from testkit.setup import ALPHA, SetupController, StrictKeyboard, fake_tool, setup_root
 from testkit.window import FakeTerminal
 
 from huragok import steam as steamsetup
 from huragok.commandline import cli
-from huragok.content import gamefiles, newserver, upkeep
+from huragok.content import gamefiles, upkeep
 from huragok.content.catalogue import Catalogue, Entry
-from huragok.content.newserver import NewServer, create_server
-from huragok.content.packages import Package, install_starters, load_package, write_package_toml
 from huragok.core.events import Event, EventBus
 from huragok.core.logs import RecentLog
 from huragok.core.requests import Result
@@ -215,15 +215,18 @@ def test_a_server_whose_playlist_names_reach_waits_for_reachs_files(tmp_path: Pa
     settings = load(settings_path)
     tool = Tool()
     game_files = gamefiles.GameFiles(settings, EventBus(), lambda: tool)
+    target = gamefiles.read_paths(server_folder, settings.config_name).game  # beside the Halo 3 it has
 
     async def nothing_to_copy_from() -> str | None:
-        game_files.prelaunch(settings.server(ALPHA))
+        assert (game_files.prelaunch(settings.server(ALPHA)) or "").startswith("needs Halo: Reach's files: press I")
+        assert not game_files.getting  # nothing got by itself (0.7.0)
+        game_files.get("reach", target)  # the host asks (I)
         await asyncio.gather(*game_files.tasks)
         return game_files.prelaunch(settings.server(ALPHA))
 
     with caplog.at_level(logging.ERROR):
         wait = run(nothing_to_copy_from())
-    assert wait and wait.startswith("needs Halo: Reach's files: Halo: Reach's files come from your own MCC")
+    assert wait and "(the last try: Halo: Reach's files come from your own MCC" in wait
     assert "Halo: Reach's files are missing and there's no way to get them here" in caplog.text
     rows = gamefiles.game_status(settings)
     assert ("missing", f"{ALPHA} (Halo: Reach's files)", "yellow") in rows
@@ -233,6 +236,7 @@ def test_a_server_whose_playlist_names_reach_waits_for_reachs_files(tmp_path: Pa
     game_files = gamefiles.GameFiles(settings, EventBus(), lambda: tool)
 
     async def copied() -> str | None:
+        game_files.get("reach", target)
         wait = game_files.prelaunch(settings.server(ALPHA))
         assert wait and wait.startswith("getting Halo: Reach's files")
         await asyncio.gather(*game_files.tasks)
@@ -247,7 +251,7 @@ def test_a_server_whose_playlist_names_reach_waits_for_reachs_files(tmp_path: Pa
     assert "Reach" not in gamefiles.games_text(paths.game, "0.9.23")  # an older program: not shown
 
 
-def test_a_start_that_failed_for_a_reach_map_gets_reach_not_halo_3(tmp_path: Path, run) -> None:
+def test_a_start_that_failed_for_a_reach_map_waits_for_reach_not_halo_3(tmp_path: Path, run) -> None:
     settings_path = setup_root(tmp_path)
     folder = mcc(tmp_path / "MCC", "reach", "halo1")
     set_table_key(settings_path, "setup", "mcc_folder", str(folder), before="process")
@@ -260,7 +264,8 @@ def test_a_start_that_failed_for_a_reach_map_gets_reach_not_halo_3(tmp_path: Pat
         assert game_files.prelaunch(settings.server(ALPHA)) is None  # it plays Halo 3's slayer playlist
         bus.publish(Event("server.start_failed", ALPHA, {"why": "it exited", "lines": [NO_REACH]}))
         wait = game_files.prelaunch(settings.server(ALPHA))
-        assert wait and wait.startswith("getting Halo: Reach's files")
+        assert wait and wait.startswith("needs Halo: Reach's files: press I") and not game_files.getting
+        game_files.get("reach", gamefiles.read_paths(settings.server(ALPHA).folder, settings.config_name).game)
         await asyncio.gather(*game_files.tasks)
         assert game_files.prelaunch(settings.server(ALPHA)) is None
 
@@ -325,9 +330,9 @@ def test_steam_files_for_the_new_games(tmp_path: Path, capsys: pytest.CaptureFix
     out = capsys.readouterr()
     assert "No way to get Halo 2's files here: Halo 2's files come from your own MCC" in flat(out.out + out.err)
     assert cli.main(["-c", str(settings_path), "steam", "files", "halo4"]) == 2
-    assert cli.main(["-c", str(settings_path), "new", "X", "--games", "reach,halo4"]) == 2
+    assert cli.main(["-c", str(settings_path), "new", "X", "--games", "reach,halo4"]) == 2  # gone in 0.7.0
     out = capsys.readouterr()
-    assert "--games: 'halo4' isn't one of" in flat(out.out + out.err)
+    assert "--games is gone" in flat(out.out + out.err) and "repair" in flat(out.out + out.err)
 
 
 def test_the_engine_files_of_every_game_after_an_mcc_update(tmp_path: Path) -> None:
@@ -349,73 +354,12 @@ def test_find_mcc_prefers_halo_3_and_takes_another_game_without_it(tmp_path: Pat
     assert steamsetup.find_mcc(str(only_reach)) == only_reach
 
 
-# N and `new` ---------------------------------------------------------------------------------------------------
+# The Every Halo playlist (0.6.2's starter package, archived in 0.7.0) ---------------------------------------------
 
-def test_a_new_server_gets_the_games_picked_from_mcc(tmp_path: Path) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = mcc(tmp_path / "MCC", "reach", "halo1")
-    settings = load(settings_path)
-    halo3(settings.home / "game")
-    said: list[str] = []
-    tool = Tool()
-    outcome = create_server(settings, NewServer("Mixed", port=46989, mcc_folder=str(folder),
-                                                games=["reach", "halo1", "halo2"]), tool, said.append)
-    game = settings.home / "game"
-    assert files.has_reach_files(game) and files.has_halo1_files(game) and not files.has_halo2_files(game)
-    assert ["reach", "halo1"] in tool.inits  # one init for both
-    assert any("Halo 2's files, which aren't in" in note and "no MCC with them" in note for note in outcome.notes)
-    old = Tool("0.9.23")
-    outcome = create_server(load(settings_path), NewServer("Older", port=46988, mcc_folder=str(folder),
-                                                           games=["halo2"]), old, said.append)
-    assert any("need Project Reclaimer 0.10.0 or later, and this program is 0.9.23" in n for n in outcome.notes)
-
-
-def test_n_asks_which_games_mcc_has_and_copies_them(tmp_path: Path, run, monkeypatch: pytest.MonkeyPatch) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = mcc(tmp_path / "MCC", "reach", "halo2")
-    set_table_key(settings_path, "setup", "mcc_folder", str(folder), before="process")
-    halo3(settings_path.parent / "game")
-    made: list[NewServer] = []
-
-    def create(settings: Any, spec: NewServer, tool: Any, say: Any = print) -> Any:
-        made.append(spec)
-        raise newserver.SetupError("stopped here")
-
-    from huragok.window.screens import setup as menu_setup
-
-    monkeypatch.setattr(menu_setup, "create_server", create)
-    monkeypatch.setattr(Menu, "_tool", lambda self, settings: asyncio.sleep(0, Tool()), raising=False)
-    keys = ["ENTER", *"Mixed", "ENTER", "ENTER", "N", "ENTER", "ENTER", "ENTER", "Y", "x"]  # Enter: the default games
-    terminal = FakeTerminal()
-    menu = Menu(SetupController(settings_path), terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
-    run(menu.screen_new())
-    text = flat("".join(terminal.output))
-    assert "Halo: Reach's files" in text and "Halo 2's files" in text and "Halo: Reach's campaign" not in text
-    assert made and made[0].games == ["reach", "halo2"]
-
-
-# Packages ------------------------------------------------------------------------------------------------------
-
-def test_a_package_names_the_games_it_needs(tmp_path: Path) -> None:
-    package = Package(tmp_path / "mix", "Mix", needs_games=["reach", "halo2"],
-                      server={"playlist": "playlists/x.playlist.json"})
-    (package.folder / "playlists").mkdir(parents=True)
-    (package.folder / "playlists" / "x.playlist.json").write_text("{}", encoding="utf-8")
-    write_package_toml(package)
-    loaded = load_package(package.folder)
-    assert loaded.needs_games == ["reach", "halo2"] and loaded.file_kinds == ["reach", "halo2"]
-    assert "needs Halo: Reach's and Halo 2's files (Project Reclaimer 0.10)" in loaded.summary()
-    (package.folder / "package.toml").write_text('name = "x"\nneeds_games = ["halo4"]\n', encoding="utf-8")
-    with pytest.raises(Exception, match="needs_games must be a list of these"):
-        load_package(package.folder)
-
-
-def test_the_every_halo_starter_mixes_four_games(tmp_path: Path) -> None:
-    install_starters(tmp_path)
-    package = load_package(tmp_path / "every-halo")
-    assert package.needs_games == ["reach", "halo1", "halo2"] and package.server["max_players"] == 16
-    games = json.loads(package.playlists[0].read_text(encoding="utf-8"))["games"]
-    assert files.needed_by({"playlist": "playlists/every-halo.playlist.json"}, package.folder) == \
+def test_the_every_halo_playlist_mixes_four_games() -> None:
+    folder = ENGINE / "tools" / "archive" / "starter-packages" / "every-halo"
+    games = json.loads((folder / "playlists" / "every-halo.playlist.json").read_text(encoding="utf-8"))["games"]
+    assert files.needed_by({"playlist": "playlists/every-halo.playlist.json"}, folder) == \
         ["halo3", "reach", "halo1", "halo2"]
     from huragok.games.bungie import GAMES
 

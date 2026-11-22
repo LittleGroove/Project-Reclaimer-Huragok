@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -16,29 +15,26 @@ from testkit.fleet import SERVER, cycle, world
 from testkit.manage import StubClient
 from testkit.mcc import fake_mcc
 from testkit.screens import text_of
-from testkit.setup import ALPHA, SetupController, fake_tool, setup_root
+from testkit.setup import ALPHA, SetupController, fake_tool, setup_root, write_plays
 from testkit.upkeep import menu_on
 
 from huragok.content import upkeep
-from huragok.content.catalogue import Catalogue, Entry, parse_listing
-from huragok.content.newserver import NewServer, add_odst_files, create_server
-from huragok.content.packages import find_package, install_starters
+from huragok.content.catalogue import parse_listing
+from huragok.content import gamefiles
+from huragok.content.newserver import add_odst_files
 from huragok.core.events import Event, EventBus
 from huragok.core.settings import RelayUser, load
 from huragok.core.tomledit import read_toml, set_server_setting
 from huragok.games import odst
 from huragok.games import files as game_files
 from huragok.games.files import has_odst_files
-from huragok.games.halo3 import old_labels, rename_old_labels
-from huragok.games.halo3_options import trait_options
+from huragok.games.halo3 import label_fixes, old_labels
 from huragok.players.relay import Relay, Session
-from huragok.program import plays
 from huragok.program import settings as ls
 from huragok.servers.fleet import Lifecycle
 from huragok.servers.logs import parse_log_line
 from huragok.servers.state import Player, ServerState
 from huragok.window import statuscard
-from huragok.window.dashboard import Menu
 
 FIREFIGHT = {"mode": "firefight", "mission": 5000, "insertion": 7, "variant": "odst_ff_classic", "difficulty": "heroic"}
 
@@ -103,10 +99,10 @@ def test_what_an_odst_server_plays_and_the_camera(tmp_path: Path) -> None:
     # Switching an ODST server to something else takes `odst` out (a server plays one kind of thing).
     settings_path = setup_root(tmp_path)
     server = load(settings_path).servers[0]
-    plays.write_plays(server.config_path, ALPHA, {"odst": FIREFIGHT})
+    write_plays(server.config_path, ALPHA, {"odst": FIREFIGHT})
     reread = load(settings_path).servers[0]
     assert reread.plays == "ODST Firefight Crater (Night), Ff Classic (heroic)" and reread.plays_kind == "odst"
-    plays.write_plays(server.config_path, ALPHA, {"playlist": "playlists/slayer.playlist.json"})
+    write_plays(server.config_path, ALPHA, {"playlist": "playlists/slayer.playlist.json"})
     assert "odst" not in read_toml(server.config_path)["server"][0]
 
 
@@ -126,28 +122,25 @@ def test_odst_files_are_added_to_a_game_folder_that_has_halo_3s(tmp_path: Path) 
         add_odst_files(fake_tool(), tmp_path / "other", str(fake_mcc(tmp_path / "MCC2")), tmp_path / "stage", said.append)
 
 
-def test_a_new_odst_server_gets_odsts_files_from_mcc(tmp_path: Path, monkeypatch) -> None:
+def test_an_odst_server_without_odsts_files_waits_and_repair_adds_them_from_mcc(tmp_path: Path) -> None:
+    """0.7.0: nothing is got by itself. An ODST server whose game folder lacks ODST's files waits, warned, and
+    `repair` (when the host asks) copies them from MCC beside the Halo 3 it has."""
     mcc = odst_mcc(tmp_path / "MCC")
     settings_path = setup_root(tmp_path, extra=f"[setup]\nmcc_folder = {json.dumps(str(mcc))}\n")
+    server = load(settings_path).servers[0]
+    write_plays(server.config_path, ALPHA, {"odst": FIREFIGHT, "max_players": 4})
     settings = load(settings_path)
-    install_starters(settings.packages_folder)
-    package = find_package(settings.packages_folder, "odst-firefight")
-    said: list[str] = []
-    outcome = create_server(settings, NewServer("ODST Night", package=package, mcc_folder=str(mcc)), fake_tool(),
-                            said.append)
-    assert outcome.ready, outcome.check.text if outcome.check else outcome.notes
-    assert has_odst_files(settings.home / "game") and any("Halo 3: ODST's files are in" in line for line in said)
-    block = read_toml(outcome.folder / "dedicated.toml")["server"][0]
-    assert block["odst"] == FIREFIGHT and "playlist" not in block and block["max_players"] == 4
-    assert "Halo 3: ODST" in outcome.check.text  # the program's check saw an ODST server
-    # Without an MCC that has ODST: made all the same, with a note saying how.
-    monkeypatch.setattr("huragok.content.newserver.find_mcc", lambda hint=None: None)
-    settings = load(settings_path)
-    (settings.home / "game" / "halo3odst" / "halo3odst.dll").unlink()
-    outcome = create_server(settings, NewServer("ODST Day", extra={"odst": {"mission": 6100}}), fake_tool(),
-                            said.append)
-    assert not outcome.ready and any("no MCC with ODST installed was found" in note for note in outcome.notes)
-    assert "Halo 3: ODST's files are not in the game folder" in outcome.check.text
+    server = settings.servers[0]
+    files = gamefiles.GameFiles(settings, EventBus(), fake_tool)
+    wait = files.prelaunch(server) or ""
+    assert "Halo 3: ODST's files" in wait and "press I" in wait and not files.tasks  # held, nothing got by itself
+    plan = gamefiles.repairs(settings, server, fake_tool, lambda line: None)
+    odst_repair = next(r for r in plan if r.text.startswith("Halo 3: ODST's files into"))
+    assert "copying them from MCC" in odst_repair.text and not odst_repair.writes  # beside its Halo 3: no path change
+    done, failed = gamefiles.run_repairs(settings, server, plan, lambda line: None)
+    assert failed == [] and has_odst_files(server.folder / "game")
+    assert any(line.startswith("Halo 3: ODST's files are in") for line in done)
+    assert "ODST" not in (files.prelaunch(server) or "")  # what this MCC has is in (its campaign it lacks)
 
 
 def test_the_engine_files_after_an_mcc_update_include_odsts(tmp_path: Path) -> None:
@@ -180,61 +173,6 @@ def test_a_check_offers_odsts_files(tmp_path: Path, run, monkeypatch) -> None:
     assert "No MCC with Halo 3: ODST installed was found" in text_of(terminal)
 
 
-# The window: D -> What it plays -> Halo 3: ODST ------------------------------------------------------
-
-def test_an_odst_game_is_picked_from_lists(tmp_path: Path, run, monkeypatch) -> None:
-    mcc = odst_mcc(tmp_path / "MCC")
-    settings_path = setup_root(tmp_path, extra=f"[setup]\nmcc_folder = {json.dumps(str(mcc))}\n")
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    set_server_setting(server.config_path, ALPHA, "max_players", 24)
-    listing = odst.parse_listing((DATA / "content-with-odst-0.9.20.txt").read_text(encoding="utf-8"))
-
-    async def catalogue(self: Any, tool: Any, settings: Any, server: Any) -> Catalogue:
-        return Catalogue(maps=[Entry("Guardian", "Guardian", "map")], odst=listing)
-
-    monkeypatch.setattr(Menu, "_catalogue", catalogue)
-    keys = ["1", "ENTER",  # Alpha
-            "2", "ENTER", "Y", "W",  # What it plays
-            "5", "Y",  # Halo 3: ODST; its game folder has none of ODST's files: add them from the fake MCC
-            "2", "2", "ENTER", "1", "ENTER", "3",  # Firefight: Crater (Night), Ff Classic, heroic
-            "Y", "x", "ESC",  # max_players 24 -> 16, written
-            "2", "ENTER", "Y", "W", "5",  # again: a campaign mission this time
-            "1", "2", "ENTER", "3", "ENTER", "4", "Y", *"150", "ENTER", "ENTER", "ENTER", "ENTER",
-            "Y", *"150", "ENTER", *"10", "ENTER", "x", "ESC",  # Mombasa Streets from start 3, legendary, sprint
-            "ESC", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    text = text_of(terminal)
-    assert "now plays ODST Firefight Crater (Night), Ff Classic (heroic)" in text
-    assert "max_players is 24 (this server)" in text and "max_players to 16 with it?" in text  # written with the switch (7.4)
-    assert "now plays ODST campaign Mombasa Streets, start 3 (legendary)" in text
-    assert "Now: ODST Firefight Crater (Night), Ff Classic (heroic)" in text
-    block = read_toml(server.config_path)["server"][0]
-    assert block["max_players"] == 16 and "playlist" not in block
-    assert block["odst"] == {"mission": 5000, "insertion": 3, "difficulty": "legendary",
-                             "modifiers": {"health_percent": 150, "sprint": True, "sprint_speed_percent": 150,
-                                           "sprint_stamina_seconds": 10}}
-    assert has_odst_files(server.folder / "game")
-
-
-def test_campaign_modifiers_keep_what_they_dont_ask_about(tmp_path: Path, run) -> None:
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    plays.write_plays(server.config_path, ALPHA, {"campaign": {"mission": 3010, "customization": ["Armor Pack"],
-                                                            "modifiers": {"skulls": 5, "sprint": True,
-                                                                          "sprint_speed_percent": 120}}})
-    keys = ["1", "ENTER", "2", "ENTER", "Y", "W", "4", "1", "ENTER", "0", "ENTER", "2", "N",
-            "Y", "ENTER", *"33", "ENTER", "ENTER", "ENTER", "N", "x", "ESC", "ESC", "ESC"]  # damage 33: refused; sprint off
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    campaign = read_toml(server.config_path)["server"][0]["campaign"]
-    assert campaign == {"mission": 3010, "insertion": 0, "difficulty": "normal", "customization": ["Armor Pack"],
-                        "modifiers": {"skulls": 5}}
-    assert "'33' isn't 25-1000 in steps of 25; left as it was." in text_of(terminal)
-
-
 def test_the_status_card_shows_the_camera(tmp_path: Path) -> None:
     settings_path = setup_root(tmp_path)
     settings = load(settings_path)
@@ -245,7 +183,7 @@ def test_the_status_card_shows_the_camera(tmp_path: Path) -> None:
         return {title: " | ".join(f"{label} {text}" for label, text, _ in lines) for title, lines in sections.items()}
 
     assert "Camera player choice" in card()["Settings"]
-    plays.write_plays(server.config_path, ALPHA, {"odst": FIREFIGHT})
+    write_plays(server.config_path, ALPHA, {"odst": FIREFIGHT})
     assert "Camera (not for co-op)" in card()["Settings"] and "ODST Firefight Crater (Night)" in card()["What it plays"]
 
 
@@ -357,31 +295,26 @@ def test_an_odst_game_ending_in_a_new_lobby_ends_the_game_for_a_planned_restart(
 
 # The labels 0.9.19 renamed ------------------------------------------------------------------------------
 
-def test_renamed_labels_are_read_and_written_as_they_are_called_now(tmp_path: Path) -> None:
-    character_set = next(o for o in trait_options("player") if o.key == "player.character_set")
-    assert character_set.label_of(1) == "Halo 3" and character_set.value_of("Vanilla characters") == 1
-    assert character_set.label_of("vanilla characters") == "Halo 3"
-    regeneration = next(o for o in trait_options("player") if o.key == "player.grenade_regeneration")
-    assert regeneration.label_of(3) == "On, with firebombs" and regeneration.value_of("On with firebombs") == 3
+def test_renamed_labels_are_found_and_the_file_left_as_it_is(tmp_path: Path) -> None:
+    """Huragok no longer rewrites a playlist's labels (0.7.0): it names the ones the server's program refuses, and
+    which it takes instead, and the file stays exactly as the host wrote it."""
     playlist = tmp_path / "old.playlist.json"
     games = [{"map": "Guardian", "game": "Slayer", "options": {"player.character_set": "Vanilla characters"}},
              {"map": "Guardian", "game": "Slayer", "name": "Vanilla characters only",
               "options": {"player.grenade_regeneration": "on with firebombs"}},
              {"map": "Guardian", "game": "Slayer"}]
-    playlist.write_text(json.dumps({"name": "old", "games": games}, indent=4), encoding="utf-8")
+    text = json.dumps({"name": "old", "games": games}, indent=4)
+    playlist.write_text(text, encoding="utf-8")
     assert old_labels(playlist) == ["Vanilla characters", "on with firebombs"]
-    assert rename_old_labels(playlist) == [("Vanilla characters", "Halo 3"), ("on with firebombs", "On, with firebombs")]
-    data = json.loads(playlist.read_text(encoding="utf-8"))
-    assert data["games"][0]["options"]["player.character_set"] == "Halo 3"
-    assert data["games"][1]["options"]["player.grenade_regeneration"] == "On, with firebombs"
-    assert data["games"][1]["name"] == "Vanilla characters only"  # only whole labels change
-    assert playlist.read_text(encoding="utf-8").startswith('{\n    "name": "old"')  # the rest as it was
-    assert rename_old_labels(playlist) == [] and old_labels(tmp_path / "missing.json") == []
+    assert label_fixes(playlist) == [("player.character_set", "Vanilla characters", "Halo 3"),
+                                     ("player.grenade_regeneration", "on with firebombs", "On, with firebombs")]
+    assert playlist.read_text(encoding="utf-8") == text  # read only
+    assert old_labels(tmp_path / "missing.json") == [] and label_fixes(tmp_path / "missing.json") == []
 
 
-def test_labels_are_written_as_the_servers_own_program_calls_them(tmp_path: Path) -> None:
+def test_labels_are_judged_as_the_servers_own_program_calls_them(tmp_path: Path) -> None:
     """0.9.18 refuses "Halo 3", 0.9.19 on refuse "Vanilla characters", and no version takes "On with firebombs";
-    only option values change, never a game's name or anything else."""
+    only option values count, never a game's name or anything else."""
     playlist = tmp_path / "p.playlist.json"
     games = [{"map": "Guardian", "game": "Slayer", "options": {"player.character_set": "Halo 3"}},
              {"map": "Guardian", "game": "Slayer", "name": "Vanilla characters",
@@ -390,39 +323,32 @@ def test_labels_are_written_as_the_servers_own_program_calls_them(tmp_path: Path
              {"map": "Guardian", "game": "Slayer", "rules": {"note": "Halo 3"}, "options": {"map.weapons": "Halo 3"}}]
     text = json.dumps({"name": "p", "games": games}, indent=4)
     playlist.write_text(text, encoding="utf-8")
-    assert rename_old_labels(playlist, "0.9.18") == [("Halo 3", "Vanilla characters"),
-                                                     ("On with firebombs", "On, with firebombs")]
-    data = json.loads(playlist.read_text(encoding="utf-8"))
-    assert data["games"][0]["options"]["player.character_set"] == "Vanilla characters"
-    assert data["games"][1]["name"] == "Vanilla characters" and data["games"][2] == games[2]
-    assert playlist.read_text(encoding="utf-8").startswith('{\n    "name": "p"')  # the layout as it was
-    assert old_labels(playlist, "0.9.18") == [] and rename_old_labels(playlist, "0.9.18") == []
-    assert rename_old_labels(playlist, "v0.9.20") == [("Vanilla characters", "Halo 3")] * 2
-    playlist.write_text(text, encoding="utf-8")
-    assert rename_old_labels(playlist, None) == [("On with firebombs", "On, with firebombs")]  # version not known
-    assert '"player.character_set": "Halo 3"' in playlist.read_text(encoding="utf-8")
-    assert old_labels(playlist) == ["Vanilla characters"]  # `check`: as the newest program calls them
+    assert [(written, taken) for _, written, taken in label_fixes(playlist, "0.9.18")] == [
+        ("Halo 3", "Vanilla characters"), ("On with firebombs", "On, with firebombs")]
+    assert old_labels(playlist, "v0.9.20") == ["On with firebombs", "Vanilla characters"]
+    assert old_labels(playlist, None) == ["On with firebombs"]  # version not known: only what no version takes
+    assert old_labels(playlist) == ["On with firebombs", "Vanilla characters"]  # `check`: as the newest calls them
+    assert playlist.read_text(encoding="utf-8") == text
 
 
-def test_a_server_starts_with_its_playlists_labels_renamed(world, run, caplog) -> None:  # noqa: F811
+def test_a_server_starts_with_its_playlists_as_they_are(world, run, caplog) -> None:  # noqa: F811
+    """A label its program refuses is the host's to change: the start never rewrites a playlist (0.7.0)."""
     clock, settings, backend, fleet, manager, client, state, seen = world
     folder = manager.server.folder / "playlists"
     folder.mkdir(exist_ok=True)
-    (folder / "old.playlist.json").write_text('{"games": [{"options": {"teams.red_character_set": '
-                                              '"Vanilla characters"}}]}', encoding="utf-8")
-    state.version = "0.9.20"  # what its console said on its last run (the fake has no program file to ask)
+    text = '{"games": [{"options": {"teams.red_character_set": "Vanilla characters"}}]}'
+    (folder / "old.playlist.json").write_text(text, encoding="utf-8")
+    state.version = "0.9.20"
 
     async def scenario() -> None:
         caplog.set_level(logging.INFO)
         fleet.boot()
         await cycle(manager, clock)
-        # The labels are put right in a thread before the start: a busy machine (CI's) takes longer than a cycle
         await wait_for(lambda: backend.starts == [SERVER], timeout=15)
 
     run(scenario())
-    assert '"Halo 3"' in (folder / "old.playlist.json").read_text(encoding="utf-8")
-    assert "old.playlist.json: 'Vanilla characters' is now 'Halo 3', as Project Reclaimer 0.9.20 calls them" in \
-        caplog.text
+    assert (folder / "old.playlist.json").read_text(encoding="utf-8") == text
+    assert "is now 'Halo 3'" not in caplog.text
 
 
 def test_check_names_a_playlists_old_labels(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -435,8 +361,10 @@ def test_check_names_a_playlists_old_labels(tmp_path: Path, capsys, monkeypatch)
         '{"games": [{"options": {"player.character_set": "Vanilla characters"}}]}', encoding="utf-8")
     monkeypatch.setattr(serverupdates, "program_version", lambda settings, program: "0.9.20")  # the server's own
     cli.main(["-c", str(settings_path), "check"])
+    text = " ".join(capsys.readouterr().out.split())
     assert ("slayer.playlist.json names 'Vanilla characters', which Project Reclaimer 0.9.20 (this server's program) "
-            "calls otherwise") in " ".join(capsys.readouterr().out.split())
+            "calls otherwise, so it won't play that playlist: write 'Halo 3' instead (the window's O opens it)") in text
+    assert "Vanilla characters" in (server.folder / "playlists" / "slayer.playlist.json").read_text(encoding="utf-8")
 
 
 def test_vergils_game_commands_are_refused_on_an_odst_server(tmp_path: Path, run) -> None:
@@ -455,35 +383,3 @@ def test_vergils_game_commands_are_refused_on_an_odst_server(tmp_path: Path, run
             await wait_for(lambda: fake.named("nextmap"))
 
     run(scenario())
-
-
-def test_an_odst_setup_keeps_what_d_doesnt_ask_about(tmp_path: Path, run, monkeypatch) -> None:
-    """0.9.21's Firefight `options` (and story_characters, and anything newer) stay while it stays Firefight; a
-    change to a campaign mission leaves them out and says so."""
-    mcc = odst_mcc(tmp_path / "MCC")
-    settings_path = setup_root(tmp_path, extra=f"[setup]\nmcc_folder = {json.dumps(str(mcc))}\n")
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    set_server_setting(server.config_path, ALPHA, "max_players", 16)
-    plays.write_plays(server.config_path, ALPHA, {"odst": {**FIREFIGHT, "options": {"lives": 5}}})
-    listing = odst.parse_listing((DATA / "content-with-odst-0.9.20.txt").read_text(encoding="utf-8"))
-
-    async def catalogue(self: Any, tool: Any, settings: Any, server: Any) -> Catalogue:
-        return Catalogue(maps=[Entry("Guardian", "Guardian", "map")], odst=listing)
-
-    monkeypatch.setattr(Menu, "_catalogue", catalogue)
-    keys = ["1", "ENTER", "2", "ENTER", "Y", "W", "5", "Y",  # Alpha, What it plays, ODST (its files added from MCC)
-            "2", "1", "ENTER", "1", "ENTER", "2", "x", "ESC",  # Firefight again: Crater, Ff Classic, normal
-            "ESC", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    setup = read_toml(server.config_path)["server"][0]["odst"]
-    assert setup["options"] == {"lives": 5} and setup["difficulty"] == "normal"
-    keys = ["1", "ENTER", "2", "ENTER", "Y", "W", "5",
-            "1", "1", "ENTER", "2", "N", "x", "ESC",  # a campaign mission: Prepare to Drop, normal, no modifiers
-            "ESC", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    setup = read_toml(server.config_path)["server"][0]["odst"]
-    assert "options" not in setup and setup["mission"] == 4100
-    assert "Left out, as they were for Firefight: options." in text_of(terminal)

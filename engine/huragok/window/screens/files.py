@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ...content.catalogue import (
-    DisabledModsError, disabled_mods, installed_mods, is_disabled, mod_package, set_mod_disabled,
+    DISABLED_MODS, DisabledModsError, disabled_mods, installed_mods, is_disabled, mod_package,
 )
 from ...content.mccimport import content_root_of
 from ...core import desktop
@@ -880,50 +880,35 @@ class FileScreens(Screens):
         self.note(f"Added: every {describe_every(message.seconds)}. It's first said within "
                   f"{describe_every(message.seconds)}, while someone's on.", "green")
 
-    # A server's page: its mods on or off ----------------------------------------------------------
+    # A server's page: its mods, and which its content folder's disabled-mods.json switches off (read only) ---------
 
     async def _server_mods(self, settings: Any, server: Any, row: Row) -> None:
+        """The mods in its content folder, each in use or switched off as the host's disabled-mods.json says. Huragok
+        reads that file and never writes it (0.7.0): O opens it to change it, and the server takes the change when it
+        restarts."""
         root = content_root_of(server.folder, settings.config_name)
-        while True:
-            mods = installed_mods(root)
-            try:
-                off = disabled_mods(root)
-            except DisabledModsError as error:
-                self.note(f"{error}. O opens it, to put it right by hand.", "red")
-                await self.wait_any_key(8)
-                return
-            self.heading(server.name, "Settings", "Mods on or off",
-                         note=f"{root / 'Mods'} · a mod switched off stays on disk but isn't used; the server takes "
-                              "the change when it restarts")
-            if not mods:
-                self.note("No mods in its content folder yet: G → Workshop items and mods adds them.")
-                await self.wait_any_key(6)
-                return
-            packages = [mod_package(root, mod) for mod in mods]
-            rows = [("OFF" if is_disabled(off, p) else "on", mod.label) for mod, p in zip(mods, packages)]
-            panel = self.listing(rows, colours=["gray" if is_disabled(off, p) else None for p in packages], wrap=True)
-            answer = await self.prompt_line("  Which? (a number switches it on or off; Esc goes back)", panel=panel)
-            if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(mods):
-                return
-            package = packages[int(answer) - 1]
-            switch_off = not is_disabled(off, package)
-            # A content folder other servers share has one mod list: what's switched here is switched for them too,
-            # and one whose playlist uses the mod may not start (audit 2026-11, 7.2)
-            sharing = self._sharing_content(settings, server, root)
-            if sharing:
-                self.note(f"{', '.join(sharing)} share{'s' if len(sharing) == 1 else ''} this content folder: the mod is "
-                          f"switched {'off' if switch_off else 'on'} for them too. O on the server's page gives it a "
-                          "folder of its own.", "yellow")
-                if switch_off and not await self.prompt_yes_no(f"  Switch it off for {', '.join(sharing)} too?", False):
-                    continue
-            try:
-                set_mod_disabled(root, package, switch_off)
-            except (DisabledModsError, OSError) as error:
-                self.note(f"Not changed: {error}", "yellow")
-                await self.wait_any_key(6)
-                continue
-            self.note(f"{mods[int(answer) - 1].title} switched {'off' if switch_off else 'on'}.", "green")
-            await self._offer_restart(row, server.name, _Change("mods", "restart"))
+        mods = installed_mods(root)
+        self.heading(server.name, "Settings", "Mods",
+                     note=f"{root / 'Mods'} · {DISABLED_MODS} switches a mod off: it stays on disk, unused")
+        if not mods:
+            self.note("No mods in its content folder yet: list Workshop items in [workshop] items in its "
+                      f"{settings.config_name}, and the server fetches them itself.")
+            await self.wait_any_key(6)
+            return
+        try:
+            off = disabled_mods(root)
+        except DisabledModsError as error:
+            self.note(f"{error}: the server may not read it either. O opens it, to put it right.", "red")
+            off = []
+        packages = [mod_package(root, mod) for mod in mods]
+        self.listing([("OFF" if is_disabled(off, p) else "in use", mod.label) for mod, p in zip(mods, packages)],
+                     colours=["gray" if is_disabled(off, p) else None for p in packages], wrap=True)
+        sharing = self._sharing_content(settings, server, root)
+        self.note(f"To switch one off or on, list its folder (\"Mods/<folder>\") in {root / DISABLED_MODS} "
+                  "(O opens it); the server takes the change when it restarts."
+                  + (f" {', '.join(sharing)} share{'s' if len(sharing) == 1 else ''} this content folder, so the "
+                     "change is theirs too." if sharing else ""))
+        await self.wait_any_key(30)
 
     def _sharing_content(self, settings: Any, server: Any, root: Path) -> list[str]:
         """The other servers whose content folder is this one."""
@@ -964,12 +949,13 @@ class FileScreens(Screens):
 
     def server_page_extras(self, settings: Any, server: Any) -> list[tuple[str, str, str, str]]:
         """(letter, what, count, what it holds) for a server's page in D."""
+        from ...games.gamemodes import list_game_modes
         from ...games.halo3 import playlist_files
 
-        root = content_root_of(server.folder, settings.config_name)
+        root = server.content_dir or content_root_of(server.folder, settings.config_name)
         playlists = playlist_files(server.folder)
-        modes = root / "Game Modes"
-        custom = sorted(modes.glob("*.json")) if modes.is_dir() else []
+        custom = list_game_modes(root)  # .json, .rmeg and .bin, subfolders and the program's own too
+        scripted = sum(1 for mode in custom if mode.kind == "rmeg")
         try:
             off = len(disabled_mods(root))
         except DisabledModsError:
@@ -981,10 +967,11 @@ class FileScreens(Screens):
         except (MessageError, OSError):
             messages = []
         return [("P", "playlists", str(len(playlists)), ", ".join(p.name.removesuffix(".playlist.json")
-                                                                   for p in playlists[:4]) or "build one"),
-                ("G", "custom games", str(len(custom)), "game types with rules of their own"),
+                                                                   for p in playlists[:4]) or "none: made by hand"),
+                ("G", "custom games", str(len(custom)), "game types with rules of their own"
+                 + (f" ({scripted} .rmeg)" if scripted else "")),
                 ("B", "bans, admins and the VPN block", "", "through its console, while it runs"),
-                ("M", "mods on or off", str(mods), f"{off} switched off" if off else "every mod in use"),
+                ("M", "mods", str(mods), f"{off} switched off by {DISABLED_MODS}" if off else "every mod in use"),
                 ("I", "interval messages", str(len(messages)), "its own; it says the ones for every server too"
                  if own is not None else "the ones for every server (its folder is Huragok's)")]
 
@@ -1042,13 +1029,6 @@ class FileScreens(Screens):
             self.note("Save it and the server re-checks its files a couple of seconds later; the result shows in the "
                       "dashboard's events ('settings reloaded …', or what's wrong).", "cyan")
         await self.wait_any_key(6)
-
-
-class _Change:
-    """What _offer_restart needs to know about a change that isn't a dedicated.toml setting."""
-
-    def __init__(self, key: str, applies: str) -> None:
-        self.key, self.applies = key, applies
 
 
 def _ago(seconds: float) -> str:

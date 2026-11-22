@@ -1,0 +1,441 @@
+# Huragok's warnings: the words for each, as data (core/serverwarnings.py; plans/server-files-audit/plan-0.7.0.md
+# section 5). Huragok warns and carries on: a warning never stops a server.
+#
+# id       how checkers name the rule
+# kind     refused (the server's own program said no), seen (what it said while it played), check (Huragok's own
+#          judgement of something the server lets through), info (nothing wrong, worth knowing)
+# text     what's wrong and why, with {fields} the checker fills in
+# fix      what to do about it (optional)
+# checked  the newest Project Reclaimer version the rule was checked on: a server newer than every rule gets one line
+#          saying these warnings may be out of date. Bring this up to date after each release's tests.
+# discord  true: said in the staff channel too. Only what the host must act on: refused, a game skipped, an update
+#          waiting.
+# area     plays (what it plays), runs (how it runs), updates, huragok (Huragok's own)
+
+# ---- What it plays (games/, program/plays.py): new rules go below this line ----
+# content/filehealth.py finds them, content/playswatch.py keeps them up to date (source "plays"). The program's own
+# words (refused), what it said while it played (seen: servers/logs.py GAME_SKIPS, the 0.10.8 and 0.10.9 program
+# text), and Huragok's own judgement of what the program lets through (check: README section 3).
+
+[[rule]]
+id = "plays-refused"
+kind = "refused"
+area = "plays"
+text = "The server refuses {what}: {why}. {effect}"
+fix = "Put it right in the file (G → F opens its folder): the server takes the change by itself."
+checked = "0.10.8"
+discord = true
+
+[[rule]]
+id = "plays-refused-unused"
+kind = "refused"
+area = "plays"
+text = "The server's own program won't play {what}: {why}. {effect}"
+fix = "Put it right before a server plays it, or set it aside (G → Playlists → S)."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-reload-refused"
+kind = "refused"
+area = "plays"
+text = "The server refused its changed files as it reloaded them ({why}): it keeps playing what it played before, and no other change to its dedicated.toml applies until this is fixed."
+fix = "Put the file right (D → O opens it): the server reloads it by itself."
+checked = "0.10.8"
+discord = true
+
+[[rule]]
+id = "plays-game-skipped"
+kind = "seen"
+area = "plays"
+text = "{game} was skipped at {at}: its map failed to load {times} times in a row ({reason}). The server skips it for {skip}."
+fix = "Its server.log says more. A map that keeps failing to load is often a damaged or half-installed mod map (G → Mods)."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "plays-game-unplayable"
+kind = "seen"
+area = "plays"
+text = "{game} can't be played ({reason}), the server said at {at}: it's skipped from now on."
+fix = "Its server.log says more; the game may need fewer objects or mods."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "plays-nothing-playable"
+kind = "seen"
+area = "plays"
+text = "No game of its playlist could be played (the last: {game}), the server said at {at}: it stopped."
+fix = "Its server.log says why each game failed; G shows what each game names."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "plays-game-passed-over"
+kind = "seen"
+area = "plays"
+text = "{game} ended with no results {times} times in a row with players in it, the server said at {at}: its playlist goes on without it."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "plays-game-retried"
+kind = "seen"
+area = "plays"
+text = "{game}'s map failed to load at {at} ({reason}): the server started it again ({times} time(s) in a row)."
+checked = "0.10.9"
+
+[[rule]]
+id = "plays-game-load-failed"
+kind = "seen"
+area = "plays"
+text = "{game} couldn't be loaded at {at} ({reason}): the server started again."
+checked = "0.10.9"
+
+[[rule]]
+id = "plays-console-game-failed"
+kind = "seen"
+area = "plays"
+text = "{game}, a game chosen outside its playlist, couldn't be played at {at} ({reason}): the server went on with its playlist."
+checked = "0.10.9"
+
+[[rule]]
+id = "plays-not-checked"
+kind = "info"
+area = "plays"
+text = "The server's own program didn't check what it plays: {why}. What G shows is Huragok's own reading of its files."
+fix = "G → 5 runs the server's own check when you ask."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-too-many-mod-maps"
+kind = "check"
+area = "plays"
+text = "{file} plays {maps} mod maps from {mods} mods. A session lists 23 mod maps at most (Halo 3 lists 50 maps, 27 of its own), and the guide says 16 mods: the server's check lets more through, and some may be left out when they're played. This may be a false alarm after a Project Reclaimer update."
+fix = "Split it into two playlists, or take some mod maps out."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-map-id-clash"
+kind = "check"
+area = "plays"
+text = "{file} plays {maps}, which share map ID {id}: one session can't hold both, so the server leaves one out."
+fix = "Keep one of them in this playlist; the mods' own check (G → Mods) says which mods they're from."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-layout-other-version"
+kind = "check"
+area = "plays"
+text = "{layout} was made on {stem}.map with map ID {made}, but the installed {mod} has map ID {now}: it was made on another version of the mod, so it may not load, or its objects may not be what they were."
+fix = "Get the layout made for this version of the mod (or save it again on it in Forge)."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-layout-objects"
+kind = "check"
+area = "plays"
+text = "{layout} has {objects} objects: Project Reclaimer 0.10 places {most} at most on a map, the map's own included, so the game may not start or may leave objects out."
+fix = "Take objects out of it in Forge."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-options-own-rules"
+kind = "check"
+area = "plays"
+text = "{where} sets {keys} on {map}, a {game} map: those maps play their game types' own options, and the server refuses options and rules there."
+fix = "Name one of {game}'s game variants instead, and take the {keys} out."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-label-refused"
+kind = "check"
+area = "plays"
+text = "{where} sets {option} to \"{label}\", which Project Reclaimer {version} (this server's program) doesn't take: it calls it \"{taken}\", so the server won't play that game."
+fix = "Write \"{taken}\" instead."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-image"
+kind = "check"
+area = "plays"
+text = "{where}'s ballot picture {image}: {why}."
+fix = "Put the picture (PNG or JPEG, 4 MiB at most) in the content folder's Images, or take preview_image out."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-same-name"
+kind = "check"
+area = "plays"
+text = "{where} names the game mode {name}, and {count} files are called that ({files}): the server picks one, and which isn't known."
+fix = "Give each file a name of its own (its \"name\"), or name the one you mean by its path."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-workshop-names"
+kind = "info"
+area = "plays"
+text = "{where} names its map {name}: a workshop:<item>/<map> name makes the server's own check fetch that Workshop item, so Huragok doesn't run the check by itself for this server."
+fix = "The map's title names it as well, unless two mods share that title. G → 5 runs the check when you ask."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-mode-note"
+kind = "check"
+area = "plays"
+text = "{file}: {note} (the server's own words): what it reads without plays as the game type has it."
+fix = "Take the setting out, or write it the way this version takes it."
+checked = "0.10.8"
+
+[[rule]]
+id = "plays-file-left-out"
+kind = "info"
+area = "plays"
+text = "The server leaves {file} out ({reason}). Nothing it plays names it, so nothing changes for players."
+fix = "Put it right, or set it aside (G → Game modes or Maps)."
+checked = "0.10.8"
+
+[[rule]]
+id = "checked-up-to"
+kind = "info"
+area = "huragok"
+text = "These warnings were checked up to Project Reclaimer {checked}; this server runs {version}."
+fix = "Its own check (G → 5) still applies, and a warning may be out of date until Huragok's next update."
+checked = "0.10.9"
+
+[[rule]]
+id = "no-console"
+kind = "check"
+area = "runs"
+text = "No console: there's no [rcon] password in its dedicated.toml. Huragok starts it and keeps it on, watching its status.json, but can't tell players anything or moderate."
+fix = "Add password = \"...\" (something long) under [rcon], or D → Q → Add the console; the server uses it from its next start."
+checked = "0.10.9"
+
+[[rule]]
+id = "game-files-missing"
+kind = "check"
+area = "runs"
+text = "Its game folder ({game}) lacks {what}, which it needs for what it plays: it can't start without them, so Huragok holds its start until they're there. Huragok no longer gets game files by itself."
+fix = "I gets them (copied from MCC on this PC, or downloaded with SteamCMD), or run {launcher} repair: it shows what it would do first."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "content-folder-missing"
+kind = "check"
+area = "plays"
+text = "Its content folder ({content}) names a folder that isn't on this PC (a folder copied in from elsewhere?): it has none of the maps, game modes or mods it had there."
+fix = "Point content at its folder here in its dedicated.toml, or run {launcher} repair: it gives the server an empty content folder of its own."
+checked = "0.10.9"
+
+[[rule]]
+id = "ban-list-missing"
+kind = "check"
+area = "runs"
+text = "Its ban list ({bans}) isn't on this PC: the server starts with none, and the bans it had where it came from stayed there."
+fix = "Copy that bans.json here and name it in its dedicated.toml, or run {launcher} repair: it gives the server an empty ban list of its own (Huragok's own bans are put on it by themselves)."
+checked = "0.10.9"
+
+[[rule]]
+id = "ban-list-shared"
+kind = "info"
+area = "runs"
+text = "It reads its ban list from outside its folder ({bans}): every server reading that file shares its bans, so a ban on one is a ban on all."
+fix = "Keep it if that's what you want; {launcher} repair gives it a copy of its own (every ban, admin and allowance kept)."
+checked = "0.10.9"
+
+[[rule]]
+id = "steamcmd-missing"
+kind = "check"
+area = "updates"
+text = "Its [workshop] steamcmd ({steamcmd}) isn't on this PC: it can't fetch its Workshop items or their updates."
+fix = "I → L writes this PC's SteamCMD lines into it (shown first), or run {launcher} steam lines \"{server}\"."
+checked = "0.10.9"
+
+[[rule]]
+id = "reach-variants-missing"
+kind = "info"
+area = "plays"
+text = "Halo: Reach's game and map variants aren't in {game} (0.10.0's dedicated init left them out), and with them Reach's own game types."
+fix = "Run {launcher} repair: it adds them from MCC on this PC (or copy the four *_variants folders from MCC's haloreach folder by hand)."
+checked = "0.10.9"
+
+[[rule]]
+id = "environment"
+kind = "info"
+area = "runs"
+text = "Set where Huragok runs, and read by the program over its dedicated.toml: {overrides}."
+fix = "Change the file and remove the variable, or keep it on purpose."
+checked = "0.10.9"
+
+[[rule]]
+id = "crash-loop"
+kind = "seen"
+area = "runs"
+text = "Its game crashed {crashes} times in a row (its supervision.json); the program keeps starting it again."
+fix = "Its log says why (D → a server → O): a map, a mod or a game mode is the usual cause."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "stats-relay-off"
+kind = "info"
+area = "huragok"
+text = "Huragok's stats relay is off ([stats] relay = false in settings.toml): this server reports its games straight to the stats service, so leaderboards and the kill feed get nothing new from it."
+fix = "Set relay = true under [stats] to have them again; the server is pointed at the relay from its next start."
+checked = "0.10.9"
+
+[[rule]]
+id = "used-to-set"
+kind = "info"
+area = "huragok"
+text = "Before 0.7.0 Huragok set these in this server's files: {lines}. They stay as they are; since 0.7.0 Huragok doesn't change a server's files by itself."
+fix = "Change any of them as you like (O opens the file); X dismisses this."
+checked = "0.10.9"
+
+# ---- Program updates (updates/program.py): new rules go below this line ----
+
+[[rule]]
+id = "release-pinned"
+kind = "info"
+area = "updates"
+text = "Pinned to Project Reclaimer {version} by its own file (auto_update = false), so it stays there: {newest} is out."
+fix = "Nothing to do if that's on purpose; players need the server's exact version to join. To follow releases, set auto_update = true in its dedicated.toml (it counts from its next start)."
+checked = "0.10.9"
+
+[[rule]]
+id = "release-overdue"
+kind = "seen"
+area = "updates"
+text = "Still on Project Reclaimer {version}, though {newest} came out at {out} and auto_update is on: its own update didn't happen{why}."
+fix = "Its console says why (logs/console-{slug}.log when Huragok runs it). A restart makes it look again as it starts; or put {newest}'s program in its folder by hand ({page})."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "release-old-file"
+kind = "check"
+area = "updates"
+text = "It updated itself to Project Reclaimer {version} at {since}, but its program still runs from the old file ({old}): Huragok restarts it onto the new one once nobody is on, and it hasn't been empty since."
+fix = "Its next update may not go in until then. Restart it when it suits (R), or let it empty."
+checked = "0.10.9"
+
+[[rule]]
+id = "release-image"
+kind = "check"
+area = "updates"
+text = "A new image is out: Project Reclaimer {newest}, and this server runs {version}. On Docker the image is the update, so Huragok doesn't restart it for a release."
+fix = "Pull the new image and recreate its container when it suits; players need the server's exact version to join."
+checked = "0.10.9"
+discord = true
+
+# ---- Mods and Workshop updates (updates/workshop.py, content/): new rules go below this line ----
+
+[[rule]]
+id = "mod-update-downloading"
+kind = "info"
+area = "updates"
+text = "{mod} has a new version on Steam ({newest}); this server has the old one ({installed})."
+fix = "Nothing to do: the server downloads it by itself (its [workshop] update_check_minutes says how often it looks) and puts it in between games."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-update-players"
+kind = "info"
+area = "updates"
+text = "Players who already have {mod}'s new version can't join until this server has it too: their game says \"this PC's copy is a different version from the host's\", and they'd have to download the server's older copy from the server browser."
+fix = "It lasts until the update is in, which a restart does within seconds."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-update-waiting"
+kind = "seen"
+area = "updates"
+text = "{mod}: downloaded, waiting for a restart: the map is in use, so the server can't put the new version in."
+fix = "Huragok restarts it {when} ([workshop_updates] restart)."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-update-held"
+kind = "seen"
+area = "updates"
+text = "{mod}: downloaded, waiting for a restart: the map is in use, so the server can't put the new version in, and Huragok doesn't restart it for that ({where}). It stays waiting."
+fix = "Restart it when it suits you (U → Workshop mods puts it in now), or switch the restart on."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "mod-update-held-shared"
+kind = "seen"
+area = "updates"
+text = "{mod}: downloaded, waiting for a restart: the servers sharing this content folder have the map open, and {holder} has workshop_updates = \"off\", so none of them can put the new version in. It stays waiting."
+fix = "Restart them all at the same moment when it suits you, or take workshop_updates = \"off\" out of {holder}'s [[server]] block in settings.toml."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "mod-update-external"
+kind = "seen"
+area = "updates"
+text = "{mod}: downloaded, waiting for a restart: the servers sharing this content folder have the map open, and {external} wasn't started by Huragok, so Huragok doesn't stop it for the update. It goes in once nobody is on any of them: they're restarted together then."
+fix = "To have it sooner, stop {external} the way it was started and start it from Huragok."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "mod-update-stuck"
+kind = "seen"
+area = "updates"
+text = "{mod}: {restarts} restart(s) didn't put the new version in; the server still can't install it ({reason})."
+fix = "Something else may have the map open (another server on this content folder, a game on this PC, an antivirus scan): once it's closed, U → Workshop mods restarts its game to put the update in. A stop and start doesn't help: a cold start opens the map before the update goes in."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "mod-update-group"
+kind = "seen"
+area = "updates"
+text = "{mod}'s update waits for this server's game to end ({waited} so far): the servers sharing its content folder can't install it while any has the map open, and those stopped for it stay stopped until then ({stopped})."
+fix = "It goes in once this game ends; to go sooner, end the game early (its console's endgame)."
+checked = "0.10.9"
+discord = true
+
+[[rule]]
+id = "mod-download-kept"
+kind = "info"
+area = "updates"
+text = "{mod}'s download stays in {folder} ({size}) beside the installed copy: each server folder keeps every Workshop mod twice."
+fix = "Nothing to do; a later Huragok may manage these copies to save disk space."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-leftover"
+kind = "check"
+area = "updates"
+text = "{folder} ({size}) is a Workshop update's copy left behind: the server that downloaded it (process {pid}) is no longer running."
+fix = "Delete the folder while no server using this content folder is updating. A clean stop never leaves one; a server that was ended or crashed can."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-hand-copy"
+kind = "check"
+area = "plays"
+text = "This copy of {mod} names Workshop item {item} but isn't in this server's [workshop] items, so it never updates ({folder})."
+fix = "Add the item to items and take the copy out: the server fetches and updates listed mods itself (its own check does it too)."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-unlisted"
+kind = "check"
+area = "plays"
+text = "{folder} ({mod}) was installed by the server program, but Workshop item {item} isn't in [workshop] items any more: the server still loads it and never updates it."
+fix = "Add the item back to items to keep it up to date, or move the folder out if it isn't wanted."
+checked = "0.10.9"
+
+[[rule]]
+id = "mod-steam-folder"
+kind = "info"
+area = "plays"
+text = "Loads {count} mod(s) found only in this PC's own Steam Workshop folder ({folder}): {mods}."
+fix = "Steam updates or removes those on its own schedule; to keep one, list its item in [workshop] items."
+checked = "0.10.9"

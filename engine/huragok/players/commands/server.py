@@ -10,7 +10,6 @@ from __future__ import annotations
 from ...core.part import command
 from ...core.text import describe_time, seconds_of
 from ...servers.backends import LifecycleError, LifecycleUnavailable
-from ...servers.server import AFTER_GAME_LIMIT
 from ..router import CommandCall, unquote
 from ..targets import TIME
 from .base import CommandsBase
@@ -146,9 +145,8 @@ class ServerCommands(CommandsBase):
             await call.reply("A countdown or a stop was already under way: it now ends in a restart"
                              + (", at its own time." if length else "."))
         elif gameover:
-            await call.reply(f"Restarting once this game ends, with a few seconds' notice; everyone on has been told. "
-                             f"A game still going in {int(AFTER_GAME_LIMIT // 60)} minutes gets the usual countdown "
-                             "instead.")
+            await call.reply("Restarting once this game ends, however long it runs, with a few seconds' notice; "
+                             "everyone on has been told. It goes at once if everyone leaves.")
         elif length:
             await call.reply(f"Restarting in {describe_time(length)}: everyone on is warned along the way.")
         else:

@@ -79,35 +79,24 @@ def _start(args: argparse.Namespace) -> int:
     return common.hold(args, launcher.start_loop(args, settings))
 
 
+NOT_INSTALLED = ("Huragok doesn't install Project Reclaimer releases (0.7.0): each server installs its own as it starts "
+                 "(auto_update = true in its dedicated.toml), and Huragok restarts those after their game when a "
+                 "release is out ([server_updates] follow)")
+
+
 def cmd_update_program(args: argparse.Namespace, settings: Settings) -> int:
-    """`update --program`: a new release of the server program, installed at a quiet moment."""
-    from ..program.releases import download_program, install_program, latest_program_release
-    from ..window.tui import is_terminal
+    """`update --program`: the newest Project Reclaimer release and where each server stands. Nothing is installed:
+    each server installs its own releases (its auto_update)."""
+    from ..program.releases import latest_program_release
     from ..core.web import UpdateError
     from ..updates.engine import summary
 
-    when = "now" if args.now else "after_game"
-    if pid := lock.running_supervisor(settings):
+    if lock.running_supervisor(settings):
         reply = _ask(settings, "check_program_update", wait=60)
         (out.ok if reply.ok else out.warn)(reply.message)
         for line in reply.text.splitlines():
             out.say(f"  {line}")
-        if args.check or not reply.ok or " is out " not in reply.message:
-            return 0 if reply.ok else 1
-        if not args.yes:
-            if not is_terminal():
-                out.note(f"To install it: {LAUNCHER} update --program --yes [--now]")
-                return 1
-            try:
-                answer = input(f"Install it and restart each running server {when.replace('_', ' ')}? [y/N] ")
-            except (EOFError, KeyboardInterrupt):
-                answer = ""
-            if answer.strip().lower() not in ("y", "yes"):
-                out.note("Not installed.")
-                return 0
-        out.note(f"Asking Huragok (process {pid}) to install it…")
-        reply = _ask(settings, "update_program", wait=UPDATE_WAIT, when=when, why=f"asked by {LAUNCHER} update")
-        (out.ok if reply.ok else out.warn)(reply.message)
+        out.note(NOT_INSTALLED)
         return 0 if reply.ok else 1
     try:
         release = latest_program_release(settings.server_updates.repository)
@@ -120,32 +109,10 @@ def cmd_update_program(args: argparse.Namespace, settings: Settings) -> int:
     out.write(f"Newest server program: Project Reclaimer {release.version} ({release.page})", "white")
     for line in summary(release.notes):
         out.say(f"  {line}")
-    out.note("Huragok isn't running, so the servers' versions aren't known; the file is put in place without restarts.")
-    if args.check:
-        return 0
-    if not args.yes:
-        if not is_terminal():
-            out.note(f"To install it: {LAUNCHER} update --program --yes")
-            return 1
-        try:
-            answer = input(f"Put {release.version} in place of every copy of the server program? [y/N] ")
-        except (EOFError, KeyboardInterrupt):
-            answer = ""
-        if answer.strip().lower() not in ("y", "yes"):
-            out.note("Not installed.")
-            return 0
-    try:
-        path = download_program(release, settings.records)
-        try:
-            replaced = install_program(settings, path, release.version)
-        finally:
-            path.unlink(missing_ok=True)
-    except (UpdateError, OSError) as error:
-        out.fail(f"Not installed: {error}")
-        return 1
-    for target in replaced:
-        out.note(f"replaced {target}")
-    out.ok(f"Server program {release.version} installed. Start Huragok to run the servers on it: {LAUNCHER}")
+    for server in settings.servers:
+        out.say(f"  {server.name}: auto_update " + ("on" if server.auto_update else "off (pinned by its own file)"))
+    out.note("Huragok isn't running, so the versions the servers run aren't known.")
+    out.note(NOT_INSTALLED)
     return 0
 
 
@@ -517,16 +484,20 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Huragok · builds and mends", [
         ("check", "check the settings, servers and commands without starting anything"),
-        ("new <name> [--package name] …", "a new server folder in SERVERS/, from a package, checked and started"),
-        ("package [list|show|save] …", "the packages in PACKAGES/; save <server> [name] keeps a server as one"),
+        ("new <name> [--all | --one-server --free-ports --console]", "a new server folder in SERVERS/: the program's "
+                                                                     "own dedicated init and nothing more, then its "
+                                                                     "quick actions, each shown before it's written"),
+        ("repair [server…] [--yes]", "what a server's folder lacks (its game files, a folder or ban list it names "
+                                     "that isn't here, SteamCMD lines): shown, then put right when you say yes"),
         ("content [-s server] [words]", "what a server can play; --import [--from folder] copies MCC's variants in"),
-        ("playlist [-s server] [list|show|new|use]", "a server's playlists"),
+        ("playlist [-s server] [list|show] [name]", "a server's playlists, as the server program reads them"),
         ("variant [-s server] [list|show|check] [name]", "a server's saved custom games: what each changes, checked "
                                                          "by the server program"),
-        ("workshop [-s server] [list|add|remove|install]", "a server's Workshop items"),
-        ("steam [status|install|login <account>|files [halo3|campaign|odst|reach|reach-campaign|halo1|halo2]|path]",
-         "SteamCMD: Workshop items, and every game's files (copied from MCC here, or downloaded: Halo 3's, the "
-         "campaign's and ODST's)"),
+        ("workshop [-s server] [list|install]", "a server's Workshop items (listed in its dedicated.toml)"),
+        ("steam [status|install|login <account>|files [halo3|campaign|odst|reach|reach-campaign|halo1|halo2]|"
+         "lines <server>|path]",
+         "SteamCMD: Workshop items, every game's files (copied from MCC here, or downloaded: Halo 3's, the "
+         "campaign's and ODST's), and a server's own [workshop] lines, shown first"),
         ("dedicated [-s server] <command…>", "any of the server program's own commands, e.g. dedicated check"),
         ("init [--force]", "write settings.toml, commands.toml, automod.txt, names.txt and intervalmessages.txt (the "
                            "first start does this)"),
@@ -535,7 +506,8 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
         ("start [--no-menu] [--hold]", "open the window; --no-menu is a plain log with typed commands (a task at boot)"),
         ("close", "close Huragok; the servers keep running"),
         ("update [--check] [--yes]", "a new version of Huragok from GitHub, installed if you say yes"),
-        ("update --program [--now]", "a new release of the server program, put in place of every copy"),
+        ("update --program", "the newest server program release and each server's version (each server installs "
+                             "its own: auto_update)"),
     ]),
 ]
 
@@ -626,14 +598,14 @@ def build_parser() -> argparse.ArgumentParser:
     say.add_argument("words", nargs=argparse.REMAINDER)
     say.set_defaults(func=cmd_say)
 
-    update = commands.add_parser("update", help="Look for a new version on GitHub, and install it if you say yes: "
-                                                "Huragok's, or with --program the server program's")
+    update = commands.add_parser("update", help="Look for a new version of Huragok on GitHub, and install it if you "
+                                                "say yes; with --program, the server program's newest release")
     update.add_argument("--check", action="store_true", help="only say whether there's a new version")
     update.add_argument("-y", "--yes", action="store_true", help="install it without asking")
     update.add_argument("--program", action="store_true",
-                        help="the server program (Project Reclaimer): put in place of every copy, each running server "
-                             "restarted after its game")
-    update.add_argument("--now", action="store_true", help="with --program: restart the servers at once, mid-game")
+                        help="the server program (Project Reclaimer): its newest release and each server's version; "
+                             "each server installs its own (auto_update)")
+    update.add_argument("--now", action="store_true", help=argparse.SUPPRESS)  # before 0.7.0, with --program
     update.add_argument("--wait", type=float, default=300, help="seconds to wait for a running Huragok to update")
     update.set_defaults(func=cmd_update)
 

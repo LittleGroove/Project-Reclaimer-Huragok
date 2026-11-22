@@ -655,26 +655,26 @@ def test_a_planned_restart_waits_for_the_game_then_gives_short_notice(world, run
     run(scenario())
 
 
-def test_a_mod_update_tells_players_its_own_words_and_an_empty_server_restarts_now(world, run, caplog) -> None:
-    from huragok.updates.workshop import tell_players
+def test_a_restart_after_the_game_tells_players_its_own_words_and_an_empty_server_restarts_now(world, run,
+                                                                                               caplog) -> None:
+    from huragok.lore import callout
 
     clock, settings, backend, fleet, manager, client, state, seen = world
     lifecycle = Lifecycle(fleet)
+    tell = callout("mod update", "A new version of HugeGrass is out: this server restarts after this game to put it in.")
 
     async def scenario() -> None:
         await bring_up(fleet, manager, clock, state)
         state.players[1] = Player(1, "Alice", ALICE)
         state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
-        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass",
-                                tell=tell_players("HugeGrass"))
+        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass", tell=tell)
         await asyncio.sleep(0.01)
         assert client.says() == ["[^_^] YOUR TAX DOLLARS AT WORK! A new version of HugeGrass is out: this server "
                                  "restarts after this game to put it in."]
         assert manager.phase == "running"
         assert lifecycle.cancel(SERVER)
         state.players.clear()  # nobody on: at once, and the log says why
-        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass",
-                                tell=tell_players("HugeGrass"))
+        await lifecycle.restart(SERVER, when="after_game", reason="installing a new version of HugeGrass", tell=tell)
         assert manager.phase in ("countdown", "stopping", "restarting")
 
     with caplog.at_level(logging.INFO):
@@ -907,9 +907,12 @@ def test_a_tick_with_stopped_servers_never_waits_on_their_ports(tmp_path: Path, 
 
 # A plan belongs to the run it was made for --------------------------------------------------------------
 
-def test_a_planned_restart_goes_with_the_daily_restart_that_did_it(world, run) -> None:
-    """A Workshop update planned for after the game at 03:50; the daily restart at 04:00 does it (and runs the
-    update's job). The plan must not be left over to restart the server again, with a full countdown, at 04:20."""
+def test_the_daily_restart_joins_a_restart_already_planned_for_after_the_game(world, run) -> None:
+    """A Workshop update planned for after the game at 03:50; at 04:00 the daily restart is due. It doesn't cut the game
+    (the host, 22 Nov 2026) and doesn't plan a second restart: the one planned does both, when the game ends, and runs
+    the update's job. No time limit: still waiting at 06:00."""
+    from huragok.core.events import Event
+
     clock, settings, backend, fleet, manager, client, state, seen = world
     settings.restarts.daily_restart = "04:00"
     settings.restarts.min_uptime_seconds = 0
@@ -927,23 +930,82 @@ def test_a_planned_restart_goes_with_the_daily_restart_that_did_it(world, run) -
         manager.started = clock.now - 86400  # up a day: a daily restart isn't skipped as fresh
         state.players[1] = Player(1, "Alice", ALICE)
         state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Valhalla", "mode": "Slayer"}))
         lifecycle.add_job(SERVER, StoppedJob("workshop", "installing new Workshop versions", swap))
         plan = await lifecycle.restart(SERVER, when="after_game", reason="installing new Workshop versions")
         assert plan.requested == clock.now  # stamped from the manager's clock
         clock.now = at.replace(hour=4, minute=0, second=5).timestamp()
         await cycle(manager, clock)
-        assert manager.phase == "countdown" and manager.countdown and manager.countdown.label == "daily restart"
+        assert manager.phase == "running" and manager.countdown is None  # the game goes on
+        assert manager.planned is not None and manager.planned.reason == "installing new Workshop versions"
+        assert "done by the restart planned for after this game" in manager.record.history[-1][2]
+        clock.now = at.replace(hour=6).timestamp()  # two hours on: no limit, it still waits
+        await cycle(manager, clock)
+        assert manager.phase == "running" and manager.planned is not None
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "finished", "map": "Valhalla", "mode": "Slayer"}))
+        assert manager.phase == "countdown" and manager.planned is None
         for _ in range(12):
             await cycle(manager, clock, 1)
         state.players.clear()
         for _ in range(3):
             await cycle(manager, clock, 1)
         assert manager.phase == "running" and len(backend.starts) == 2 and ran == [False]
-        assert manager.planned is None  # the daily restart did what it was for
+
+    run(scenario())
+
+
+def test_the_daily_restart_waits_for_the_game_to_end(world, run) -> None:
+    """Due at 04:00 with a game on: players are told it restarts after this game, and it does, however long the game
+    runs (the host, 22 Nov 2026: a Forge session's save is never cut for it)."""
+    from huragok.core.events import Event
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    settings.restarts.daily_restart = "04:00"
+    settings.restarts.min_uptime_seconds = 0
+
+    async def scenario() -> None:
+        at = datetime.fromtimestamp(clock.now).replace(hour=3, minute=59, second=0)
+        clock.now = at.timestamp()
+        await bring_up(fleet, manager, clock, state)
+        manager.started = clock.now - 86400
         state.players[1] = Player(1, "Alice", ALICE)
-        clock.now = at.replace(hour=4, minute=21).timestamp()  # past the plan's half-hour limit
+        state.phase, state.map, state.mode = "playing", "Sandbox", "Forge"
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Sandbox", "mode": "Forge"}))
+        clock.now = at.replace(minute=0, hour=4, second=30).timestamp()
         await cycle(manager, clock)
+        await asyncio.sleep(0.01)
         assert manager.phase == "running" and manager.countdown is None
+        assert manager.planned is not None and manager.planned.when == "after_game"
+        assert client.says()[-1].endswith("This server restarts after this game: daily restart.")
+        clock.now = at.replace(hour=7).timestamp()  # a three-hour Forge session
+        await cycle(manager, clock)
+        assert manager.phase == "running" and backend.stops == []
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "finished", "map": "Sandbox", "mode": "Forge"}))
+        assert manager.phase == "countdown" and manager.countdown and manager.countdown.label == "daily restart"
+
+    run(scenario())
+
+
+def test_a_restart_after_the_game_has_no_time_limit(world, run) -> None:
+    """It used to give up after 30 minutes and restart with the usual countdown, cutting the game. Now it waits for
+    the game to end however long it runs; everyone leaving still sets it off at once."""
+    from huragok.core.events import Event
+
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    lifecycle = Lifecycle(fleet)
+
+    async def scenario() -> None:
+        await bring_up(fleet, manager, clock, state)
+        state.players[1] = Player(1, "Alice", ALICE)
+        state.phase, state.map, state.mode = "playing", "Valhalla", "Slayer"
+        manager.on_phase(Event("rcon.phase", SERVER, {"phase": "playing", "map": "Valhalla", "mode": "Slayer"}))
+        await lifecycle.restart(SERVER, when="after_game", reason="a mod update")
+        for _ in range(4):
+            await cycle(manager, clock, 3600)
+        assert manager.phase == "running" and manager.countdown is None and manager.planned is not None
+        state.players.clear()
+        manager.on_leave(Event("rcon.leave", SERVER, {"number": 1}))
+        assert manager.phase == "stopping" and manager.planned is None  # nobody on: no countdown
 
     run(scenario())
 
@@ -1376,36 +1438,6 @@ def test_failures_climb_the_backoff_ladder_then_fault(tmp_path, monkeypatch, run
 
     assert run(scenario()) == expected
     assert manager.phase == "faulted"
-
-
-def test_a_playlists_labels_are_written_as_the_program_about_to_run_calls_them(world, run, caplog) -> None:
-    """0.9.19 renamed some game option labels; 0.9.18 refuses the new names as 0.9.19 refuses the old. The labels
-    were rewritten for 0.9.19 whatever the server ran."""
-    clock, settings, backend, fleet, manager, client, state, seen = world
-    folder = manager.server.folder / "playlists"
-    folder.mkdir(exist_ok=True)
-    playlist = folder / "old.playlist.json"
-    playlist.write_text('{"games": [{"options": {"teams.red_character_set": "Vanilla characters"}}]}',
-                        encoding="utf-8")
-    state.version = "0.9.18"  # what its console said last time (there's no program file here to ask)
-
-    async def scenario() -> None:
-        fleet.boot()
-        await cycle(manager, clock)
-        await asyncio.sleep(0.05)
-        assert backend.starts == [SERVER]
-        assert '"Vanilla characters"' in playlist.read_text(encoding="utf-8")  # 0.9.18's own name: kept
-        backend.up.clear()
-        state.version = "0.9.19"
-        await cycle(manager, clock, 1)
-        await cycle(manager, clock, 5)
-        await asyncio.sleep(0.05)
-        assert len(backend.starts) == 2 and '"Halo 3"' in playlist.read_text(encoding="utf-8")
-
-    with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert "old.playlist.json: 'Vanilla characters' is now 'Halo 3', as Project Reclaimer 0.9.19 calls them" \
-        in caplog.text
 
 
 def test_a_restart_asked_during_a_failed_starts_clean_up_isnt_announced_as_one(world, run) -> None:

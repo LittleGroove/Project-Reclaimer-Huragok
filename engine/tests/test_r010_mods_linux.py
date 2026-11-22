@@ -1,16 +1,13 @@
 """Project Reclaimer 0.10: its commands run with their output in a file (into a pipe they never end), mods for every
-game it plays (Reach, Combat Evolved and Halo 2 as Halo 3's), and the program Linux has of its own (no wine) found,
-run and installed, with Windows left exactly as it was."""
+game it plays (Reach, Combat Evolved and Halo 2 as Halo 3's), and the program Linux has of its own (no wine) found and
+run, with Windows left exactly as it was. (Huragok no longer installs releases: 0.7.0.)"""
 
 from __future__ import annotations
 
-import asyncio
-import io
 import json
 import logging
 import subprocess
 import sys
-import tarfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +24,6 @@ from huragok.content import modcheck, mods, workshopmods
 from huragok.content.modcheck import BROKEN, NOTE, WARNING, check_mods
 from huragok.core.events import Event, EventBus
 from huragok.core.settings import load
-from huragok.core.web import UpdateError
 from huragok.program import dedicated, releases
 from huragok.program.dedicated import Dedicated, Output, find_executable, program_prefix, windows_program, without_wine
 from huragok.servers import backends
@@ -36,7 +32,6 @@ from huragok.servers.state import ServerState
 
 ELF = b"\x7fELF" + bytes(60)  # Linux's own program, as far as its first bytes go
 PE = b"MZ" + bytes(62)  # a Windows program (0.9's project-reclaimer.exe)
-RELEASES = Path(__file__).resolve().parents[3] / "releases" / "v0.10.0"
 
 
 def texts(report: modcheck.ModReport, level: str | None = None) -> str:
@@ -237,7 +232,7 @@ def test_the_program_copies_of_other_games_mods_are_kept_on_0_10_only(tmp_path: 
     workshopmods.look_through(content / "Mods" / "h3", version("0.10.0"))
     assert asked == []  # only Halo 3's: the program isn't asked
     (content / "Mods" / "hand" / "maps").rename(content / "Mods" / "hand" / "Maps")
-    assert workshopmods.map_files(content / "Mods" / "hand") == {"golan"}
+    assert modcheck.maps_folder(content / "Mods" / "hand") == content / "Mods" / "hand" / "Maps"  # Reach's spelling
 
 
 def test_the_mod_watch_passes_each_content_folders_program_version(tmp_path: Path, monkeypatch) -> None:
@@ -345,144 +340,3 @@ def test_each_system_gets_its_own_download(tmp_path: Path, monkeypatch) -> None:
     as_linux(monkeypatch)
     answer["json"] = release_json("0.9.23", ["project-reclaimer-dedicated-v0.9.23.exe", "SHA256SUMS.txt"])
     assert releases.latest_program_release().exe_name == "project-reclaimer-dedicated-v0.9.23.exe"  # 0.9: wine
-
-
-def a_linux_release(path: Path, program: bytes = ELF, extra: list[tarfile.TarInfo] | None = None) -> Path:
-    """A release's .tar.gz as 0.10.0's: <folder>/project-reclaimer and its notes, plus whatever `extra` adds."""
-    with tarfile.open(path, "w:gz") as tar:
-        for name, data in (("project-reclaimer-v0.10.0-linux-x86_64/README.txt", b"read me"),
-                           ("project-reclaimer-v0.10.0-linux-x86_64/project-reclaimer", program)):
-            info = tarfile.TarInfo(name)
-            info.size, info.mode = len(data), 0o755
-            tar.addfile(info, io.BytesIO(data))
-        for info in extra or []:
-            tar.addfile(info, io.BytesIO(b"evil" * (info.size // 4)) if info.isreg() else None)
-    return path
-
-
-def test_the_program_alone_is_unpacked_never_where_the_archive_says(tmp_path: Path) -> None:
-    def member(name: str, kind: bytes = tarfile.REGTYPE, link: str = "", size: int = 4) -> tarfile.TarInfo:
-        info = tarfile.TarInfo(name)
-        info.type, info.linkname, info.size = kind, link, size if kind == tarfile.REGTYPE else 0
-        return info
-
-    archive = a_linux_release(tmp_path / "r.tar.gz", extra=[
-        member("../project-reclaimer"), member("/tmp/project-reclaimer"), member("../../escape.txt"),
-        member("x/y/z/project-reclaimer", tarfile.SYMTYPE, "/etc/passwd")])
-    folder = tmp_path / "out" / "unpacked"
-    program = releases.unpack_program(archive, folder)
-    assert program == folder / "project-reclaimer" and program.read_bytes() == ELF
-    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == [
-        "out", "out/unpacked", "out/unpacked/project-reclaimer", "r.tar.gz"]
-    with tarfile.open(tmp_path / "none.tar.gz", "w:gz") as tar:
-        info = tarfile.TarInfo("README.txt")
-        tar.addfile(info, io.BytesIO(b""))
-    with pytest.raises(UpdateError, match="has no project-reclaimer in it"):
-        releases.unpack_program(tmp_path / "none.tar.gz", tmp_path / "out2")
-    (tmp_path / "broken.tar.gz").write_bytes(b"not gzip")
-    with pytest.raises(UpdateError, match="can't be unpacked"):
-        releases.unpack_program(tmp_path / "broken.tar.gz", tmp_path / "out3")
-
-
-@pytest.mark.skipif(not (RELEASES / "project-reclaimer-dedicated-v0.10.0-linux-x86_64.tar.gz").is_file(),
-                    reason="the 0.10.0 Linux download isn't on this PC")
-def test_the_real_0_10_linux_download_unpacks(tmp_path: Path) -> None:
-    program = releases.unpack_program(RELEASES / "project-reclaimer-dedicated-v0.10.0-linux-x86_64.tar.gz", tmp_path)
-    assert program.name == "project-reclaimer" and program.stat().st_size == 84541096
-    assert program.read_bytes()[:4] == b"\x7fELF" and not windows_program(program)
-
-
-def linux_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> Any:
-    settings = load(write_root(tmp_path / "root", [(n, free_port()) for n in names], 'backend = "process"\n',
-                               backend=None, exe=True))
-    for server in settings.servers:
-        (server.folder / "project-reclaimer.exe").write_bytes(PE + server.name.encode())
-    monkeypatch.setattr(releases, "program_version", lambda settings, path: None)  # an old program: never asked
-    as_linux(monkeypatch)
-    return settings
-
-
-def test_linux_installs_its_own_program_in_place_of_0_9s(tmp_path: Path, monkeypatch) -> None:
-    settings = linux_root(tmp_path, monkeypatch, "Alpha", "Beta")
-    archive = a_linux_release(tmp_path / "project-reclaimer-dedicated-v0.10.0-linux-x86_64.tar.gz")
-    replaced = releases.install_program(settings, archive, "0.10.0")
-    for server in settings.servers:
-        native = server.folder / "project-reclaimer"
-        assert native in replaced and native.read_bytes() == ELF and find_executable(server.folder) == native
-        assert not (server.folder / "project-reclaimer.exe").exists()  # with the old files, for going back
-        kept = list(settings.records.glob(f"previous-program/*/{server.folder.name}/project-reclaimer.exe"))
-        assert [p.read_bytes() for p in kept] == [PE + server.name.encode()]
-        assert not list(server.folder.glob(".huragok-unpacked-*")) and not list(server.folder.glob("*.new"))
-
-
-def test_a_failed_linux_install_puts_every_windows_program_back(tmp_path: Path, monkeypatch) -> None:
-    import os
-
-    settings = linux_root(tmp_path, monkeypatch, "Alpha", "Beta")
-    archive = a_linux_release(tmp_path / "release.tar.gz")
-    real_replace = os.replace
-
-    def replace(source: Any, target: Any) -> None:
-        if str(source).endswith(".new") and Path(target).parent.name == "Beta":
-            raise PermissionError(13, "Access is denied", str(target))
-        real_replace(source, target)
-
-    monkeypatch.setattr(releases.os, "replace", replace)
-    with pytest.raises(UpdateError, match="nothing was changed"):
-        releases.install_program(settings, archive, "0.10.0")
-    for server in settings.servers:
-        assert (server.folder / "project-reclaimer.exe").read_bytes() == PE + server.name.encode()
-        assert not (server.folder / "project-reclaimer").exists()
-        assert not list(server.folder.glob(".huragok-unpacked-*"))
-
-
-def test_linux_swaps_one_servers_program_for_its_own(tmp_path: Path, monkeypatch) -> None:
-    settings = linux_root(tmp_path, monkeypatch, "Alpha")
-    server = settings.servers[0]
-    archive = a_linux_release(tmp_path / "release.tar.gz")
-    said = releases.swap_program(settings, server, archive, "0.10.0")
-    native = server.folder / "project-reclaimer"
-    assert said.startswith(f"Project Reclaimer 0.10.0 put in place at {native}; the old one is in ")
-    assert native.read_bytes() == ELF and not (server.folder / "project-reclaimer.exe").exists()
-    assert releases.swap_program(settings, server, archive, "0.10.0") == \
-        "its program file is Project Reclaimer 0.10.0 already"
-
-
-def test_windows_installs_the_exe_where_it_was(tmp_path: Path, monkeypatch) -> None:
-    settings = load(write_root(tmp_path / "root", [("Alpha", free_port())], 'backend = "process"\n', backend=None,
-                               exe=True))
-    monkeypatch.setattr(releases, "program_version", lambda settings, path: None)
-    as_windows(monkeypatch)
-    server = settings.servers[0]
-    (server.folder / "project-reclaimer.exe").write_bytes(PE + b"old")
-    (server.folder / "project-reclaimer").write_bytes(ELF)  # a Linux program lying there means nothing to Windows
-    new = tmp_path / "project-reclaimer-dedicated-v0.10.0.exe"
-    new.write_bytes(PE + b"new")
-    assert releases.install_program(settings, new, "0.10.0") == [server.folder / "project-reclaimer.exe"]
-    assert (server.folder / "project-reclaimer.exe").read_bytes() == PE + b"new"
-    assert (server.folder / "project-reclaimer").read_bytes() == ELF
-    new.write_bytes(PE + b"newer")
-    said = releases.swap_program(settings, server, new, "0.10.1")
-    assert said.startswith(f"Project Reclaimer 0.10.1 put in place at {server.folder / 'project-reclaimer.exe'}")
-    assert (server.folder / "project-reclaimer.exe").read_bytes() == PE + b"newer"
-
-
-def test_old_linux_downloads_are_removed_with_old_exes(tmp_path: Path, monkeypatch, run) -> None:
-    from huragok.updates.program import DOWNLOADS, ProgramUpdateService
-
-    folder = tmp_path / DOWNLOADS
-    folder.mkdir()
-    (folder / "project-reclaimer-dedicated-v0.9.23.exe").write_bytes(b"old")
-    (folder / "project-reclaimer-dedicated-v0.10.0-linux-x86_64.tar.gz").write_bytes(b"old")
-    release = releases.ProgramRelease("0.10.1", "p", "", "https://x/a.tar.gz",
-                                      "project-reclaimer-dedicated-v0.10.1-linux-x86_64.tar.gz")
-
-    def download(release: Any, where: Path) -> Path:
-        path = where / release.exe_name
-        path.write_bytes(b"new")
-        return path
-
-    monkeypatch.setattr(releases, "download_program", download)
-    service = SimpleNamespace(_download_lock=asyncio.Lock(), downloads={}, settings=SimpleNamespace(records=tmp_path))
-    path = run(ProgramUpdateService._download(service, release))  # type: ignore[arg-type]
-    assert [p.name for p in folder.iterdir()] == [path.name]

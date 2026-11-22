@@ -12,7 +12,7 @@ and the window never freezes while one of them restarts.
   countdown  warning players before a stop or restart         stopping, running (cancelled)
   stopping   stop sent, waiting for the process to go         idle, launch, running (it couldn't be stopped)
   preparing  stopped; jobs that need it stopped are running   booting, idle (a stop calls them off)
-             (a Workshop mod update swapped in), then it starts
+             (the program's old file removed), then it starts
   restarting the backend's own restart command is running     booting, stopping (a stop asked meanwhile)
   backoff    died; trying again at a set time                 launch, idle
   faulted    stopped trying for now; one more try after a      launch
@@ -43,7 +43,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable
 
-from ..core import versions
 from ..core.background import background
 from ..core.events import Event
 from ..core.files import write_atomic
@@ -55,7 +54,6 @@ from ..core.settings import launcher
 from ..core.tables import ConfigError, check_clock_time
 from ..core.text import format_duration
 from ..core.tomledit import remove_server_setting, set_server_setting
-from ..games.halo3 import playlist_files, rename_old_labels
 from ..games.plays import console_refusal
 from ..lore import SIGN_OFF, callout
 from ..rcon import RconClient, RconError, masked
@@ -85,9 +83,8 @@ DOWN = {"idle", "faulted", "backoff", "offline"}  # not running (one in backoff 
 
 
 WHEN = ("now", "after_game", "when_empty")
-
-
-AFTER_GAME_LIMIT = 1800.0  # a restart "after this game" waits at most this long
+# A restart "after this game" waits for the game to end however long it runs: a Forge session's save, or any game,
+# is never cut for it (the host, 22 Nov 2026). The last player leaving still sets it off at once (on_leave).
 
 
 DAILY_WINDOW = 1800.0  # the daily restart only fires within this long after its time
@@ -100,7 +97,7 @@ DAILY_FRESH_SECONDS = 6 * 3600.0
 MANY_RESTARTS = 6
 
 
-JOB_LIMIT = 1200.0  # a job before a start (a Workshop swap) gets this long; then the server starts anyway
+JOB_LIMIT = 1200.0  # a job before a start gets this long; then the server starts anyway
 
 
 INFERRED_ALIVE_SECONDS = 30.0  # without a process to watch: status.json this fresh means up
@@ -112,7 +109,10 @@ HISTORY_DAYS = 7  # what records/servers/<server>.json remembers of starts, rest
 WAIT_RECHECK = 30.0  # a server waiting to start (game files, its port) looks again this often
 
 
+QUIT_WAIT = 10.0  # after RCON `quit`, how long the process gets to end (S1b: under a second) before the usual stop
+
 OWN_STATUS_SECONDS = 120.0  # status.json written this recently: the server on its port runs from its own folder
+SUPERVISION_LOOK = 5.0  # a stopped server's supervision.json is read at most this often
 
 
 HISTORY_MAX = 60
@@ -172,6 +172,7 @@ class Countdown:
     step: str = "ladder"  # ladder | go
     warned: bool = False
     empty_since: float | None = None  # monotonic
+    console: bool = False  # ends in its own console's `restart now`: a server started some other way (answer 30)
 
     @property
     def label(self) -> str:
@@ -188,6 +189,7 @@ class PlannedRestart:
     countdown: float | None = None  # seconds of notice once it's due; None: the after_game setting
     since: float = field(default_factory=time.monotonic)  # the same, monotonic: how long it has waited
     manual: bool = False  # a person asked (!restartserver gameover): not counted among the automatic restarts
+    console: bool = False  # through its own console's `restart`: a server started some other way (answer 30)
 
 
 def since_start(lines: list[str]) -> list[str]:
@@ -247,6 +249,34 @@ def next_daily(spec: str, now: datetime) -> datetime | None:
     return slot + timedelta(days=1) if slot <= now else slot
 
 
+def supervisor_running(server: ServerConfig, ours: int | None = None) -> int | None:
+    """The process number of the program's own supervisor for this server, when its supervision.json names one that's
+    still running and isn't `ours` (the process Huragok runs for it). None otherwise, or when it can't be told: a
+    number reused by another program doesn't count."""
+    import psutil
+
+    try:
+        data = json.loads((server.data_dir / "supervision.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    pid = data.get("supervisor") if isinstance(data, dict) else None
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid == ours:
+        return None
+    try:
+        process = psutil.Process(pid)
+        names = [process.name()]
+        try:  # under Wine the process is wine's: the program's own file is the first word of its command line
+            names += process.cmdline()[:1]
+        except (psutil.AccessDenied, OSError):
+            pass
+    except (psutil.Error, OSError):
+        return None
+    # The program's own file (project-reclaimer.exe, project-reclaimer-dedicated-v0.10.9.exe), not anything run from a
+    # folder that happens to have the word in it
+    files = [Path(name.replace("\\", "/")).name.lower() for name in names if name]
+    return pid if any("reclaimer" in name for name in files) else None
+
+
 class ServerManager:
     def __init__(self, fleet: Fleet, server: ServerConfig, client: RconClient, state: ServerState) -> None:
         self.fleet = fleet
@@ -285,6 +315,11 @@ class ServerManager:
         self.flags: dict[str, str] = {}  # short notes for the dashboard's detail line, by who set them
         self.waiting_for = ""  # why it can't start yet (game files being got, its port taken); "" when it can
         self.waiting_kind = ""  # "files" or "port"
+        # Renamed in its dedicated.toml while it ran (0.7.0, answer 32): it isn't started again under the old name, which
+        # the file no longer has; once it's stopped Huragok follows the rename (superintendent.discover) and starts it.
+        self.renamed_to: str | None = None
+        self._supervision_looked = float("-inf")  # when its supervision.json was last read (monotonic)
+        self._supervision_seen: int | None = None  # the program's own supervisor for it, running, not ours
         self.waiting_checked = float("-inf")  # monotonic: when it last looked whether it still has to wait
 
     # What we know -------------------------------------------------------------------
@@ -432,13 +467,30 @@ class ServerManager:
             self._set_phase("offline")
             return
         if self.backend.sees_processes:
+            if (supervisor := self._supervised_elsewhere()) is not None:
+                # Its own supervisor runs, started some other way: a second one started beside it crash-loops and
+                # wipes the server's status.json and log (S4). Watched and moderated instead, as below.
+                self._set_phase("external")
+                self.started = self.backend.started_at(self.server) or time.time()
+                log.warning("[%s] already running under its own supervisor (process %s, from its supervision.json), "
+                            "started some other way. Watching and moderating it; stop it and start it from here to let "
+                            "the Superintendent restart it", self.name, supervisor)
+                return
             taken = self.fleet.ports.in_use(self.server)
+            if not taken and self.fleet.ports.game_port_in_use(self.server) and not self._status_is_ours():
+                self._wait("port", f"its game port {self.server.game_port} is in use by something else on this PC: "
+                                   f"stop that, or change port = {self.server.game_port} in its [[server]] block in "
+                                   f"its {self.server.config_path.name} (change its port there)")
+                return
             if taken and not self._status_is_ours():
                 # Something answers on its port, but not a server writing this folder's status.json: another copy
                 # of it running from another folder, or another program. Never watched as if it were this one.
                 self._wait("port", f"its port {self.server.rcon_port} is in use by something that isn't this "
                                    "server (the copy it was made from, running from another folder?): stop that, "
-                                   "or give this one another port (D)")
+                                   f"or change port = {self.server.game_port} in its [[server]] block in its "
+                                   f"{self.server.config_path.name} (change its port there)"
+                                   + (f", or its rcon_port = {self.server.rcon_port}"
+                                      if self.server.rcon_port != self.server.game_port else ""))
                 return
             if taken:
                 self._set_phase("external")
@@ -452,11 +504,23 @@ class ServerManager:
             if self.waiting_kind == "port":
                 self._stop_waiting("its port is free")
         if self.record.wanted == "running" and not self.record.faulted and not self.server.errors:
+            if self.renamed_to:
+                return  # followed under its new name first (see _step_launch)
             if self.waiting_kind == "files" and time.monotonic() - self.waiting_checked < WAIT_RECHECK:
                 return
             if self.fleet.stopping_all:
                 return  # everything is being stopped: nothing starts meanwhile, or it'd be left running
             self._set_phase("launch")
+
+    def _supervised_elsewhere(self) -> int | None:
+        """The program's own supervisor for this server, alive and not one Huragok runs, as its supervision.json names
+        it; None otherwise. Looked at most every SUPERVISION_LOOK seconds."""
+        now = time.monotonic()
+        if now - self._supervision_looked < SUPERVISION_LOOK:
+            return self._supervision_seen
+        self._supervision_looked = now
+        self._supervision_seen = supervisor_running(self.server, self.pid)
+        return self._supervision_seen
 
     def _status_is_ours(self) -> bool:
         """This folder's server writes its status.json every few seconds while it runs."""
@@ -494,6 +558,11 @@ class ServerManager:
     def _step_launch(self) -> None:
         if not self._still_wanted():
             return
+        if self.renamed_to and not self.alive:
+            log.info("[%s] not started again under this name: it's %s in its dedicated.toml now, and Huragok picks it "
+                     "up under that name within seconds", self.name, self.renamed_to)
+            self._set_phase("idle")
+            return
         if not self.alive:
             wait = self._prelaunch()
             if wait:
@@ -528,56 +597,9 @@ class ServerManager:
         self.state.players.clear()
         start = self.backend.revive(self.server) if self.revive else self.backend.start(self.server)
         self.revive = False
-        playlists = playlist_files(self.server.folder)
-        self._run_task("start", self._labels_then(start, playlists) if playlists else start)
+        self._run_task("start", start)
         self._set_phase("booting")
         log.info("[%s] starting; allowing %s for it to answer", self.name, format_duration(self.setting("ready_seconds")))
-
-    async def _labels_then(self, start: Awaitable[None], playlists: list[Path]) -> None:
-        """The playlists' labels first, then the start. In a thread: asking the program its version runs it (through
-        wine on Linux, seconds), and nothing may hold the loop."""
-        try:
-            await asyncio.to_thread(self._rename_old_labels, playlists)
-        except asyncio.CancelledError:
-            close = getattr(start, "close", None)
-            if close is not None:
-                close()  # never started
-            raise
-        except Exception:  # noqa: BLE001 - the labels must never keep the server from starting
-            log.exception("[%s] couldn't check its playlists' labels; starting it anyway", self.name)
-        await start
-
-    def _rename_old_labels(self, playlists: list[Path]) -> None:
-        """Game option labels a server program doesn't know (0.9.19 renamed some, so an older one wants the old
-        names) stop it starting with a playlist that names them: write them as the program about to run calls them."""
-        version = self._program_version()
-        for path in playlists:
-            versions.seen(self.settings.records, "playlists", self.server.slug, path)
-            try:
-                renamed = rename_old_labels(path, version)
-            except OSError as error:
-                log.warning("[%s] couldn't update %s's renamed labels: %s", self.name, path.name, error)
-                continue
-            if renamed:
-                try:
-                    versions.keep(self.settings.records, "playlists", self.server.slug, path,
-                                  f"labels written for {version or 'every version'} as it started")
-                except OSError as error:
-                    log.warning("[%s] couldn't keep %s's version in the history: %s", self.name, path.name, error)
-                log.info("[%s] %s: %s, as %s calls them (other names stop it starting)", self.name, path.name,
-                         ", ".join(f"'{old}' is now '{new}'" for old, new in renamed),
-                         f"Project Reclaimer {version}" if version else "every version of Project Reclaimer")
-
-    def _program_version(self) -> str | None:
-        """The version of the program about to run: its file's own (`--version`, asked once per file), else what its
-        console said on its last run; None when neither is known."""
-        from ..program.releases import program_of, program_version, readable
-
-        program = program_of(self.settings, self.server)
-        version = program_version(self.settings, program) if program is not None else None
-        if readable(version):
-            return version
-        return self.state.version if readable(self.state.version) else None
 
     def _step_preparing(self) -> None:
         if self.task is not None:
@@ -670,11 +692,6 @@ class ServerManager:
                 log.info("[%s] back to normal after FAULTED: up %s", self.name, format_duration(uptime))
             self.record.fail_count, self.record.retries = 0, 0
             self._save()
-        if self.planned is not None and time.monotonic() - self.planned.since > AFTER_GAME_LIMIT:
-            log.info("[%s] the game didn't end within %s; restarting with the usual warnings",
-                     self.name, format_duration(AFTER_GAME_LIMIT))
-            self._trigger_plan(use_ladder=True)
-            return
         if self.planned is not None and self.planned.when == "when_empty" and self.state.empty:
             self._trigger_plan()
             return
@@ -683,8 +700,16 @@ class ServerManager:
                 log.info("[%s] daily restart skipped: it was restarted %s ago", self.name, format_duration(uptime))
                 self.record.remember("restart", f"daily restart skipped: up {format_duration(uptime)}, refreshed already")
                 self._save()
+            elif self.planned is not None and self.planned.when == "after_game":
+                log.info("[%s] daily restart: the restart already planned for after this game does it (%s)", self.name,
+                         self.planned.reason or "no reason given")
+                self.record.remember("restart", "daily restart: done by the restart planned for after this game")
+                self._save()
             else:
-                self._begin_countdown("daily restart", coming_back=True, manual=False, by=self.settings.name)
+                # After the game, like a mod or program update's: a game in progress (a Forge session's save) is never
+                # cut for it (the host, 22 Nov 2026). Nobody on: at once. It takes over a restart planned for when
+                # nobody's on: that one's jobs run at this restart all the same.
+                self.plan("after_game", "daily restart", self.settings.name, None)
 
     def _daily_due(self, now: float) -> bool:
         spec = self.settings.of(self.server).daily_restart
@@ -721,7 +746,7 @@ class ServerManager:
         if countdown is None:
             self._set_phase("running")
             return
-        if not alive:
+        if not alive and not countdown.console:  # (one started elsewhere isn't ours to watch: its console says)
             log.warning("[%s] the server exited on its own during the countdown", self.name)
             self.countdown = None
             self.coming_back = countdown.coming_back
@@ -820,9 +845,12 @@ class ServerManager:
     def _step_external(self, alive: bool) -> None:
         if alive:
             return
-        if self.backend.sees_processes and self.fleet.ports.in_use(self.server) is not False:
-            return  # its port is still taken (or that isn't known yet)
+        if self.backend.sees_processes and (self.fleet.ports.in_use(self.server) is not False
+                                            or self._supervised_elsewhere() is not None):
+            return  # its port is still taken (or that isn't known yet), or its own supervisor still runs
         log.info("[%s] no longer running", self.name)
+        if self.planned is not None and self.planned.console:
+            self.planned = None  # its console's restart: nothing to restart now
         self.started = None
         self._run_ended("stopped")
         self._set_phase("idle" if self.backend.can_start else "offline")
@@ -838,6 +866,9 @@ class ServerManager:
 
     def _say(self, text: str) -> None:
         """A chat line whose answer only matters if it went wrong."""
+        if getattr(self.client, "no_console", False):  # nothing can be said on a server without a console: warned once
+            log.debug("[%s] not announced (no console): %s", self.name, text)
+            return
         if not self.client.connected:
             self.note(f"could not announce (RCON not connected): {text}", 60)
             return
@@ -1039,9 +1070,10 @@ class ServerManager:
         self._set_phase("launch")
 
     def _begin_countdown(self, reason: str, *, coming_back: bool, manual: bool, by: str, immediate: bool = False,
-                         seconds: float | None = None, steps: bool = False) -> None:
+                         seconds: float | None = None, steps: bool = False, console: bool = False) -> None:
         """`seconds`: a countdown of that length, warned at its start and 10 s before; with `steps` (a person's own
-        length: !restartserver 7m), at its start and then at the usual warn_seconds below it."""
+        length: !restartserver 7m), at its start and then at the usual warn_seconds below it. `console`: it ends in the
+        server's own console's `restart now` (_restart_by_console)."""
         usual = sorted({float(s) for s in self.setting("warn_seconds") if float(s) > 0}, reverse=True)
         if seconds is None:
             rungs = usual
@@ -1049,7 +1081,7 @@ class ServerManager:
             rungs = sorted({float(seconds), *(s for s in usual if s < float(seconds))}, reverse=True)
         else:
             rungs = sorted({s for s in (float(seconds), 10.0) if 0 < s <= float(seconds)}, reverse=True)
-        countdown = Countdown(reason, coming_back, manual, by, rungs, None)
+        countdown = Countdown(reason, coming_back, manual, by, rungs, None, console=console)
         label = countdown.label
         self.stop_failed = ""  # a new try: a `stop everything` waits for this one
         self.flags.pop("stop", None)
@@ -1085,6 +1117,9 @@ class ServerManager:
 
     def _begin_stop(self) -> None:
         countdown = self.countdown
+        if countdown is not None and countdown.console:
+            self._restart_by_console(countdown)
+            return
         self.countdown = None
         coming_back = countdown.coming_back if countdown else self.coming_back
         label = countdown.label if countdown else self.stop_label
@@ -1106,6 +1141,35 @@ class ServerManager:
         log.info("[%s] %s: stopping the server", self.name, "restart" if coming_back else "stop")
         self._run_task("stop", self.backend.stop(self.server))
         self._set_phase("stopping")
+
+    def _started_elsewhere(self) -> bool:
+        """Started some other way, on a backend that sees processes: never stopped, started or killed from here. Its own
+        console's `restart` is the one way it's restarted (a countdown to one counts too)."""
+        return self.backend.sees_processes and (self.phase == "external" or (
+            self.phase == "countdown" and self.countdown is not None and self.countdown.console))
+
+    def _restart_by_console(self, countdown: Countdown) -> None:
+        """A server started some other way, restarted through its own console's `restart now`: only its game restarts,
+        its process (the program's own supervisor) stays (S1b), so nothing here stops, starts or kills it (0.7.0,
+        answer 30). It stays "external" throughout."""
+        self.countdown = None
+        self._set_phase("external")
+        if self.fleet.stopping_all or self.fleet.closing:
+            log.info("[%s] its restart is called off: Huragok is stopping (it wasn't started from here, so it's left "
+                     "running)", self.name)
+            return
+        if self.state.connected and self.players:
+            self._say(callout("now", "Server is restarting now: join again in a minute or two."))
+        self.fleet.bus.emit("server.restarting", self.name, reason=countdown.label, by=countdown.by)
+        log.info("[%s] restart: through its own console (`restart now`), as it wasn't started from here: its game "
+                 "restarts, its process stays", self.name)
+
+        async def send() -> None:  # the one way a game is restarted over its console (restart_worker)
+            result = await self.restart_worker(now=True, reason=countdown.label, by=countdown.by)
+            if not result.ok:
+                log.warning("[%s] couldn't restart it through its console: %s", self.name, result.message)
+
+        self._run_task("console restart", send())
 
     def restarts_lately(self) -> int:
         """Automatic restarts in the last hour: a count, shown and logged, that holds nothing up."""
@@ -1140,14 +1204,16 @@ class ServerManager:
     # Planned restarts (after this game, when empty) ----------------------------------------------
 
     def plan(self, when: str, reason: str, by: str, countdown: float | None, *, manual: bool = False,
-             tell: str = "") -> PlannedRestart:
+             tell: str = "", console: bool = False) -> PlannedRestart:
         """`tell`: what players read when it waits for the game to end (a Workshop update's own words); the usual
-        "This server restarts after this game" otherwise."""
+        "This server restarts after this game" otherwise. `console`: through the server's own console's `restart`
+        (a server started some other way)."""
         plan = PlannedRestart(self.name, when, reason, by, requested=time.time(), countdown=countdown,
-                              since=time.monotonic(), manual=manual)
+                              since=time.monotonic(), manual=manual, console=console)
         self.planned = plan
-        self.record.wanted = "running"
-        self._save()
+        if not console:  # one started some other way is never started from here: whether it's wanted isn't ours
+            self.record.wanted = "running"
+            self._save()
         if self.state.phase == "playing" and self.playing is None:
             self.playing = (self.state.map, self.state.mode)
         log.info("[%s] restart planned (%s): %s", self.name, when.replace("_", " "), reason or "no reason given")
@@ -1174,7 +1240,7 @@ class ServerManager:
         if not ended:
             return
         self.playing = None
-        if self.planned is not None and self.planned.when == "after_game" and self.phase == "running":
+        if self.planned is not None and self.planned.when == "after_game" and self.phase == self._plan_phase():
             self._trigger_plan()
 
     def on_crash(self, event: Event) -> None:
@@ -1184,20 +1250,24 @@ class ServerManager:
         self.playing = None
 
     def on_leave(self, event: Event) -> None:
-        if self.planned is None or self.phase != "running":
+        if self.planned is None or self.phase != self._plan_phase():
             return
         others = [p for p in self.state.players.values() if p.number != event.get("number")]
         if not others:
             self._trigger_plan()
 
-    def _trigger_plan(self, *, use_ladder: bool = False) -> None:
+    def _plan_phase(self) -> str:
+        """The phase its planned restart goes ahead from: "external" for one through its own console."""
+        return "external" if self.planned is not None and self.planned.console else "running"
+
+    def _trigger_plan(self) -> None:
+        phase = self._plan_phase()
         plan, self.planned = self.planned, None
-        if plan is None or self.phase != "running":
+        if plan is None or self.phase != phase:
             return
-        seconds = None if use_ladder else (plan.countdown if plan.countdown is not None
-                                           else float(self.setting("after_game_seconds")))
+        seconds = plan.countdown if plan.countdown is not None else float(self.setting("after_game_seconds"))
         self._begin_countdown(plan.reason, coming_back=True, manual=plan.manual, by=plan.by,
-                              immediate=seconds is not None and seconds <= 0, seconds=seconds)
+                              immediate=seconds is not None and seconds <= 0, seconds=seconds, console=plan.console)
 
     # What a person asks for ----------------------------------------------------------------------
 
@@ -1247,7 +1317,7 @@ class ServerManager:
     def stop(self, *, immediate: bool = False, reason: str = "", manual: bool = True,
              by: str = "") -> Result:
         self._notice()
-        if self.phase == "external" and self.backend.sees_processes:
+        if self._started_elsewhere():
             return Result(False, "it wasn't started from here, so the Superintendent can't stop it; stop it the way it "
                                  "was started")
         if not self.backend.can_stop:
@@ -1296,13 +1366,19 @@ class ServerManager:
         return Result(True, "it is not running")
 
     def restart(self, *, immediate: bool = False, reason: str = "", manual: bool = True, by: str = "",
-                when: str = "now", countdown: float | None = None, tell: str = "") -> Result:
+                when: str = "now", countdown: float | None = None, tell: str = "", console: bool = False) -> Result:
+        """`console`: a server started some other way may be restarted through its own console's `restart` (its game
+        restarts, its process stays), for an update (0.7.0, answer 30); a person's restart of one is still refused.
+        Ignored for a server Huragok started."""
         self._notice()
         if refused := self._stopping_everything():
             return refused
-        if self.phase == "external" and self.backend.sees_processes:
+        console = console and self._started_elsewhere()
+        if self._started_elsewhere() and not console:
             return Result(False, "it wasn't started from here, so the Superintendent can't restart it; stop it the way "
                                  "it was started, then start it from here")
+        if console and getattr(self.client, "no_console", False):
+            return Result(False, "it wasn't started from here and has no console, so it can't be restarted from here")
         if not self.backend.can_restart:
             return Result(False, f"backend = {self.backend.name} can't restart servers")
         if when not in WHEN:
@@ -1311,18 +1387,19 @@ class ServerManager:
         if when != "now":
             if self.phase not in ("running", "external"):
                 return Result(False, f"it isn't running ({self.phase})")
-            self.plan(when, reason, by, countdown, manual=manual, tell=tell)
+            self.plan(when, reason, by, countdown, manual=manual, tell=tell, console=console)
             return Result(True, f"restart planned {when.replace('_', ' ')}")
         if self.planned is not None and self.phase in ("running", "external", "countdown"):
             log.info("[%s] the restart planned %s is now a restart now", self.name, self.planned.when.replace("_", " "))
             self.planned = None  # one restart now, not another after the next game
-        self.record.wanted = "running"
-        self._save()
+        if not console:
+            self.record.wanted = "running"
+            self._save()
         phase = self.phase
         if phase in ("running", "external"):
             self._begin_countdown(reason or ("manual restart" if manual else ""), coming_back=True, manual=manual,
                                   by=by, immediate=immediate or (countdown is not None and countdown <= 0),
-                                  seconds=countdown if countdown else None, steps=manual)
+                                  seconds=countdown if countdown else None, steps=manual, console=console)
             return Result(True, "restarting now" if self.countdown is None or self.countdown.step == "go"
                           else "restarting (warning players first)")
         if phase == "countdown" and self.countdown:
@@ -1339,6 +1416,66 @@ class ServerManager:
             return Result(False, "it is still starting")
         return self.start()
 
+    # Over its console: the game worker restarted, or the program stopped its own way -------------------------------
+
+    async def restart_worker(self, *, now: bool = False, reason: str = "", by: str = "") -> Result:
+        """RCON `restart` (`restart now` with `now`): the program restarts its game worker and keeps its own
+        supervisor, so what the supervisor holds stays (a downloaded Workshop update goes in before the new worker
+        opens the map: S1b, back in the lobby within seconds, no crash counted). `restart` alone waits until nobody is
+        on; `now` drops whoever is. The process stays up, so the phase doesn't change. The one restart a server
+        Huragok didn't start gets (phase external, answer 30): it's never stopped, started or killed from here."""
+        if self.phase not in ("running", "external"):
+            return Result(False, f"it isn't running ({self.phase})")
+        if getattr(self.client, "no_console", False) or not self.client.connected:
+            return Result(False, "its console isn't connected")
+        line = "restart now" if now else "restart"
+        try:
+            reply = await self.client.command(line, by=by or self.settings.name, timeout=15)
+        except RconError as error:
+            return Result(False, str(error))
+        if not reply.ok:
+            return Result(False, reply.text or "refused", reply.text)
+        why = reason or "a restart of its game"
+        log.info("[%s] its game restarted over the console (%s): %s", self.name, line, why)
+        self.record.remember("restart", f"{why} (its game only, over the console)")
+        self._save()
+        self.fleet.bus.emit("server.worker_restarted", self.name, reason=why, by=by or self.settings.name, now=now)
+        return Result(True, "restarting its game", reply.text)
+
+    def quit(self, *, reason: str = "", by: str = "") -> Result:
+        """Stopped with RCON `quit`, the program's own clean stop: it ends in under a second and deletes the Workshop
+        download it held, where ending the process leaves that behind as a 1 GB `.workshop-*` folder (S1b). It stays
+        stopped until it's started again. Without a console, or if the process outlives the quit, the usual stop."""
+        if self.phase == "external":
+            return Result(False, "it wasn't started from here, so the Superintendent doesn't stop it")
+        if not self.backend.sees_processes:
+            return Result(False, f"backend = {self.backend.name} stops it its own way, not over its console")
+        if self.phase != "running":
+            return Result(False, f"it isn't running ({self.phase})")
+        self.planned = None
+        self.record.wanted = "stopped"
+        self.coming_back = self.stop_manual = False
+        self.stop_label, self.stop_by, self.stop_failed = reason or "stop", by or self.settings.name, ""
+        self.flags.pop("stop", None)
+        log.info("[%s] stop requested: %s (over its console: quit)", self.name, self.stop_label)
+        self.record.remember("stop", self.stop_label)
+        self._save()
+        self._run_task("stop", self._quit_then_stop())
+        self._set_phase("stopping")
+        return Result(True, "stopping")
+
+    async def _quit_then_stop(self) -> None:
+        if self.client.connected and not getattr(self.client, "no_console", False):
+            try:
+                await self.client.command("quit", by=self.stop_by, timeout=5)
+            except RconError:
+                pass  # its console closes as the program goes: no answer is expected
+            for _ in range(int(QUIT_WAIT / 0.2)):
+                if not self.backend.alive(self.server):
+                    break
+                await asyncio.sleep(0.2)
+        await self.backend.stop(self.server)  # gone already: only what's kept about it; still there: the usual stop
+
     def cancel(self) -> Result:
         if refused := self._stopping_everything():
             return refused
@@ -1349,11 +1486,12 @@ class ServerManager:
                                                 else "The server shutdown has been cancelled.") + f" {SIGN_OFF}"))
             if countdown.coming_back and not countdown.manual and self.record.restart_times:
                 self.record.restart_times.pop()  # counted as it began: a restart that didn't happen isn't one
-            self.record.wanted = "running"
+            if not countdown.console:
+                self.record.wanted = "running"
             self._save()
             log.info("[%s] countdown cancelled (%s)", self.name, countdown.label)
             self.fleet.bus.emit("server.countdown_cancelled", self.name, reason=countdown.label)
-            self._set_phase("running")
+            self._set_phase("external" if countdown.console else "running")
             return Result(True, "cancelled")
         if self.planned is not None:
             plan, self.planned = self.planned, None
@@ -1554,6 +1692,11 @@ class ServerManager:
             "reload": list(state.last_reload) if state.last_reload else None,
             "version": state.version or "", "uptime": up, "health": self.health,
             "connected": state.connected, "errors": list(self.server.errors),
+            "warnings": [w.line() for w in self.fleet.warnings.of(self.name)] if self.fleet.warnings else [],
+            # each warning as the screens show it, with what dismisses it (G and D, X)
+            "warning_items": [{"id": w.id, "kind": w.kind, "text": w.text, "fix": w.fix, "rule": w.rule.id,
+                               "area": w.rule.area} for w in self.fleet.warnings.of(self.name)]
+            if self.fleet.warnings else [],
             "health_reasons": list(self.health_reasons), "flags": list(self.flags.values()),
             "history": [list(h) for h in self.record.history[-12:]], "address": state.address or "",
             "pid": self.pid, "priority": self.backend.priority_text(self.server),

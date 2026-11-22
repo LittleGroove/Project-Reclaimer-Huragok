@@ -3,7 +3,6 @@
   commands   in-game commands; commands.toml says which role may use each (always on)
   automod    the word list, automod.txt: removes players for the words on it
   watchdog   notices a struggling server and restarts it at a good moment
-  byplayers  plays each server's playlist for how many players are on, once it's set up (G -> P) (always on)
   eventlog   every event as JSON, to see what the server sends
   tempdiscord  temporary (from 0.5.2): a record of what the servers send, in logs/temp-discord (always on)
   stats      every finished game from its server's report: what players' stats count (always on)
@@ -28,7 +27,6 @@ from .discordbot.part import DiscordPart
 from .players.automod import AutoMod
 from .players.commands import Commands
 from .players.messages import Messages
-from .servers.byplayers import ByPlayers
 from .servers.eventlog import EventLog
 from .servers.stats import Stats
 from .servers.tempdiscord import TempDiscord
@@ -37,8 +35,8 @@ from .servers.watchdog import Watchdog
 if TYPE_CHECKING:
     from .core.settings import Settings
 
-PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, ByPlayers, EventLog, Messages,
-                                                          TempDiscord, Stats, DiscordPart)}
+PARTS: dict[str, type[Part]] = {cls.name: cls for cls in (Commands, AutoMod, Watchdog, EventLog, Messages, TempDiscord,
+                                                          Stats, DiscordPart)}
 
 
 def config_problem(settings: Settings, name: str, cls: Any) -> str | None:

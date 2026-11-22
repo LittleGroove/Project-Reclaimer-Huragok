@@ -25,9 +25,6 @@ from typing import TYPE_CHECKING, Callable
 from ..core.files import write_atomic
 from ..core.serverfolders import slug_taken, slugify
 from ..core.tomledit import read_toml, server_blocks, set_server_setting, set_top_key
-from ..games.byplayers import FILE as BY_PLAYERS
-from ..games.byplayers import ByPlayersError
-from ..games.byplayers import rename as rename_by_players
 
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
@@ -121,14 +118,6 @@ def rename_server(settings: Settings, server: ServerConfig, new_name: str, say: 
             undo.append((f"its block in {settings.path.name}",
                          lambda: set_server_setting(settings.path, new_name, "name", old)))
             say(f"{settings.path.name}: its [[server]] block renamed")
-        try:
-            by_players = rename_by_players(folder, old, new_name)
-        except ByPlayersError as error:
-            say(f"its playlists by player count stay under {old}: {error}")
-            by_players = False
-        if by_players:
-            undo.append((f"its block in {BY_PLAYERS}", lambda: rename_by_players(folder, new_name, old)))
-            say(f"{BY_PLAYERS}: its [[server]] block renamed")
         # Everything of Huragok's under its slug. Only its data folder is checked for being named after it: the
         # console log (console-<slug>.log) never moved, and the FAULTED record and playlist history were left
         # under the old name (audit 2026-11, 7.6)

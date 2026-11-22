@@ -20,17 +20,19 @@ shows them all, starts them, keeps them up, and gives you single-key control. It
   (`!promote`, `!demote`), and a ban takes it away;
 - **records everything** (Vergil): every player seen (names, visits) and every
   warn, mute, kick and ban, with who did it and why;
-- **sets servers up** (Huragok): a new server from a package in one key
-  (`dedicated init`, Halo 3's files shared from the root, the playlist and Workshop
-  items of the package, `dedicated check`), playlists and Workshop items managed
-  from the window, any server's files edited with the server's own reload result
-  shown;
+- **reads each server's own files and warns** (Huragok): what each server plays,
+  from its own `dedicated.toml` and playlists, with every game's map, game mode and
+  mod looked up and what will probably fail said with why; a new server made with
+  the program's own `dedicated init`; game files and SteamCMD lines put in place
+  when you ask;
 - **manages them while they run:** a console with the server's events and your name
-  on what you do, settings changed live (the server applies most without a
-  restart), bans and admins, and a **relay** so moderators elsewhere use the official
-  RCON client through Huragok, each with their own password and role;
-- **keeps them current** (Huragok): a new Project Reclaimer release is put in place
-  of every copy and each server restarts after its game, not mid-game;
+  on what you do, each server's settings shown with the warnings about them, bans
+  and admins, and a **relay** so moderators elsewhere use the official RCON client
+  through Huragok, each with their own password and role;
+- **keeps them current** (Huragok): the servers install their own Project Reclaimer
+  releases and Workshop updates; Huragok restarts each after its game when that
+  helps (a release is out, a mod update waits on a map in use), tells players first,
+  and warns when an update didn't happen;
 - **runs a Discord bot, if you want one** (your own, off until you set it up:
   [docs/discord.md](docs/discord.md)): cards with buttons for what happens on the servers,
   a status board, every in-game command as a slash command, a typed console, alerts, and
@@ -42,15 +44,18 @@ unexpectedly, its launcher starts it again within seconds, and it picks the serv
 up the same way. Huragok is run on Windows 11. Linux works too (the server program
 runs through `wine` there), but it's experimental and on hold: it isn't tested end
 to end. It never patches the server: it uses what the server offers (its remote
-console, its files and its `dedicated` command), and it changes a server's
-`dedicated.toml` only when you do, from the window's D, G and I screens.
+console, its files and its `dedicated` command). It never changes what a server
+plays or how it runs: you edit a server's files, and Huragok reads them and warns.
+It writes into them only for moderation, for the stats relay while `[stats] relay`
+is on, and for what you ask (a quick action, a copy, a repair), each shown before
+it's written.
 
-> **Status: 0.6.0, on its way to 1.0.** Tested against Project Reclaimer **v0.9.20** on
+> **Status: 0.7.0-beta.1, on its way to 1.0.** Tested against Project Reclaimer **v0.10.8** (warnings checked up to v0.10.9) on
 > Windows 11; Linux is experimental. Up to 0.2.1 this was
 > called Reclaimer Supervisor: see [Coming from Reclaimer Supervisor 0.2.1](#coming-from-reclaimer-supervisor-021).
 
 ```text
- HURAGOK 0.6.0   (supervising)   the Engineer for Project Reclaimer servers
+ HURAGOK 0.7.0   (supervising)   the Engineer for Project Reclaimer servers
  [o_O] SUPERINTENDENT · PLEASE REMAIN CALM! · Slayer restart in 2m 10s
  Sat 18 Oct 2026  21:04:12      C:\reclaimer
  SUPT backend process · servers in SERVERS/ · watchdog (act) · eventlog
@@ -85,7 +90,7 @@ are its parts:
 
 | Tag | Part | In New Mombasa | Here |
 | --- | --- | --- | --- |
-| `HRGK` | **Huragok** (violet) | the Engineer, Quick to Adjust | the program itself, and what it builds and mends: new servers, packages, game content, the Workshop and SteamCMD, settings files, checks, updates, the window, the Discord bot |
+| `HRGK` | **Huragok** (violet) | the Engineer, Quick to Adjust | the program itself, and what it reads and mends: new servers, what each server plays and its file health, game files, the Workshop and SteamCMD, settings files, checks, updates, the window, the Discord bot |
 | `SUPT` | **the Superintendent** (amber) | the city's AI, running its signs, traffic and trains | keeps the servers running: starts, stops, restarts, countdowns, crash backoff and FAULTED, the daily restart, the keepalive, the watchdog, the event log |
 | `VRGL` | **Vergil** (sky blue) | the subroutine Dr. Endesha wrote to watch over his daughter Sadie through the city's cameras | watches over the players: automod, in-game commands and who may use them, warns, mutes, kicks and bans, the bans and admins screen, the console relay for moderators, the record of every player |
 
@@ -124,19 +129,21 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
      SERVERS\                     one folder per server
        Big Team Battle\           what `dedicated init` makes: dedicated.toml,
        Slayer\                    project-reclaimer.exe, game\, data\, bans.json…
-     PACKAGES\                    server packages, for new servers (N)
      engine\  docs\  records\  logs\
    ```
 2. **Put each server's folder in `SERVERS\`.** A server folder is what the
    server's own `dedicated init` makes (see the
    [hosting guide](https://projectreclaimer.dev/host)): run
    `project-reclaimer.exe dedicated init "SERVERS\Slayer" --from <your MCC folder>`
-   once per server, or move the folder you already have. Each folder's
+   once per server, or move the folder you already have (once Huragok runs, **N** in
+   the window makes one the same way). Each folder's
    `dedicated.toml` usually holds one `[[server]]`; two folders must not use the
-   same server name or port. Switch RCON on in each: set `[rcon] password`.
+   same server name or port. Switch RCON on in each: set `[rcon] password` (without
+   it a server is still kept on, but Huragok can't tell its players anything or
+   moderate it).
 3. **Start it** (Windows: double-click `start.cmd`; Linux: `./start.sh`). The first
-   time, it installs what it needs (into `engine\.venv`), writes six files and the
-   `PACKAGES\` folder for you, and stops with the window held open to read them
+   time, it installs what it needs (into `engine\.venv`), writes six files for you,
+   and stops with the window held open to read them
    (Windows may first warn that the publisher couldn't be verified, because the
    file came from the internet: choose **Run**):
 
@@ -148,7 +155,6 @@ Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
    | `names.txt` | the banned names |
    | `intervalmessages.txt` | interval messages every server says (a Discord link, the rules); each server folder has one of its own |
    | `discord.toml` | the Discord bot: every setting, each with its note, and all of it off until you set it up (J in the window; [docs/discord.md](docs/discord.md)) |
-   | `PACKAGES\` | eight starter packages for new servers (Team Slayer, Big Team Battle, MLG Hardcore, Infection, Scripted Modes, Campaign Co-op, ODST Firefight, Every Halo); see [docs/setup.md](docs/setup.md) |
 
 4. **Make yourself faculty:** put your player ID under `[faculty]` in `commands.toml`
    (in game: Settings > Online services > Your player ID). Add your moderators
@@ -215,14 +221,14 @@ on the screen is always still waiting for you.
 | **A** | the console: type RCON commands (`players`, `mute Bravo 30m`, `map Guardian`…) through Huragok's own connection, so no moderator's spot is used; the server's events scroll in as they happen, and your name goes on what you do ("kicked by Alice"). See [docs/managing.md](docs/managing.md) |
 | **B** | bans, admins and the VPN block: the lists, unban, ban someone offline, pardon a kick, add or remove an admin, let a player through the VPN block |
 | | **Huragok** |
-| **N** | a **new server**: a folder in `SERVERS/` made with the server program's `dedicated init`, from a package in `PACKAGES/` (its playlist, game types, maps, Workshop items), sharing the root's Halo 3 files (and one content folder, if you choose; never a ban list: every server keeps its own), checked, then started. See [docs/setup.md](docs/setup.md) |
-| **G** | **what a server plays**: what it's set to, what's on now and next, and what players pick on its ballots; **W** sets it (a playlist, one map and game type, a custom game on one map or on three or more to vote on, campaign, ODST); browse its maps (on Project Reclaimer 0.10 every game's: Halo 3, Reach, Combat Evolved, Halo 2, each map with the game types it takes), mod maps, variants and game types as numbered lists; build and edit playlists by picking from them, every version of each kept (**H**) and what players pick on each (**P**); copy a playlist or a custom game to other servers; nothing is saved that the server's own program would refuse, and its problems are shown with the fixes; Workshop items and mods (and the Forge layouts mods ship); `dedicated check`; save it as a package; import MCC's own matchmaking map and game variants (MLG, Hardcore, Infection…) into its content |
-| **I** | SteamCMD: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), tell every server about it; and **every game's files**: Halo 3's, the campaign missions and ODST's, copied from MCC on this PC or downloaded with SteamCMD, and on Project Reclaimer 0.10 Reach's (and its campaign), Combat Evolved's and Halo 2's, copied from MCC. See [docs/setup.md](docs/setup.md#steamcmd-i-in-the-window) |
-| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: faculty, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try; **I** `intervalmessages.txt`: the interval messages every server says, added and taken off. Then every server: its `dedicated.toml` in groups, changed while it runs (player cap, join password, voice, votes, welcome, what it plays, anti-cheat…; a value the server program would refuse, or one its version is too old for, is refused before anything is written; the screen says when each applies and the events show the server's answer), and its playlists, custom games, bans, mods switched on or off and its own interval messages. See [docs/managing.md](docs/managing.md#settings-d) |
+| **N** | a **new server**: a folder in `SERVERS/` made with the server program's own `dedicated init` and nothing more, then three quick actions, each shown line by line before it's written: one server only (`init` makes two), free ports (`init`'s are usually taken) and the console. **G** then shows what it still needs. See [docs/setup.md](docs/setup.md#a-new-server-n-in-the-window-or-new) |
+| **G** | **what one server plays, and its file health**: what its own file sets (a playlist, playlists by lobby size, a game), what's on now and next, and every warning about its playlists, game modes, layouts and mods, refused first. **1** Playlists (each as the server reads it, its history and put back, what players pick, a copy to other servers checked by their own program first), **2** Game modes, **3** Maps and layouts (on Project Reclaimer 0.10 every game's), **4** Mods (what the server last said about each Workshop item, and whether each mod is good to go), **5** Check it (its own `dedicated check`), **6** Import from MCC (its matchmaking map and game variants: MLG, Hardcore, Infection…); **F** its folder, **E** its `dedicated.toml`, **X** dismisses a warning until its file changes. Nothing here changes what it plays: playlists and custom games are made by hand, and what a server plays is set in its `dedicated.toml`. See [docs/setup.md](docs/setup.md#what-a-server-plays-g-in-the-window) |
+| **I** | SteamCMD: find or install it, sign your Steam account in once (it must own MCC; anonymous can't fetch MCC's items), and write its lines into one server's `dedicated.toml` when you ask (**L**); **every game's files**: Halo 3's, the campaign missions and ODST's, copied from MCC on this PC or downloaded with SteamCMD, and on Project Reclaimer 0.10 Reach's (and its campaign), Combat Evolved's and Halo 2's, copied from MCC; and **R** repairs a server's folder: what it lacks, listed first, and put right only when you say yes. See [docs/setup.md](docs/setup.md#steamcmd-i-in-the-window) |
+| **D** | **settings, a step at a time**, with no file format to know. Huragok's own files come first: **S** `settings.toml` in groups (restarts, the watchdog, Vergil, updates, new servers…, and the moderators' console logins), each change checked the way Huragok reads the file as it starts, so one that would stop it starting is never written; **C** `commands.toml`: faculty, moderators and members picked from the players seen lately, which role may use each in-game command, which are off; **A** `automod.txt`: Vergil's rules, the words then what each strike does (ready-made ladders, or your own a question at a time), shown as players will meet them, with a line of chat to try; **N** `names.txt`: banned names added and taken off, with a name to try; **I** `intervalmessages.txt`: the interval messages every server says, added and taken off. Then every server: its `dedicated.toml` shown read-only, in groups, each setting with what it does and the warnings about it, and the variables that override the file (**O** opens it in your editor); **H** Huragok's own settings for it, changed there (autostart, its daily restart, priority, restarts for mod updates, Vergil on this server); **Q** the console for a server without one, shown before it's written; its bans and its own interval messages; and, only when you ask, renaming it (**N**) and a content folder of its own (**C**). See [docs/managing.md](docs/managing.md#settings-d) |
 | **J** | the **Discord bot**, a step at a time: webhook only or your own bot and its token, Discord roles onto Huragok's ranks, channels, features, every message, tickets, the typed console, reports, appeals and Contact staff, a check and a test post. `/huragok setup` in Discord does the same. How to make the bot: [docs/discord.md](docs/discord.md) |
 | **C** | a server's own `dedicated check`: game files, settings, playlists, maps, ports |
-| **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt`, or any server's folder, `dedicated.toml`, playlists and ban list in your editor, for what D doesn't change (the server applies most edits by itself; the result shows in the events) |
-| **U** | four things: **Huragok** itself (servers keep running), the **server program** (a new Project Reclaimer release for the servers that don't install it themselves, each restarted after its game), **Workshop mods** (new versions, installed after the game) and **clean up** (what updates and mods leave behind). See [docs/managing.md](docs/managing.md#updates-u) |
+| **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt`, or any server's folder, `dedicated.toml`, playlists, ban list and saved game types in your editor: that's how a server is changed (the server applies most edits by itself; the result shows in the events) |
+| **U** | four things: **Huragok** itself (servers keep running), the **server program** (each server's version and `auto_update`, the newest release and the warnings; nothing is installed here: each server installs its own releases, and Huragok restarts each self-updating one after its game once a release is out), **Workshop mods** (each item's version and what each server is doing about it; **R** restarts a server whose update waits on its map) and **clean up** (what updates and mods leave behind). See [docs/managing.md](docs/managing.md#updates-u) |
 | **W** | start at boot: Windows puts a small file in the Startup folder; Linux a systemd user unit |
 | **H / Q** | help: who's who, every key by part, what the colours mean; close the window. **The servers keep running**, but unsupervised |
 
@@ -247,13 +253,13 @@ start.cmd watch <server|huragok>      follow a server's console output, or Hurag
 start.cmd say <server|all> <text>     a [Server] chat line
 start.cmd rcon [-s server] <command>  one console command
 start.cmd check                       check the settings, servers and commands
-start.cmd new <name> [--package …]    a new server folder, checked and started (docs/setup.md)
-start.cmd package [list|show|save]    the packages in PACKAGES/
+start.cmd new <name> [--all]          a new server folder: the program's own init, then its quick actions (docs/setup.md)
+start.cmd repair [server…] [--yes]    what a server's folder lacks, shown, then put right when you say yes
 start.cmd content | playlist | variant | workshop | dedicated …   what a server plays (docs/setup.md)
-start.cmd steam [status|install|login <account>|path]   SteamCMD for Workshop items
+start.cmd steam [status|install|login <account>|files|lines <server>|path]   SteamCMD, game files, a server's SteamCMD lines
 start.cmd close                       close Huragok; the servers keep running (Q in the window)
 start.cmd update                      update Huragok
-start.cmd update --program [--now]    a new Project Reclaimer release for the servers (docs/managing.md)
+start.cmd update --program            the newest Project Reclaimer release and each server's version (docs/managing.md)
 start.cmd start --no-menu             run with no window: a plain log, with typed commands (a task at boot)
 ```
 (Linux: `./start.sh …`.) A server is named by its name (in quotes when it has
@@ -270,7 +276,7 @@ waits as long as its work takes (an update up to 15 minutes); when the answer is
 late it says so ("It may still be doing it") rather than calling it a failure.
 `start.cmd --help` lists them grouped by part, like the window's keys:
 the Superintendent's (`status`, `stop`, `restart`, `watch`), Vergil's (`say`,
-`rcon`), Huragok's (`check`, `new`, `package`, `content`, `playlist`, `variant`,
+`rcon`), Huragok's (`check`, `new`, `repair`, `content`, `playlist`, `variant`,
 `workshop`, `steam`, `dedicated`, `init`) and the program's (`start`, `close`,
 `update`), with the exit codes: 0 done, 1 it didn't work, 2 a settings problem or
 a name it doesn't know, 3 the first start wrote the files, 4 `start` found Huragok
@@ -282,10 +288,12 @@ Each server has a small state machine, looked at every second, so nothing waits
 on anything else:
 
 - **Starting:** a server is up once its RCON answers. One that never answers
-  within `ready_seconds` is a failed start. Before a start, Huragok puts right what
-  the server's folder lacks (a ban list, a content folder, Halo 3's files, a SteamCMD
-  that's on this PC: see [docs/setup.md](docs/setup.md#a-server-folder-from-somewhere-else));
-  while something is still missing the server shows **WAITING** and why, and that
+  within `ready_seconds` is a failed start. Before a start, Huragok looks at what
+  the server's folder lacks (its game files, a ban list, a content folder or a
+  SteamCMD that isn't on this PC) and warns, naming the fix; it puts nothing right
+  by itself (I → R or `start.cmd repair` does, when you ask: see
+  [docs/setup.md](docs/setup.md#a-server-folder-from-somewhere-else)). A server
+  without its game files shows **WAITING** and why until they're there, and that
   never counts as a failed start.
 - **Crashes:** a server that dies is started again after `backoff_seconds` (5 s,
   then 10, 30, 60, 300). Dying within `good_run_seconds` of starting counts as a
@@ -475,13 +483,14 @@ reclaimer/                the root
   intervalmessages.txt    |  (each server folder has its own too)
   discord.toml            /  the Discord bot, off until you set it up. It can hold the bot's token: keep it to yourself
   SERVERS/                one folder per server (yours); a folder starting with . or _ is ignored
-  PACKAGES/               server packages: seven starters on the first start, and the ones you save
-  game/  bans.json        written by the first new server you make: Halo 3's files once and one
-                          ban list, shared by the servers made here (content/ too, if you choose)
+  game/                   every game's files, once I or repair gets them here, shared by the
+                          servers whose dedicated.toml points at it
   records/                its database (huragok.sqlite3: players seen, every action, Vergil's
                           strikes and mutes), the lock (huragok.pid), what it remembers about
                           each server, running-servers.json, requests from outside, the copies
-                          an update replaced (previous-<version>/, previous-program/), and the
+                          an update replaced (previous-<version>/; previous-program/ from
+                          before 0.7.0), the versions of a server's files it replaced when
+                          you asked (playlists/, settings/), and the
                           bot's own (discord-*.json)
   logs/                   huragok.log, each server's console output, faulted-<server>.txt,
                           window.log (every screen as it was shown, asked and answered),
@@ -495,6 +504,8 @@ Those are the default names; a `settings.toml` that names other paths
 (`database`, `log_file`) keeps them. Coming from 0.1, where this folder sat inside
 the one server folder? That still works: `server_folder = ".."` in `settings.toml`
 names it. Moving the server folder into `SERVERS/` is the layout to grow into.
+Packages are gone since 0.7.0: a `PACKAGES/` folder from before is left where it is,
+and a new server is the program's own `dedicated init` (N).
 
 ## Updating
 Huragok looks for a new version on GitHub when it starts and every few hours.
@@ -513,12 +524,14 @@ this one didn't, the update downloads them from PyPI as it installs: 0.6.0's are
 and what it brings with it. If that can't be done, the old version's files go back and it says
 why, so a PC that can't reach PyPI stays as it was. Then, as the new version starts, it
 brings your files up to date itself: a new setting is added to `settings.toml` with
-its comment, a setting that does nothing any more becomes a comment saying why, a new
-in-game command is listed in `commands.toml`, a new starter package goes into
-`PACKAGES/`, and a `discord.toml` is written if there isn't one, with the bot off. What
+its comment, a setting that does nothing any more is taken out (a value you'd set
+yourself stays as a comment saying where it went), a new in-game command is listed in
+`commands.toml`, and a `discord.toml` is written if there isn't one, with the bot off. What
 you wrote stays as you wrote it, each file is kept as it was in
 `records/previous-files/<version>/` (`discord.toml` without its token and webhook addresses), and `check` lists what the next start will bring
-up to date. You never need to reinstall or start over. The install is all or nothing:
+up to date. The servers' own folders aren't touched: each server lists, once, what
+Huragok had set there before 0.7.0 (X on G dismisses it). You never need to
+reinstall or start over. The install is all or nothing:
 anything that can't be moved into place (an antivirus scanning the new files, a
 console whose current folder is in `engine`) puts every file back as it was. The
 replaced files are kept in `records/previous-<version>/` (a backup of the same

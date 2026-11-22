@@ -50,7 +50,8 @@ class Fleet:
         self.live_path = settings.live_file
         self._live_written = float("-inf")  # monotonic
         self._requests_tasks: set[asyncio.Task[None]] = set()
-        self.ports = PortWatch()  # whether a stopped server's port is taken, without holding the loop
+        self.ports = PortWatch()
+        self.warnings: Any = None  # the warnings catalogue (core/serverwarnings.py), set by the Superintendent  # whether a stopped server's port is taken, without holding the loop
         # More for records/live.json, from the supervisor: what the second window shows beyond the servers.
         self.live_extra: Callable[[], dict[str, Any]] | None = None
         # What a server lacks before it starts (repair.GameFiles.prelaunch): why it waits, or None.
@@ -224,11 +225,17 @@ class Fleet:
         """One request, for one server or all; the answers by server name."""
         if verb == "stop_all":
             return self.stop_all(immediate=bool(options.get("immediate")))
-        if verb in ("update", "check_update", "close", "check_program_update", "update_program", "check_workshop",
-                    "update_workshop", "game_files", "game_files_retry", "banall", "workshop_look"):
+        if verb == "dismiss_warning":  # G and D, X: hidden on this server until its file changes
+            if self.warnings is None:
+                return [(server, Result(False, "Huragok's warnings aren't available"))]
+            done = self.warnings.dismiss(server, str(options.get("id", "")))
+            return [(server, Result(done, "dismissed: it comes back if its file changes" if done
+                                    else "that warning isn't there any more"))]
+        if verb in ("update", "check_update", "close", "check_program_update", "check_workshop",
+                    "update_workshop", "game_files", "game_files_retry", "banall"):
             if self.on_request is None:
                 return [("Huragok", Result(False, "not available"))]
-            if verb in ("banall", "workshop_look"):  # one server's: a ban onto Huragok's own list, its new items
+            if verb == "banall":  # one server's: a ban onto Huragok's own list
                 return [(server, await self.on_request(verb, {**options, "server": server}))]
             return [("Huragok", await self.on_request(verb, options))]
         targets = self.targets(server)
@@ -329,10 +336,12 @@ class Lifecycle:
         return self.fleet.booted and manager is not None and manager.phase in DOWN - {"offline"}
 
     async def restart(self, server: str, *, when: str = "now", reason: str = "", by: str | None = None,
-                      countdown: float | None = None, manual: bool = False, tell: str = "") -> PlannedRestart:
+                      countdown: float | None = None, manual: bool = False, tell: str = "",
+                      console: bool = False) -> PlannedRestart:
         """`manual`: a person asked (an admin's !restartserver), as the window's R: it isn't counted among the
         automatic restarts (a count the log names when there are many). `tell`: what players read
-        while it waits for the game to end, in place of the usual line."""
+        while it waits for the game to end, in place of the usual line. `console`: a server started some other way
+        is restarted too, through its own console's `restart` (its process stays: an update's restart, answer 30)."""
         if not self.can_control:
             raise LifecycleUnavailable(f"backend = {self.fleet.backend.name} can't restart servers")
         if when not in WHEN:
@@ -342,10 +351,53 @@ class Lifecycle:
             raise LifecycleError(f"no server called {server}")
         by = by or self.fleet.settings.name
         result = manager.restart(immediate=countdown is not None and countdown <= 0, reason=reason, manual=manual,
-                                 by=by, when=when, countdown=countdown, tell=tell)
+                                 by=by, when=when, countdown=countdown, tell=tell, console=console)
         if not result.ok:
             raise LifecycleUnavailable(result.message)
         return manager.planned or PlannedRestart(server, when, reason, by, countdown=countdown)
+
+    async def restart_worker(self, server: str, *, now: bool = False, reason: str = "", by: str | None = None) -> Result:
+        """RCON `restart` (`restart now` with `now`): only the game worker restarts, the program's supervisor stays.
+        Also for a server Huragok didn't start (ServerManager.restart_worker)."""
+        manager = self.fleet.managers.get(server)
+        if manager is None:
+            return Result(False, f"no server called {server}")
+        return await manager.restart_worker(now=now, reason=reason, by=by or self.fleet.settings.name)
+
+    def quit(self, server: str, *, reason: str = "", by: str | None = None) -> Result:
+        """Stopped with RCON `quit`, never by ending its process (ServerManager.quit); started again with start()."""
+        manager = self.fleet.managers.get(server)
+        if manager is None:
+            return Result(False, f"no server called {server}")
+        return manager.quit(reason=reason, by=by or self.fleet.settings.name)
+
+    def start(self, server: str) -> Result:
+        manager = self.fleet.managers.get(server)
+        if manager is None:
+            return Result(False, f"no server called {server}")
+        return manager.start()
+
+    async def say(self, server: str, text: str) -> Result:
+        """A line every player on it reads (its console's `say`)."""
+        manager = self.fleet.managers.get(server)
+        if manager is None:
+            return Result(False, f"no server called {server}")
+        return await manager.say(text)
+
+    def is_external(self, server: str) -> bool:
+        """Up, but not started by Huragok: watched, moderated and restarted only over its console (answer 30)."""
+        manager = self.fleet.managers.get(server)
+        return manager is not None and manager.phase == "external"
+
+    def empty(self, server: str) -> bool:
+        """Known to have nobody on (its console connected and its players read)."""
+        manager = self.fleet.managers.get(server)
+        return manager is not None and manager.state.empty
+
+    def in_game(self, server: str) -> bool:
+        """A game is being played on it (not its lobby, a ballot or the results)."""
+        manager = self.fleet.managers.get(server)
+        return manager is not None and manager.state.phase == "playing"
 
     def cancel(self, server: str) -> bool:
         manager = self.fleet.managers.get(server)

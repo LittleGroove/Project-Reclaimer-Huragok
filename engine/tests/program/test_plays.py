@@ -1,5 +1,5 @@
-"""What a server plays, written into its dedicated.toml, and what each version of the program takes of it
-(program/plays.py)."""
+"""What a server plays, as the server's own program judges it before a file the host chose is written, and what each
+version of the program takes of it (program/plays.py). Huragok never writes what a server plays (0.7.0)."""
 
 from __future__ import annotations
 
@@ -26,15 +26,15 @@ def test_when_a_change_of_what_it_plays_applies() -> None:
     assert "campaign and ODST" in applies_when("campaign", "campaign") and "campaign and ODST" in applies_when("map", "odst")
 
 
-def test_a_playlist_the_server_cant_play_isnt_used(tmp_path, capsys) -> None:
-    """`playlist use` asks the server program first: a playlist it can't play is named, and nothing is written."""
+def test_playlist_use_and_new_are_gone_and_show_is_the_programs_own(tmp_path, capsys) -> None:
+    """0.7.0: `playlist use` and `playlist new` say where they went and write nothing; `playlist show` is the program's
+    own words about a file."""
     import json
 
     from testkit.setup import setup_root
 
     from huragok.commandline import cli
     from huragok.core.settings import load
-    from huragok.core.tomledit import read_toml
 
     settings_path = setup_root(tmp_path)
     server = load(settings_path).servers[0]
@@ -42,47 +42,22 @@ def test_a_playlist_the_server_cant_play_isnt_used(tmp_path, capsys) -> None:
     bad.write_text(json.dumps({"version": 2, "name": "Nowhere", "games": [
         {"map": "Atlantis", "game": "Slayer"}, {"map": "Guardian", "game": "Slayer"},
         {"map": "Valhalla", "game": "Slayer"}]}), encoding="utf-8")
-    before = read_toml(server.config_path)["server"][0]
-    assert cli.main(["-c", str(settings_path), "playlist", "use", "nowhere"]) == 1
+    before = server.config_path.read_text(encoding="utf-8"), bad.read_text(encoding="utf-8")
+    assert cli.main(["-c", str(settings_path), "playlist", "use", "nowhere"]) == 2
+    assert cli.main(["-c", str(settings_path), "playlist", "new", "Night Shift"]) == 2
     said = capsys.readouterr()
-    assert "Not used: the server program won't play playlists/nowhere.playlist.json" in said.out + said.err
-    assert "Game 1: No map is called \"Atlantis\"" in said.out + said.err
-    assert read_toml(server.config_path)["server"][0] == before
-    assert cli.main(["-c", str(settings_path), "playlist", "use", "slayer"]) == 0  # one it can play: used
-    assert read_toml(server.config_path)["server"][0]["playlist"] == "playlists/slayer.playlist.json"
-
-
-def test_playlist_use_finds_a_playlist_by_the_name_it_was_made_with(tmp_path, capsys) -> None:
-    """The simulation's finding 1 (26 October): `playlist new "Night Shift"` writes night-shift.playlist.json, and
-    `playlist use "Night Shift"` looked for "Night Shift.playlist.json". It takes the name now, the file's stem or the
-    file, in any case; one that isn't there is said so, with how to list them."""
-    import json
-
-    from testkit.setup import setup_root
-
-    from huragok.commandline import cli
-    from huragok.core.settings import load
-    from huragok.core.tomledit import read_toml
-
-    settings_path = setup_root(tmp_path)
-    server = load(settings_path).servers[0]
-    (server.folder / "playlists" / "night-shift.playlist.json").write_text(json.dumps({
-        "version": 2, "name": "Night Shift", "games": [{"map": "Guardian", "game": "Slayer"},
-                                                       {"map": "Valhalla", "game": "Slayer"},
-                                                       {"map": "Narrows", "game": "Slayer"}]}), encoding="utf-8")
-    for given in ("Night Shift", "night shift", "night-shift", "playlists/night-shift.playlist.json"):
-        assert cli.main(["-c", str(settings_path), "playlist", "use", given]) == 0, given
-        assert read_toml(server.config_path)["server"][0]["playlist"] == "playlists/night-shift.playlist.json"
-        assert cli.main(["-c", str(settings_path), "playlist", "use", "slayer"]) == 0
-    capsys.readouterr()
-    assert cli.main(["-c", str(settings_path), "playlist", "use", "Day Shift"]) == 2
+    assert said.err.count("is gone: Huragok no longer makes playlists or changes what a server plays") == 2
+    assert (server.config_path.read_text(encoding="utf-8"), bad.read_text(encoding="utf-8")) == before
+    assert not (server.folder / "playlists" / "night-shift.playlist.json").exists()
+    assert cli.main(["-c", str(settings_path), "playlist", "show", "playlists/nowhere.playlist.json"]) == 1
     said = capsys.readouterr()
-    assert "No playlist 'Day Shift'" in said.out + said.err and "playlist list" in said.out + said.err
+    assert 'No map is called "Atlantis"' in said.out + said.err
 
 
 def test_the_gate_asks_the_servers_own_program_and_counts_only_what_the_change_brings(tmp_path) -> None:
-    """Decision 3 (25 October): nothing is written that the server's program would refuse; a problem the server
-    has already, and that the change doesn't touch, doesn't hold the change up."""
+    """The program's own words about a change, before a file the host chose is written (0.7.0: a copy, a version put
+    back): a problem the server has already, and that the change doesn't touch, doesn't count against it. Two games
+    the same are the program's to say, not Huragok's."""
     from testkit.setup import fake_tool, setup_root
 
     from huragok.core.settings import load
@@ -95,7 +70,7 @@ def test_the_gate_asks_the_servers_own_program_and_counts_only_what_the_change_b
         {"map": "Guardian", "game": "Slayer"}, {"map": "Guardian", "game": "Slayer", "name": "Renamed"},
         {"map": "Valhalla", "game": "Slayer"}])
     check = check_plays(tool, server, {"playlist": same.relative}, same)
-    assert [(p.game, p.text.split(" (")[0]) for p in check.problems] == [(2, "the same game as game 1")]  # at once
+    assert [p.game for p in check.problems] == [2] and "duplicates another map/game" in check.problems[0].text
     missing = Playlist(same.path, "X", 20, [{"map": "Guardian", "game": "Slayer"}, {"map": "Atlantis", "game": "Slayer"},
                                             {"map": "Valhalla", "game": "Slayer"}])
     check = check_plays(tool, server, {"playlist": missing.relative}, missing)

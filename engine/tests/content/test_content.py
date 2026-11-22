@@ -1,5 +1,5 @@
-"""Seeing what's there and choosing from it: the catalogue, the playlist builder and editor, mods' Forge
-layouts, and SteamCMD setup."""
+"""Seeing what's there: the catalogue, a server's playlists and custom games (shown, their history put back, copied
+to another server and set aside, only when the host asks), mods' Forge layouts, and SteamCMD setup."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pytest
 
 from conftest import free_port
 from testkit import DATA
-from testkit.setup import SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root
+from testkit.setup import ALPHA, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root, write_playlist
 from testkit.window import FakeTerminal
 
 from huragok import steam as steamsetup
@@ -23,7 +23,7 @@ from huragok.content.mccimport import content_root_of
 from huragok.core.logs import RecentLog
 from huragok.core.settings import load
 from huragok.core.tomledit import read_toml
-from huragok.games.halo3 import PlaylistError, load_playlist, new_playlist, resolve
+from huragok.games.halo3 import load_playlist
 from huragok.window.dashboard import Menu
 
 REAL_LISTING = '''Maps: map = "…" (and base_map), or a playlist game's "map"
@@ -101,54 +101,47 @@ def test_mods_and_their_layouts(tmp_path: Path) -> None:
     assert install_layouts(mods[0], content) == []  # already there
 
 
-def test_building_and_editing_playlists(tmp_path: Path) -> None:
+def test_a_playlist_is_read_as_the_host_wrote_it(tmp_path: Path) -> None:
     folder = tmp_path / "Slayer"
     make_server_folder(folder, "Slayer", free_port())
-    playlist = new_playlist(folder, "Friday Night!", vote_seconds=30)
-    assert playlist.path == folder / "playlists" / "friday-night.playlist.json"
-    assert playlist.add("Guardian", "team_slayer") and not playlist.add("Guardian", "team_slayer")
-    with pytest.raises(PlaylistError, match="3 or more"):
-        playlist.save()
-    playlist.add("The Pit", "team_slayer")
-    playlist.add("cyberdyne", "rockets", name="Rockets!", weight=2)
-    playlist.set_weight(1, 3)
-    playlist.save()
-    loaded = load_playlist(playlist.path)
-    assert loaded.name == "Friday Night!" and loaded.vote_seconds == 30
-    assert loaded.games == [{"map": "Guardian", "game": "team_slayer", "weight": 3}, {"map": "The Pit", "game": "team_slayer"},
-                            {"map": "cyberdyne", "game": "rockets", "name": "Rockets!", "weight": 2}]
+    path = write_playlist(folder, "friday-night", [
+        {"map": "Guardian", "game": "team_slayer", "weight": 3}, {"map": "The Pit", "game": "team_slayer"},
+        {"map": "cyberdyne", "game": "rockets", "name": "Rockets!", "weight": 2}], name="Friday Night!", vote_seconds=30)
+    text = path.read_text(encoding="utf-8")
+    loaded = load_playlist(path)
+    assert loaded.name == "Friday Night!" and loaded.vote_seconds == 30 and loaded.relative == "playlists/friday-night.playlist.json"
     assert loaded.labels()[2] == "Rockets! on cyberdyne (rockets) · weight 2"
-    assert loaded.remove([1, 9]) == 1 and len(loaded.games) == 2
-    loaded.set_weight(2, 1)
-    assert "weight" not in loaded.games[1]
-    with pytest.raises(PlaylistError):
-        loaded.set_weight(1, 500)
-    assert resolve(folder, "friday-night") == playlist.path and resolve(folder, "Friday Night!") == playlist.path
-    assert resolve(folder, "playlists/friday-night.playlist.json") == playlist.path
     assert fake_tool().playlist_show(folder, "friday-night").ok  # the (fake) program accepts the file
+    assert path.read_text(encoding="utf-8") == text  # read, never written
 
 
 def test_the_content_screens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run) -> None:
+    """G, one server's home (mockups-0.7.0.md 1): what it plays, its file health, then 1 playlists, 3 maps and
+    layouts, 4 mods, F its folder and E its dedicated.toml; the keys that have gone are no choices, and nothing it
+    plays is changed."""
+    from huragok.core import desktop
+
     settings_path = setup_root(tmp_path)
     firstrun.write_files(settings_path.parent)
     root = settings_path.parent
-    content = content_root_of(root / "SERVERS" / "Alpha Server")
+    folder = root / "SERVERS" / "Alpha Server"
+    content = content_root_of(folder)
     fake_mod(content / "Mods" / "HugeGrass", "HugeGrass Rebalance")
     monkeypatch.setattr(steamsetup, "find_steamcmd", lambda home, hint="": (None, ""))
+    opened: list[Path] = []
+    monkeypatch.setattr(desktop, "open_path", lambda p: opened.append(p) or f"opened {p}")
     controller = SetupController(settings_path)
+    before = (folder / "dedicated.toml").read_text(encoding="utf-8")
     keys = [
         "G", "1", "ENTER",  # Alpha; the catalogue is read
-        "1", "1", "ESC",  # browse: Halo 3's maps, back to the content menu
-        "2",  # playlists
-        "B", *"Night", "ENTER", "ENTER",  # build: name, vote 20 s
-        "ENTER", "ENTER", *"1-4", "ENTER",  # maps: no words to narrow, next page, pick the first four
-        *"1", "ENTER",  # game types: Slayer
-        "ENTER",  # leave none out
-        *"1=2", "ENTER",  # weights
-        "Y",  # use it for this server
-        "E", "1", "ENTER", "R", *"4", "ENTER", "S", "N",  # edit it: remove the fourth game, save, don't switch
-        "ESC",  # playlists -> content menu
-        "3", "L", "1", "ENTER", "ESC",  # Workshop and mods: install mod 1's Forge layouts, back
+        "W", "P",  # gone: not choices any more (the note says where they went)
+        "3", "1", "ESC",  # maps and layouts: Halo 3's maps, back to G's home
+        "1",  # playlists
+        "B", "E", "U",  # gone too
+        "S", "1", "ENTER",  # show slayer as the server reads it
+        "ESC",  # playlists -> G's home
+        "4", "L", "1", "ENTER", "ESC",  # mods: install mod 1's Forge layouts, back
+        "F", "E",  # its folder, its dedicated.toml
         "ESC",  # leave G
         "Q", "Y"]
     terminal = FakeTerminal()
@@ -157,20 +150,26 @@ def test_the_content_screens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ru
         assert run(menu.run()) == "quit"
     except RuntimeError as error:
         raise AssertionError(f"{error}\n{''.join(terminal.output)}") from None
-    printed = "".join(terminal.output)
-    assert "Halo 3's maps" in printed and "[  1] Assembly  [descent]" in printed
-    playlist = load_playlist(root / "SERVERS" / "Alpha Server" / "playlists" / "night.playlist.json")
-    assert playlist.name == "Night" and len(playlist.games) == 3  # four built, one removed in the editor
-    assert playlist.games[0] == {"map": "descent", "game": "Slayer", "weight": 2}
-    assert "Saved playlists/night.playlist.json (4 games)" in printed and "now plays playlists/night.playlist.json" in printed
-    data = read_toml(root / "SERVERS" / "Alpha Server" / "dedicated.toml")
-    assert data["server"][0]["playlist"] == "playlists/night.playlist.json"
+    printed = " ".join("".join(terminal.output).split())
+    assert "Halo 3's maps" in printed and "[ 1] Assembly [descent]" in printed
+    # Its file health: no warnings, so nothing to say and no X to dismiss one.
+    assert "File health" in printed and "nothing to say" in printed and "Dismiss a warning" not in printed
+    # Every removed key's place says where it went (for one release), and nothing it plays was changed.
+    assert ("Playlists and custom games are made by hand now, and what it plays is set in its dedicated.toml: F opens "
+            "its folder, E the file. (W, P, the builders and packages have gone; this note shows for one release.)") \
+        in printed
+    assert "Playlists are made and changed by hand now (F opens one in your editor)" in printed
+    assert "(B, M, E and U have gone; this note shows for one release.)" in printed
+    assert "What it plays: set it" not in printed and "Build one" not in printed and "Use one" not in printed
+    assert "Reload the listing" not in printed  # no reload key any more
+    assert "dedicated playlist show playlists/slayer.playlist.json" in printed
+    assert opened == [folder, folder / "dedicated.toml"]
+    assert (folder / "dedicated.toml").read_text(encoding="utf-8") == before
     assert "SteamCMD isn't installed" in printed and "HugeGrass Rebalance" in printed
     assert (content / "Maps" / "HugeGrass Rebalance" / "Layout 0.json").is_file() and "Copied 2 layout(s)" in printed
     transcript = (root / "logs" / "window.log").read_text(encoding="utf-8")  # what was shown, asked and answered
-    assert "key G =====" in transcript and "Which maps?" in transcript and "> 1-4" in transcript
-    assert "Playlist name (shown in the lobby): > Night" not in transcript and "> Night" in transcript
-    assert "back to the dashboard after" in transcript and "with the server program before it's saved" in transcript
+    assert "key G =====" in transcript and "Which playlist? (number)" in transcript
+    assert "back to the dashboard after" in transcript
 
 
 # SteamCMD ------------------------------------------------------------------------------------------
@@ -210,27 +209,38 @@ def test_steamcmd_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys:
     assert status.accounts == ["lilgremlin", "other"] and not status.ready and "no Steam account set" in status.summary()
     assert steamsetup.signed_in(program, "LilGremlin") == (True, "Loading Steam API...OK\nWaiting for user info...OK\n")
     assert steamsetup.signed_in(program, "nobody")[0] is False
-    written = steamsetup.configure(settings, program, "lilgremlin")
-    assert len(written) == 1
-    data = read_toml(written[0])
-    assert data["workshop"] == {"steamcmd": str(program), "username": "lilgremlin"} and data["master"]["port"] == 49175
+    config = settings.servers[0].config_path
+    before = config.read_bytes()
+    assert steamsetup.configure(settings, program, "lilgremlin") is None
+    assert config.read_bytes() == before  # never a server's own file (0.7.0): that's a quick action the host asks for
     fresh = load(settings_path)
     assert fresh.setup.steamcmd == str(program) and fresh.setup.steam_username == "lilgremlin"
     status = steamsetup.status(fresh)
-    assert status.ready and status.servers_configured == 1 and "account lilgremlin" in status.summary()
+    assert status.ready and status.servers_configured == 0 and "account lilgremlin" in status.summary()
     assert cli.main(["-c", str(settings_path), "steam"]) == 0
     assert "account lilgremlin" in capsys.readouterr().out
     assert cli.main(["-c", str(settings_path), "steam", "login", "lilgremlin"]) == 0
-    assert "signed in" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "signed in" in out and "steam lines <server>" in out and config.read_bytes() == before
+    # A server's own lines: one server, shown first, written only with a yes (--yes here: no terminal to answer).
+    assert cli.main(["-c", str(settings_path), "steam", "lines", ALPHA]) == 1
+    out = capsys.readouterr().out
+    assert "+ steamcmd = " in out and "SteamCMD on this PC" in out and '+ username = "lilgremlin"' in out
+    assert "Not written" in out and config.read_bytes() == before
+    assert cli.main(["-c", str(settings_path), "steam", "lines", ALPHA, "--yes"]) == 0
+    assert read_toml(config)["workshop"] == {"steamcmd": str(program), "username": "lilgremlin"}
+    assert read_toml(config)["master"]["port"] == 49175 and "Written in" in capsys.readouterr().out
+    assert cli.main(["-c", str(settings_path), "steam", "lines", ALPHA, "--yes"]) == 0  # nothing to write twice
+    assert "name this PC's SteamCMD and account already" in capsys.readouterr().out
     assert cli.main(["-c", str(settings_path), "steam", "install"]) == 0  # already there
     assert "already at" in capsys.readouterr().out
     # The window's I screen with everything in place: account offered, checked, written.
     controller = SetupController(settings_path)
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["I", "1", "ENTER", "N", "x", "ESC", "Q", "Y"]), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["I", "1", "ENTER", "N", "N", "x", "ESC", "Q", "Y"]), RecentLog())  # type: ignore[arg-type]
     assert run_menu(menu) == "quit"
     printed = "".join(terminal.output)
-    assert "lilgremlin is signed in" in printed and "Written: [workshop]" in printed
+    assert "lilgremlin is signed in" in printed and "Written: [setup] steamcmd and steam_username" in printed
 
 
 def run_menu(menu: Menu) -> str:
@@ -260,38 +270,11 @@ REAL_SHOW = '''playlists/content-test-build.playlist.json · "Content Test Build
 Error: 2 of 5 games cannot be played; `dedicated content` lists the names this server has'''
 
 
-def test_the_builder_names_games_the_server_cant_play_and_drops_them(tmp_path: Path, run) -> None:
+def test_the_programs_words_for_each_game_are_read() -> None:
     from huragok.games.halo3 import problems_from_show
 
     problems = problems_from_show(REAL_SHOW)
     assert set(problems) == {2, 3} and problems[2].startswith("This game was made on the mod map")
-    settings_path = setup_root(tmp_path)
-    firstrun.write_files(settings_path.parent)
-    controller = SetupController(settings_path)
-    folder = settings_path.parent / "SERVERS" / "Alpha Server"
-    # A playlist file with two maps the (fake) server doesn't have, among four it does.
-    bad = new_playlist(folder, "Mixed Bag")
-    for map_ref in ("Guardian", "Nowhere Land", "The Pit", "Valhalla", "Also Missing"):
-        bad.add(map_ref, "Slayer")
-    bad.save()
-    keys = [
-        "G", "1", "ENTER", "2",  # Alpha, playlists
-        "E", "1", "ENTER",  # edit mixed-bag (the first file)
-        "S", "T", "Y",  # save: the server can't play two -> take them out and check again -> use it
-        "ESC", "ESC",  # back out of playlists and G
-        "Q", "Y"]
-    terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
-    try:
-        assert run(menu.run()) == "quit"
-    except RuntimeError as error:
-        raise AssertionError(f"{error}\n{''.join(terminal.output)}") from None
-    printed = "".join(terminal.output)
-    assert "won't play it as it is, so it isn't saved" in printed and "game 2 (Slayer on Nowhere Land)" in printed
-    assert "Take out games 2, 5, and check again" in printed and "Saved playlists/mixed-bag.playlist.json" in printed
-    saved = load_playlist(folder / "playlists" / "mixed-bag.playlist.json")
-    assert [g["map"] for g in saved.games] == ["Guardian", "The Pit", "Valhalla"]
-    assert read_toml(folder / "dedicated.toml")["server"][0]["playlist"] == "playlists/mixed-bag.playlist.json"
 
 
 # The window's screens, fixed after the 2026-10-18 audit -----------------------------------------------------
@@ -305,55 +288,6 @@ def on_the_loop() -> bool:
     import threading
 
     return threading.current_thread() is threading.main_thread()  # asyncio.run's loop runs on the main thread
-
-
-def test_the_playlist_a_server_plays_is_checked_before_it_is_replaced(tmp_path: Path, run) -> None:
-    from testkit.setup import fake_tool as tool
-
-    settings_path = setup_root(tmp_path)
-    server = load(settings_path).servers[0]
-    assert server.plays == "playlist slayer"
-    path = server.folder / "playlists" / "slayer.playlist.json"
-    before = path.read_text(encoding="utf-8")
-    playlist = load_playlist(path)
-    playlist.add("Nowhere Land", "Slayer")  # a map the (fake) server doesn't have
-    menu, terminal = screen(settings_path, ["L"])  # leave it unsaved: nothing refused is ever saved
-    assert run(menu._save_playlist(tool(), server, playlist)) is False
-    printed = "".join(terminal.output)
-    assert "won't play it as it is, so it isn't saved" in printed and "Keep it as it is" not in printed
-    assert "Not saved: playlists/slayer.playlist.json stays as it was; the draft is in its history" in printed
-    assert path.read_text(encoding="utf-8") == before  # the live file never held the refused draft
-    assert not list(path.parent.glob(".*huragok-*")) and not list(server.folder.glob(".huragok-check*"))
-    menu, terminal = screen(settings_path, ["T", "N"])  # take out the game it can't play: checked again, saved
-    assert run(menu._save_playlist(tool(), server, playlist)) is True
-    assert "Nowhere Land" not in path.read_text(encoding="utf-8") and "Saved playlists/slayer.playlist.json" in \
-        "".join(terminal.output)
-
-
-def test_n_asks_again_for_a_port_or_a_player_count_out_of_range(tmp_path: Path, run, monkeypatch) -> None:
-    from conftest import free_port
-
-    from huragok.window.screens import setup as menu_setup
-
-    settings_path = setup_root(tmp_path)
-    probed: list[bool] = []
-
-    def next_free_port(settings: Any) -> int:
-        probed.append(on_the_loop())
-        return free_port()
-
-    monkeypatch.setattr(menu_setup, "next_free_port", next_free_port)
-    keys = ["ENTER", *"Zed", "ENTER",  # no package, the name
-            *"70000", "ENTER", *"80", "ENTER", *str(free_port()), "ENTER",  # asked again until it's a port
-            "N", "ENTER",  # not hidden, no join password
-            *"0", "ENTER", *"500", "ENTER", "ESC"]  # players: asked again; Esc leaves
-    menu, terminal = screen(settings_path, keys)
-    run(menu.screen_new())
-    printed = "".join(terminal.output)
-    assert "'70000' isn't a port from 1024 to 65535" in printed and "'80' isn't a port from 1024 to 65535" in printed
-    assert "'0' isn't a player count from 1 to 127" in printed and "'500' isn't a player count" in printed
-    assert "That didn't work" not in printed and not (settings_path.parent / "SERVERS" / "Zed").exists()
-    assert probed == [False]  # the port probe ran in a thread, not on the loop
 
 
 def test_leaving_the_steam_sign_in_writes_nothing(tmp_path: Path, run, monkeypatch) -> None:
@@ -382,9 +316,9 @@ def test_a_quoted_path_is_the_path(tmp_path: Path, run, monkeypatch) -> None:
     monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (True, ""))
     on_path: list[bool] = []  # PowerShell, which waits on every open window: never on the loop
     monkeypatch.setattr(steamsetup, "add_to_path", lambda folder: on_path.append(on_the_loop()) or "on your PATH")
-    menu, terminal = screen(settings_path, ["1", "3", *f'"{folder}"', "ENTER", "ENTER", "Y", "x", "ESC"])
+    menu, terminal = screen(settings_path, ["1", "3", *f'"{folder}"', "ENTER", "ENTER", "Y", "N", "x", "ESC"])
     run(menu.screen_steam())
-    assert "Written: [workshop]" in "".join(terminal.output) and on_path == [False]
+    assert "Written: [setup]" in "".join(terminal.output) and on_path == [False]
     assert load(settings_path).setup.steamcmd == str(program)
     # G -> Import variants, from a quoted folder; looking for MCC and reading the folder happen off the loop.
     source = tmp_path / "My Variants"
@@ -403,23 +337,34 @@ def test_a_quoted_path_is_the_path(tmp_path: Path, run, monkeypatch) -> None:
     assert threads == [False, False]
 
 
-def test_a_custom_game_a_server_plays_is_not_deleted(tmp_path: Path, run) -> None:
+def test_a_custom_game_is_set_aside_never_deleted(tmp_path: Path, run) -> None:
+    """B14: D on the custom games screen moves the file into "content set aside", never unlinks it. A server that
+    plays it is named, with what setting it aside does, and the host asked once: a warning, not a refusal."""
+    from huragok.content.catalogue import SET_ASIDE
     from huragok.games import halo3_options as go
-    from huragok.program.plays import write_plays
+    from testkit.setup import write_plays
 
     settings_path = setup_root(tmp_path)
     server = load(settings_path).servers[0]
-    path = go.new_preset("Snipers", "Slayer").save(go.preset_path(server.content_dir, "Snipers"))
+    modes = server.content_dir / "Game Modes"
+    modes.mkdir(parents=True, exist_ok=True)
+    path = modes / "snipers.json"
+    text = json.dumps({"version": 1, "name": "Snipers", "mode": "Slayer", "rules": {}, "options": {"map.weapons": 7}})
+    path.write_text(text, encoding="utf-8")
     write_plays(server.config_path, server.name, {"variant": os.path.relpath(path, server.folder).replace("\\", "/")})
     number = str([p.path for p in go.list_presets(server.content_dir)].index(path) + 1)
     settings = load(settings_path)
-    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "ESC"])
+    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "N", "ESC"])  # it plays it: asked, and left
     run(menu._custom_games(settings, None, settings.servers[0]))
-    assert path.is_file() and "Not deleted: Alpha Server plays Game Modes/snipers.json" in "".join(terminal.output)
-    write_plays(server.config_path, server.name, {"playlist": "playlists/slayer.playlist.json"})
-    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "Y", "ESC"])
+    printed = " ".join("".join(terminal.output).split())
+    assert path.is_file() and "Alpha Server plays Game Modes/snipers.json. Set aside, it's gone from its content" in printed
+    assert "Set Game Modes/snipers.json aside anyway (moved to" in printed and "Not deleted" not in printed
+    menu, terminal = screen(settings_path, ["D", *number, "ENTER", "Y", "ESC"])  # asked once: yes
     run(menu._custom_games(load(settings_path), None, load(settings_path).servers[0]))
-    assert not path.exists() and "Deleted Game Modes/snipers.json" in "".join(terminal.output)
+    aside = server.content_dir.parent / SET_ASIDE / "Game Modes" / "snipers.json"
+    assert not path.exists() and aside.read_text(encoding="utf-8") == text  # moved whole, never deleted
+    assert "Set aside: Game Modes/snipers.json is in" in "".join(terminal.output)
+    assert go.list_presets(server.content_dir) == []
 
 
 def test_the_workshop_screen_reads_only_the_end_of_the_console_log(tmp_path: Path, run, monkeypatch) -> None:
@@ -472,6 +417,27 @@ def test_the_workshop_screen_says_whether_each_mod_is_good_to_go(tmp_path: Path)
          "packaging, ask its author", "red")]
 
 
+def test_g_lists_a_servers_mods_as_its_disabled_mods_json_has_them(tmp_path: Path, run, monkeypatch) -> None:
+    """0.7.0: a server's mods are G's (4), no longer D's (M): each mod installed, and the one the host's
+    disabled-mods.json switches off said so. The file is read, never written: Huragok never switches a mod off or on."""
+    settings_path = setup_root(tmp_path)
+    folder = settings_path.parent / "SERVERS" / ALPHA
+    for name in ("canyon", "valley"):
+        mod = folder / "content" / "Mods" / name
+        mod.mkdir(parents=True)
+        (mod / "ModInfo.json").write_text(json.dumps({"Title": {"Neutral": name.title()}}), encoding="utf-8")
+    disabled = folder / "content" / "disabled-mods.json"
+    disabled.write_text('{"packages": ["Mods/valley"]}', encoding="utf-8")
+    before = disabled.read_bytes()
+    monkeypatch.setattr(steamsetup, "find_steamcmd", lambda home, hint="": (None, ""))  # not this PC's own SteamCMD
+    menu, terminal = screen(settings_path, ["1", "ENTER", "4", "ESC", "ESC"])  # Alpha; Mods; back out of it and G
+    run(menu.screen_content())
+    printed = "".join(terminal.output)
+    assert "Mods installed (2):" in printed and "Canyon: good to go" in printed
+    assert "Valley: switched off (disabled-mods.json)" in printed
+    assert disabled.read_bytes() == before  # read, never written
+
+
 def test_the_workshop_screen_says_why_a_mod_map_was_skipped(tmp_path: Path) -> None:
     from testkit.mapfiles import broken, written
 
@@ -490,7 +456,7 @@ def test_the_workshop_screen_says_why_a_mod_map_was_skipped(tmp_path: Path) -> N
         "3820687243: installed",
         "3820687243: its map fixed.map was skipped: it has no scenario: none of its 3 tag groups is a scenario "
         "('scnr'): there's no level in it. The map file itself is broken, not your setup: ask its author (Workshop "
-        "3820687243) for a fixed upload; Huragok installs the fixed version when it comes out"]
+        "3820687243) for a fixed upload; the server installs the fixed version when it comes out"]
 
 
 def test_odst_progress_from_the_worker_thread_is_printed_on_the_loop(tmp_path: Path, run, monkeypatch) -> None:
@@ -712,8 +678,8 @@ def test_content_files_the_server_cant_read_are_named_and_set_aside(tmp_path: Pa
 
 
 def test_every_playlist_version_is_kept_and_one_is_put_back(tmp_path: Path, run) -> None:
-    """Decision 1: before and after each save, and a change by hand found as G lists the playlists; a version is put
-    back through the same check as any save."""
+    """Decision 1: a change by hand is found as G lists the playlists; a version is put back exactly as it was kept,
+    when the host asks, checked first by the server's own program, with the one it replaces kept."""
     from testkit.setup import fake_tool as tool
 
     from huragok.core import versions
@@ -722,25 +688,34 @@ def test_every_playlist_version_is_kept_and_one_is_put_back(tmp_path: Path, run)
     settings = load(settings_path)
     server = settings.servers[0]
     path = server.folder / "playlists" / "slayer.playlist.json"
-    original = load_playlist(path)
-    playlist = load_playlist(path)
-    playlist.name = "Slayer, renamed"
-    menu, _ = screen(settings_path, ["N"])  # saved; not used now
-    assert run(menu._save_playlist(tool(), server, playlist)) is True
-    kept = versions.versions(settings.records, "playlists", server.slug, path.name)
-    assert [v.how for v in kept] == ["saved in G", versions.FIRST]  # what it replaced, then what it wrote
-    path.write_text(path.read_text(encoding="utf-8").replace("Slayer, renamed", "Edited by hand"), encoding="utf-8")
+    original = path.read_bytes()
+    menu, _ = screen(settings_path, ["ESC"])
+    run(menu._playlists(settings, tool(), server, Catalogue()))  # listed: kept as Huragok first found it
+    path.write_text(path.read_text(encoding="utf-8").replace("Halo 3 community rotation", "Edited by hand"),
+                    encoding="utf-8")
     keys = ["H", "1", "ENTER",  # Playlists -> History of slayer
-            "P", *str(3), "ENTER",  # put back the oldest: as Huragok first found it
-            "N",  # saved (checked first); not used now
-            "ESC"]
+            "P", "2", "ENTER",  # put back the oldest: as Huragok first found it (taken by the program: no question)
+            "x", "ESC"]
     menu, terminal = screen(settings_path, keys)
     run(menu._playlists(settings, tool(), server, Catalogue()))
-    original.number_choices()  # saved by Huragok: its choices as numbers (decision 2)
-    assert load_playlist(path).name == original.name and load_playlist(path).games == original.games
+    assert path.read_bytes() == original  # exactly as it was kept
     hows = [v.how for v in versions.versions(settings.records, "playlists", server.slug, path.name)]
-    assert hows == ["put back", versions.BY_HAND, "saved in G", versions.FIRST]
-    assert "changed outside Huragok" in "".join(terminal.output)
+    assert hows == ["put back", versions.BY_HAND, versions.FIRST]
+    printed = "".join(terminal.output)
+    assert "changed outside Huragok" in printed and "Put back: slayer.playlist.json is the version of" in printed
+    # One the server's program refuses: its words, what putting it back does, asked once. No: left as it is.
+    write_playlist(server.folder, "slayer", [{"map": "Nowhere Land", "game": "Slayer"}] * 3, name="broken")
+    versions.seen(settings.records, "playlists", server.slug, path)
+    path.write_bytes(original)
+    versions.seen(settings.records, "playlists", server.slug, path)  # as the listing keeps it
+    kept =versions.versions(settings.records, "playlists", server.slug, path.name)
+    number = str(next(n for n, v in enumerate(kept, 1) if "Nowhere Land" in versions.read(v)))
+    menu, terminal = screen(settings_path, ["H", "1", "ENTER", "P", number, "ENTER", "N", "ESC", "ESC"])
+    run(menu._playlists(settings, tool(), server, Catalogue()))
+    printed = " ".join("".join(terminal.output).split())
+    assert "its server program won't play it as it is" in printed and "Nowhere Land" in printed
+    assert "Put back anyway, Alpha Server refuses the change and keeps playing the playlist as it is now" in printed
+    assert path.read_bytes() == original
 
 
 def test_g_shows_what_players_pick_and_what_never_gets_played(tmp_path: Path, run) -> None:
@@ -772,11 +747,12 @@ def test_g_shows_what_players_pick_and_what_never_gets_played(tmp_path: Path, ru
 
 
 def test_a_playlist_and_a_custom_game_are_copied_to_other_servers_each_checked_there(tmp_path: Path, run) -> None:
-    """Decision 1: copied to the servers picked, each copy checked by that server's own program against its own
-    content first; one that lacks what the playlist names keeps what it has."""
+    """Decision 1, as 0.7.0 has it: copied exactly as they are (labels and all), to the servers picked, each copy checked
+    first by that server's own program. One it refuses: its words, what copying anyway does, and the host asked once;
+    no leaves it out, yes copies it. What a copy replaces is kept in that server's history first."""
     from conftest import free_port
     from testkit.setup import fake_tool as tool
-    from testkit.setup import make_server_folder
+    from testkit.setup import make_server_folder, write_plays
 
     from huragok.core import versions
 
@@ -787,39 +763,43 @@ def test_a_playlist_and_a_custom_game_are_copied_to_other_servers_each_checked_t
     bravo = next(s for s in settings.servers if s.name == "Bravo")
     (alpha.content_dir / "Maps").mkdir(parents=True, exist_ok=True)
     (alpha.content_dir / "Maps" / "Alpha Only.mvar").write_bytes(b"_blf" + bytes(20))  # a map variant Bravo lacks
-    good = new_playlist(alpha.folder, "Shared Rotation")
-    for map_name in ("Guardian", "Valhalla", "The Pit"):
-        good.add(map_name, "Slayer")
-    good.save()
-    bad = new_playlist(alpha.folder, "Alpha Rotation")
-    for map_name in ("Guardian", "Valhalla", "Alpha Only"):
-        bad.add(map_name, "Slayer")
-    bad.save()
+    good = write_playlist(alpha.folder, "shared-rotation", [
+        {"map": "Guardian", "game": "Slayer", "options": {"player.character_set": "Vanilla characters"}},
+        {"map": "Valhalla", "game": "Slayer"}, {"map": "The Pit", "game": "Slayer"}], name="Shared Rotation")
+    bad = write_playlist(alpha.folder, "alpha-rotation", [{"map": name, "game": "Slayer"}
+                                                         for name in ("Guardian", "Valhalla", "Alpha Only")])
     modes = alpha.content_dir / "Game Modes"
     modes.mkdir(parents=True, exist_ok=True)
     (modes / "br-slayer.json").write_text(json.dumps({"version": 1, "name": "BR Slayer", "mode": "Slayer",
-                                                      "rules": {}, "options": {}}), encoding="utf-8")
+                                                      "rules": {}, "options": {"player.speed": 99}}), encoding="utf-8")
     (bravo.folder / "playlists" / "shared-rotation.playlist.json").write_text(json.dumps(
         {"version": 2, "name": "Bravo's own", "games": [{"map": "Guardian", "game": "Oddball"}]}), encoding="utf-8")
-    from huragok.program.plays import write_plays
-
     write_plays(bravo.config_path, bravo.name, {"playlist": "playlists/shared-rotation.playlist.json"})  # in use there
     files = sorted(p.name for p in (alpha.folder / "playlists").glob("*.playlist.json"))
     keys = ["C", str(files.index("shared-rotation.playlist.json") + 1), "ENTER", "1", "ENTER", "Y", "x",  # to Bravo
-            "C", str(files.index("alpha-rotation.playlist.json") + 1), "ENTER", "A", "ENTER", "x",  # to all: Bravo
+            "C", str(files.index("alpha-rotation.playlist.json") + 1), "ENTER", "A", "ENTER", "N", "x",  # refused: no
             "ESC"]
     menu, terminal = screen(settings_path, keys)
     run(menu._playlists(settings, tool(), alpha, Catalogue()))
-    text = "".join(terminal.output)
-    copied = load_playlist(bravo.folder / "playlists" / "shared-rotation.playlist.json")
-    assert copied.name == "Shared Rotation" and len(copied.games) == 3
+    text = " ".join("".join(terminal.output).split())
+    assert (bravo.folder / "playlists" / "shared-rotation.playlist.json").read_bytes() == good.read_bytes()  # exactly
     hows = [v.how for v in versions.versions(settings.records, "playlists", bravo.slug, "shared-rotation.playlist.json")]
     assert hows[0] == "copied" and versions.FIRST in hows  # Bravo's own kept before it was replaced
     assert "Bravo has a shared-rotation.playlist.json of its own, and plays it now" in text  # said before replacing
-    assert "Bravo: copied to playlists/shared-rotation.playlist.json (it plays it: from its next vote)" in text
-    assert "Bravo: not copied: its server program won't play it" in text and "Alpha Only" in text
-    assert not (bravo.folder / "playlists" / "alpha-rotation.playlist.json").exists()
-    menu, terminal = screen(settings_path, ["O", "1", "ENTER", "1", "ENTER", "x", "ESC"])
+    assert "Bravo: copied to playlists/shared-rotation.playlist.json (it plays it: from the next vote)" in text
+    assert "Bravo: its server program won't play it as it is" in text and "Alpha Only" in text
+    assert "Copied anyway, it sits in Bravo's playlists folder unplayed" in text and "Copy it to Bravo anyway?" in text
+    assert not (bravo.folder / "playlists" / "alpha-rotation.playlist.json").exists()  # asked once: no
+    keys = ["C", str(files.index("alpha-rotation.playlist.json") + 1), "ENTER", "1", "ENTER", "Y", "x", "ESC"]
+    menu, terminal = screen(settings_path, keys)
+    run(menu._playlists(settings, tool(), alpha, Catalogue()))
+    assert (bravo.folder / "playlists" / "alpha-rotation.playlist.json").read_bytes() == bad.read_bytes()  # yes
+    assert text.count("anyway?") == 1  # one question for it, never a refusal
+    # A custom game Bravo's program refuses: its words, asked once; yes copies it as it is.
+    menu, terminal = screen(settings_path, ["O", "1", "ENTER", "1", "ENTER", "Y", "x", "ESC"])
     run(menu._custom_games(settings, tool(), alpha))
-    assert json.loads((bravo.content_dir / "Game Modes" / "br-slayer.json").read_text(encoding="utf-8"))["name"] == \
-        "BR Slayer" and "Bravo: copied to Game Modes/br-slayer.json" in "".join(terminal.output)
+    printed = " ".join("".join(terminal.output).split())
+    assert "Bravo: its server program refuses it: Error: Movement speed must be 0..=10" in printed
+    assert "Copy it to Bravo anyway?" in printed and "Bravo: copied to Game Modes/br-slayer.json" in printed
+    assert (bravo.content_dir / "Game Modes" / "br-slayer.json").read_bytes() == (modes / "br-slayer.json").read_bytes()
+    assert [v.how for v in versions.versions(settings.records, "custom-games", bravo.slug, "br-slayer.json")] == ["copied"]

@@ -35,7 +35,7 @@ MCC_SOURCES = {  # folder under halo3/ -> content subfolder
     "hopper_map_variants": "Maps", "map_variants": "Maps",
     "hopper_game_variants": "Game Modes", "game_variants": "Game Modes",
 }
-KINDS = {".mvar": "Maps", ".bin": "Game Modes"}
+KINDS = {".mvar": "Maps", ".bin": "Game Modes", ".rmeg": "Game Modes", ".rvt": "Game Modes"}  # .rmeg: 0.10's modes
 
 
 @dataclass(frozen=True)
@@ -71,17 +71,18 @@ def copy_replacing(source: Path, target: Path) -> None:
 
 
 def _json_kind(path: Path) -> str | None:
-    """A saved .json: a game type (has "mode"/"rules") goes to Game Modes, a saved map to Maps."""
+    """A saved .json: a saved map (a Forge layout: its `map` block holds the objects) goes to Maps, a game type to
+    Game Modes. The map is looked for first: a layout has `mode` and `rules` too (a game type's `map` is null)."""
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict):
         return None
+    if isinstance(data.get("map"), dict) or "placements" in data or "objects" in data:
+        return "Maps"
     if "mode" in data or "rules" in data or "script" in data:
         return "Game Modes"
-    if "map" in data or "placements" in data or "objects" in data:
-        return "Maps"
     return None
 
 

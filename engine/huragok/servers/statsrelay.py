@@ -1,10 +1,12 @@
-"""statsrelay: a copy of what a server sends the stats service, for tempdiscord.py (0.5.2 until the version that brings stats).
+"""statsrelay: Huragok's stats relay, a copy of what each server sends the stats service: how Huragok's stats,
+leaderboards and kill feed get every game (servers/stats.py). Written in 0.5.2 as a stopgap; since 0.7.0 it's how they
+work, with a switch: [stats] relay in settings.toml (on by default). Off, every server's own stats_server goes back
+as it was and Huragok never touches it.
 
 After each finished game a server reports it to the stats service ([stats_server] in its dedicated.toml; empty
 means the project's public one), which answers with each player's rank: "Stats recorded: Alpha is Sergeant
 grade 2 (37 EXP, skill 21)". The report goes over plain HTTP (POST <service>/v1/matches) and nobody outside the
-project knows what's in it. For every server, always (nothing to set; the version that brings stats takes it out), Huragok stands in the
-middle:
+project knows what's in it. For every server, while [stats] relay is on, Huragok stands in the middle:
 
   * it listens on 127.0.0.1 (a port of its own for each server, kept in records/temp-stats-capture.json) and points
     the server's stats_server there (the server reads it as it starts, so from that server's next start);

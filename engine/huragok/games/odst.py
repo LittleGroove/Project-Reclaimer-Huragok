@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .bungie import installed_in_text
-from .halo3_options import version_tuple
+from ..core.text import version_tuple
 
 FILES_HINT = "dedicated init --from --maps odst"
 

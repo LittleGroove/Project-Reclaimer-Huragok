@@ -46,7 +46,8 @@ VERSION = 13  # Halo 3 as MCC ships it
 MAX_GROUPS = 1024
 MAX_TAGS = 32768
 SCENARIO = b"rncs"  # the scnr group's letters as they lie on disk
-RECEIPT = "reclaimer-workshop-version.json"  # the server program's note of the Workshop version it installed
+RECEIPT = "reclaimer-workshop-version.json"  # the server program's older note of the Workshop version it installed
+INSTALLED = "reclaimer-installed.json"  # its receipt, whose "version" the program itself goes by (answer 17)
 
 # The program's reasons for a map it can't read (others, such as a missing .mapinfo, aren't about the file).
 NOT_HALO3 = "it is not a Halo 3 cache"
@@ -102,8 +103,23 @@ def explain(path: Path, said: str, *, updates: bool = True) -> str:
     if verdict.reason == CUT_SHORT:
         return (f"{detail}. Fetch or copy it again; if it comes back the same, the upload itself is short: ask its "
                 f"author{upload} to upload it again")
-    fixed = "; Huragok installs the fixed version when it comes out" if upload and updates else ""
+    fixed = "; the server installs the fixed version when it comes out" if upload and updates else ""
     return f"{detail}. The map file itself is broken, not your setup: ask its author{upload} for a fixed upload{fixed}"
+
+
+def installed_updated(folder: Path) -> int | None:
+    """When the installed version of the Workshop item in `folder` was uploaded (Unix seconds), as the program reads
+    it: reclaimer-installed.json's "version", else the older receipt beside it."""
+    for name, inner in ((INSTALLED, True), (RECEIPT, False)):
+        try:
+            data = json.loads((folder / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        version = data.get("version") if inner and isinstance(data, dict) else data
+        updated = version.get("updated") if isinstance(version, dict) else None
+        if isinstance(updated, int) and not isinstance(updated, bool):
+            return updated
+    return None
 
 
 def upload_text(path: Path) -> str:
@@ -111,10 +127,7 @@ def upload_text(path: Path) -> str:
     '' for any other map."""
     for folder in path.parents:
         if folder.name.isdecimal() and folder.parent.name.lower() == "workshop":
-            try:
-                updated = json.loads((folder / RECEIPT).read_text(encoding="utf-8")).get("updated")
-            except (OSError, ValueError, AttributeError):
-                updated = None
+            updated = installed_updated(folder)
             when = time.strftime("%d %b %Y %H:%M UTC", time.gmtime(updated)) if isinstance(updated, int) else ""
             return f" (Workshop {folder.name}, the version uploaded {when})" if when else f" (Workshop {folder.name})"
     return ""

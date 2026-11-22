@@ -44,9 +44,11 @@ GROUPS: list[tuple[str, str, str, str]] = [  # (key, whose: SUPT/VRGL/HRGK, titl
     ("relay", "VRGL", "Moderators' console (relay)", "the relay, and each moderator's name, password and role"),
     ("updates", "HRGK", "Huragok's updates", "looking for new versions of Huragok, and installing them"),
     ("server_updates", "HRGK", "Server program updates", "new Project Reclaimer releases"),
-    ("workshop_updates", "HRGK", "Workshop updates", "new versions of the servers' Workshop mods"),
-    ("setup", "HRGK", "New servers and SteamCMD", "what new servers share, packages, the program, SteamCMD"),
+    ("workshop_updates", "HRGK", "Workshop updates", "restarts that put in the mod updates the servers download"),
+    ("setup", "HRGK", "New servers and SteamCMD", "MCC's folder, the program for new folders, SteamCMD"),
     ("files", "HRGK", "Folders and files", "where the server folders, records and log are"),
+    ("stats", "SUPT", "The stats relay", "leaderboards and the kill feed: Huragok between the servers and the stats "
+                                         "service"),
 ]
 GROUP_TITLES = {key: title for key, _, title, _ in GROUPS}
 
@@ -90,6 +92,9 @@ SETTINGS: list[HostSetting] = [
       default="Superintendent"),
     H("", "dry_run", "bool", "record every moderation action as \"would have…\" without doing it", "general",
       default=False),
+    H("", "follow_renames", "bool", "a server renamed in its own dedicated.toml stays the same server: its settings "
+      "here, its records, stats and history follow the new name; off: the new name starts afresh", "general",
+      default=True),
     # How the servers are run
     H("process", "executable", "str", "the server program, in each server's folder", "running",
       default="project-reclaimer.exe", backend="process"),
@@ -189,6 +194,9 @@ SETTINGS: list[HostSetting] = [
     H("eventlog", "enabled", "bool", "every event as a line of JSON, one file per UTC day (player IPs are in it: "
       "keep the folder private)", "eventlog", default=False),
     H("eventlog", "folder", "path", "where the files go", "eventlog", default="logs/events"),
+    H("stats", "relay", "bool", "stand between each server and the stats service, passing every report on unchanged "
+      "and keeping a copy for the leaderboards and the kill feed; off: every server's own stats_server goes back at "
+      "once and is never touched", "stats", default=True),
     # Automod
     H("automod", "enabled", "bool", "Vergil acts on the words in its word list said in chat, and on banned names",
       "automod", default=True),
@@ -240,51 +248,31 @@ SETTINGS: list[HostSetting] = [
     H("updates", "repository", "str", "where Huragok's releases come from, owner/name on GitHub", "updates",
       default="LittleGroove/Project-Reclaimer-Huragok"),
     # Server program updates
-    H("server_updates", "check", "bool", "look for new Project Reclaimer releases", "server_updates", default=True),
-    H("server_updates", "check_hours", "float", "hours between looks (hourly, as the servers' own updaters do)",
-      "server_updates", default=1, low=1, high=720),
-    H("server_updates", "install", "choice", "for servers with auto_update off: ask (only say so; U installs), "
-      "after_game (install and restart each after its game) or now", "server_updates",
-      choices=("ask", "after_game", "now"), default="ask"),
+    H("server_updates", "check", "bool", "look for new Project Reclaimer releases (each server installs its own: "
+      "auto_update in its dedicated.toml)", "server_updates", default=True),
+    H("server_updates", "check_minutes", "float", "minutes between looks (every 15, so Huragok usually sees a release "
+      "before the servers' own hourly looks)", "server_updates", default=15, low=5, high=1440),
     H("server_updates", "repository", "str", "where the server program's releases come from, owner/name on GitHub",
       "server_updates", default="ProjectReclaimer/project-reclaimer-releases"),
-    H("server_updates", "follow", "bool", "once one server has updated itself, restart the others that update "
-      "themselves after their game, so every server is on the new version within a game", "server_updates",
-      default=True),
-    H("server_updates", "fallback", "bool", "a server with auto_update on that didn't update itself gets the release "
-      "from Huragok after its game (off: only say so)", "server_updates", default=True),
+    H("server_updates", "follow", "bool", "once a release is out (Huragok saw it, or one server updated itself), "
+      "restart each server with auto_update on after its game, so it installs the release as it starts instead of "
+      "cutting a game at its own hourly look (nobody on: at once). Off: Huragok never restarts a server for a "
+      "release", "server_updates", default=True),
     # Workshop updates
-    H("workshop_updates", "install", "choice", "after_game (stop the server when the game ends, swap the new version "
-      "in, start it), when_empty (the server's own way, once nobody is on) or off (by hand)", "workshop_updates",
-      choices=("after_game", "when_empty", "off"), default="after_game"),
-    H("workshop_updates", "check_minutes", "int", "minutes between looks at Steam (5 at least; 0 leaves each server's "
-      "own setting alone and Huragok doesn't look)", "workshop_updates", default=5, low=0, high=10080),
-    H("workshop_updates", "adopt", "bool", "a mod copied into a server's content by hand that names a Workshop item "
-      "is kept up to date too: the Workshop's copy is fetched while the server runs and takes the hand copy's place "
-      "after a game (the hand copy kept in content set aside), and the item is listed", "workshop_updates",
-      default=True),
-    H("workshop_updates", "layouts", "bool", "the Forge layouts each mod ships are copied into content/Maps and kept in "
-      "step with its new versions (one changed there by hand is left as it is)", "workshop_updates", default=True),
+    H("workshop_updates", "restart", "bool", "the servers download and install their own mod updates, but not over a "
+      "map they have open: restart such a server to put the update in, at once when nobody is on, when its game ends "
+      "otherwise (players are told first). false: Huragok only warns. One server can be left out on its page",
+      "workshop_updates", default=True),
     # New servers and SteamCMD
-    H("setup", "share", "share", "what new servers take from this folder instead of a copy of their own: game "
-      "(the games' files: Halo 3's and the others the servers play), content (one content folder for every "
-      "server). Never the ban list: every server keeps its own, and Huragok puts its own bans on every one", "setup",
-      default=["game"]),
-    H("setup", "mcc_folder", "path", "your MCC folder, for the games' files: Halo 3's when no server has them yet, "
-      "and ODST's, Reach's, CE's and Halo 2's for the servers that play them; empty: Steam's own folder; left out: "
-      "linked from a server that has them", "setup", optional=True),
-    H("setup", "packages_folder", "path", "where the packages are", "setup", default="PACKAGES"),
+    H("setup", "mcc_folder", "path", "your MCC folder, where I and `repair` copy the games' files from when you ask "
+      "(Halo 3's, and ODST's, Reach's, CE's and Halo 2's for the servers that play them); empty: Steam's own folder; "
+      "left out: found from Steam's own records", "setup", optional=True),
     H("setup", "program", "path", "the server program for what isn't one server's (making new folders, checking "
       "custom games); empty: the newest copy here", "setup", default=""),
     H("setup", "steamcmd", "path", "SteamCMD's program (I sets it up); empty: looked for in steamcmd/ here, "
       "C:\\steamcmd and PATH", "setup", default=""),
     H("setup", "steam_username", "str", "the Steam account SteamCMD signs in with; it must own MCC (never a password "
       "here)", "setup", default=""),
-    H("setup", "download_game_files", "bool", "a server missing a game's files (Halo 3's, or another game's its maps "
-      "need) gets them by itself (copied from MCC, or downloaded with SteamCMD: Halo 3's, the campaign's, ODST's)",
-      "setup", default=True),
-    H("setup", "auto_update", "bool", "new servers install new Project Reclaimer releases themselves (auto_update "
-      "in their dedicated.toml)", "setup", default=True),
     # Folders and files
     H("", "servers_folder", "path", "where the server folders are, one folder per server", "files",
       default="SERVERS"),
@@ -400,8 +388,6 @@ def parse(setting: HostSetting, text: str) -> Any:
             value = int(value)  # 15 rather than 15.0 in the file
         if setting.low is not None and value < setting.low or setting.high is not None and value > setting.high:
             raise HostSettingsError(f"between {_number(setting.low)} and {_number(setting.high)}")
-        if setting.key == "check_minutes" and 0 < value < 5:
-            raise HostSettingsError("5 at least (the server program never looks more often), or 0")
         return value
     if kind == "choice":
         if text.lower() not in setting.choices:

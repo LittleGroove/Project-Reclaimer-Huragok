@@ -17,6 +17,7 @@ going (`listen`). The Superintendent never knows Vergil.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import logging
 import sqlite3
@@ -26,9 +27,12 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from .core.context import PartContext
 from .core.events import Event
-from .core.serverfolders import FolderProblem, ServerConfig, discover_servers
+from .core.renames import follow_rename, pair_renames
+from .core.serverfolders import FolderProblem, ServerConfig, discover_servers, read_dedicated
+from .core.serverwarnings import RuleError, Warnings, load_rules
 from .core.tables import ConfigError
 from .core.text import one_line, wrap
+from .games.byplayers_retired import retired_warning
 from .rcon import RconClient
 from .servers.backends import make_backend
 from .servers.fleet import Fleet, Lifecycle
@@ -36,6 +40,7 @@ from .servers.keepalive import Keepalive
 from .servers.logs import FileWatcher, read_status
 from .servers.server import BUSY, SETTLED, ServerManager
 from .servers.state import Player, ServerState, StateTracker
+from .servers.statusclient import StatusFileClient
 
 if TYPE_CHECKING:
     from .huragok import Huragok
@@ -43,6 +48,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DISCOVER_SECONDS = 10.0  # server folders added or removed while running are found this often
+CRASH_LOOP = 3  # crashes in a row (the program's supervision.json) that make a warning
 
 
 class ServerListener(Protocol):
@@ -81,6 +87,8 @@ class Superintendent:
         self.watchers: dict[str, FileWatcher] = {}
         self.backend = make_backend(settings, bus, self.states)
         self.fleet = Fleet(settings, self.backend, bus, on_all_stopped=self._all_stopped, on_request=huragok.request)
+        self.warnings = Warnings(_warning_rules(), settings.records, bus)  # what's wrong, or worth knowing (0.7.0)
+        self.fleet.warnings = self.warnings
         self.lifecycle = Lifecycle(self.fleet)
         self.keepalive = Keepalive(settings.keepalive, self.lifecycle, self.states, bus)
         self.listeners: list[ServerListener] = []
@@ -110,8 +118,9 @@ class Superintendent:
     def add_server(self, server: ServerConfig, *, listed: bool = False) -> None:
         """One more server to look after, at the start or found in SERVERS/ while running."""
         settings = self.settings
-        client = RconClient(server, self.bus, use_host_key=settings.use_host_key,
-                            command_timeout=settings.command_timeout)
+        client = _client_for(server, self.bus, settings)
+        self._config_warnings(server)
+        self._used_to_set(server)
         self.clients[server.name] = client
         state = self.tracker.add(server.name, client)
         self.watchers[server.name] = FileWatcher(server, state, self.bus)
@@ -129,6 +138,7 @@ class Superintendent:
             except Exception:  # noqa: BLE001 - a damaged record mustn't keep the server out
                 log.exception("[%s] couldn't look for it among the servers started before", server.name)
         self.fleet.add(server, client, state)
+        _warn_by_players(server)
         if self.huragok.running:
             self._server_tasks[server.name] = self._start_server_tasks(server.name)
         self.huragok.refresh_problems()
@@ -144,8 +154,51 @@ class Superintendent:
             listener.server_removed(name)
         self.fleet.remove(name)
         self.tracker.remove(name)
+        self.warnings.forget(name)
         self.settings.servers[:] = [s for s in self.settings.servers if s.name != name]
         self.huragok.refresh_problems()
+
+    def _used_to_set(self, server: ServerConfig) -> None:
+        """What Huragok had set in the server's folder before 0.7.0 (the 0.7.0 update step's record): said once, as
+        information, until the host dismisses it. Nothing there is changed back."""
+        from .core.handsoff import hands_off_lines
+
+        lines = hands_off_lines(self.settings.records, server)
+        if lines:
+            self.warnings.set(server.name, "used-to-set", source="hands-off", lines="; ".join(lines))
+
+    def _config_warnings(self, server: ServerConfig) -> None:
+        """What reading its dedicated.toml found (no console, environment overrides), into the warnings catalogue."""
+        self.warnings.sync(server.name, "config", [(rule, "", server.config_path, fields)
+                                                   for rule, fields in server.warnings])
+
+    def _follow_rename(self, old: ServerConfig, new: ServerConfig) -> bool:
+        """A server renamed in its dedicated.toml (core/renames.py). True when it's dealt with here: followed now, or
+        once it stops (it isn't started again under the old name meanwhile). False with follow_renames off: the new
+        name is a new server, as before 0.7.0, and Huragok says what it saw."""
+        manager = self.fleet.managers.get(old.name)
+        if not self.settings.follow_renames:
+            log.info("[%s] %s in its dedicated.toml looks like this server renamed; with follow_renames off in %s it "
+                     "starts afresh under that name", old.name, new.name, self.settings.path.name)
+            return False
+        if manager is not None and not (manager.phase in SETTLED and not manager.alive):
+            if manager.renamed_to != new.name:
+                manager.renamed_to = new.name
+                log.info("[%s] renamed to %s in its dedicated.toml: Huragok follows it as soon as it stops (its next "
+                         "restart does it)", old.name, new.name)
+                manager.note(f"renamed to {new.name} in its dedicated.toml: followed as soon as it stops (its next "
+                             "restart does it)", 600, logging.INFO)
+            return True
+        done = follow_rename(self.settings, self._storage, old, new)
+        self.warnings.rename(old.name, new.name)
+        self.remove_server(old.name)
+        fresh = _read_again(new, self.settings)
+        self.add_server(fresh)
+        log.info("[%s] renamed from %s in its dedicated.toml: Huragok follows it (%s)", new.name, old.name,
+                 ", ".join(done) or "nothing of Huragok's to move")
+        if (renamed := self.fleet.managers.get(new.name)) is not None:
+            renamed.note(f"renamed from {old.name}: its settings, records and history came with it", 600, logging.INFO)
+        return True
 
     def _start_server_tasks(self, name: str) -> list[Any]:
         return [self.huragok.spawn(f"RCON {name}", self.clients[name].run),
@@ -175,7 +228,14 @@ class Superintendent:
             return
         broken = {p.folder for p in left_out if p.folder is not None}
         current = {s.name: s for s in self.settings.servers}
+        gone = [s for name, s in current.items() if not any(f.name == name for f in found) and s.folder not in broken]
+        handled: set[str] = set()
+        for old, new in pair_renames(gone, [s for s in found if s.name not in current]):
+            if self._follow_rename(old, new):
+                handled |= {old.name, new.name}
         for server in found:
+            if server.name in handled:
+                continue
             if server.name not in current:
                 log.info("[%s] new server folder: %s", server.name, server.folder)
                 self.add_server(server)
@@ -191,7 +251,19 @@ class Superintendent:
                     manager.note(f"its folder is now {server.folder}, but it's still running from {known.folder}; "
                                  "it's picked up there once it stops")
                 continue
-            known.errors = server.errors  # e.g. RCON switched on since
+            if _has_console(known) != _has_console(server):  # a console added or taken out: another kind of client
+                manager = self.fleet.managers.get(server.name)
+                if manager is None or (manager.phase in SETTLED and not manager.alive):
+                    log.info("[%s] its console is %s in its dedicated.toml: picked up", server.name,
+                             "set up" if _has_console(server) else "off")
+                    self.remove_server(server.name)
+                    self.add_server(server)
+                    continue
+                manager.note("its console changed in its dedicated.toml: Huragok uses it from the next time the "
+                             "server is stopped and started (X, then S)", 600)
+            known.errors = server.errors
+            known.warnings = server.warnings
+            self._config_warnings(known)
             known.autostart = server.autostart
             changed = known.auto_update != server.auto_update
             for key in ("auto_update", "content_dir", "workshop_items", "workshop_check_minutes",
@@ -204,7 +276,7 @@ class Superintendent:
                          self.lifecycle.is_up(server.name) else "")
                 self.huragok.refresh_problems()
         for name, server in current.items():
-            if any(s.name == name for s in found) or server.folder in broken:
+            if any(s.name == name for s in found) or server.folder in broken or name in handled:
                 continue  # a folder that can't be read for now isn't gone: its server is kept as it was
             manager = self.fleet.managers.get(name)
             if manager is not None and manager.phase in SETTLED and not manager.alive:
@@ -218,6 +290,17 @@ class Superintendent:
         while True:
             await asyncio.sleep(DISCOVER_SECONDS)
             self.discover()
+            self.crash_loops()
+
+    def crash_loops(self) -> None:
+        """A server whose game keeps crashing: the program's own supervisor restarts it each time and counts them in
+        supervision.json (crashes_in_row). From CRASH_LOOP in a row, a warning; gone once it runs again."""
+        for server in self.settings.servers:
+            crashes = _crashes_in_row(server)
+            if crashes >= CRASH_LOOP:
+                self.warnings.set(server.name, "crash-loop", source="supervision", crashes=crashes)
+            else:
+                self.warnings.clear(server.name, "crash-loop")
 
     # What the servers say -----------------------------------------------------------------------------------
 
@@ -320,6 +403,14 @@ class Superintendent:
         return SuperintendentContext(self.huragok, self, **options)
 
 
+def _warn_by_players(server: ServerConfig) -> None:
+    """A server with playlists by player count set up before 0.7.0: Huragok no longer switches them. Said once as it's
+    taken on, with the lines that have the server do it itself (its card shows them too); its old file is left alone."""
+    lines = retired_warning(server.folder, server.name)
+    if lines:
+        log.warning("[%s] %s", server.name, "\n    ".join(lines))
+
+
 def _where(server: ServerConfig) -> str:
     """The server's folder and file, as one comparable path (its block may have moved to another folder by hand)."""
     try:
@@ -339,6 +430,11 @@ class SuperintendentContext(PartContext):
     def servers(self) -> Mapping[str, ServerState]:
         """Each server's live picture, by name."""
         return self._superintendent.states
+
+    @property
+    def warnings(self) -> Warnings:
+        """The warnings catalogue (core/serverwarnings.py): what's wrong with a server, or worth knowing."""
+        return self._superintendent.warnings
 
     def server(self, name: str) -> ServerState:
         return self._superintendent.states[name]
@@ -378,19 +474,6 @@ class SuperintendentContext(PartContext):
         except KeyError:
             return None
 
-    def check_plays(self, server: str, values: dict[str, Any]) -> Any:
-        """What the server's own program says of playing `values` before they're written (program/plays.check_plays:
-        `dedicated check` on a draft beside its file), as a PlaysCheck. It runs the program: call it in a thread."""
-        from .program.dedicated import DedicatedError, tool_for
-        from .program.plays import PlaysCheck, check_plays
-
-        settings = self._superintendent.settings
-        try:
-            config = settings.server(server)
-            return check_plays(tool_for(settings, config), config, values)
-        except (KeyError, DedicatedError) as error:
-            return PlaysCheck(asked=False, unasked=str(error))
-
     def pid(self, server: str) -> int | None:
         """The server's process: the one the backend started (its game runs under it), or the game's own."""
         manager = self._superintendent.fleet.managers.get(server)
@@ -424,3 +507,43 @@ class SuperintendentContext(PartContext):
 
 
 __all__ = ["Server", "ServerListener", "Superintendent", "SuperintendentContext"]
+
+
+def _has_console(server: ServerConfig) -> bool:
+    return bool(server.rcon_password)
+
+
+def _client_for(server: ServerConfig, bus: Any, settings: Any) -> RconClient | StatusFileClient:
+    """The server's console, or, for a server without one (no [rcon] password), its status.json in its place (0.7.0,
+    answer 7: started and kept on all the same, and warned about)."""
+    if not _has_console(server):
+        return StatusFileClient(server, bus)
+    return RconClient(server, bus, use_host_key=settings.use_host_key, command_timeout=settings.command_timeout)
+
+
+def _read_again(server: ServerConfig, settings: Any) -> ServerConfig:
+    """The server read from its dedicated.toml again, with Huragok's own settings for it now under its new name."""
+    try:
+        return next(s for s in read_dedicated(server.config_path, settings.server_overrides) if s.name == server.name)
+    except (StopIteration, ConfigError, OSError, ValueError):
+        return server
+
+
+def _warning_rules() -> dict[str, Any]:
+    """The warnings' words (templates/warnings.toml). One that can't be read leaves Huragok without them, said."""
+    try:
+        return load_rules()
+    except (RuleError, OSError) as error:
+        log.error("Huragok's warnings can't be read (%s): it carries on without them", error)
+        return {}
+
+
+def _crashes_in_row(server: ServerConfig) -> int:
+    """supervision.json's crashes_in_row: how many times in a row the program's supervisor has had to start its game
+    again. 0 when it can't be read."""
+    try:
+        data = json.loads((server.data_dir / "supervision.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    value = data.get("crashes_in_row") if isinstance(data, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

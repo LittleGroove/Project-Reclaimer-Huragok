@@ -7,7 +7,7 @@ the Superintendent's subroutine Vergil included, and carried it out of the city.
 this program the three are its parts:
 
   HURAGOK         the Engineer: the program itself, and what it builds and mends
-                  (new servers, packages, content, the Workshop, updates, the window)
+                  (new servers, content, the Workshop, updates, the window)
   SUPERINTENDENT  the city AI that kept New Mombasa running: it keeps every server
                   up, starts, stops, restarts and counts down, and its watchdog
                   notices a server in trouble
@@ -50,7 +50,7 @@ class Persona:
 HURAGOK = Persona(
     "Huragok", "HRGK", "violet", "builds and mends: new servers, content, the Workshop, updates",
     "the Engineer, Quick to Adjust: it mended the dying city AI and carried it out of the city. Here it builds "
-    "and mends: new servers, packages, content, the Workshop, updates, this window")
+    "and mends: new servers, content, the Workshop, updates, this window")
 SUPERINTENDENT = Persona(
     "Superintendent", "SUPT", "amber", "keeps the servers running: starts, stops, restarts, the watchdog",
     "New Mombasa's city AI, which kept the lights, trains and signs running. Here it keeps every server up: starts, "
@@ -170,6 +170,8 @@ CALLOUTS = {
     "after game": ("neutral", "construction"),  # [o_o] CONSTRUCTION AHEAD! EXPECT DELAYS! This server restarts after…
     "cancelled": ("happy", ""),             # [^_^] The server restart has been cancelled. Keep it clean!
     "mod update": ("happy", "taxes"),       # [^_^] YOUR TAX DOLLARS AT WORK! A new version of HugeGrass is out: this…
+    "release out": ("neutral", "dust"),     # [o_o] PARDON OUR DUST! Project Reclaimer 0.10.9 is out. This server restarts…
+    "self update": ("sleeping", "dust"),    # [-.-] PARDON OUR DUST! This server is updating to Project Reclaimer 0.10.9…
     # Vergil: the players (players/)
     "mute": ("confused", "clean"),          # [o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted …
     "kick": ("angry", "crime"),             # [>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 …

@@ -32,8 +32,9 @@ from .. import __version__
 from .commandsfile import Permissions, PermissionsError, load_permissions, rank_named, rank_word
 from .priority import PRIORITIES
 from .priority import DEFAULT as DEFAULT_PRIORITY
-from .serverfolders import SERVERS_FOLDER, FolderProblem, ServerConfig, find_server_folders, read_servers
-from .serversettings import AUTOMOD_MODES, SERVER_KEYS, WORKSHOP_INSTALLS, ServerSettings
+from .serverfolders import (SERVERS_FOLDER, FolderProblem, ServerConfig, find_server_folders, read_servers,
+                            server_environment_of)
+from .serversettings import AUTOMOD_MODES, SERVER_KEYS, WORKSHOP_OLD, WORKSHOP_UPDATES, ServerSettings
 from .tables import ConfigError, Table, _read_toml, _shown, check_clock_time
 
 
@@ -51,7 +52,8 @@ BACKENDS = ("attach", "process", "docker", "command")
 BACKEND_ALIASES = {"windows": "process"}  # 0.1 called the process backend `windows`
 CORE_TABLES = {"rcon", "keepalive", "updates", "restarts", "process", "windows", "docker", "command", "server",
                "setup", "relay", "server_updates", "workshop_updates"}
-WORKSHOP_MIN_MINUTES = 5  # the server program never looks more often than this
+PROGRAM_CHECK_MINUTES = 15.0  # how often Huragok looks for a Project Reclaimer release (0.7.0, answer 27)
+PROGRAM_CHECK_MIN_MINUTES = 5.0  # GitHub answers 60 looks an hour without signing in, Huragok's own updates' too
 RELAY_ROLES = ("moderator", "admin", "faculty")
 PROGRAM_RELEASES = "ProjectReclaimer/project-reclaimer-releases"
 PART_SWITCHES = {"enabled", "dry_run", "handler_timeout"}
@@ -61,17 +63,18 @@ PROCESS_KEYS = {"executable", "command", "stop_timeout", "stop_servers_on_exit",
 # the last section) thinks it does: `check` and the start name each one. The parts' sections come from the parts.
 KNOWN_KEYS: dict[str, set[str]] = {
     "": {"servers_folder", "server_folder", "dedicated_config", "backend", "servers", "name", "dry_run", "database",
-         "log_file"},
+         "log_file", "follow_renames"},
     "restarts": {"warn_seconds", "after_game_seconds", "daily_restart", "min_uptime_seconds", "backoff_seconds",
                  "faulted_retry_minutes",
                  "good_run_seconds", "max_failures", "ready_seconds", "empty_seconds"},
     "keepalive": {"hang_seconds", "check_seconds", "act"},
     "rcon": {"use_host_key", "command_timeout"},
     "updates": {"check", "check_hours", "auto_update", "install_on_server_restart", "beta", "repository"},
-    "server_updates": {"check", "check_hours", "install", "repository", "follow", "fallback"},
-    "workshop_updates": {"install", "check_minutes", "adopt", "layouts"},
-    "setup": {"mcc_folder", "share", "packages_folder", "program", "auto_update", "steamcmd", "steam_username",
-              "download_game_files"},
+    "server_updates": {"check", "check_minutes", "check_hours", "install", "repository", "follow", "fallback"},
+    # restart (0.7.0); 0.6's install, check_minutes, adopt and layouts are still accepted and do nothing (load() reads
+    # install = "off" as restart = false until the update step, updates/hostfiles.py, takes the lines out)
+    "workshop_updates": {"restart", "install", "check_minutes", "adopt", "layouts"},
+    "setup": {"mcc_folder", "program", "steamcmd", "steam_username"},
     "relay": {"enabled", "address", "port_offset", "source_port_offset", "user"},
     "relay.user": {"name", "password", "role"},
     "process": PROCESS_KEYS,
@@ -98,6 +101,11 @@ MINIMUMS = {
 }
 MIN_HANDLER_TIMEOUT = 1.0
 MIN_STOP_TIMEOUT = 1.0
+# Settings 0.7.0 reads and ignores ([server_updates] install and fallback: Huragok put releases in place), or reads
+# under their new name (check_hours, as check_minutes while that isn't set). A host's settings.toml has them, and so
+# does a new host's until the update step takes them out (plan-0.7.0 4.10): accepted, never called mistakes, and not
+# offered in the window's settings editor.
+OUTGOING = {("server_updates", "install"), ("server_updates", "fallback"), ("server_updates", "check_hours")}
 # Settings that once did something and now do nothing: (section, key) -> what to do. A host's settings.toml outlives
 # the version that wrote it, so `check` and the start of Huragok name each one still there.
 RETIRED = {
@@ -105,6 +113,17 @@ RETIRED = {
                                         "only switch for Project Reclaimer updates now: delete the line",
     ("restarts", "restarts_per_hour"): "automatic restarts aren't held to a number an hour since 0.6.0 (one that stopped "
                                        "them stopped updates and the watchdog doing their job): delete the line",
+    # 0.7.0 (hands off the servers): a new server is the program's own `dedicated init` and nothing more
+    ("setup", "share"): "new servers share nothing from Huragok's folder since 0.7.0: each uses the game and content "
+                        "folders its own dedicated.toml names (servers made before keep what they point at): delete "
+                        "the line",
+    ("setup", "packages_folder"): "packages are gone since 0.7.0 (a new server is the program's own `dedicated init`; "
+                                  "PACKAGES/ is left as it is, yours to keep or delete): delete the line",
+    ("setup", "auto_update"): "Huragok no longer sets auto_update in new servers since 0.7.0: each server's own "
+                              "auto_update (its dedicated.toml) is the switch: delete the line",
+    ("setup", "download_game_files"): "Huragok no longer gets game files by itself since 0.7.0: a server missing them "
+                                      "is held and warned about, and I or `repair` gets them when you ask: delete "
+                                      "the line",
 }
 ANY_VALUE = object()
 # Values earlier versions wrote into settings.toml whose meaning or default has changed since: (section, key, the
@@ -116,13 +135,10 @@ OLD_VALUES: list[tuple[str, str, Any, str]] = [
     ("watchdog", "slow_frames", ANY_VALUE,
      "is 0.2.1's one switch for both frame cases. It's still read while slow and very_slow aren't set (\"act\" makes "
      "slow \"act\" and very_slow \"actnow\"), but those two are the settings now: replace the line with them"),
-    ("setup", "share", ["game", "content", "bans"],
-     "is what 0.2.0 and 0.2.1 wrote: new servers share one content/ folder. Since 0.4.0 the default is "
-     "[\"game\", \"bans\"]: each new server keeps its own content, so its Workshop mods are updated after its own "
-     "games. Take \"content\" out unless you want the shared folder"),
     ("server_updates", "check_hours", 6,
-     "is what 0.2.0 and 0.2.1 wrote. Since 0.4.0 the default is 1, as often as the servers' own updaters look (the "
-     "fallback for a server that didn't update itself counts on hourly looks). Set check_hours = 1"),
+     "is what 0.2.0 and 0.2.1 wrote: Huragok looks for a release every 6 hours. Since 0.7.0 the setting is "
+     "check_minutes, 15 by default, so Huragok sees a release before the servers' own hourly looks and restarts each "
+     "after its game to install it (follow): replace the line with check_minutes = 15"),
     ("updates", "install_on_server_restart", ANY_VALUE,
      "is auto_update's name before 0.4.2, and is read as auto_update while that isn't set: true installs a new "
      "version as soon as Huragok finds it, rather than at the next server restart (which a server that keeps "
@@ -151,16 +167,13 @@ RENAMED_REPOSITORIES = {  # a settings.toml written before the rename names the 
 
 @dataclass
 class SetupSettings:
-    """[setup]: making new servers (the window's N key, `new` from the command line)."""
+    """[setup]: the program for what isn't one server's (new folders, checks), MCC and SteamCMD. share,
+    packages_folder, auto_update and download_game_files are RETIRED (0.7.0): read past, and named by `check`."""
 
     mcc_folder: str | None = None  # Halo 3's files from here; None: not set ("" would be Steam's default folder)
-    share: list[str] = field(default_factory=lambda: ["game"])  # what new servers take from the root (never bans)
-    packages_folder: str = "PACKAGES"
     program: str = ""  # the server program for making and checking folders, when it isn't in a server folder or at the root
-    auto_update: bool = True  # new servers install new Project Reclaimer releases themselves (dedicated.toml auto_update)
     steamcmd: str = ""  # SteamCMD, for Workshop items and Halo 3's files; empty: looked for in the usual places
     steam_username: str = ""  # the Steam account that owns MCC, signed in to SteamCMD once (never a password here)
-    download_game_files: bool = True  # a server missing Halo 3's files may download them with SteamCMD by itself
 
 
 @dataclass(frozen=True)
@@ -183,24 +196,25 @@ class RelaySettings:
 
 @dataclass
 class ProgramUpdateSettings:
-    """[server_updates]: new releases of the server program, installed at a quiet moment."""
+    """[server_updates]: new releases of the server program. Each server installs its own (its auto_update); Huragok
+    looks, says so and warns, and never puts a program file in place (0.7.0)."""
 
     check: bool = True
-    check_hours: float = 1.0  # as often as the program's own auto_update looks
-    install: str = "ask"  # ask (only say so), after_game, now: for servers with auto_update off
+    check_minutes: float = PROGRAM_CHECK_MINUTES  # how often Huragok looks at GitHub
     repository: str = PROGRAM_RELEASES
-    follow: bool = True  # one server updated itself: restart the other self-updating ones after their game
-    fallback: bool = True  # a self-updating server whose own update didn't happen gets it from Huragok after its game
+    # A release Huragok sees, or one server that updated itself: each server with auto_update on that's behind restarts
+    # after its game, so it installs the release as it starts. Off: Huragok never restarts a server for a release.
+    follow: bool = True
 
 
 @dataclass
 class WorkshopUpdateSettings:
-    """[workshop_updates]: new versions of the servers' Workshop mods, installed when a game ends."""
+    """[workshop_updates]: the servers download and install their own mod updates; Huragok restarts a server whose map
+    in use holds a downloaded update up (updates/workshop.py)."""
 
-    install: str = "after_game"  # after_game, when_empty (the server's own way), off
-    check_minutes: int = 5  # Huragok's look at Steam, and each server's update_check_minutes; 0: leave both alone
-    adopt: bool = True  # a mod copied into a server's content by hand that names a Workshop item: kept up to date too
-    layouts: bool = True  # the Forge layouts mods ship, copied into content/Maps and kept in step with each version
+    # Nobody on: at once (RCON `restart`). People on: when the game ends, after telling them (`restart now`). A server's
+    # own [[server]] workshop_updates = "off" leaves it out. false: Huragok only warns.
+    restart: bool = True
 
 
 @dataclass
@@ -268,6 +282,9 @@ class Settings:
     database: Path | None = None
     log_file: Path | None = None
     dry_run: bool = False
+    # A server renamed in its own dedicated.toml stays the same server: its settings here, records, stats and lists
+    # follow it (0.7.0, answer 32: on by default). Off: Huragok says so, and the new name starts afresh.
+    follow_renames: bool = True
     use_host_key: bool = True
     command_timeout: float = 10.0
     keepalive: KeepaliveSettings = field(default_factory=KeepaliveSettings)
@@ -299,7 +316,8 @@ class Settings:
 
     @property
     def packages_folder(self) -> Path:
-        return self.home / self.setup.packages_folder
+        """Where packages were kept up to 0.6 (PACKAGES/): left as the host has it. Only the update steps name it."""
+        return self.home / "PACKAGES"
 
     @property
     def server_folders(self) -> list[Path]:
@@ -380,7 +398,8 @@ def load(path: str | os.PathLike[str]) -> Settings:
     only = top.strings("servers")
     folders = find_server_folders(base, servers_folder, single_folder, config_name)
     problems: list[FolderProblem] = []
-    servers = read_servers(folders, config_name, overrides, only, problems)
+    servers = read_servers(folders, config_name, overrides, only, problems,
+                           environment=server_environment_of(backend))
     known = {s.name.lower() for s in servers}
     chosen = {n.lower() for n in only}
     if folders:  # with no folders at all, the first start's hints are the useful message
@@ -394,12 +413,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
     keep = top.table("keepalive")
     updates = top.table("updates")
     restarts = top.table("restarts")
-    setup = top.table("setup")
-    share = [s.lower() for s in setup.strings("share")] if "share" in setup.data else ["game"]
-    if unknown_share := [s for s in share if s not in ("game", "content", "bans")]:
-        raise ConfigError(f"setup.share: '{unknown_share[0]}' isn't one of game, content")
-    # "bans" (up to 0.4.4) is read and does nothing: every server keeps a ban list of its own (the update takes it out).
-    share = [s for s in share if s != "bans"]
+    setup = top.table("setup")  # share, packages_folder, auto_update and download_game_files: RETIRED, never read
     relay = top.table("relay")
     users: list[RelayUser] = []
     raw_users = relay.data.get("user", [])
@@ -421,17 +435,12 @@ def load(path: str | os.PathLike[str]) -> Settings:
             raise ConfigError(f"[[relay.user]] {name}: role must be one of {', '.join(rank_word(one) for one in RELAY_ROLES)}")
         users.append(RelayUser(name, password, role))
     program_updates = top.table("server_updates")
-    install = program_updates.get("install", str, "ask").strip().lower()
-    if install not in ("ask", "after_game", "now"):
-        raise ConfigError("server_updates.install: must be ask, after_game or now")
     workshop_updates = top.table("workshop_updates")
-    workshop_install = workshop_updates.get("install", str, "after_game").strip().lower()
-    if workshop_install not in WORKSHOP_INSTALLS:
-        raise ConfigError(f"workshop_updates.install: must be one of {', '.join(WORKSHOP_INSTALLS)}")
-    workshop_minutes = workshop_updates.get("check_minutes", int, 5)
-    if workshop_minutes and not WORKSHOP_MIN_MINUTES <= workshop_minutes <= 10080:
-        raise ConfigError(f"workshop_updates.check_minutes: {WORKSHOP_MIN_MINUTES} to 10080 (the server program "
-                          "never looks more often than every 5 minutes), or 0 to leave each server's own")
+    # 0.6's install, check_minutes, adopt and layouts are accepted and do nothing (KNOWN_KEYS), except that install =
+    # "off" (the host chose no automatic mod swaps) stands for restart = false until the line is taken out.
+    old_install = workshop_updates.data.get("install")
+    workshop_restart = workshop_updates.get(
+        "restart", bool, not (isinstance(old_install, str) and old_install.strip().lower() == "off"))
     program_repository = program_updates.get("repository", str, PROGRAM_RELEASES)
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", program_repository):
         raise ConfigError(f"server_updates.repository: '{program_repository}' should look like owner/name")
@@ -485,6 +494,7 @@ def load(path: str | os.PathLike[str]) -> Settings:
         database=optional_path("database", "records/huragok.sqlite3"),
         log_file=optional_path("log_file", "logs/huragok.log"),
         dry_run=top.get("dry_run", bool, False),
+        follow_renames=top.get("follow_renames", bool, True),
         use_host_key=rcon.get("use_host_key", bool, True),
         command_timeout=seconds(rcon, "command_timeout", 10.0),
         keepalive=KeepaliveSettings(
@@ -514,13 +524,9 @@ def load(path: str | os.PathLike[str]) -> Settings:
         ),
         setup=SetupSettings(
             mcc_folder=setup.path("mcc_folder", None),
-            share=share,
-            packages_folder=setup.path("packages_folder", "PACKAGES") or "PACKAGES",
             program=setup.path("program", "") or "",
             steamcmd=setup.path("steamcmd", "") or "",
             steam_username=setup.get("steam_username", str, ""),
-            auto_update=setup.get("auto_update", bool, True),
-            download_game_files=setup.get("download_game_files", bool, True),
         ),
         relay=RelaySettings(
             enabled=relay.get("enabled", bool, False),
@@ -531,20 +537,28 @@ def load(path: str | os.PathLike[str]) -> Settings:
         ),
         server_updates=ProgramUpdateSettings(
             check=program_updates.get("check", bool, True),
-            check_hours=max(1.0, program_updates.get("check_hours", float, 1.0)),
-            install=install,
+            check_minutes=program_check_minutes(program_updates),
             repository=program_repository,
             follow=program_updates.get("follow", bool, True),
-            fallback=program_updates.get("fallback", bool, True),
         ),
-        workshop_updates=WorkshopUpdateSettings(install=workshop_install, check_minutes=workshop_minutes,
-                                                adopt=workshop_updates.get("adopt", bool, True),
-                                                layouts=workshop_updates.get("layouts", bool, True)),
+        workshop_updates=WorkshopUpdateSettings(restart=workshop_restart),
         parts=parts,
         problems=problems,
         retired=retired_settings(top) + unknown_settings(top) + repeated_server_blocks(top),
         notes=old_values(top),
     )
+
+
+def program_check_minutes(table: Table) -> float:
+    """[server_updates] check_minutes; an older settings.toml's check_hours in minutes while it isn't set; 15 when
+    neither is. Never under PROGRAM_CHECK_MIN_MINUTES."""
+    if "check_minutes" in table.data:
+        minutes = table.get("check_minutes", float, PROGRAM_CHECK_MINUTES)
+    elif "check_hours" in table.data:
+        minutes = table.get("check_hours", float, 1.0) * 60
+    else:
+        minutes = PROGRAM_CHECK_MINUTES
+    return max(PROGRAM_CHECK_MIN_MINUTES, minutes)
 
 
 def retired_settings(top: Table) -> list[str]:
@@ -567,6 +581,8 @@ def _known_keys() -> dict[str, set[str]]:
     for name, cls in PARTS.items():
         if not cls.always_on:
             known[name] = PART_SWITCHES | set(cls.defaults) | set(cls.old_options)
+        elif cls.defaults:  # always on, with settings of its own ([stats] relay): no switch to turn it off
+            known[name] = set(cls.defaults) | set(cls.old_options)
     return known
 
 
@@ -716,8 +732,8 @@ def _server_overrides(top: Table) -> dict[str, dict[str, Any]]:
         if "daily_restart" in block:  # "5:00" read as "05:00", as [restarts] daily_restart is
             override["daily_restart"] = check_clock_time(block["daily_restart"],
                                                          f"{SETTINGS_FILE} [[server]] {name} daily_restart")
-        if block.get("workshop_updates", "after_game") not in WORKSHOP_INSTALLS:
-            raise ConfigError(f"[[server]] {name} workshop_updates: must be one of {', '.join(WORKSHOP_INSTALLS)}")
+        if block.get("workshop_updates", "on") not in (*WORKSHOP_UPDATES, *WORKSHOP_OLD):  # 0.6's values still read
+            raise ConfigError(f"[[server]] {name} workshop_updates: must be one of {', '.join(WORKSHOP_UPDATES)}")
         if block.get("priority", DEFAULT_PRIORITY) not in PRIORITIES:
             raise ConfigError(f"[[server]] {name} priority: must be one of {', '.join(PRIORITIES)}")
         if block.get("automod", "on") not in AUTOMOD_MODES:
@@ -755,7 +771,7 @@ def _parts(top: Table) -> dict[str, PartSettings]:
     from ..parts import PARTS  # here, not at the top: the parts import this module
 
     sections = {k: v for k, v in top.data.items() if isinstance(v, dict) and k not in CORE_TABLES}
-    optional = [name for name, cls in PARTS.items() if not cls.always_on]
+    optional = [name for name, cls in PARTS.items() if not cls.always_on or cls.defaults]
     if unknown := sorted(set(sections) - set(optional)):
         close = difflib.get_close_matches(unknown[0], sorted((CORE_TABLES - {"windows", "server"}) | set(optional)),
                                           n=1, cutoff=0.6)

@@ -1,14 +1,19 @@
-"""Halo 3: its playlist files (reading, building from picked maps and game types, editing entries, saving), its
-campaign's missions and difficulties, and its 27 multiplayer maps.
+"""Halo 3: its playlist files (read, never written: they're the host's), its campaign's missions and difficulties,
+and its 27 multiplayer maps.
 
-A playlist (`playlists/<name>.playlist.json`, version 2) is a rotation players vote on: 3 to
-128 games before Project Reclaimer 0.10, 1 to 256 from it (voted on from three up), each a map
-and a game type (plus a display name, a weight, rules and options). From 0.10 one playlist may
-mix Halo 3's maps with Reach's, Combat Evolved's and Halo 2's; CE's and Halo 2's play only their
-own game types, and the program refuses `options` and `rules` on them, so Halo 3's option
-catalogue never touches those games (entry_game). The server program's `dedicated playlist new`
-makes every map with every game type; the window's builder lets the host pick which pairs, then
-checks the file with `dedicated playlist show`.
+A playlist (`playlists/<name>.playlist.json`, version 2) is a rotation players vote on: 3 to 128 games before
+Project Reclaimer 0.10, more from it (voted on from three up), each a map and a game type (plus a display name, a
+weight, rules and options). From 0.10 one playlist may mix Halo 3's maps with Reach's, Combat Evolved's and Halo 2's
+(entry_game); CE's and Halo 2's play only their own game types, and the program refuses `options` and `rules` on
+them. Huragok makes and edits none of them (0.7.0): it lists and shows them, keeps their versions (core/versions.py),
+copies one to another server when the host asks, and warns of a choice label the server's program refuses
+(old_labels).
+
+Everything 0.10 writes in one is read and never refused (playlists-format.md, verified on 0.10.8): co-op entries
+(`{"campaign": {"mission": 3010}}`, `{"odst": {"mode": "firefight", "mission": 5000, "insertion": 7}}`, shown as
+"Campaign: Sierra 117" and "ODST Firefight: Crater (Night)"), `teams`, `players` and `recommended_players`, and
+curves or formulas (`{"points": [[2, 15], [16, 25]]}`, `{"formula": "3 + p/8"}`) in place of `vote_seconds`, a weight
+or an option, kept as written and shown as following the lobby size.
 """
 
 from __future__ import annotations
@@ -19,10 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..core.files import write_atomic
-from ..core.text import slug
-from .bungie import GAMES, SINCE, Game, game_of_map
-from .halo3_options import LABEL_CHANGES, NEWEST, choices_as_numbers, version_tuple
+from .bungie import GAMES, Game, game_of_map
+from .halo3_options import LABEL_CHANGES, NEWEST
 
 
 HALO3_MAPS = {"armory", "bunkerworld", "chill", "chillout", "construct", "cyberdyne", "deadlock", "descent", "docks",
@@ -43,21 +46,6 @@ MISSION_STARTS = {3010: 2, 3020: 2, 3030: 1, 3040: 1, 3050: 1, 3070: 2, 3100: 2,
 DIFFICULTIES = ("easy", "normal", "heroic", "legendary")
 
 
-MIN_GAMES, MAX_GAMES = 3, 256  # what Huragok's builder asks for; the most any program takes (0.10's)
-GAMES_BEFORE_0_10 = (3, 128)  # 0.9's playlists
-GAMES_FROM_0_10 = (1, 256)  # 0.10.0: "1 to 256 games", voted on from three up (a 2-game playlist checked: taken)
-
-
-def games_range(program_version: str | None) -> tuple[int, int]:
-    """(fewest, most) games a playlist may hold on a server running `program_version`. Not known: 3 (what every
-    version takes, and a vote needs) to 256 (0.10's most): the server's own program refuses at its check what its
-    version can't take (check_plays asks it before every save)."""
-    have = version_tuple(program_version)
-    if have is None:
-        return MIN_GAMES, MAX_GAMES
-    return GAMES_BEFORE_0_10 if have < (version_tuple(SINCE) or ()) else GAMES_FROM_0_10
-
-
 def entry_game(game: dict[str, Any]) -> Game | None:
     """The game whose map a playlist game names: its stock map's (by title, file name or ID), else by MCC's file
     name for Combat Evolved's and Halo 2's maps, their mods' too (`halo1_bloodgulch_6381b55e`, as 0.10's `dedicated
@@ -74,7 +62,7 @@ def entry_game(game: dict[str, Any]) -> Game | None:
 
 def own_rules_only(game: dict[str, Any]) -> bool:
     """A Combat Evolved or Halo 2 game: it plays only its own game types, and the program refuses `options` and
-    `rules` on it, so Halo 3's option catalogue leaves it as it is written."""
+    `rules` on it, so Halo 3's option labels aren't looked for in it."""
     found = entry_game(game)
     return found is not None and found.own_rules_only
 
@@ -83,141 +71,154 @@ class PlaylistError(Exception):
     pass
 
 
+FOLLOWS = "follows the lobby size"  # a curve or formula in place of a number (0.10.1 on)
+
+
+def is_curve(value: Any) -> bool:
+    """A value that follows the lobby size (0.10.1's vote_seconds, 0.10.2's weights and options): a table of
+    `points` or a `formula` (with `interpolation`, `min`, `max`), kept as written; the program reads it."""
+    return isinstance(value, dict) and ("points" in value or "formula" in value)
+
+
+def value_text(value: Any, unit: str = "") -> str:
+    """A number as written ("30 s"), or a curve as the lobby-size range its points give ("15-30 s, follows the lobby
+    size"), or just that it follows the lobby size (a formula: the program works it out)."""
+    if not is_curve(value):
+        number = isinstance(value, (int, float)) and not isinstance(value, bool)
+        return f"{value}{unit}" if number else str(value)
+    points = value.get("points")
+    numbers = [p[1] for p in points if isinstance(p, list) and len(p) == 2 and isinstance(p[1], (int, float))
+               and not isinstance(p[1], bool)] if isinstance(points, list) else []
+    if numbers and "formula" not in value:
+        low, high = min(numbers), max(numbers)
+        shown = f"{low:g}{unit}" if low == high else f"{low:g}-{high:g}{unit}"
+        return f"{shown}, {FOLLOWS}"
+    return FOLLOWS
+
+
+def coop_kind(game: dict[str, Any]) -> str:
+    """A playlist game's kind: campaign (`{"campaign": {...}}`), odst (`{"odst": {...}}`, a mission or Firefight), or
+    multiplayer (a map and a game type), 0.10's three."""
+    if isinstance(game.get("campaign"), dict) or "campaign" in game:
+        return "campaign"
+    if isinstance(game.get("odst"), dict) or "odst" in game:
+        return "odst"
+    return "multiplayer"
+
+
+def game_label(game: dict[str, Any]) -> str:
+    """A playlist game in a few words: "Team Slayer on Guardian", "Campaign: Sierra 117 (heroic)", "ODST Firefight:
+    Crater (Night)", "ODST campaign: Tayari Plaza". Only what the file says; the program says what it makes of it."""
+    from .odst import is_firefight, map_title, mission_title
+
+    kind = coop_kind(game)
+    if kind == "campaign":
+        setup = game["campaign"] if isinstance(game.get("campaign"), dict) else {}
+        mission = setup.get("mission", "?")
+        title = MISSIONS.get(mission, str(mission)) if isinstance(mission, int) and not isinstance(mission, bool) \
+            else str(mission)
+        start = setup.get("insertion")
+        bits = [str(setup.get("difficulty") or "normal")] + ([f"start {start}"] if start not in (None, 0, "0") else [])
+        return f"Campaign: {title} ({', '.join(bits)})"
+    if kind == "odst":
+        setup = game["odst"] if isinstance(game.get("odst"), dict) else {}
+        difficulty = str(setup.get("difficulty") or "normal")
+        if is_firefight(setup):
+            return f"ODST Firefight: {map_title(setup.get('mission'), setup.get('insertion'))} ({difficulty})"
+        return f"ODST campaign: {mission_title(setup.get('mission', '?'))} ({difficulty})"
+    label = f"{game.get('name') or game.get('game', 'Slayer')} on {game.get('map', '?')}"
+    if game.get("name") and game.get("game"):
+        label += f" ({game['game']})"
+    return label
+
+
+def game_details(game: dict[str, Any]) -> list[str]:
+    """What else a playlist game says, in a few words each: its game where it isn't Halo 3, weight, lobby sizes,
+    teams, base map, rules and options (and whether one follows the lobby size), picture."""
+    bits: list[str] = []
+    other = entry_game(game) if coop_kind(game) == "multiplayer" else None
+    if other is not None and other.key != "halo3":
+        bits.append(other.short)
+    weight = game.get("weight", 1)
+    if is_curve(weight):
+        bits.append(f"weight {FOLLOWS}")
+    elif weight != 1:
+        # As it's written: "two" or 1.5 broke every playlist screen (int() raised), and the program's check says
+        # what's wrong with it (audit 2026-11, 7.9)
+        bits.append(f"weight {weight}")
+    if players := game.get("players"):
+        bits.append(f"players {players}")
+    if recommended := game.get("recommended_players"):
+        bits.append(f"best at {recommended}")
+    if isinstance(game.get("teams"), bool):
+        bits.append("teams on" if game["teams"] else "teams off")
+    if game.get("base_map"):
+        bits.append(f"on mod map {game['base_map']}")
+    for key in ("rules", "options", "world"):
+        value = game.get(key)
+        if value:
+            curved = isinstance(value, dict) and any(is_curve(v) for v in value.values())
+            bits.append(f"{key} (some follow the lobby size)" if curved else key)
+    if game.get("anti_cheat") is False:
+        bits.append("anti-cheat off")
+    if game.get("voice_team_only"):
+        bits.append("team voice only")
+    if game.get("preview_image"):
+        bits.append(f"picture {game['preview_image']}")
+    return bits
+
+
 @dataclass
 class Playlist:
+    """A playlist file as it's written, read without judging it: 0.10's co-op entries, curves and formulas for
+    `vote_seconds`, weights and options, `teams`, `players` and `recommended_players` are kept as they are. Only a
+    file that isn't a playlist at all (no `games` list) is refused; the program's own check says the rest."""
+
     path: Path
     name: str
-    vote_seconds: int = 20
+    vote_seconds: Any = 20  # whole seconds, or a curve that follows the lobby size (0.10.1), as written
     games: list[dict[str, Any]] = field(default_factory=list)
-    extra: dict[str, Any] = field(default_factory=dict)  # keys we don't edit, kept as they were
+    extra: dict[str, Any] = field(default_factory=dict)  # the file's other keys, as they are
+    vote_given: bool = True  # the file says its vote_seconds (else the program's default, 20 s)
 
     @classmethod
     def from_data(cls, path: Path, data: Any) -> Playlist:
-        """A playlist file's contents (a kept version's too) as a Playlist at `path`. Raises PlaylistError."""
+        """A playlist file's contents (a kept version's too) as a Playlist at `path`. Raises PlaylistError only for
+        something that isn't a playlist at all."""
         if not isinstance(data, dict) or not isinstance(data.get("games", []), list):
             raise PlaylistError(f"{path.name} isn't a playlist")
         games = [g for g in data.get("games", []) if isinstance(g, dict)]
         extra = {k: v for k, v in data.items() if k not in ("version", "name", "vote_seconds", "games")}
-        try:
-            vote_seconds = int(data.get("vote_seconds") or 20)
-        except (TypeError, ValueError):  # "30s", [30]: what's wrong with the file, never a traceback (audit 8.6)
-            raise PlaylistError(f"{path.name}: vote_seconds must be a whole number of seconds, not "
-                                f"{data.get('vote_seconds')!r}") from None
-        return cls(path, str(data.get("name") or path.stem.removesuffix(".playlist")), vote_seconds, games, extra)
+        given = data.get("vote_seconds") is not None
+        return cls(path, str(data.get("name") or path.stem.removesuffix(".playlist")),
+                   data["vote_seconds"] if given else 20, games, extra, given)
 
     @property
     def relative(self) -> str:
         return f"playlists/{self.path.name}"
 
+    @property
+    def vote(self) -> str:
+        """Its vote time in words: "20 s", "15-30 s, follows the lobby size"."""
+        return value_text(self.vote_seconds, " s")
+
+    @property
+    def players(self) -> str:
+        """The lobby sizes it's for ("1-8", "12+"), "" when it doesn't say."""
+        value = self.extra.get("players")
+        return "" if value is None or isinstance(value, bool) else str(value)
+
+    @property
+    def recommended(self) -> str:
+        value = self.extra.get("recommended_players")
+        return "" if value is None or isinstance(value, bool) else str(value)
+
     def labels(self) -> list[str]:
-        out = []
-        for game in self.games:
-            label = f"{game.get('name') or game.get('game', '?')} on {game.get('map', '?')}"
-            if game.get("name") and game.get("game"):
-                label += f" ({game['game']})"
-            bits = [label]
-            other = entry_game(game)
-            if other is not None and other.key != "halo3":
-                bits.append(other.short)
-            weight = game.get("weight", 1)
-            if weight != 1:
-                # As it's written: "two" or 1.5 broke every playlist screen (int() raised), and the program's check says
-                # what's wrong with it (audit 2026-11, 7.9)
-                bits.append(f"weight {weight}")
-            if game.get("base_map"):
-                bits.append(f"on mod map {game['base_map']}")
-            for key in ("rules", "options", "world"):
-                if game.get(key):
-                    bits.append(key)
-            if game.get("anti_cheat") is False:
-                bits.append("anti-cheat off")
-            if game.get("voice_team_only"):
-                bits.append("team voice only")
-            out.append(" · ".join(bits))
-        return out
-
-    def add(self, map_ref: str, game_ref: str, *, name: str | None = None, weight: int = 1) -> bool:
-        """Add a pair unless the same pair (same name) is there. Returns whether it was added."""
-        for game in self.games:
-            if game.get("map") == map_ref and game.get("game") == game_ref and game.get("name") == name:
-                return False
-        entry: dict[str, Any] = {"map": map_ref, "game": game_ref}
-        if name:
-            entry["name"] = name
-        if weight != 1:
-            entry["weight"] = weight
-        self.games.append(entry)
-        return True
-
-    def remove(self, numbers: list[int]) -> int:
-        keep = [g for i, g in enumerate(self.games, 1) if i not in numbers]
-        removed = len(self.games) - len(keep)
-        self.games = keep
-        return removed
-
-    def set_weight(self, number: int, weight: int) -> None:
-        if not 1 <= number <= len(self.games):
-            raise PlaylistError(f"no game {number}")
-        if not 1 <= weight <= 100:
-            raise PlaylistError("weight is 1 to 100")
-        game = self.games[number - 1]
-        if weight == 1:
-            game.pop("weight", None)
-        else:
-            game["weight"] = weight
-
-    def problems(self, program_version: str | None = None) -> list[str]:
-        """What Huragok can tell at once the server program won't take, for a server on `program_version` (None:
-        not known: games_range's; its own check says the rest)."""
-        found = []
-        fewest, most = games_range(program_version)
-        if len(self.games) < fewest:
-            found.append(f"a playlist needs {fewest} or more games (this one has {len(self.games)})")
-        if len(self.games) > most:
-            found.append(f"a playlist takes at most {most} games" + (
-                f" before Project Reclaimer {SINCE}" if most < MAX_GAMES else ""))
-        if not 5 <= self.vote_seconds <= 120:
-            found.append("vote_seconds is 5 to 120")
-        return found
+        return [" · ".join([game_label(game), *game_details(game)]) for game in self.games]
 
     def data(self) -> dict[str, Any]:
-        return {**self.extra, "version": 2, "name": self.name, "vote_seconds": self.vote_seconds, "games": self.games}
-
-    def duplicates(self) -> dict[int, int]:
-        """Games that repeat an earlier one, numbered from 1: {game: the earlier game}. The program's rule: the same
-        map and game with the same rules, options and world are one game, whatever each is called; raising its
-        weight plays it more often. (It also counts a custom game named by name and by file as the same, which
-        only the program can tell: check_plays asks it.)"""
-        seen: dict[str, int] = {}
-        found: dict[int, int] = {}
-        for number, game in enumerate(self.games, 1):
-            copy = json.loads(json.dumps(game))  # a deep copy: choices_as_numbers rewrites its options in place
-            if not own_rules_only(copy):  # CE's and Halo 2's: as written (Halo 3's options aren't theirs)
-                choices_as_numbers(copy)
-            key = json.dumps([str(copy.get("map", "")).casefold(), str(copy.get("game", "")).casefold(),
-                              str(copy.get("base_map", "")).casefold(), copy.get("rules") or {},
-                              copy.get("options") or {}, copy.get("world") or {}], sort_keys=True)
-            if key in seen:
-                found[number] = seen[key]
-            else:
-                seen[key] = number
-        return found
-
-    def number_choices(self) -> None:
-        """Every option choice as its number, as Huragok writes playlists (labels only on screen). Combat Evolved's
-        and Halo 2's games are left as they are written: Halo 3's options aren't theirs."""
-        for game in self.games:
-            if not own_rules_only(game):
-                choices_as_numbers(game)
-
-    def save(self, program_version: str | None = None) -> Path:
-        if problems := self.problems(program_version):
-            raise PlaylistError("; ".join(problems))
-        self.number_choices()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # Whole or not at all: the server's auto_reload reads it as it changes.
-        write_atomic(self.path, json.dumps(self.data(), indent=2, ensure_ascii=False) + "\n")
-        return self.path
+        vote = {"vote_seconds": self.vote_seconds} if self.vote_given else {}
+        return {**self.extra, "version": 2, "name": self.name, **vote, "games": self.games}
 
 
 GAME_PARTS = re.compile(r"(?:^|;\s*)game (\d+):\s*")  # 0.10: "<file>: game 2: why; game 6: why"
@@ -265,93 +266,46 @@ def load_playlist(path: Path) -> Playlist:
 
 def _label_fixes(data: Any, program_version: str | None) -> list[tuple[str, str, str]]:
     """(option key, the label as written, the label the program takes) for every choice in the playlist's games'
-    `options` that a program of this version refuses; `data` gets the labels it takes. Only option values change,
-    and only for options that have that label: a game named "Vanilla characters" stays so named."""
+    `options` that a program of this version refuses. Only option values count, and only for options that have that
+    label: a game named "Vanilla characters" isn't one. Read only: the file is the host's to change."""
     fixes = []
     games = data.get("games") if isinstance(data, dict) else None
     for game in games if isinstance(games, list) else []:
         if isinstance(game, dict) and own_rules_only(game):
             continue  # CE's and Halo 2's: not Halo 3's options, left as written
         options = game.get("options") if isinstance(game, dict) else None
-        for key, value in list(options.items()) if isinstance(options, dict) else []:
+        for key, value in options.items() if isinstance(options, dict) else []:
             for change in LABEL_CHANGES:
                 taken = change.taken(program_version)
                 if taken is None or not isinstance(value, str) or not change.applies_to(key):
                     continue
                 if value.strip().lower() == (change.old if taken == change.new else change.new).lower():
-                    options[key] = taken
                     fixes.append((key, value, taken))
     return fixes
 
 
-def old_labels(path: Path, program_version: str | None = NEWEST) -> list[str]:
-    """The choice labels in a playlist file that a program of this version refuses (it calls them otherwise).
-    Without a version, as the newest program calls them (what `check` warns of); None (not known) names only the
-    labels no version takes."""
+def entry_label_fixes(game: dict[str, Any], program_version: str | None = NEWEST) -> list[tuple[str, str, str]]:
+    """label_fixes for one playlist game (a co-op entry has none)."""
+    return _label_fixes({"games": [game]}, program_version)
+
+
+def label_fixes(path: Path, program_version: str | None = NEWEST) -> list[tuple[str, str, str]]:
+    """(option key, the label as written, the label the program takes) for each choice in a playlist file that a
+    program of this version refuses; [] when the file can't be read. Without a version, as the newest program calls
+    them; None (not known) names only the labels no version takes."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    return [written for _, written, _ in _label_fixes(data, program_version)]
+    return _label_fixes(data, program_version)
 
 
-def rename_old_labels(path: Path, program_version: str | None = NEWEST) -> list[tuple[str, str]]:
-    """Each choice label in a playlist file written as the server's own program calls it: [(as written, now)], []
-    when nothing changed. `program_version` is that program's version: 0.9.19 or newer takes "Halo 3", older
-    "Vanilla characters"; None (not known) changes only labels no version takes ("On with firebombs"). Called
-    without it, as the newest program calls them (as before versions were known; keep that only for a server whose
-    program is the newest).
-
-    The rest of the file stays exactly as it was (when the targeted change can't be shown to give the same data,
-    the file is written whole, indented); the new file replaces the old one whole (a hard-linked copy elsewhere
-    keeps its own)."""
-    try:
-        with path.open(encoding="utf-8", newline="") as file:
-            text = file.read()
-        data = json.loads(text)
-    except (OSError, ValueError):
-        return []
-    fixes = _label_fixes(data, program_version)
-    if not fixes:
-        return []
-    fixed = text
-    for key, written, taken in dict.fromkeys(fixes):
-        pattern = re.compile("(" + re.escape(json.dumps(key, ensure_ascii=False)) + r"\s*:\s*)"
-                             + re.escape(json.dumps(written, ensure_ascii=False)))
-        fixed = pattern.sub(lambda match, taken=taken: match.group(1) + json.dumps(taken, ensure_ascii=False), fixed)
-    try:
-        exact = json.loads(fixed) == data
-    except ValueError:
-        exact = False
-    if not exact:
-        fixed = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    write_atomic(path, fixed, newline="")  # the file's own line ends, as they were
-    return [(written, taken) for _, written, taken in fixes]
+def old_labels(path: Path, program_version: str | None = NEWEST) -> list[str]:
+    """The choice labels in a playlist file that a program of this version refuses (it calls them otherwise), as
+    label_fixes finds them: what `check` warns of."""
+    return [written for _, written, _ in label_fixes(path, program_version)]
 
 
 def playlist_files(server_folder: Path) -> list[Path]:
     folder = server_folder / "playlists"
     return sorted(folder.glob("*.playlist.json")) if folder.is_dir() else []
-
-
-def new_playlist(server_folder: Path, name: str, *, vote_seconds: int = 20) -> Playlist:
-    path = server_folder / "playlists" / f"{slug(name, 'playlist')}.playlist.json"
-    return Playlist(path, name, vote_seconds)
-
-
-def resolve(server_folder: Path, ref: str) -> Path:
-    """A playlist by file, path, or its name in playlists/ ("infection" -> playlists/infection.playlist.json)."""
-    path = server_folder / ref
-    if path.is_file():
-        return path
-    for candidate in (server_folder / "playlists" / f"{ref}.playlist.json", server_folder / "playlists" / ref,
-                      server_folder / "playlists" / f"{slug(ref, 'playlist')}.playlist.json"):
-        if candidate.is_file():
-            return candidate
-    for file in playlist_files(server_folder):
-        try:
-            if load_playlist(file).name.lower() == ref.lower():
-                return file
-        except PlaylistError:
-            continue
-    return path

@@ -13,7 +13,8 @@ from testkit.window import FakeKeyboard
 
 from huragok.core.requests import Result
 from huragok.core.settings import load
-from huragok.core.tomledit import replace_server_blocks, set_table_key
+from huragok.core.tomledit import change_server_settings, replace_server_blocks, set_table_key
+from huragok.games.plays import PLAYS_KEYS
 from huragok.program.dedicated import Dedicated
 
 
@@ -39,6 +40,22 @@ def make_server_folder(folder: Path, name: str, port: int, *, with_game: bool = 
     config = folder / "dedicated.toml"
     set_table_key(config, "rcon", "password", "secretsecret")
     replace_server_blocks(config, [{"name": name, "port": port, "playlist": "playlists/slayer.playlist.json"}])
+
+
+def write_plays(config: Path, server_name: str, values: dict[str, Any]) -> None:
+    """What a server plays, set in its own [[server]] block as a host sets it by hand: the new keys in, every other
+    kind's out. Huragok itself never writes it (0.7.0); the tests set servers up with it."""
+    change_server_settings(config, server_name, values, PLAYS_KEYS, what="what it plays", add=False)
+
+
+def write_playlist(server_folder: Path, stem: str, games: list[dict[str, Any]], *, name: str | None = None,
+                   vote_seconds: int = 20) -> Path:
+    """A playlist file as a host writes one by hand, playlists/<stem>.playlist.json; its path."""
+    path = server_folder / "playlists" / f"{stem}.playlist.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 2, "name": name or stem, "vote_seconds": vote_seconds, "games": games},
+                               indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def setup_root(tmp_path: Path, *, with_game: bool = True, extra: str = "") -> Path:

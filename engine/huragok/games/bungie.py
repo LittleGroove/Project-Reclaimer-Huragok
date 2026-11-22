@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .halo3_options import version_tuple
+from ..core.text import version_tuple
 
 SINCE = "0.10.0"  # the first program version that plays Reach, Combat Evolved and Halo 2
 

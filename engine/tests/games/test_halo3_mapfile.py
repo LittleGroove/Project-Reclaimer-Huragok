@@ -56,7 +56,7 @@ def test_the_explanation_says_which_upload_and_what_to_do(tmp_path: Path) -> Non
     why = explain(path, DAMAGED_INDEX)
     assert why.startswith("its tag table (600 tags) runs to 0x1ca1a12c0, past the end of the map's tag data")
     assert ("ask its author (Workshop 3820687243, the version uploaded 20 Oct 2026 05:57 UTC) for a fixed upload; "
-            "Huragok installs the fixed version when it comes out") in why
+            "the server installs the fixed version when it comes out") in why
     assert "installs the fixed version" not in explain(path, DAMAGED_INDEX, updates=False)
     # what the server said and what Huragok finds differ: the file changed after the server looked
     assert "(the server said 'it has no scenario': the file has changed since)" in explain(path, NO_SCENARIO)

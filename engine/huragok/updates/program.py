@@ -1,7 +1,24 @@
-"""The server program's updates, as Huragok runs them: a server with `auto_update` updates itself (the program
-looks at its start and hourly) and Huragok steps in when a release doesn't arrive (`follow`, `fallback`); the
-others are updated from GitHub after their game, as a job the manager runs while the server is stopped. What a
-release is, where the program is and how its files are swapped is program/releases.py's."""
+"""The server program's releases (Project Reclaimer itself), as Huragok follows them from 0.7.0 (hands off the servers:
+plan-0.7.0 section 4.3). Each server installs its own releases, its `auto_update` (its dedicated.toml) the one switch;
+Huragok never downloads a program or puts one in place. What it does:
+
+- **Looks** at GitHub every [server_updates] check_minutes (15) and says when a release is out.
+- **Restarts the servers that update themselves after their game** once it sees a release they're behind (answer 24),
+  or once one of them updated itself: each installs the release as it starts (S2: back in about 13 s) instead of having
+  its game cut at its own hourly look (S2d). Players are told once during the game; nobody on, it's at once and nothing
+  is said. `follow` is the switch (off: Huragok never restarts a server for a release, which the Reclaimer update tests
+  use to see what a server does alone). A server Huragok didn't start is restarted only through its own console's
+  `restart` (answer 30); on Docker the image is the update, so there it only warns (answer 36).
+- **Warns players** the moment a server says `[update] downloading Project Reclaimer <version>`: its own updater stops
+  the game a few seconds later (answer 23), and without a word players would think it crashed.
+- **Moves a server off its old program file** after a self-update: the program's supervisor keeps running from the
+  locked project-reclaimer.exe.old (S2), so once nobody is on the server is restarted, and that file deleted while it's
+  stopped. A server that never empties for it is warned about.
+- **Warns** (core/serverwarnings.py, templates/warnings.toml): a server pinned to its version by its own file (said
+  once, calmly), one that should have updated and didn't (70 minutes after a release), the busy one above, and on
+  Docker a new image.
+
+Which release a program file is, and GitHub's latest, are program/releases.py's."""
 
 from __future__ import annotations
 
@@ -15,9 +32,12 @@ from typing import TYPE_CHECKING, Any
 from ..core.background import background
 from ..core.events import Event
 from ..core.jobs import StoppedJob
+from ..core.serverwarnings import RuleError, Warnings, load_rules
+from ..core.text import wrap
 from ..core.web import UpdateError, parse_version
-from ..lore import NOTICES
+from ..lore import NOTICES, callout
 from ..program import releases
+from ..rcon import RconError
 
 if TYPE_CHECKING:
     from ..core.serverfolders import ServerConfig
@@ -33,25 +53,28 @@ log = logging.getLogger(__name__)
 OVERDUE = 70 * 60.0  # the program looks at its start and hourly; then a few minutes to download and restart
 
 
-REVIEW_SECONDS = 60.0  # how often the self-updating servers are looked at (no network)
+REVIEW_SECONDS = 60.0  # how often the servers' releases are looked at again (no network)
 
 
-DOWNLOADS = "program-download"  # in records/: the checked release Huragok installs from
-
-
-JOB = "program"
+OLD_FILE_WARN = 3600.0  # still running from the old program file this long after a self-update: warned
 
 
 OLD_JOB = "program-old"
 
 
-FLAG = "program"
+REASON = "Project Reclaimer {version} is out; it updates as it starts"  # a release restart's reason, players read it
 
 
-OUR_REASON = "updating to Project Reclaimer"
+SOURCE = "program"  # the warnings this sets, for Warnings.sync
 
 
-SWAP_RETRY_HOURS = (1.0, 4.0, 12.0)  # after a swap that failed; one more failure and it waits for U
+RESTARTS_ON = ("process", "command")  # backends a release restart works on: docker's image is its update, attach can't
+
+
+GAME_ON = {"playing", "round_over", "between_rounds"}  # the console's phases while a game is being played
+
+
+SAID_LATELY = 120.0  # what a server was doing as it said it was downloading counts this long for its update line
 
 
 # What the program says about a setting it doesn't know, as it reads dedicated.toml.
@@ -59,23 +82,22 @@ UNKNOWN_SETTING = re.compile(r"unknown (?P<what>field|variant) `(?P<name>[^`]+)`
 
 
 class ProgramUpdateService:
-    """Looks for new server releases, says so, makes sure self-updating servers got them, and installs them when
-    asked (or by itself, per [server_updates])."""
+    """Looks for new server releases, says so, has the self-updating servers pick them up after their game, and warns
+    about the ones that don't."""
 
     def __init__(self, settings: Settings, bus: EventBus, lifecycle: Lifecycle, states: dict[str, ServerState],
-                 clients: dict[str, RconClient]) -> None:
+                 clients: dict[str, RconClient], warnings: Warnings | None = None) -> None:
         self.settings = settings
         self.config = settings.server_updates
         self.bus = bus
         self.lifecycle = lifecycle
         self.states = states
         self.clients = clients
-        self.pending: releases.ProgramRelease | None = None
+        self.warnings = warnings if warnings is not None else Warnings(_rules(), None, bus)
+        self.pending: releases.ProgramRelease | None = None  # the newest release, while a server is behind it
         self.newest: releases.ProgramRelease | None = None  # the newest release seen, whatever the servers run
         self.first_seen: dict[str, float] = {}  # version -> when Huragok first saw it
         self.announced: str | None = None
-        self.installing = False
-        self.last_installed: str | None = None
         self.versions: dict[str, str] = {}  # each server's release when its console last signed in (identify())
         self.said: dict[str, str] = {}  # the version each server's console gave then (0.10.1 says 0.10.0)
         self.put_in_place: dict[str, str] = {}  # server -> the release its own updater said it put in place
@@ -84,19 +106,19 @@ class ProgramUpdateService:
         self.updater: dict[str, str] = {}  # what each server's console said about its own updater (on / off)
         self.failed: dict[str, str] = {}  # the reason each server's own update last failed
         self.updated_itself: set[str] = set()  # "Update installed" seen; its `dedicated` runs from the old file
-        self.taken: dict[str, str] = {}  # server -> the version Huragok is installing for it
-        self.swapped: dict[str, str] = {}  # server -> the version Huragok put in place, until it's seen running
-        self.retry: dict[str, float] = {}  # server -> when a failed download is tried again
-        self.swap_failures: dict[str, tuple[str, int]] = {}  # server -> (version, swaps that failed)
+        self.file_versions: dict[str, str] = {}  # a pinned server not signed in: its program file's release
+        self.restarting: dict[str, str] = {}  # server -> the release it restarts for after its game (follow)
+        self.old_file: dict[str, tuple[str, float]] = {}  # server -> (release, since when) still on the old file
+        self.games: dict[str, float] = {}  # server -> when the game it plays began (as seen here)
+        self.downloading: dict[str, tuple[float, float | None]] = {}  # server -> (when it said so, its game's start)
         self.last_error = ""  # why the last look at GitHub gave nothing to go by ("" when it did)
-        self.newer: bool | None = None  # the last look: newer than a running server's version or a stopped one's file
+        self.newer: bool | None = None  # the last look: newer than a running server's version or a pinned one's file
         self._unreadable: set[tuple[str, str]] = set()  # (server, version) that isn't a version number: said once
-        self.downloads: dict[str, Path] = {}  # version -> the checked download
-        self._download_lock = asyncio.Lock()
-        self._said_cant: set[tuple[str, str]] = set()
+        self._said_cant: set[tuple[str, str]] = set()  # (server, release) a restart couldn't be planned for: said once
         self.diagnosing: set[str] = set()  # servers whose failed start is being looked into
         self.mistakes: set[tuple[str, str]] = set()  # (server, setting) even the newest program doesn't know
         bus.subscribe("rcon.connected", self._on_connected)
+        bus.subscribe("rcon.phase", self._on_phase)
         bus.subscribe("server.started", self._on_started)
         bus.subscribe("server.updating", self._on_updating)
         bus.subscribe("server.self_update", self._on_self_update)
@@ -104,7 +126,7 @@ class ProgramUpdateService:
         bus.subscribe("server.update_downloading", self._on_downloading)
         bus.subscribe("server.start_failed", self._on_start_failed)
 
-    # Servers that update themselves ----------------------------------------------------------
+    # Which release each server runs ---------------------------------------------------------------------------
 
     def self_updating(self) -> set[str]:
         return releases.self_updating(self.settings)
@@ -149,32 +171,51 @@ class ProgramUpdateService:
 
     def _identify_again(self) -> None:
         """After Huragok learns a release's checksum: each running server's release, from what it said as it signed
-        in. One that turns out to be on the release Huragok was installing for it is done (no restart for it)."""
+        in. One that turns out to be on the release it was to restart for is done (no restart for it)."""
         for name, said in list(self.said.items()):
             version = self.identify(name, said)
-            if version == self.versions.get(name):
-                continue
-            self.versions[name] = version
-            if name in self.taken and not self.behind(name, self.taken[name]):
-                self._done(name)
+            if version != self.versions.get(name):
+                self.versions[name] = version
+                self._caught_up(name)
+
+    def _read_files(self) -> None:
+        """A thread's work: each pinned server (auto_update off) that hasn't signed in, its program file's release (by
+        its checksum when Huragok knows the file, else its own --version, asked once per file)."""
+        for server in list(self.settings.servers):
+            name = server.name
+            path = releases.program_of(self.settings, server) if not server.auto_update else None
+            version = releases.file_version(self.settings, path) if path is not None and not self.version_of(name) \
+                else None
+            if releases.readable(version):
+                self.file_versions[name] = str(version)
+            else:
+                self.file_versions.pop(name, None)
+
+    def known_version(self, name: str) -> str | None:
+        """What it runs, or (a pinned server not signed in) its program file's release."""
+        return self.version_of(name) or self.file_versions.get(name)
 
     def behind(self, name: str, version: str | None = None) -> bool:
         """Its running version is older than `version` (the newest release seen); False while it isn't known."""
         version = version or (self.newest.version if self.newest else None)
-        mine = self.version_of(name)
-        if not version or not mine:
-            return False
-        try:
-            return parse_version(mine) < parse_version(version)
-        except UpdateError:
-            return False
+        return _older(self.version_of(name), version)
 
     def _server(self, name: str) -> ServerConfig | None:
         return next((s for s in self.settings.servers if s.name == name), None)
 
+    # What the servers say -------------------------------------------------------------------------------------
+
     def _on_started(self, event: Event) -> None:
         if event.server:
             self.since[event.server] = time.time()
+
+    def _on_phase(self, event: Event) -> None:
+        """When the game it plays began, for "stopped its game N minutes in" (rounds don't start it again)."""
+        name, phase = event.server or "", str(event.get("phase") or "")
+        if phase in GAME_ON:
+            self.games.setdefault(name, event.time)
+        else:
+            self.games.pop(name, None)
 
     def _on_self_update(self, event: Event) -> None:
         """At its start the server says whether its own updater is on."""
@@ -186,37 +227,74 @@ class ProgramUpdateService:
             return
         self.updater[name] = "off"
         self.failed[name] = text.rstrip(".")
-        log.warning("[%s] auto_update is on, but the server says: %s. %s", name, text.rstrip("."),
-                    "Huragok installs new releases for it after its game" if self.can_take_over()
-                    else "Its new releases have to be installed another way")
+        log.warning("[%s] auto_update is on, but the server says: %s. Its new releases have to be put in its folder by "
+                    "hand", name, text.rstrip("."))
 
     def _on_downloading(self, event: Event) -> None:
-        log.info("[%s] downloading Project Reclaimer %s itself (auto_update)", event.server,
-                 str(event.get("version") or "?"))
+        """'[update] downloading Project Reclaimer 0.10.8': its own updater stops the game a few seconds later, at once
+        and mid-game (S2d: 8 s, the console still up). Players on are told now, so they don't think it crashed
+        (answer 23). Huragok restarts nothing for it."""
+        name, version = event.server or "", str(event.get("version") or "?").lstrip("v")
+        state = self.states.get(name)
+        on = len(state.players) if state is not None else 0
+        self.downloading[name] = (time.time(), self.games.get(name))
+        log.info("[%s] downloading Project Reclaimer %s itself (auto_update): it restarts on it in a few seconds%s",
+                 name, version, f"; telling the {on} player(s) on" if on else "")
+        if on:
+            text = callout("self update", f"This server is updating to Project Reclaimer {version} and restarts in a "
+                                          "few seconds. Update your game to rejoin.")
+            background(self._say(name, text), f"[{name}] telling its players about its update", log)
+
+    async def _say(self, name: str, text: str) -> None:
+        client = self.clients.get(name)
+        if client is None or getattr(client, "no_console", False) or not getattr(client, "connected", False):
+            log.info("[%s] couldn't tell its players (its console isn't connected): %s", name, text)
+            return
+        for line in wrap(text) or [text]:
+            try:
+                await client.command("say", line)
+            except RconError as error:
+                log.warning("[%s] couldn't tell its players (%s): %s", name, error, text)
+                return
 
     def _on_update_failed(self, event: Event) -> None:
-        """'Automatic update failed; retrying in an hour: …': it didn't work, so Huragok does it after the game."""
+        """'Automatic update failed; retrying in an hour: …': said, and warned about (overdue at once)."""
         name, reason = event.server or "", str(event.get("reason") or "no reason given")
         self.failed[name] = reason
         log.warning("[%s] its own update failed: %s", name, reason)
-        if name in self.self_updating() and self.config.fallback:
-            background(self._after_failure(name), f"[{name}] taking over its failed update", log)
+        if name in self.self_updating():
+            background(self._after_failure(), f"[{name}] its failed update", log)
 
-    async def _after_failure(self, name: str) -> None:
-        if self.newest is None or not self.behind(name):
-            await self.check()  # it may know of a release Huragok hasn't seen yet
-        self.review(only=name)
+    async def _after_failure(self) -> None:
+        if self.newest is None:
+            await self.check()  # it may know of a release Huragok hasn't seen yet (check reviews)
+        else:
+            await self.review()
 
     def _on_updating(self, event: Event) -> None:
         """'Update installed; restarting all servers.' (0.9), '[update] Project Reclaimer 0.10.1 is in place: stopping
-        every server to start it' (0.10): the server's own auto_update is at work."""
-        if event.server:
-            self.updated_itself.add(event.server)
-            self.failed.pop(event.server, None)
+        every server to start it' (0.10): the server's own auto_update is at work, and doesn't wait for a game to end
+        (S2d)."""
+        name = event.server or ""
+        if name:
+            self.updated_itself.add(name)
+            self.failed.pop(name, None)
             if event.get("version"):  # 0.10 names the release: its program file is that release's from now on
-                self.put_in_place[event.server] = str(event.get("version")).lstrip("v")
-        log.warning("[%s] %s Project Reclaimer installed a new release by itself (auto_update): its game ended and "
-                    "it is back in a few seconds", event.server, NOTICES["dust"])
+                self.put_in_place[name] = str(event.get("version")).lstrip("v")
+        log.warning("[%s] %s Project Reclaimer installed a new release by itself (auto_update): %s", name,
+                    NOTICES["dust"], self._what_it_cut(name))
+
+    def _what_it_cut(self, name: str) -> str:
+        """The game its own update stopped, if one was on: as it was when it said it was downloading (its console may
+        be gone by now), else as it is."""
+        said, game = self.downloading.pop(name, (None, None))
+        if said is None or time.time() - said > SAID_LATELY:
+            game = self.games.get(name)
+        self.games.pop(name, None)
+        if game is None:
+            return "it is back in a few seconds"
+        return (f"it stopped its game {_minutes_in(time.time() - game)} and is back in a few seconds (players must "
+                "update their game to rejoin)")
 
     def _on_connected(self, event: Event) -> None:
         name, said = event.server or "", str(event.get("version") or "")
@@ -232,15 +310,12 @@ class ProgramUpdateService:
         version = self.identify(name, said)
         self.said[name] = said
         before, self.versions[name] = self.versions.get(name), version
-        if name in self.taken:
-            if not self.behind(name, self.taken[name]):
-                self._done(name)
-            elif self.swapped.get(name) == self.taken[name]:
-                self._swap_missed(name)
+        self.file_versions.pop(name, None)
+        self._caught_up(name)
         updated_itself = name in self.updated_itself  # "Update installed" came first; at its start, the old
         if updated_itself:                            # version may never have signed in
             self.updated_itself.discard(name)
-            self._restart_off_the_old_file(name)
+            self._restart_off_the_old_file(name, version)
         try:
             newer = before is not None and parse_version(version) > parse_version(before)
         except UpdateError:
@@ -250,53 +325,52 @@ class ProgramUpdateService:
         log.warning("[%s] now on Project Reclaimer %s (%s)", name, version,
                     f"was {before}" if before else "it updated itself as it started")
         self.bus.emit("server.program_updated", name, version=version, before=before)
-        if self.settings.server_updates.follow:
+        if self.config.follow:
             background(self.follow(name, version), f"[{name}] the others following its update", log)
 
-    def _done(self, name: str) -> None:
-        """It is on the version Huragok was installing (by Huragok, or by itself after all)."""
-        self.taken.pop(name, None)
-        self.retry.pop(name, None)
-        self.swap_failures.pop(name, None)
-        self.swapped.pop(name, None)
-        self.failed.pop(name, None)
-        self.lifecycle.drop_job(name, JOB)
-        self.lifecycle.set_flag(name, FLAG, None)
+    def _caught_up(self, name: str) -> None:
+        """It's on the release it was to restart for (it updated itself first): that restart is called off."""
+        version = self.restarting.get(name)
+        if version is None or self.behind(name, version):
+            return
+        self.restarting.pop(name, None)
         plan = self.lifecycle.planned.get(name)
-        if plan is not None and plan.reason.startswith(OUR_REASON):
+        if plan is not None and plan.reason == REASON.format(version=version):
             self.lifecycle.cancel(name)  # it updated itself before its game ended: no restart needed now
+            log.info("[%s] on Project Reclaimer %s already: its restart for it is called off", name, version)
 
-    def _swap_missed(self, name: str) -> None:
-        """Huragok put the new file in place, yet the server came back on the old version: it runs another file
-        (a [process] command, say). Trying again would only restart it again."""
-        version = self.swapped.pop(name)
-        server = self._server(name)
-        where = releases.program_of(self.settings, server) if server else None
-        self.retry.pop(name, None)  # taken stays: not tried again this run
-        self.lifecycle.set_flag(name, FLAG, f"! still on {self.version_of(name)} after {version} was put in place")
-        log.error("[%s] still on Project Reclaimer %s after Huragok put %s in place at %s: it runs another program "
-                  "file. Update that one by hand", name, self.version_of(name), version, where or "?")
+    # The restart onto the new program file ------------------------------------------------------------------
 
-    def _restart_off_the_old_file(self, name: str) -> None:
+    def holds_processes(self) -> bool:
+        """Huragok runs the program's own supervisor itself only with the process backend."""
+        return self.settings.backend == "process"
+
+    def _restart_off_the_old_file(self, name: str, version: str) -> None:
         """After a self-update the `dedicated` Huragok holds still runs from project-reclaimer.exe.old, which the
         next update may not be able to replace. Once nobody is on, restart it on the new file and remove the old."""
-        if not self.can_take_over():
+        if not self.holds_processes():
             return
         server = self._server(name)
         if server is None:
             return
 
         async def tidy() -> str:
+            self.old_file.pop(name, None)
+            self.warnings.clear(name, "release-old-file")
             removed = await asyncio.to_thread(releases.remove_old_files, server.folder)
             return f"removed {', '.join(p.name for p in removed)} (the program from before its update)" if removed \
                 else ""
 
         self.lifecycle.add_job(name, StoppedJob(OLD_JOB, "removing the program file from before its update", tidy))
+        self.old_file[name] = (version, time.time())
         if name in self.lifecycle.planned:
             return  # the restart already planned runs the job too
-        background(self._plan(name, "when_empty", "its own update left `dedicated` running from the old "
-                                                  "program file; restarting on the new one"),
-                   f"[{name}] restarting on its new program file", log)
+        background(self._plan_off_the_old_file(name), f"[{name}] restarting on its new program file", log)
+
+    async def _plan_off_the_old_file(self, name: str) -> None:
+        if not await self._plan(name, "when_empty", "its own update left `dedicated` running from the old program "
+                                                    "file; restarting on the new one"):
+            self.old_file.pop(name, None)  # not one Huragok can restart: no warning that it isn't
 
     async def _plan(self, name: str, when: str, reason: str) -> bool:
         try:
@@ -306,28 +380,118 @@ class ProgramUpdateService:
             log.info("[%s] couldn't plan a restart (%s); it happens at its next start", name, error)
             return False
 
+    # Restarts for a release (answer 24) ----------------------------------------------------------------------
+
+    def restarts_for_releases(self) -> bool:
+        """`follow` on, and a backend whose restart puts a release in (docker's image is its update: answer 36)."""
+        return bool(self.config.follow) and self.settings.backend in RESTARTS_ON
+
     async def follow(self, updated: str, version: str) -> list[str]:
-        """Restart the other self-updating servers still on an older version after their game: they look for
-        releases as they start, so they update then instead of within the hour."""
-        restarted = []
-        for name in sorted(self.self_updating() - {updated}):
-            mine = self.version_of(name)
-            try:
-                behind = bool(mine) and parse_version(str(mine)) < parse_version(version)
-            except UpdateError:
-                behind = False
-            if not behind or not self.lifecycle.is_up(name) or name in self.taken:
-                continue
-            try:
-                await self.lifecycle.restart(name, when="after_game", by=self.settings.name,
-                                             reason=f"Project Reclaimer {version} is out; it updates as it starts")
-                restarted.append(name)
-            except Exception as error:  # noqa: BLE001 - LifecycleUnavailable, LifecycleError
-                log.info("[%s] couldn't plan a restart onto %s: %s", name, version, error)
+        """One server updated itself: the others with auto_update on still on an older version restart after their
+        game, so they install it as they start instead of within the hour."""
+        restarted = await self._restart_behind(version, skip={updated})
         if restarted:
             log.info("Following %s onto Project Reclaimer %s: %s restart after their game", updated, version,
                      ", ".join(restarted))
         return restarted
+
+    async def _restart_behind(self, version: str, *, skip: set[str] | None = None) -> list[str]:
+        """Each running server with auto_update on that's behind `version`, restarted after its game (at once when
+        nobody is on), once per release. Not one that started after Huragok saw the release: it looked as it started,
+        and if it's still behind, its own update didn't happen (warned)."""
+        if not self.restarts_for_releases():
+            return []
+        seen = self.first_seen.get(version)
+        restarted = []
+        for name in sorted(self.self_updating() - (skip or set())):
+            if self.restarting.get(name) == version or not self.lifecycle.is_up(name) or not self.behind(name, version):
+                continue
+            if seen is not None and self.since.get(name, 0.0) > seen:
+                continue
+            if await self._restart_for(name, version):
+                restarted.append(name)
+        return restarted
+
+    async def _restart_for(self, name: str, version: str) -> bool:
+        self.restarting[name] = version  # first: two looks at once plan it once
+        plan = self.lifecycle.planned.get(name)
+        if plan is not None and plan.when == "after_game":
+            log.info("[%s] the restart planned after its game (%s) installs Project Reclaimer %s as it starts too",
+                     name, plan.reason or "no reason given", version)
+            return True
+        tell = callout("release out", f"Project Reclaimer {version} is out. This server restarts for it after this "
+                                      "game, so the update lands sooner. Update your game to rejoin.")
+        try:
+            await self.lifecycle.restart(name, when="after_game", reason=REASON.format(version=version),
+                                         by=self.settings.name, tell=tell, console=True)
+        except Exception as error:  # noqa: BLE001 - LifecycleUnavailable, LifecycleError
+            self.restarting.pop(name, None)
+            if (name, version) not in self._said_cant:
+                self._said_cant.add((name, version))
+                log.info("[%s] couldn't plan a restart onto Project Reclaimer %s: %s", name, version, error)
+            return False
+        return True
+
+    # Warnings -----------------------------------------------------------------------------------------------
+
+    def overdue(self, name: str, now: float | None = None) -> bool:
+        """A self-updating server still behind the newest release after it has had its look (at its start, then
+        hourly) and time to install it, or at once when it said its own update failed."""
+        if self.newest is None or not self.behind(name):
+            return False
+        if name in self.failed:
+            return True
+        now = time.time() if now is None else now
+        return now >= max(self._out(), self.since.get(name, now)) + OVERDUE
+
+    def _out(self) -> float:
+        """When the newest release came out: GitHub's word, else when Huragok first saw it."""
+        assert self.newest is not None
+        return self.newest.published or self.first_seen.get(self.newest.version, time.time())
+
+    def found(self, name: str, now: float | None = None) -> list[tuple[str, str, Path | str | None, dict[str, Any]]]:
+        """The server's release warnings now, as Warnings.sync takes them."""
+        now = time.time() if now is None else now
+        server, newest, found = self._server(name), self.newest, []
+        if server is None:
+            return []
+        mine = self.known_version(name)
+        if newest is not None and _older(mine, newest.version):
+            if self.settings.backend == "docker":
+                found.append(("release-image", "", None, {"newest": newest.version, "version": mine}))
+            elif not server.auto_update:
+                found.append(("release-pinned", "", server.config_path, {"version": mine, "newest": newest.version}))
+            elif self.lifecycle.is_up(name) and self.overdue(name, now):
+                why = f" (it said: {self.failed[name]})" if name in self.failed else ""
+                found.append(("release-overdue", "", None, {
+                    "version": mine, "newest": newest.version, "out": _clock(self._out()), "why": why,
+                    "slug": server.slug, "page": newest.page}))
+        old = self.old_file.get(name)
+        if old is not None and now - old[1] >= OLD_FILE_WARN and self.lifecycle.is_up(name):
+            found.append(("release-old-file", "", None, {"version": old[0], "since": _clock(old[1]),
+                                                         "old": "project-reclaimer.exe.old"}))
+        return found
+
+    async def review(self, *, now: float | None = None) -> list[str]:
+        """Every server's release warnings brought up to date, and (follow) the self-updating ones behind the newest
+        release restarted after their game. Returns the servers restarted."""
+        for server in list(self.settings.servers):
+            self.warnings.sync(server.name, SOURCE, self.found(server.name, now))
+        if self.newest is None:
+            return []
+        restarted = await self._restart_behind(self.newest.version)
+        if restarted:
+            log.info("Project Reclaimer %s is out: %s restart after their game to install it as they start",
+                     self.newest.version, ", ".join(restarted))
+        return restarted
+
+    async def _review_loop(self) -> None:
+        while True:
+            await asyncio.sleep(REVIEW_SECONDS)
+            try:
+                await self.review()
+            except Exception:  # noqa: BLE001 - the look must go on
+                log.exception("Looking at the servers' releases went wrong")
 
     # A program older than its settings -----------------------------------------------------------
 
@@ -343,9 +507,11 @@ class ProgramUpdateService:
         if (name, setting) in self.mistakes:
             return
         self.diagnosing.add(name)
-        background(self._diagnose(server, setting, match.group("what")), f"[{name}] looking into its update", log)
+        background(self._diagnose(server, setting, match.group("what")), f"[{name}] looking into its start", log)
 
     async def _diagnose(self, server: ServerConfig, setting: str, what: str) -> None:
+        """Said, never mended: its own auto_update can't run before it has read its settings (0.9.15 stops at 0.9.20's
+        `auto_reload`), so the newest program goes in by hand, or that line comes out."""
         name, file = server.name, self.settings.config_name
         unknown = f"`{setting}`" if what == "field" else f"the value `{setting}`"
         try:
@@ -361,9 +527,9 @@ class ProgramUpdateService:
                 return
             if mine is not None and not releases.readable(mine):
                 log.warning("[%s] it won't start: its program doesn't know %s in its %s, and answers --version with "
-                            "'%s', which isn't a version Huragok can compare with the newest (%s), so Huragok leaves "
-                            "it: put the newest program in its folder if it's older, or fix that line (D, or E for "
-                            "the file)", name, unknown, file, mine, release.version)
+                            "'%s', which isn't a version Huragok can compare with the newest (%s): put the newest "
+                            "program in its folder if it's older, or fix that line", name, unknown, file, mine,
+                            release.version)
                 return
             older = mine is None or parse_version(mine) < parse_version(release.version)
             if not older:
@@ -371,234 +537,39 @@ class ProgramUpdateService:
                 newest = "the newest" if parse_version(str(mine)) == parse_version(release.version) else \
                     f"newer than the newest release ({release.version})"
                 log.error("[%s] it won't start: its program is Project Reclaimer %s, %s, and doesn't know %s "
-                          "in its %s: that line is a mistake. Fix or remove it (D, or E for the file), then start "
-                          "it again", name, mine, newest, unknown, file)
+                          "in its %s: that line is a mistake. Fix or remove it, then start it again", name, mine,
+                          newest, unknown, file)
                 return
             was = f"Project Reclaimer {mine}" if mine else "its program"
-            if not (server.auto_update and self.config.fallback and self.can_take_over()):
-                why = ("auto_update is off" if not server.auto_update else "[server_updates] fallback is off"
-                       if not self.config.fallback else f"with backend = {self.settings.backend} Huragok can't")
-                log.warning("[%s] it won't start: %s is older than its %s (it doesn't know %s; the newest is %s). "
-                            "%s, so Huragok leaves it: put the newest program in its folder (U -> The server program "
-                            "does it), or switch auto_update on (D)", name, was, file, unknown, release.version, why)
-                return
-            path = await self._download(release)
-
-            async def install() -> str:
-                if self._pulled(release):
-                    return f"left as it is: Project Reclaimer {release.version} is no longer the newest release"
-                try:
-                    said = await asyncio.to_thread(releases.swap_program, self.settings, server, path, release.version)
-                except (UpdateError, OSError) as error:
-                    log.error("[%s] Project Reclaimer %s didn't install: %s; it tries the old one", name,
-                              release.version, error)
-                    return ""
-                return f"{said} ({was} didn't know {unknown} in its {file})"
-
-            self.lifecycle.add_job(name, StoppedJob(JOB, f"installing Project Reclaimer {release.version}", install))
-            log.warning("[%s] it won't start: %s is older than its %s (it doesn't know %s). Huragok puts Project "
-                        "Reclaimer %s in place before it tries again", name, was, file, unknown, release.version)
+            log.warning("[%s] it won't start: %s is older than its %s (it doesn't know %s; the newest is %s), and its "
+                        "own auto_update can't run before it reads its settings: put the newest program in its folder "
+                        "by hand (%s), or take that line out", name, was, file, unknown, release.version, release.page)
         except (UpdateError, OSError) as error:
-            log.error("[%s] its program looks older than its %s, but the newest couldn't be put in place: %s", name,
-                      file, error)
+            log.error("[%s] its program looks older than its %s, but couldn't be looked into: %s", name, file, error)
         finally:
             self.diagnosing.discard(name)
 
-    # Making sure it worked --------------------------------------------------------------------
-
-    def can_take_over(self) -> bool:
-        """Huragok can put a program file in place only for servers it runs as processes."""
-        return self.settings.backend == "process"
-
-    def overdue(self, name: str, now: float | None = None) -> bool:
-        """A self-updating server still behind the newest release after it has had its look (at its start, then
-        hourly) and time to install it, or at once when it said its own update failed."""
-        if self.newest is None or not self.behind(name):
-            return False
-        if name in self.failed:
-            return True
-        now = time.time() if now is None else now
-        out = self.newest.published or self.first_seen.get(self.newest.version, now)
-        return now >= max(out, self.since.get(name, now)) + OVERDUE
-
-    def review(self, *, only: str | None = None, now: float | None = None) -> list[str]:
-        """Each running self-updating server that didn't get the newest release itself: Huragok installs it after
-        its game. Returns the servers it took over."""
-        if not self.config.fallback or self.newest is None:
-            return []
-        release, taken = self.newest, []
-        moment = time.time() if now is None else now
-        for name in sorted(self.self_updating()):
-            if only is not None and name != only:
-                continue
-            if not self.lifecycle.is_up(name) or not self.overdue(name, now):
-                continue  # a stopped server looks for releases itself as it starts
-            if self.taken.get(name) == release.version and moment < self.retry.get(name, float("inf")):
-                continue
-            if not self.can_take_over():
-                if (name, release.version) not in self._said_cant:
-                    self._said_cant.add((name, release.version))
-                    log.warning("[%s] still on Project Reclaimer %s although %s is out: its own update didn't "
-                                "happen, and with backend = %s Huragok can't put the program in place",
-                                name, self.version_of(name), release.version, self.settings.backend)
-                continue
-            why = (f"its own update failed ({self.failed[name]})" if name in self.failed
-                   else f"still on {self.version_of(name)} over an hour after {release.version} came out")
-            self.taken[name] = release.version
-            self.retry.pop(name, None)
-            background(self.take_over(name, release, why), f"[{name}] installing {release.version}", log)
-            taken.append(name)
-        return taken
-
-    async def _download(self, release: releases.ProgramRelease) -> Path:
-        """The checked release, downloaded once (records/program-download/); older downloads are removed."""
-        async with self._download_lock:
-            path = self.downloads.get(release.version)
-            if path is not None and path.is_file():
-                return path
-            folder = self.settings.records / DOWNLOADS
-            path = await asyncio.to_thread(releases.download_program, release, folder)
-            for other in [*folder.glob("*.exe"), *folder.glob(f"*{releases.ARCHIVE}")]:  # Linux's own: a .tar.gz
-                if other != path:
-                    other.unlink(missing_ok=True)
-            self.downloads = {release.version: path}
-            return path
-
-    async def take_over(self, name: str, release: releases.ProgramRelease, why: str, *,
-                        when: str = "after_game") -> tuple[bool, str]:
-        """Install `release` for one server: a job swaps the file while it's stopped, at a restart after its game
-        (or now)."""
-        server = self._server(name)
-        if server is None:
-            return False, f"no server called {name}"
-        self.taken[name] = release.version
-        try:
-            path = await self._download(release)
-        except (UpdateError, OSError) as error:
-            self.retry[name] = time.time() + self.config.check_hours * 3600
-            self.lifecycle.set_flag(name, FLAG, f"! Project Reclaimer {release.version}: the download failed")
-            log.error("[%s] %s, but Huragok couldn't download Project Reclaimer %s either: %s; it tries again "
-                      "within %s", name, why, release.version, error, _hours(self.config.check_hours))
-            return False, f"not installed: {error}"
-
-        async def install() -> str:
-            if self._pulled(release):
-                return f"left as it is: Project Reclaimer {release.version} is no longer the newest release"
-            try:
-                said = await asyncio.to_thread(releases.swap_program, self.settings, server, path, release.version)
-            except (UpdateError, OSError) as error:
-                self._swap_failed(name, release.version, error)
-                return ""
-            self.lifecycle.set_flag(name, FLAG, None)
-            self.swapped[name] = release.version
-            return said
-
-        self.lifecycle.add_job(name, StoppedJob(JOB, f"installing Project Reclaimer {release.version}", install))
-        self.lifecycle.set_flag(name, FLAG, f"Project Reclaimer {release.version}: installs "
-                                            + ("after this game" if when == "after_game" else "now"))
-        log.warning("[%s] %s: Huragok installs Project Reclaimer %s %s", name, why, release.version,
-                    "after its game" if when == "after_game" else "now")
-        if not await self._plan(name, when, f"{OUR_REASON} {release.version}"):
-            return True, f"{name} installs {release.version} at its next start"
-        return True, f"{name} installs {release.version} {'after its game' if when == 'after_game' else 'now'}"
-
-    def _swap_failed(self, name: str, version: str, error: BaseException) -> None:
-        """A swap that didn't work: tried again after 1, 4, then 12 hours (each try restarts the server after its
-        game), then left until someone presses U."""
-        before, count = self.swap_failures.get(name, (version, 0))
-        count = count + 1 if before == version else 1
-        self.swap_failures[name] = (version, count)
-        if count > len(SWAP_RETRY_HOURS):
-            self.retry[name] = float("inf")
-            self.lifecycle.set_flag(name, FLAG, f"! Project Reclaimer {version} didn't install ({count} tries): U "
-                                                "to try again")
-            log.error("[%s] Project Reclaimer %s didn't install again: %s. That's %d tries, so Huragok stops trying "
-                      "it by itself (each try restarts the server): find what holds its program file (an antivirus "
-                      "or Controlled Folder Access, say), then press U -> The server program", name, version, error,
-                      count)
-            return
-        hours = max(self.config.check_hours, SWAP_RETRY_HOURS[count - 1])
-        self.retry[name] = time.time() + hours * 3600
-        self.lifecycle.set_flag(name, FLAG, f"! Project Reclaimer {version} didn't install: tried again in "
-                                            f"{_hours(hours)} (U to try now)")
-        log.error("[%s] Project Reclaimer %s didn't install: %s; it starts on the old one, and Huragok tries again "
-                  "in %s", name, version, error, _hours(hours))
-
-    def _pulled(self, release: releases.ProgramRelease) -> bool:
-        """`release` is newer than GitHub's latest now: it was pulled."""
-        if self.newest is None:
-            return False
-        try:
-            return parse_version(release.version) > parse_version(self.newest.version)
-        except UpdateError:
-            return False
+    # Releases -----------------------------------------------------------------------------------
 
     def _follow_latest(self, release: releases.ProgramRelease) -> None:
-        """The newest release is GitHub's latest, even when that goes back: what was planned for a pulled one is
-        dropped (its download, take-overs, jobs and restarts)."""
+        """The newest release is GitHub's latest, even when that goes back: the restarts planned for a pulled one are
+        called off."""
         before, self.newest = self.newest, release
         if before is None or parse_version(release.version) >= parse_version(before.version):
             return
         pulled = before.version
         log.warning("Project Reclaimer %s is no longer GitHub's newest release (%s is, again): it was pulled, so "
-                    "Huragok doesn't install it", pulled, release.version)
-        for version, path in list(self.downloads.items()):
-            if version == pulled:
-                path.unlink(missing_ok=True)
-                self.downloads.pop(version, None)
-        for name in [n for n, v in self.taken.items() if v == pulled]:
-            for table in (self.taken, self.retry, self.swapped, self.swap_failures):
-                table.pop(name, None)
-            self.lifecycle.drop_job(name, JOB)
-            self.lifecycle.set_flag(name, FLAG, None)
+                    "no server restarts for it", pulled, release.version)
+        for name in [n for n, v in self.restarting.items() if v == pulled]:
+            self.restarting.pop(name, None)
             plan = self.lifecycle.planned.get(name)
-            if plan is not None and str(plan.reason).startswith(f"{OUR_REASON} {pulled}"):
+            if plan is not None and plan.reason == REASON.format(version=pulled):
                 self.lifecycle.cancel(name)
         if self.pending is not None and self.pending.version == pulled:
             self.pending = None
         if self.announced == pulled:
             self.announced = None
         self.first_seen.pop(pulled, None)
-
-    def copies_behind(self, version: str) -> list[Path]:
-        """The program files the servers with auto_update off run that are older than `version`: by their checksum
-        when Huragok knows the file, else their own `--version` (one older than its dedicated.toml can't even start,
-        so it never reports a version over RCON)."""
-        runs = {releases.program_of(self.settings, s) for s in self.settings.servers if s.name not in self.self_updating()}
-        behind = []
-        for path in sorted(p for p in runs if p is not None):
-            theirs = releases.file_version(self.settings, path)
-            if releases.readable(theirs) and parse_version(str(theirs)) < parse_version(version):
-                behind.append(path)
-        return behind
-
-    def note(self, name: str) -> str:
-        """For its status card: where its program update stands, or ''."""
-        if name in self.taken and self.swap_failures.get(name, ("", 0))[1] > len(SWAP_RETRY_HOURS):
-            return (f"Project Reclaimer {self.taken[name]} didn't install in {self.swap_failures[name][1]} tries: "
-                    "U to try again")
-        if name in self.taken:
-            return f"Huragok is installing Project Reclaimer {self.taken[name]} for it (its own update didn't arrive)"
-        if name in self.failed and name in self.self_updating():
-            return f"its own update failed: {self.failed[name]}"
-        if name in self.self_updating() and self.newest is not None and self.behind(name):
-            now = time.time()
-            out = self.newest.published or self.first_seen.get(self.newest.version, now)
-            due = time.strftime("%H:%M", time.localtime(max(out, self.since.get(name, now)) + OVERDUE))
-            then = "; if not, Huragok installs it after the game" if self.config.fallback and self.can_take_over() \
-                else ""
-            return f"Project Reclaimer {self.newest.version} is out: it should have updated itself by {due}{then}"
-        return ""
-
-    async def _review_loop(self) -> None:
-        while True:
-            await asyncio.sleep(REVIEW_SECONDS)
-            try:
-                self.review()
-            except Exception:  # noqa: BLE001 - the look must go on
-                log.exception("Looking at the self-updating servers went wrong")
-
-    # Releases -----------------------------------------------------------------------------------
 
     def running_versions(self) -> dict[str, str]:
         """Each running server's release (version_of: 0.10.1 is 0.10.1 here, though its console says 0.10.0)."""
@@ -627,23 +598,25 @@ class ProgramUpdateService:
         return parse_version(release.version) > parse_version(oldest)
 
     async def run(self) -> None:
-        if not self.config.check:
-            log.info("Not looking for server program updates ([server_updates] check = false)")
-            return
-        await asyncio.sleep(20)  # the servers' consoles answer first, so their versions are known
-        reviewer = asyncio.ensure_future(self._review_loop())
+        reviewer = asyncio.ensure_future(self._review_loop())  # the old program file's warning needs no look
         try:
+            if not self.config.check:
+                log.info("Not looking for server program updates ([server_updates] check = false)")
+                await asyncio.Event().wait()
+            await asyncio.sleep(20)  # the servers' consoles answer first, so their versions are known
             while True:
                 try:
                     await self.check()
                 except Exception:  # noqa: BLE001 - one bad look must not end the looking (or the reviews)
                     log.exception("Looking for server program updates went wrong; it looks again in %s",
-                                  _hours(self.config.check_hours))
-                await asyncio.sleep(self.config.check_hours * 3600)
+                                  _minutes(self.config.check_minutes))
+                await asyncio.sleep(self.config.check_minutes * 60)
         finally:
             reviewer.cancel()
 
     async def check(self, *, quiet: bool = True) -> releases.ProgramRelease | None:
+        """GitHub's latest release; returned when a server is behind it (or that isn't known yet), None when they're
+        all on it or GitHub gave nothing to go by (last_error says why)."""
         try:
             release = await asyncio.to_thread(releases.latest_program_release, self.config.repository)
         except UpdateError as error:
@@ -667,139 +640,121 @@ class ProgramUpdateService:
         self._identify_again()  # before anyone is judged behind: a server may say an older version than it runs
         self._follow_latest(release)
         self.first_seen.setdefault(release.version, time.time())
-        self.review()
+        await asyncio.to_thread(self._read_files)
         newer = self.is_newer(release)
-        if not newer:  # the running servers are on it; a stopped one's program file may not be
-            behind = await asyncio.to_thread(self.copies_behind, release.version)
-            if behind:
-                newer = True
-                if not quiet or self.announced != release.version:
-                    log.warning("%s %s older than Project Reclaimer %s", ", ".join(str(p) for p in behind),
-                                "is" if len(behind) == 1 else "are", release.version)
+        known = [self.known_version(s.name) for s in self.settings.servers]
+        if not newer and any(_older(v, release.version) for v in known):
+            newer = True  # a pinned server that isn't running is behind it, say
+        elif newer is None and known and all(releases.readable(v) for v in known):
+            newer = False  # every server's release is known, and none is older
         self.newer = newer
-        if newer is False or (newer is None and self.last_installed and
-                              parse_version(release.version) <= parse_version(self.last_installed)):
+        if newer is False:
             self.pending = None
             if not quiet:
                 log.info("The servers are on the newest server program (%s)", release.version)
-            return None
-        self.pending = release
-        if not quiet or self.announced != release.version:
-            self.announce(release, newer)
-            self.announced = release.version
-            managed = set(self.states) - self.self_updating()
-            if self.config.install in ("after_game", "now") and newer and managed:
-                background(self.install(when=self.config.install, why="[server_updates] install", managed_only=True),
-                           f"installing Project Reclaimer {release.version}", log)
-        return release
+        else:
+            self.pending = release
+            if not quiet or self.announced != release.version:
+                self.announce(release, newer)
+                self.announced = release.version
+        await self.review()
+        return None if newer is False else release
 
     def announce(self, release: releases.ProgramRelease, newer: bool | None) -> None:
         running = ", ".join(f"{n} {v}" for n, v in sorted(self.running_versions().items())) or "no server running"
-        themselves = self.self_updating()
-        managed = sorted(set(self.states) - themselves)
-        check = (" Huragok makes sure each did, and installs it after the game for one that didn't"
-                 if self.config.fallback and self.can_take_over() else "")
-        if newer and not managed:
-            log.info("Project Reclaimer %s is out (running: %s); every server updates itself (auto_update) within "
-                     "the hour.%s", release.version, running, check)
-        elif newer:
-            log.warning("Server program update available: Project Reclaimer %s (running: %s). Players must be on "
-                        "the server's exact version. Press U in the window, or: update --program%s",
-                        release.version, running,
-                        f" ({', '.join(sorted(themselves))} update themselves)" if themselves else "")
-        else:
+        if not newer:
             log.info("Newest server program release: %s (running: %s)", release.version, running)
+            return
+        themselves = sorted(self.self_updating())
+        pinned = sorted(s.name for s in self.settings.servers if s.name not in themselves)
+        how = []
+        if self.settings.backend == "docker":
+            how.append("on Docker a new image is the update")
+        elif themselves:
+            how.append(f"{', '.join(themselves)} install it themselves (auto_update)" + (
+                ", each restarted after its game to do so as it starts" if self.restarts_for_releases() else
+                " within the hour"))
+        if pinned and self.settings.backend != "docker":
+            one = len(pinned) == 1
+            how.append(f"{', '.join(pinned)} {'stays on its' if one else 'stay on their'} version (auto_update off)")
+        log.info("Project Reclaimer %s is out (running: %s)%s", release.version, running,
+                 f": {'; '.join(how)}" if how else "")
 
-    async def install(self, *, when: str = "after_game", why: str = "asked for",
-                      managed_only: bool = False) -> tuple[bool, str]:
-        """Download, verify, put in place, restart each running server (after its game, or now). Self-updating
-        servers still behind get it too (one at a time, through take_over), unless managed_only."""
-        if self.installing:
-            return False, "an install is already under way"
-        release = self.pending or await self.check(quiet=False)
-        if release is None:
-            return False, (f"not installed: {self.last_error}" if self.last_error else
-                           "no newer server program is known")
-        themselves = self.self_updating()
-        behind = [] if managed_only or not self.can_take_over() else \
-            [n for n in sorted(themselves) if self.lifecycle.is_up(n) and self.behind(n, release.version)]
-        for name in behind:  # asked: tried again however often a swap failed before
-            self.swap_failures.pop(name, None)
-            self.retry.pop(name, None)
-        managed = set(self.states) - themselves
-        if not managed and not behind:
-            return False, ("every server updates itself (auto_update on in its dedicated.toml) and none running is "
-                           f"behind: Project Reclaimer {release.version} reaches each within the hour, or at its "
-                           "next start")
-        self.installing = True
-        try:
-            parts: list[str] = []
-            if managed:
-                ok, message = await self._install_managed(release, when, why, themselves)
-                if not ok:
-                    return False, message
-                parts.append(message)
-            for name in behind:
-                ok, message = await self.take_over(name, release, why, when=when)
-                parts.append(message)
-            if themselves - set(behind):
-                parts.append(f"{', '.join(sorted(themselves - set(behind)))} update themselves (auto_update)")
-            message = "; ".join(parts)
-            log.warning(message)
-            return True, message
-        finally:
-            self.installing = False
+    # What's shown -----------------------------------------------------------------------------------
 
-    async def _install_managed(self, release: releases.ProgramRelease, when: str, why: str,
-                               themselves: set[str]) -> tuple[bool, str]:
-        """The servers with auto_update off: every copy they run replaced at once, each restarted."""
-        log.warning("Installing server program %s (%s)", release.version, why)
-        try:
-            path = await asyncio.to_thread(releases.download_program, release, self.settings.records)
-            replaced = await asyncio.to_thread(releases.install_program, self.settings, path, release.version)
-        except (UpdateError, OSError) as error:
-            log.error("Server program update failed: %s", error)
-            return False, f"not installed: {error}"
-        finally:
-            try:
-                (self.settings.records / release.exe_name).unlink(missing_ok=True)
-            except OSError:
-                pass
-        self.last_installed = release.version
-        self.pending = None
-        restarted, left = [], []
-        changed = {path.resolve() for path in replaced}
-        for name in list(self.states):
-            if name in themselves or not self.lifecycle.is_up(name):
-                continue
-            server = self._server(name)
-            program = releases.program_of(self.settings, server) if server else None
-            if program is None or program.resolve() not in changed:
-                continue  # its copy was left: as new as the release, or newer
-            try:
-                await self.lifecycle.restart(name, when=when, reason=f"updating to {release.version}",
-                                             by=self.settings.name)
-                restarted.append(name)
-            except Exception as error:  # noqa: BLE001 - LifecycleUnavailable, LifecycleError
-                left.append(f"{name}: {error}")
-        message = (f"server program {release.version} installed in {len(replaced)} place(s); "
-                   + (f"restarting {', '.join(restarted)} {when.replace('_', ' ')}" if restarted
-                      else "no server was running; they start on it next time"))
-        if left:
-            message += "; not restarted: " + "; ".join(left)
-        self.bus.emit("server.program_updated", None, version=release.version, restarted=restarted)
-        return True, message
+    def note(self, name: str) -> str:
+        """For its status card: where its program update stands, or ''."""
+        server = self._server(name)
+        newest = self.newest.version if self.newest else None
+        if name in self.restarting and name in self.lifecycle.planned:
+            return f"Project Reclaimer {self.restarting[name]} is out: it restarts after its game to install it"
+        if name in self.failed and name in self.self_updating():
+            return f"its own update failed: {self.failed[name]}"
+        if name in self.old_file:
+            return "its program still runs from the old file: it restarts onto the new one once nobody is on"
+        if server is not None and newest and _older(self.known_version(name), newest):
+            if self.settings.backend == "docker":
+                return f"Project Reclaimer {newest} is out: a new image is the update"
+            if not server.auto_update:
+                return f"pinned by its own file (auto_update off): Project Reclaimer {newest} is out"
+            due = time.strftime("%H:%M", time.localtime(max(self._out(), self.since.get(name, time.time())) + OVERDUE))
+            return f"Project Reclaimer {newest} is out: it should have updated itself by {due}"
+        return ""
+
+    def report(self) -> list[str]:
+        """U → The server program: each server's version, its auto_update, where its update stands and its warnings
+        about releases."""
+        lines = []
+        for server in self.settings.servers:
+            name = server.name
+            mine = self.known_version(name) or "not known yet"
+            how = "auto_update on" if server.auto_update else "auto_update off (pinned by its own file)"
+            warned = [warning for warning in self.warnings.of(name) if warning.rule.area == "updates"]
+            note = "" if warned else self.note(name)  # a warning says it better
+            lines.append(f"{name}: Project Reclaimer {mine} · {how}" + (f" · {note}" if note else ""))
+            lines.extend(f"  {warning.line()}" for warning in warned)
+        return lines
 
     def status(self) -> dict[str, Any]:
         return {"pending": self.pending.version if self.pending else None, "running": self.running_versions(),
-                "installing": self.installing, "last_installed": self.last_installed,
                 "self_updating": sorted(self.self_updating()),
-                "newest": self.newest.version if self.newest else None,
-                "taken_over": dict(self.taken), "failed": dict(self.failed), "updater": dict(self.updater)}
+                "newest": self.newest.version if self.newest else None, "restarting": dict(self.restarting),
+                "failed": dict(self.failed), "updater": dict(self.updater)}
 
 
-def _hours(hours: float) -> str:
-    return f"{hours:g} hour{'s' if hours != 1 else ''}"
+def _rules() -> dict[str, Any]:
+    try:
+        return load_rules()
+    except (RuleError, OSError) as error:
+        log.error("Huragok's warnings can't be read (%s): it carries on without them", error)
+        return {}
+
+
+def _older(mine: str | None, version: str | None) -> bool:
+    """`mine` is a release older than `version`; False when either isn't a version number."""
+    if not mine or not version:
+        return False
+    try:
+        return parse_version(str(mine)) < parse_version(str(version))
+    except UpdateError:
+        return False
+
+
+def _minutes(minutes: float) -> str:
+    return f"{minutes:g} minute{'s' if minutes != 1 else ''}"
+
+
+def _minutes_in(seconds: float) -> str:
+    minutes = int(max(0.0, seconds) // 60)
+    return "less than a minute in" if minutes < 1 else f"{minutes} minute{'s' if minutes != 1 else ''} in"
+
+
+def _clock(when: float) -> str:
+    """A time of day, with its date when it isn't today's."""
+    local = time.localtime(when)
+    if time.strftime("%Y-%m-%d", local) == time.strftime("%Y-%m-%d"):
+        return time.strftime("%H:%M", local)
+    return time.strftime("%d %b %H:%M", local).lstrip("0")
 
 
 STATUS_FRESH = 30.0  # seconds: 0.10 writes status.json every 2 s; older, it is a stopped process's

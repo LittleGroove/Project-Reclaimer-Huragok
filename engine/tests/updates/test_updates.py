@@ -490,26 +490,6 @@ def test_a_download_cut_short_is_never_used(tmp_path: Path) -> None:
         updates.fetch(serve_once(b"M" * 400, 400), 5, accept="application/octet-stream", size=2000)
 
 
-def test_the_server_program_has_a_larger_download_limit(tmp_path: Path, monkeypatch) -> None:
-    from huragok.core import web
-    from huragok.program import releases as serverupdates
-
-    asked: list[dict[str, Any]] = []
-
-    def fake_get(url: str, timeout: float, accept: str = "", **options: Any) -> bytes:
-        asked.append({"url": url, **options})
-        return b"x" * 10
-
-    monkeypatch.setattr(web, "fetch", fake_get)  # every download goes through it
-    release = serverupdates.ProgramRelease("0.9.20", "p", "", "https://x/p.exe", "p.exe", None, None, exe_size=10)
-    serverupdates.download_program(release, tmp_path)
-    assert asked == [{"url": "https://x/p.exe", "limit": web.MAX_PROGRAM_DOWNLOAD, "size": 10}]
-    assert web.MAX_PROGRAM_DOWNLOAD >= 300_000_000 > web.MAX_DOWNLOAD
-    serverupdates.download_program(serverupdates.ProgramRelease("0.9.20", "p", "", "https://x/q.exe", "q.exe"),
-                                   tmp_path)
-    assert asked[-1] == {"url": "https://x/q.exe", "limit": web.MAX_PROGRAM_DOWNLOAD}  # no size listed
-
-
 # A version that isn't a number, GitHub out of reach, a failed install retried --------------------------
 
 def test_a_release_tag_that_isnt_a_version_is_an_error_not_a_crash(tmp_path: Path, monkeypatch, run) -> None:
@@ -649,8 +629,6 @@ def test_the_update_screen_says_when_github_couldnt_be_asked(tmp_path: Path, mon
         result = run(supervisor.request("check_program_update", {}))
         assert not result.ok and result.message.startswith(
             "couldn't tell whether there's a newer server program: couldn't ask GitHub: couldn't reach GitHub")
-        result = run(supervisor.request("update_program", {}))
-        assert not result.ok and result.message.startswith("not installed: couldn't ask GitHub")
         monkeypatch.setattr(updates, "latest_release", lambda *a, **k: None)
         result = run(supervisor.request("check_update", {}))
         assert result.ok and result.message == f"Huragok {__version__} is the newest version"
@@ -820,9 +798,7 @@ def test_the_release_named_program_is_picked_by_version(tmp_path: Path) -> None:
     assert find_executable(tmp_path).name == "project-reclaimer-dedicated-v0.9.10.exe"
 
 
-def test_the_programs_version_answer_is_read_loosely_and_unknown_is_never_older(tmp_path: Path,
-                                                                              monkeypatch) -> None:
-    from huragok.program import releases as serverupdates
+def test_the_programs_version_answer_is_read_loosely_and_unknown_is_never_older(monkeypatch) -> None:
     from huragok.program.dedicated import Dedicated, ToolResult
 
     tool = Dedicated(Path("project-reclaimer.exe"))
@@ -831,17 +807,9 @@ def test_the_programs_version_answer_is_read_loosely_and_unknown_is_never_older(
                           ("0.9.19\n", "0.9.19"), ("nightly build abc123\n", "nightly build abc123")):
         monkeypatch.setattr(tool, "run_sync", lambda *a, text=text, **k: ToolResult(True, 0, text))
         assert tool.version() == version, text
-    from conftest import free_port
-
-    write_server_folder(tmp_path / "s", free_port())
-    settings = load(write_settings(tmp_path, tmp_path / "s"))
-    path = tmp_path / "project-reclaimer.exe"
-    monkeypatch.setattr(serverupdates, "program_version", lambda settings, path: "nightly build abc123")
-    assert serverupdates.as_new_as(settings, path, "0.9.20") == "nightly build abc123"  # kept, never replaced
-    monkeypatch.setattr(serverupdates, "program_version", lambda settings, path: None)
-    assert serverupdates.as_new_as(settings, path, "0.9.20") is None  # doesn't answer at all: an old program
-    monkeypatch.setattr(serverupdates, "program_version", lambda settings, path: "0.9.19")
-    assert serverupdates.as_new_as(settings, path, "0.9.20") is None
+    older = program_updates_module._older
+    assert older("nightly build abc123", "0.9.20") is False  # never called behind (or pinned)
+    assert older(None, "0.9.20") is False and older("0.9.19", "0.9.20") is True and older("0.9.20", "0.9.20") is False
 
 
 # The server program's releases: pulled ones, odd versions, swaps that fail -----------------------------
@@ -861,37 +829,35 @@ def program_service(root: Path, names: tuple[str, ...] = ("Alpha", "Beta"), clie
     return service, lifecycle, bus
 
 
-def test_a_pulled_release_is_dropped_and_never_installed(tmp_path: Path, monkeypatch, run, caplog) -> None:
+def test_a_pulled_releases_restarts_are_called_off(tmp_path: Path, monkeypatch, run, caplog) -> None:
     import time
 
-    from huragok.updates.program import OVERDUE
+    from huragok.updates.program import OVERDUE, REASON
     from testkit.manage import program_release, self_updating_root, serve_program
 
     root = self_updating_root(tmp_path, "Alpha", "Beta", body='backend = "process"\n')
-    for name in ("Alpha", "Beta"):
-        (root / "SERVERS" / name / "project-reclaimer.exe").write_bytes(b"0.9.20")
     service, lifecycle, bus = program_service(root)
 
     async def scenario() -> None:
         bus.emit("rcon.connected", "Alpha", version="0.9.20")
         bus.emit("rcon.connected", "Beta", version="0.9.20")
         serve_program(monkeypatch, program_release("0.9.21", published=time.time() - 600), b"broken 0.9.21")
-        await service.check()
+        await service.check()  # each restarts after its game, to install 0.9.21 as it starts
+        assert lifecycle.restarts == [(n, "after_game", REASON.format(version="0.9.21")) for n in ("Alpha", "Beta")]
         bus.emit("server.update_failed", "Alpha", reason="The download stopped before it finished")
-        await wait_for(lambda: "program" in lifecycle.jobs.get("Alpha", {}))
-        job, download = lifecycle.jobs["Alpha"]["program"], service.downloads["0.9.21"]
-        assert lifecycle.planned["Alpha"].reason == "updating to Project Reclaimer 0.9.21"
+        await wait_for(lambda: service.warnings.of("Alpha"))
+        assert service.warnings.of("Alpha")[0].rule.id == "release-overdue"  # its own update failed: at once
         # 0.9.21 is pulled: GitHub's latest is 0.9.20 again.
         serve_program(monkeypatch, program_release("0.9.20", published=time.time() - 86400), b"good 0.9.20")
         await service.check()
-        assert service.newest.version == "0.9.20" and service.taken == {} and not download.exists()
-        assert "program" not in lifecycle.jobs["Alpha"] and lifecycle.cancelled == ["Alpha"]
-        assert service.review(now=time.time() + OVERDUE + 1) == []  # nobody is behind 0.9.20
-        assert (await job.run()).startswith("left as it is: Project Reclaimer 0.9.21 is no longer the newest")
+        assert service.newest.version == "0.9.20" and service.restarting == {}
+        assert lifecycle.cancelled == ["Alpha", "Beta"] and lifecycle.planned == {}
+        assert await service.review(now=time.time() + OVERDUE + 1) == []  # nobody is behind 0.9.20
+        assert service.warnings.of("Alpha") == [] and service.warnings.of("Beta") == []
 
     with caplog.at_level(logging.INFO):
         run(scenario())
-    assert [(root / "SERVERS" / n / "project-reclaimer.exe").read_bytes() for n in ("Alpha", "Beta")] == [b"0.9.20"] * 2
+    assert lifecycle.jobs == {}  # nothing put in place, ever
     assert "Project Reclaimer 0.9.21 is no longer GitHub's newest release (0.9.20 is, again)" in caplog.text
 
 
@@ -929,83 +895,8 @@ def test_a_version_that_isnt_a_number_is_left_out(tmp_path: Path, monkeypatch, r
     assert caplog.text.count("[Beta] its console gives its version as 'unknown'") == 1
 
 
-def test_a_swap_that_keeps_failing_backs_off_then_waits_for_u(tmp_path: Path, monkeypatch, run, caplog) -> None:
-    import time
-
-    from huragok.program import releases as serverupdates
-    from testkit.manage import program_release, self_updating_root, serve_program
-
-    root = self_updating_root(tmp_path, "Alpha", body='backend = "process"\n')
-    serve_program(monkeypatch, program_release(published=time.time() - 3 * 3600), b"program 0.9.19")
-    monkeypatch.setattr(serverupdates, "swap_program", lambda *a: (_ for _ in ()).throw(
-        UpdateError("couldn't put the new program at x: [WinError 5] Access is denied")))
-    service, lifecycle, bus = program_service(root, ("Alpha",))
-
-    async def scenario() -> None:
-        bus.emit("rcon.connected", "Alpha", version="0.9.18")
-        await service.check()
-        later, waits = time.time() + program_updates_module.OVERDUE + 1, []
-        for attempt in range(4):
-            assert service.review(now=later) == ["Alpha"], attempt
-            await wait_for(lambda: "program" in lifecycle.jobs.get("Alpha", {}))
-            assert await lifecycle.jobs["Alpha"].pop("program").run() == ""
-            if attempt < 3:
-                waits.append(round((service.retry["Alpha"] - time.time()) / 3600))
-                assert service.review(now=service.retry["Alpha"] - 60) == []  # not before its time
-                later = max(service.retry["Alpha"], time.time() + program_updates_module.OVERDUE) + 1
-        assert waits == [1, 4, 12] and len(lifecycle.restarts) == 4
-        assert service.review(now=later + 10 ** 7) == []  # it waits for U now
-        assert lifecycle.flags[("Alpha", "program")] == "! Project Reclaimer 0.9.19 didn't install (4 tries): U to " \
-                                                         "try again"
-        assert service.note("Alpha") == "Project Reclaimer 0.9.19 didn't install in 4 tries: U to try again"
-        ok, message = await service.install(when="after_game")  # U: tried again
-        assert ok and "Alpha installs 0.9.19 after its game" in message and not service.swap_failures
-
-    with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert "Huragok tries again in 4 hours" in caplog.text
-    assert "That's 4 tries, so Huragok stops trying it by itself" in caplog.text
-
-
-def test_a_program_file_is_never_left_half_written(tmp_path: Path, monkeypatch) -> None:
-    import os
-
-    from conftest import free_ports, write_root
-
-    from huragok.program import releases as serverupdates
-    from huragok.program.releases import install_program, swap_program
-
-    root = tmp_path / "reclaimer"
-    names = ("Alpha", "Beta", "Gamma")
-    write_root(root, list(zip(names, free_ports(3))), 'backend = "attach"\n', staff(), exe=True)
-    for name in names:
-        (root / "SERVERS" / name / "project-reclaimer.exe").write_bytes(f"{name} old".encode())
-    settings = load(root / "settings.toml")
-    new = tmp_path / "project-reclaimer-dedicated-v0.9.19.exe"
-    new.write_bytes(b"new program")
-    real_replace = os.replace
-
-    def replace(source: Any, target: Any) -> None:
-        if str(source).endswith(".new") and Path(target).parent.name == "Beta":
-            raise PermissionError(13, "Access is denied", str(target))
-        real_replace(source, target)
-
-    monkeypatch.setattr(serverupdates.os, "replace", replace)
-    with pytest.raises(UpdateError, match=r"couldn't put the new program at .*Beta.*nothing was changed"):
-        install_program(settings, new, "0.9.19")
-    # All or nothing: Alpha (done first) is back on its old file too, and no half-written file is left.
-    assert [(root / "SERVERS" / n / "project-reclaimer.exe").read_bytes() for n in names] == [
-        b"Alpha old", b"Beta old", b"Gamma old"]
-    assert not list(root.glob("SERVERS/*/*.new"))
-    monkeypatch.setattr(serverupdates.shutil, "copy2", lambda *a, **k: (_ for _ in ()).throw(
-        OSError(28, "No space left on device")))
-    with pytest.raises(UpdateError, match="No space left on device; the old one is as it was"):
-        swap_program(settings, settings.server("Alpha"), new, "0.9.19")
-    assert (root / "SERVERS" / "Alpha" / "project-reclaimer.exe").read_bytes() == b"Alpha old"
-    assert not list(root.glob("SERVERS/*/*.new"))
-
-
-def test_a_stopped_servers_program_older_than_the_release_is_offered_on_u(tmp_path: Path, monkeypatch, run) -> None:
+def test_a_stopped_pinned_servers_program_older_than_the_release_is_said_once(tmp_path: Path, monkeypatch, run,
+                                                                              caplog) -> None:
     from types import SimpleNamespace
 
     from huragok.program import releases as serverupdates
@@ -1018,78 +909,18 @@ def test_a_stopped_servers_program_older_than_the_release_is_offered_on_u(tmp_pa
     monkeypatch.setattr(serverupdates, "program_version", lambda settings, path: versions[path.parent.name])
     serve_program(monkeypatch, program_release("0.9.20"), b"program 0.9.20")
     service, lifecycle, _ = program_service(root, clients={"Alpha": SimpleNamespace(version="0.9.20")})
-    found = run(service.check(quiet=False))
-    assert found is not None and service.newer is True and service.pending is found
-    ok, message = run(service.install(when="after_game"))
-    assert ok and message.startswith("server program 0.9.20 installed in 1 place(s); restarting Beta after game")
-    assert (root / "SERVERS" / "Beta" / "project-reclaimer.exe").read_bytes() == b"program 0.9.20"
-    assert (root / "SERVERS" / "Alpha" / "project-reclaimer.exe").read_bytes() == b"Alpha"
-
-
-def test_a_program_update_works_with_the_servers_on_another_drive(tmp_path: Path, monkeypatch) -> None:
-    """The old program was moved into records/ by a rename, which can't cross drives: with SERVERS on D: and Huragok on
-    C: every program update of those servers failed (audit 2026-11, 3.3). It's renamed beside itself (a running
-    program can be), copied to records/, and the renamed one removed."""
-    import errno
-    import os
-
-    from conftest import free_ports, write_root
-
-    from huragok.program import releases as serverupdates
-    from huragok.program.releases import install_program
-
-    root = tmp_path / "reclaimer"
-    write_root(root, list(zip(("Alpha",), free_ports(1))), 'backend = "attach"\n', staff(), exe=True)
-    program = root / "SERVERS" / "Alpha" / "project-reclaimer.exe"
-    program.write_bytes(b"Alpha old")
-    settings = load(root / "settings.toml")
-    new = tmp_path / "project-reclaimer-dedicated-v0.9.19.exe"
-    new.write_bytes(b"new program")
-    real_replace = os.replace
-
-    def replace(source: Any, target: Any) -> None:
-        if Path(source) == program and settings.records in Path(target).parents:
-            raise OSError(errno.EXDEV, "Invalid cross-device link")  # Windows: WinError 17
-        real_replace(source, target)
-
-    monkeypatch.setattr(serverupdates.os, "replace", replace)
-    install_program(settings, new, "0.9.19")
-    assert program.read_bytes() == b"new program"
-    kept = list((settings.records / "previous-program").rglob("*.exe"))
-    assert [k.read_bytes() for k in kept] == [b"Alpha old"]
-    assert not list(program.parent.glob(".project-reclaimer.exe.previous-*"))  # nothing ran it: removed
-
-
-def test_a_failed_program_update_rolls_back_across_drives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """All or nothing, with the old files on another drive (records/ on C:, SERVERS on D:): the copies already replaced
-    were put back by a rename, which can't cross drives, so they were left on the new program (audit 2026-11, 7.8)."""
-    import errno
-    import os
-
-    from conftest import free_ports, write_root
-
-    from huragok.program import releases as serverupdates
-    from huragok.program.releases import install_program
-
-    root = tmp_path / "reclaimer"
-    names = ("Alpha", "Beta")
-    write_root(root, list(zip(names, free_ports(2))), 'backend = "attach"\n', staff(), exe=True)
-    for name in names:
-        (root / "SERVERS" / name / "project-reclaimer.exe").write_bytes(f"{name} old".encode())
-    settings = load(root / "settings.toml")
-    new = tmp_path / "project-reclaimer-dedicated-v0.9.19.exe"
-    new.write_bytes(b"new program")
-    real_replace = os.replace
-
-    def replace(source: Any, target: Any) -> None:
-        crossing = (settings.records in Path(target).parents) != (settings.records in Path(source).parents)
-        if crossing:
-            raise OSError(errno.EXDEV, "Invalid cross-device link")  # Windows: WinError 17
-        if str(source).endswith(".new") and Path(target).parent.name == "Beta":
-            raise PermissionError(13, "Access is denied", str(target))
-        real_replace(source, target)
-
-    monkeypatch.setattr(serverupdates.os, "replace", replace)
-    with pytest.raises(UpdateError, match=r"couldn't put the new program at .*Beta.*nothing was changed"):
-        install_program(settings, new, "0.9.19")
-    assert [(root / "SERVERS" / n / "project-reclaimer.exe").read_bytes() for n in names] == [b"Alpha old", b"Beta old"]
+    with caplog.at_level(logging.INFO):
+        found = run(service.check(quiet=False))
+        assert found is not None and service.newer is True and service.pending is found
+        assert service.file_versions == {"Beta": "0.9.15"}
+        [pinned] = service.warnings.of("Beta")
+        assert pinned.rule.id == "release-pinned" and pinned.kind == "info" and not pinned.rule.discord
+        assert pinned.text == "Pinned to Project Reclaimer 0.9.15 by its own file (auto_update = false), so it stays " \
+                              "there: 0.9.20 is out."
+        assert service.warnings.of("Alpha") == []  # on 0.9.20
+        run(service.check())
+        run(service.review())
+    assert caplog.text.count("Pinned to Project Reclaimer 0.9.15") == 1  # said once, calmly
+    assert lifecycle.restarts == [] and lifecycle.jobs == {}  # a pinned server is never restarted for a release
+    assert [(root / "SERVERS" / n / "project-reclaimer.exe").read_bytes() for n in ("Alpha", "Beta")] == [
+        b"Alpha", b"Beta"]  # nothing put in place

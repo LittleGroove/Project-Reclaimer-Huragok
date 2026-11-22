@@ -39,6 +39,7 @@ from typing import Any, Callable
 
 from .. import __version__
 from ..core.files import write_atomic
+from ..core.handsoff import HANDS_OFF_RECORD, hands_off_lines  # noqa: F401 - hands_off_lines: the tests' way in
 
 log = logging.getLogger(__name__)
 
@@ -1666,33 +1667,206 @@ def new_commands(ctx: Context) -> list[str]:
 
 
 def new_starters(ctx: Context) -> list[str]:
-    """Starter packages newer than the host's PACKAGES/: each added once. One the host took out stays out."""
-    from importlib import resources
-
-    if not ctx.packages.is_dir():
-        return []
-    try:
-        starters = resources.files("huragok").joinpath("templates/packages")
-        names = sorted(child.name for child in starters.iterdir() if child.is_dir())
-    except (FileNotFoundError, OSError):
-        return []
-    offered = set(ctx.record.get("starters") or STARTERS_0_4_0)
-    said: list[str] = []
-    for name in names:
-        if name in offered or (ctx.packages / name).exists():
-            offered.add(name)
-            continue
-        said.append(f"{ctx.packages.name}/{name}: a new starter package")
-        if not ctx.dry:
-            with resources.as_file(starters.joinpath(name)) as source:
-                shutil.copytree(source, ctx.packages / name)
-            offered.add(name)
-    if not ctx.dry:
-        ctx.record["starters"] = sorted(offered)
-    return said
+    """Nothing, since 0.7.0: packages are gone (a new server is the program's own `dedicated init`), and with them
+    the starter packages this step added to PACKAGES/ (archived in tools/archive/starter-packages). A host's
+    PACKAGES/ is left as it is."""
+    return []
 
 
 # The steps that turn a word list from before into this version's: done already for one Huragok writes itself.
+
+# 0.7.0: Huragok keeps its hands off the servers (plans/server-files-audit/plan-0.7.0.md 4.10) ---------------------
+# Settings that no longer do anything go: left at Huragok's own default, the line goes (its note goes with it, notes.py);
+# a value of the host's own becomes a comment saying where it went, so they still see what they'd set. New settings
+# come in at their defaults, where a new host's file has them. The servers' folders aren't touched: what Huragok had
+# set in them is listed, once per server, by the warnings (hands_off_record, read by the Superintendent).
+
+HANDS_OFF_RETIRED: dict[tuple[str, str], tuple[object, str]] = {  # (table, key): (Huragok's default, where it went)
+    ("server_updates", "install"): ("ask", "each server installs its own releases (its auto_update); Huragok never does"),
+    ("server_updates", "fallback"): (True, "Huragok no longer installs releases: a server left behind is warned about"),
+    ("workshop_updates", "install"): ("after_game", "Huragok only restarts a server for a mod update ([workshop_updates] "
+                                                    "restart)"),
+    ("workshop_updates", "check_minutes"): (5, "each server's own [workshop] update_check_minutes decides; Huragok no "
+                                               "longer writes it"),
+    ("workshop_updates", "adopt"): (True, "a mod copied in by hand is warned about: list it in [workshop] items"),
+    ("workshop_updates", "layouts"): (True, "a mod's own layouts are copied into content/Maps when you ask (G → 4 → L)"),
+    ("setup", "share"): (["game"], "each server uses the game and content folders its own dedicated.toml names; "
+                                   "Huragok no longer shares folders between servers"),
+    ("setup", "packages_folder"): ("PACKAGES", "packages are gone: a new server is the program's own init"),
+    ("setup", "auto_update"): (True, "a new server is the program's own init; each server's own auto_update decides"),
+    ("setup", "download_game_files"): (True, "game files are fetched only when you ask (I, or start.cmd repair)"),
+}
+HANDS_OFF_NOTE = "Not read since 0.7.0: {why}."
+PROGRAM_CHECK_DEFAULT_HOURS = 1  # 0.6's [server_updates] check_hours default: becomes 0.7.0's check_minutes default
+READ_SETTINGS = {"CONTENT", "DATA", "BANS", "AUTO_UPDATE", "WORKSHOP_ITEMS", "WORKSHOP_UPDATE_CHECK_MINUTES",
+                 "WORKSHOP_STEAMCMD", "WORKSHOP_USERNAME", "WORKSHOP_PROVISIONER"}
+
+
+def hands_off(ctx: Context) -> list[str]:
+    """0.7.0's settings.toml: retired settings out (or made comments), check_hours as check_minutes, [workshop_updates]
+    restart, [stats] relay and follow_renames in."""
+    from ..core.tomledit import comment_out_table_key, remove_table_key, set_table_key
+
+    data = _read(ctx.settings_path)
+    if not data:  # a file that can't be read (or holds nothing) is never touched
+        return []
+    name = ctx.settings_path.name
+    said: list[str] = []
+    actions: list[Callable[[], object]] = []
+
+    def table(key: str) -> dict[str, Any]:
+        value = data.get(key)
+        return value if isinstance(value, dict) else {}
+
+    workshop = table("workshop_updates")
+    if workshop and "restart" not in workshop:
+        restart = workshop.get("install") != "off"  # the host had chosen no automatic mod swaps: no restarts either
+        said.append(f"{name}: [workshop_updates] restart = {str(restart).lower()} added: a server is restarted to put "
+                    "in a mod update its map in use holds up (new in 0.7.0)")
+        actions.append(lambda: set_table_key(ctx.settings_path, "workshop_updates", "restart", restart))
+    program = table("server_updates")
+    if program and "check_hours" in program and "check_minutes" not in program:
+        hours = program.get("check_hours")
+        minutes = 15 if hours == PROGRAM_CHECK_DEFAULT_HOURS or not isinstance(hours, (int, float)) else round(hours * 60)
+        said.append(f"{name}: [server_updates] check_hours = {hours} is check_minutes = {minutes} now")
+        actions.append(lambda: _rename_key(ctx.settings_path, "server_updates", "check_hours", "check_minutes",
+                                           max(5, minutes)))
+    for (section, key), (default, why) in HANDS_OFF_RETIRED.items():
+        values = table(section)
+        if key not in values:
+            continue
+        if values[key] == default:
+            said.append(f"{name}: [{section}] {key} taken out: {why} (0.7.0)")
+            actions.append(lambda s=section, k=key: remove_table_key(ctx.settings_path, s, k))
+        else:
+            said.append(f"{name}: [{section}] {key} made a comment: {why} (0.7.0)")
+            actions.append(lambda s=section, k=key, w=why: comment_out_table_key(ctx.settings_path, s, k,
+                                                                                 HANDS_OFF_NOTE.format(why=w)))
+    if "stats" not in data:
+        said.append(f"{name}: [stats] relay = true added: Huragok's stats relay, now with a switch (new in 0.7.0)")
+        actions.append(lambda: _insert_template_block(ctx.settings_path, "eventlog", "stats"))
+    if "follow_renames" not in data:
+        said.append(f"{name}: follow_renames = true added: a server renamed in its dedicated.toml stays the same "
+                    "server (new in 0.7.0)")
+        actions.append(lambda: _insert_template_block(ctx.settings_path, None, "follow_renames"))
+    if ctx.dry or not said:
+        return said
+    ctx.backup(ctx.settings_path)
+    _record_what_huragok_set(ctx, workshop)
+    for action in actions:
+        action()
+    return said
+
+
+def _record_what_huragok_set(ctx: Context, workshop: dict[str, Any]) -> None:
+    """records/hands-off-0.7.0.json: what Huragok had set in the servers' folders before 0.7.0, from its own records,
+    for the one warning per server that lists it (Superintendent). Nothing in the folders changes."""
+    from ..program.environment import setting_name, taken_over
+
+    every: list[str] = []
+    minutes = workshop.get("check_minutes", 5)
+    if isinstance(minutes, int) and not isinstance(minutes, bool) and minutes > 0:
+        every.append(f"[workshop] update_check_minutes = {minutes} (from settings.toml's [workshop_updates] "
+                     "check_minutes)")
+    folders: dict[str, list[str]] = {}
+    for variable, done in taken_over(ctx.records).items():
+        short = variable.removeprefix("RECLAIMER_DEDICATED_")
+        for folder, value in done.items():
+            what = setting_name(short) if short in READ_SETTINGS else short.lower()
+            folders.setdefault(folder, []).append(f"{what} = {value} (from {variable}, set where Huragok ran)")
+    servers: dict[str, list[str]] = {}
+    try:
+        kept = json.loads((ctx.records / "workshop-mods.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        kept = {}
+    for entry in kept.get("adopted", []) if isinstance(kept, dict) else []:
+        if isinstance(entry, dict) and entry.get("server") and entry.get("item"):
+            servers.setdefault(str(entry["server"]), []).append(
+                f"Workshop item {entry['item']} ({entry.get('title') or 'a mod'}) in [workshop] items, for a copy put "
+                "in by hand")
+    record = {"every": every, "folders": folders, "servers": servers}
+    try:
+        ctx.records.mkdir(parents=True, exist_ok=True)
+        write_atomic(ctx.records / HANDS_OFF_RECORD, json.dumps(record, indent=1) + "\n")
+    except OSError as error:
+        log.warning("Couldn't keep what Huragok had set in the servers' folders (%s): %s", HANDS_OFF_RECORD, error)
+
+
+
+
+KEY_LINE = re.compile(r"^[A-Za-z_][\w-]*\s*=")
+HEADER_LINE = re.compile(r"^\[")
+
+
+def _template_block(thing: str) -> list[str]:
+    """A new host's lines for one setting at the top of settings.toml (its notes, then it) or one table (its header,
+    notes and settings), word for word."""
+    from .notes import template_text
+
+    lines = template_text("settings.toml").splitlines()
+    if thing.startswith("[") is False and any(line.startswith(f"[{thing}]") for line in lines):
+        start = next(n for n, line in enumerate(lines) if line == f"[{thing}]")
+        end = start + 1
+        while end < len(lines) and lines[end].strip() and not HEADER_LINE.match(lines[end]):
+            end += 1
+        return lines[start:end]
+    at = next(n for n, line in enumerate(lines) if line.startswith(f"{thing} ="))
+    start = at
+    while start > 0 and lines[start - 1].startswith("#"):
+        start -= 1
+    return lines[start:at + 1]
+
+
+def _insert_template_block(path: Path, after_table: str | None, thing: str) -> bool:
+    """Put a new host's block for `thing` where a new host's file has it: after the last setting at the top of the file
+    (after_table None), or after the last setting of [after_table], one blank line before it. False when that place
+    can't be found: then it goes where tomledit puts a new table, at the end."""
+    from ..core.tomledit import set_table_key, set_top_key
+
+    raw = path.read_bytes().decode("utf-8")
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    lines = raw.splitlines()
+    if after_table is None:
+        end = next((n for n, line in enumerate(lines) if HEADER_LINE.match(line)), len(lines))
+        keys = [n for n in range(end) if KEY_LINE.match(lines[n])]
+    else:
+        start = next((n for n, line in enumerate(lines) if line.strip() == f"[{after_table}]"), None)
+        if start is None:
+            keys = []
+        else:
+            end = next((n for n in range(start + 1, len(lines)) if HEADER_LINE.match(lines[n])
+                        or lines[n].startswith("# ──")), len(lines))
+            keys = [n for n in range(start + 1, end) if KEY_LINE.match(lines[n])]
+    block = _template_block(thing)
+    if not keys:
+        if after_table is None:
+            set_top_key(path, thing, True)
+        else:
+            set_table_key(path, thing, block[-1].split("=")[0].strip(), True)
+        return False
+    at = keys[-1] + 1
+    lines[at:at] = ["", *block]
+    write_atomic(path, newline.join(lines) + (newline if raw.endswith(("\n", "\r")) else ""), newline="")
+    return True
+
+
+def _rename_key(path: Path, table: str, old: str, new: str, value: object) -> None:
+    """[table] old = … becomes new = value, on its line (its note goes with the old one; notes.py adds the new one's)."""
+    raw = path.read_bytes().decode("utf-8")
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    lines = raw.splitlines()
+    start = next((n for n, line in enumerate(lines) if line.strip() == f"[{table}]"), None)
+    if start is None:
+        return
+    for n in range(start + 1, len(lines)):
+        if HEADER_LINE.match(lines[n]):
+            break
+        if re.match(rf"^{re.escape(old)}\s*=", lines[n]):
+            lines[n] = f"{new} = {value}"
+            write_atomic(path, newline.join(lines) + (newline if raw.endswith(("\n", "\r")) else ""), newline="")
+            return
+
+
 WORD_LIST_STEPS = ("0.5.1/automod-layout-note", "0.5.1/automod-order", "0.6.0/automod-reports")
 # A step's key is never changed once a release has it: hosts' records/files.json list the steps done by key, and a
 # renamed key would run its step again.
@@ -1728,6 +1902,7 @@ STEPS: list[Step] = [
     Step("0.6.0/watchdog-memory", "[watchdog] memory only warns unless turned on", watchdog_memory),
     Step("0.6.1/discord-built", "what 0.6.0 kept as notes, for what's built now, back as it was set", discord_built),
     Step("0.7.0/every-server-moderation", "[automod] across_servers on: moderation is every server's", every_server_moderation),
+    Step("0.7.0/hands-off", "settings Huragok no longer uses out, and 0.7.0's new ones in", hands_off),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.

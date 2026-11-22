@@ -69,8 +69,6 @@ class ManageController:
             return [(server, Result(True, "ok", f"reply to {options.get('text')}"))]
         if verb == "check_program_update":
             return [("Huragok", Result(True, "server program 0.9.19 is out (Alpha 0.9.18)", "notes"))]
-        if verb == "update_program":
-            return [("Huragok", Result(True, f"installed; restarting {options.get('when')}"))]
         return [(server, Result(True, "done"))]
 
     def request_quit(self) -> None:

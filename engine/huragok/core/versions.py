@@ -1,10 +1,11 @@
-"""Every version of a host's file that Huragok keeps, with where it came from: a playlist before and after each
-change Huragok makes to it, and a change made by hand, found the next time Huragok looks.
+"""Every version of a host's file that Huragok keeps, with where it came from: a playlist (or a custom game) before
+and after each write Huragok makes at the host's asking (a copy from another server, a version put back), and a
+change made by hand, found the next time Huragok looks.
 
     records/<kind>/<owner>/<file name>/<YYYYMMDD-HHMMSS>[-n]/<file name>   the file as it was
                                                               /about.json   when, how it was made, where from
 
-`kind` is "playlists", `owner` a server's slug. Each version is a folder of its own, so the window and a second
+`kind` is "playlists" or "custom-games", `owner` a server's slug. Each version is a folder of its own, so the window and a second
 window keeping versions at once never write the same file; nothing here is thrown away by itself (they're small).
 """
 
@@ -95,12 +96,18 @@ def keep(records: Path, kind: str, owner: str, path: Path, how: str, source: str
     return Version(target / path.name, now, how, source, digest, draft)
 
 
+def keep_current(records: Path, kind: str, owner: str, path: Path) -> Version | None:
+    """Before Huragok writes over a file at the host's asking: the file as it is, kept when it isn't the newest
+    version kept (the first time Huragok sees it, or after someone changed it by hand); None when it is, or there's
+    no file. Raises OSError: a write that can't keep what it replaces doesn't go ahead."""
+    how = BY_HAND if any(not v.draft for v in versions(records, kind, owner, path.name)) else FIRST
+    return keep(records, kind, owner, path, how)
+
+
 def seen(records: Path, kind: str, owner: str, path: Path) -> Version | None:
-    """Before Huragok changes a file, and when it lists them: the file as it is, kept when it isn't the newest
-    version kept (the first time Huragok sees it, or after someone changed it by hand). Never raises."""
+    """When Huragok lists them: the file as it is, kept as keep_current keeps it. Never raises."""
     try:
-        how = BY_HAND if any(not v.draft for v in versions(records, kind, owner, path.name)) else FIRST
-        return keep(records, kind, owner, path, how)
+        return keep_current(records, kind, owner, path)
     except OSError:
         return None
 
@@ -120,4 +127,4 @@ def read(version: Version) -> str:
     return version.copy.read_text(encoding="utf-8")
 
 
-__all__ = ["ABOUT", "FIRST", "BY_HAND", "Version", "versions", "keep", "seen", "keep_text", "read"]
+__all__ = ["ABOUT", "FIRST", "BY_HAND", "Version", "versions", "keep", "keep_current", "seen", "keep_text", "read"]

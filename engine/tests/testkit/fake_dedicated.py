@@ -16,9 +16,9 @@ The setup commands, with output shaped like the real program's (v0.9.18; ODST's 
 - `dedicated check`: game files, content, bans, each server's playlist (3+ games, every map and game
   known), unique names and ports; writes the scripted modes into content/Game Modes/Project Reclaimer
   on the first check, like the real one; "Everything is ready." or "Error: …" with exit code 2;
-- `dedicated content [words]`, `dedicated playlist [list | show FILE | new NAME --maps --games
-  [--vote-seconds N] [--replace]]`, `dedicated mods` (installs [workshop] items as fake folders),
-  `dedicated reload`, `dedicated status`.
+- `dedicated content [words]`, `dedicated playlist [list | show FILE]`, `dedicated mods` (installs [workshop]
+  items as fake folders), `dedicated reload`, `dedicated status` (Huragok no longer asks for `playlist new`: it
+  makes no playlists, 0.7.0).
 
 Workshop items behave as the real program's do (tested 2026-10-18): an installed item (one with a
 reclaimer-workshop-version.json receipt) is kept as it is ("installed"), even when Steam has a newer
@@ -219,6 +219,9 @@ class Folder:
                     continue
             for path in sorted(modes.rglob("*.bin")):
                 found.append((path.stem, "Slayer"))
+            for path in sorted(modes.rglob("*.rmeg")):  # 0.10's scripted modes: named by their header
+                named = re.search(r'^name\s*=\s*"([^"]+)"', path.read_text(encoding="utf-8"), re.MULTILINE)
+                found.append((named.group(1) if named else path.stem, "Slayer"))
         if (self.game / "halo3" / "game_variants").is_dir():
             found.extend(H3_VARIANTS)
         return found
@@ -281,7 +284,13 @@ class Folder:
         if ref.lower() in names:
             return True
         if ref.startswith("Game Modes/"):
-            return (self.content / ref).is_file()
+            path = self.content / ref
+            if path.suffix.lower() == ".json" and path.is_file():  # one it can't read is left out (0.10)
+                try:
+                    json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    return False
+            return path.is_file()
         return False
 
     def playlist_path(self, ref: str) -> Path:
@@ -306,6 +315,8 @@ class Folder:
             problems.append((0, f"{path.name}: a playlist needs 3 or more games"))
         seen = set()
         for number, game in enumerate(games, 1):
+            if "campaign" in game or "odst" in game:  # 0.10's co-op entries: a mission, not a map and a game type
+                continue
             pair = (str(game.get("map")), str(game.get("game")))
             same = (pair[0].lower(), pair[1].lower(), json.dumps(game.get("rules")), json.dumps(game.get("options")))
             if same in seen and duplicates:  # as 0.9.18-0.9.21: `check` says it, `playlist show` doesn't; a name
@@ -403,6 +414,12 @@ def cmd_check(folder: Folder) -> int:
     if items:
         install_items(folder, items)
     print(f"Workshop       {len(items)} managed item(s)" if items else "Workshop       no managed items")
+    for sub in ("Game Modes", "Maps"):  # as 0.10 does: a file it can't read is left out, and said so
+        for path in sorted((folder.content / sub).rglob("*.json")) if (folder.content / sub).is_dir() else []:
+            try:
+                json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                print(f"Skipped content file {path}: Invalid custom game: {error}")
     rcon = folder.settings.get("rcon", {}).get("password", "")
     print(f"RCON           127.0.0.1 · tools on this machine only" if rcon else
           "RCON           off (set a password under [rcon] to turn it on)")
@@ -425,9 +442,25 @@ def cmd_check(folder: Folder) -> int:
                 for number, why in folder.game_problems(path, duplicates=True):  # as the program says them:
                     said = why if why.startswith("Game ") or not number else f"Game {number}: {why}"  # "Game 2: …"
                     problems.append(f"Server '{name}': {block['playlist']}: {said}")
-            if {"map", "game", "variant"} & set(block):
-                problems.append(f"Server '{name}': choose one of playlist, variant, or map and game")
+            if {"map", "game", "variant", "playlists"} & set(block):
+                problems.append(f"Server '{name}': choose one of playlist, playlists, variant, or map and game")
             what = f"playlist {path.name}"
+        elif "playlists" in block:  # 0.10.1's playlists by lobby size: each file read as `playlist` is
+            entries = block["playlists"] if isinstance(block["playlists"], list) else []
+            if not 1 <= len(entries) <= 16:
+                problems.append(f"Server '{name}': playlists: name 1 to 16 playlists")
+            for entry in entries:
+                ref = str(entry.get("file", "")) if isinstance(entry, dict) else ""
+                path = folder.playlist_path(ref)
+                if not path.is_file():
+                    problems.append(f"Server '{name}': cannot read {ref}: The system cannot find the file specified.")
+                    continue
+                for number, why in folder.game_problems(path, duplicates=True):
+                    said = why if why.startswith("Game ") or not number else f"Game {number}: {why}"
+                    problems.append(f"Server '{name}': {ref}: {said}")
+            if {"map", "game", "variant"} & set(block):
+                problems.append(f"Server '{name}': choose one of playlist, playlists, variant, or map and game")
+            what = "playlists " + ", ".join(str(e.get("file", "")) for e in entries if isinstance(e, dict))
         elif "campaign" in block:
             what = f"campaign {block['campaign'].get('mission', '')}"
         elif "odst" in block:
@@ -573,35 +606,6 @@ def cmd_playlist(folder: Folder, words: list[str]) -> int:
                 print(f"Error: {len(bad)} of {len(games)} games cannot be played; `dedicated content` lists the names this server has")
             return 2
         print("Every game is installed.")
-        return 0
-    if sub == "new":
-        rest = words[1:]
-        maps = option(rest, "--maps", "") or ""
-        games = option(rest, "--games", "") or ""
-        vote = int(option(rest, "--vote-seconds", "20") or 20)
-        replace = "--replace" in rest
-        rest = [w for w in rest if w != "--replace"]
-        name = rest[0] if rest else ""
-        if not name or not maps or not games:
-            print("Error: playlist new needs a name, --maps and --games")
-            return 2
-        entries = [{"map": m.strip(), "game": g.strip()} for m in maps.split(",") for g in games.split(",")]
-        path = folder.folder / "playlists" / f"{slugify(name)}.playlist.json"
-        if path.exists() and not replace:
-            print(f"Error: {path.relative_to(folder.folder).as_posix()} exists; --replace overwrites it")
-            return 2
-        bad = [e for e in entries if not folder.known_map(e["map"]) or not folder.known_game(e["game"])]
-        if bad:
-            print(f"Error: no map or game type is called \"{bad[0]['map']}\" / \"{bad[0]['game']}\"; "
-                  "dedicated content lists the names")
-            return 2
-        if len(entries) < 3:
-            print("Error: a playlist needs 3 or more games")
-            return 2
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"version": 2, "name": name, "vote_seconds": vote, "games": entries}, indent=2) + "\n",
-                        encoding="utf-8")
-        print(f"Wrote {path.relative_to(folder.folder).as_posix()} · {len(entries)} games")
         return 0
     print(f"Error: unknown playlist command {sub}")
     return 2

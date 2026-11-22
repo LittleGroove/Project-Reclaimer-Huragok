@@ -50,7 +50,6 @@ from huragok.core.requests import Result
 from huragok.core.runner import PartRunner
 from huragok.core.settings import load
 from huragok.core.web import UpdateError
-from huragok.games.halo3 import Playlist, PlaylistError, new_playlist
 from huragok.huragok import Huragok
 from huragok.players.relay import Relay
 from huragok.players.router import CommandRouter
@@ -71,7 +70,6 @@ from huragok.updates.engine import UpdateService
 from huragok.updates.program import ProgramUpdateService
 from huragok.window.controllers import RemoteController
 from huragok.window.dashboard import Menu
-from huragok.window.screens import manage as menu_manage_module
 from huragok.window.screens import setup as menu_setup_module
 from huragok.window.tui import Interruptions, format_listing, wrap_cell
 
@@ -166,46 +164,37 @@ def test_a_second_supervisor_in_the_same_folder_is_refused(tmp_path: Path, monke
     assert "Huragok is already running from this folder (process 4242)." in both(capsys)
 
 
-def test_update_program_asks_before_installing(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_update_program_only_looks(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Since 0.7.0 each server installs its own releases: `update --program` shows the newest and where each server
+    stands, and installs nothing, whatever it's given (--yes, and --now from before 0.7.0)."""
     path = write_root(tmp_path / "reclaimer", [("Alpha", free_port())])
-    answers: list[str] = []
-    monkeypatch.setattr("huragok.window.tui.is_terminal", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt="": answers.pop(0))
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("nothing to ask"))
     sent: list[str] = []
 
     def send(records: Path, verb: str, server: str = "all", wait: float = 15.0, **options: Any) -> mailbox.Reply:
         sent.append(verb)
-        if verb == "check_program_update":
-            return mailbox.Reply(True, "server program 0.9.19 is out (Alpha 0.9.18)", "- a fix")
-        return mailbox.Reply(True, f"installing; restarting {options.get('when')}")
+        return mailbox.Reply(True, "server program 0.9.19 is out (Alpha 0.9.18)",
+                             "Alpha: Project Reclaimer 0.9.18 · auto_update off (pinned by its own file)")
 
     monkeypatch.setattr(cli.mailbox, "send", send)
-    # A supervisor is running: it does the install, once the host says yes.
-    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)
-    answers.append("n")
-    assert cli.main(["-c", str(path), "update", "--program"]) == 0
-    assert "Not installed." in both(capsys) and sent == ["check_program_update"]
-    answers.append("y")
-    assert cli.main(["-c", str(path), "update", "--program", "--now"]) == 0
+    monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: 4242)  # a supervisor is running: asked
+    assert cli.main(["-c", str(path), "update", "--program", "--yes", "--now"]) == 0
     text = both(capsys)
-    assert "Asking Huragok (process 4242) to install it…" in text and "restarting now" in text
-    # No supervisor: the release is fetched here, and put in place only after a yes.
+    assert sent == ["check_program_update"] and "server program 0.9.19 is out" in text
+    assert "Alpha: Project Reclaimer 0.9.18 · auto_update off" in text
+    assert "Huragok doesn't install Project Reclaimer releases (0.7.0)" in text
+    # No supervisor: the release is looked up here; the servers' versions aren't known.
     monkeypatch.setattr(lock_module, "running_supervisor", lambda settings: None)
     monkeypatch.setattr(serverupdates, "latest_program_release", lambda repository: PROGRAM_RELEASE)
-    answers.append("n")
     assert cli.main(["-c", str(path), "update", "--program"]) == 0
     text = both(capsys)
-    assert "Huragok isn't running, so the servers' versions aren't known" in text and "Not installed." in text
-
-    def offline(release: ProgramRelease, folder: Path) -> Path:
-        raise UpdateError("couldn't reach GitHub: offline")
-
-    monkeypatch.setattr(serverupdates, "download_program", offline)
-    assert cli.main(["-c", str(path), "update", "--program", "--yes"]) == 1
-    assert "Not installed: couldn't reach GitHub: offline" in both(capsys)
-    monkeypatch.setattr("huragok.window.tui.is_terminal", lambda: False)  # from a script: nothing to ask
+    assert f"Newest server program: Project Reclaimer {PROGRAM_RELEASE.version}" in text
+    assert "Alpha: auto_update off (pinned by its own file)" in text
+    assert "Huragok isn't running, so the versions the servers run aren't known" in text
+    monkeypatch.setattr(serverupdates, "latest_program_release", lambda repository: (_ for _ in ()).throw(
+        UpdateError("couldn't reach GitHub: offline")))
     assert cli.main(["-c", str(path), "update", "--program"]) == 1
-    assert "To install it:" in both(capsys)
+    assert "Couldn't look for server program releases: couldn't reach GitHub: offline" in both(capsys)
 
 
 def test_update_asks_then_hands_the_install_to_the_running_supervisor(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -254,9 +243,10 @@ def test_check_names_the_problems_and_the_switched_off_commands(tmp_path: Path, 
     root = tmp_path / "reclaimer"
     write_server_folder(root / "SERVERS" / "Alpha", free_port(), name="Alpha", rcon_password=None)
     path = write_settings(root, None, "[watchdog]\nenabled = false\n", staff())
-    assert cli.main(["-c", str(path), "check"]) == 1
+    cli.main(["-c", str(path), "check"])
     text = both(capsys)
-    assert "PROBLEM  RCON is off" in text and "!health*" in text and "* its part is switched off" in text
+    assert "none: Huragok keeps it on, watching its status.json" in text and "PROBLEM  RCON is off" not in text
+    assert "!health*" in text and "* its part is switched off" in text
 
 
 def test_setup_commands_refuse_with_the_reason(tmp_path: Path, capsys) -> None:
@@ -279,37 +269,26 @@ def test_setup_commands_refuse_with_the_reason(tmp_path: Path, capsys) -> None:
     with pytest.raises(SystemExit):
         cli.main(["-c", str(missing / "settings.toml"), "content"])
     assert "Problem:" in both(capsys)
-    broken = root / "PACKAGES" / "broken"
-    broken.mkdir(parents=True)
-    (broken / "package.toml").write_text('name = "Broken"\n[server]\nname = "x"\n', encoding="utf-8")
+    # What `new` took before 0.7.0 is refused with where it went, and nothing is made.
     assert cli.main(["-c", str(settings_path), "new", "Delta", "--package", "broken", "--no-start"]) == 2
-    assert "Package broken is broken:" in both(capsys)
-    # A port free a moment ago can be another program's by the time `new` looks, or one this test's servers already
-    # name (only written in their files, nothing holds it, so the system can hand it out again): CI's Windows.
-    for _ in range(5):
-        made = cli.main(["-c", str(settings_path), "new", "Delta", "--port", str(free_port())])
-        text = both(capsys)
-        if made == 0 or not ("already listens on port" in text or "is used by another server here" in text):
-            break
-    assert made == 0, text[-3000:]  # what `new` said: a CI run lost this with nothing to go by
-    assert "Made" in text and "Feet first into hell." in text and "Start Huragok to run it:" in text
-
-
-def test_package_commands_on_an_empty_folder_and_a_saved_package(tmp_path: Path, capsys) -> None:
-    settings_path = setup_root(tmp_path)
-    root = settings_path.parent
-    assert cli.main(["-c", str(settings_path), "package", "list"]) == 0
-    assert f"No packages in {root / 'PACKAGES'}" in both(capsys)
-    maps = root / "SERVERS" / ALPHA / "content" / "Maps"
-    maps.mkdir(parents=True, exist_ok=True)
-    (maps / "fort.mvar").write_bytes(b"x")
-    playlist = root / "SERVERS" / ALPHA / "playlists" / "slayer.playlist.json"  # a package keeps what it names
-    data = json.loads(playlist.read_text(encoding="utf-8"))
-    data["games"].append({"map": "Maps/fort.mvar", "game": "Slayer"})
-    playlist.write_text(json.dumps(data), encoding="utf-8")
-    assert cli.main(["-c", str(settings_path), "package", "save", ALPHA, "Mine"]) == 0
+    assert "--package is gone: since Huragok 0.7.0 `new` makes a bare server" in both(capsys)
+    assert cli.main(["-c", str(settings_path), "new", "Delta", "--port", "46000"]) == 2
+    assert "--port is gone" in both(capsys) and not (root / "SERVERS" / "Delta").exists()
+    assert cli.main(["-c", str(settings_path), "new", "Delta", "--no-start"]) == 0  # kept for scripts: it never starts
     text = both(capsys)
-    assert "Saved" in text and "playlists/slayer.playlist.json" in text and "content/Maps/fort.mvar" in text
+    assert "Made" in text and "Feet first into hell." in text and "Start Huragok to run it:" in text
+    assert cli.main(["-c", str(settings_path), "new", "Delta"]) == 1
+    assert "exists already" in both(capsys)
+
+
+def test_package_is_gone_and_says_where_it_went(tmp_path: Path, capsys) -> None:
+    """Packages are gone in 0.7.0: `package`, with anything after it, says where they went for one release."""
+    settings_path = setup_root(tmp_path)
+    for words in (["package"], ["package", "list"], ["package", "save", ALPHA, "Mine"]):
+        assert cli.main(["-c", str(settings_path), *words]) == 2
+        text = both(capsys)
+        assert "package is gone: Huragok 0.7.0 has no packages" in text and "G → 1 → C" in text
+    assert not (settings_path.parent / "PACKAGES").exists()
 
 
 def test_importing_nothing_and_importing_many(tmp_path: Path, capsys) -> None:
@@ -328,8 +307,15 @@ def test_importing_nothing_and_importing_many(tmp_path: Path, capsys) -> None:
 
 def test_playlist_and_steam_commands_refuse_clearly(tmp_path: Path, capsys, monkeypatch) -> None:
     settings_path = setup_root(tmp_path)
-    assert cli.main(["-c", str(settings_path), "playlist", "use"]) == 2
-    assert "Name the playlist file to use" in both(capsys)
+    before = (settings_path.parent / "SERVERS" / ALPHA / "dedicated.toml").read_text(encoding="utf-8")
+    for gone in (["use", "slayer"], ["new", "Night", "--maps", "Guardian"]):
+        assert cli.main(["-c", str(settings_path), "playlist", gone[0]]) == 2
+        text = " ".join(both(capsys).split())
+        assert f"playlist {gone[0]} is gone: Huragok no longer makes playlists or changes what a server plays" in text
+        assert "name it in the server's own [[server]] block (playlist =" in text
+    assert (settings_path.parent / "SERVERS" / ALPHA / "dedicated.toml").read_text(encoding="utf-8") == before
+    assert cli.main(["-c", str(settings_path), "playlist", "show"]) == 2
+    assert "Name the playlist: its file, or its name in playlists/" in both(capsys)
     monkeypatch.setattr(steamsetup, "status", lambda settings: SteamStatus(None, "", "", [], 0, 1))
 
     def no_install(target: Path, say: Any = print, timeout: float = 900.0) -> Path:
@@ -391,17 +377,28 @@ def test_held_lines_are_logged_when_the_terminal_fails(caplog) -> None:
 
 
 def test_a_setting_that_cannot_be_written_says_so(tmp_path: Path, run, monkeypatch) -> None:
+    """0.7.0: D writes only Huragok's own settings for a server (H), through the server's manager into settings.toml
+    (its dedicated.toml is shown, never written). A settings.toml that can't be written is said, and nothing changes."""
     settings_path = manage_root(tmp_path)
+    controller = ManageController(settings_path)
+    settings = controller.settings
+    bus = EventBus()
+    state = ServerState("Alpha")
+    fleet = Fleet(settings, FakeBackend(settings, bus, {"Alpha": state}), bus)
+    fleet.add(settings.servers[0], FakeClient(state), state)  # type: ignore[arg-type]
+    controller.verb = fleet.verb  # type: ignore[method-assign]  # the window's requests reach the real manager
 
-    def locked(config: Path, server: str, setting: Any, value: Any) -> None:
+    def locked(*args: Any, **options: Any) -> None:
         raise OSError("read-only")
 
-    monkeypatch.setattr(menu_manage_module, "write", locked)
+    monkeypatch.setattr(manager_module, "set_server_setting", locked)
+    before = settings_path.read_bytes()
     terminal = FakeTerminal()
-    keys = ["1", "ENTER", "1", "ENTER", "3", "ENTER", *"8", "ENTER", "x", "ESC", "ESC", "ESC"]  # Joining -> max_players
-    menu = Menu(ManageController(settings_path), terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
+    keys = ["1", "ENTER", "H", "ENTER", "1", "ENTER", "N", "ESC", "ESC", "ESC"]  # Huragok's own -> autostart: off
+    menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
     run(menu.screen_settings())
-    assert "Couldn't write dedicated.toml: read-only" in printed(terminal)
+    assert "Alpha: couldn't edit settings.toml: read-only" in printed(terminal)
+    assert settings_path.read_bytes() == before and settings.servers[0].autostart  # still on, as the file says
 
 
 def setup_menu(settings_path: Path, keys: list[str]) -> tuple[Menu, FakeTerminal, SetupController]:
@@ -458,34 +455,20 @@ def test_the_content_screen_copes_with_an_unreadable_listing(tmp_path: Path, run
     assert "couldn't read the content listing: the listing has no Maps: section" in printed(terminal)
 
 
-def test_viewing_a_package_shows_its_broken_playlist_and_its_items(tmp_path: Path, run) -> None:
+def test_a_new_server_refuses_a_bad_name_and_reports_a_failed_build(tmp_path: Path, run, monkeypatch) -> None:
     settings_path = setup_root(tmp_path)
-    package = settings_path.parent / "PACKAGES" / "odd"
-    (package / "playlists").mkdir(parents=True)
-    (package / "package.toml").write_text('name = "Odd"\ndescription = "an odd one"\n[workshop]\nitems = [123456]\n',
-                                          encoding="utf-8")
-    (package / "playlists" / "bad.playlist.json").write_text("{not json", encoding="utf-8")
-    menu, terminal, controller = setup_menu(settings_path, ["v", "1", "ENTER", "ESC"])
-    assert run(menu._choose_package(controller.settings)) == "cancel"
-    text = printed(terminal)
-    assert "bad.playlist.json:" in text and "Workshop items: [123456]" in text
-
-
-def test_a_new_server_refuses_a_bad_player_count_and_reports_a_failed_build(tmp_path: Path, run, monkeypatch) -> None:
-    settings_path = setup_root(tmp_path)
-    keys = ["ENTER", *"Zed", "ENTER", "ENTER", "N", "ENTER", *"lots", "ENTER", "ESC"]  # asked again: Esc leaves
-    menu, terminal, _ = setup_menu(settings_path, keys)
+    menu, terminal, _ = setup_menu(settings_path, [*".hidden", "ENTER", "x"])
     run(menu.screen_new())
-    assert "'lots' isn't a player count from 1 to 127" in printed(terminal)
+    assert "a name starting with . or _ is a folder Huragok ignores" in printed(terminal)
 
-    def no_room(settings: Any, spec: Any, tool: Any, say: Any = print) -> Any:
+    def no_room(settings: Any, name: Any, tool: Any, say: Any = print) -> Any:
         raise SetupError("no room on the drive")
 
     monkeypatch.setattr(menu_setup_module, "create_server", no_room)
-    keys = ["ENTER", *"Zed", "ENTER", "ENTER", "N", "ENTER", "ENTER", "Y", "x"]
-    menu, terminal, _ = setup_menu(settings_path, keys)
+    menu, terminal, _ = setup_menu(settings_path, [*"Zed", "ENTER", "x"])
     run(menu.screen_new())
     assert "Not made: no room on the drive" in printed(terminal)
+    assert not (settings_path.parent / "SERVERS" / "Zed").exists()
 
 
 def test_browsing_a_long_list_asks_for_words_first(tmp_path: Path, run) -> None:
@@ -506,79 +489,98 @@ def test_the_playlists_screen_with_no_files_and_with_a_broken_one(tmp_path: Path
     for path in folder.glob("*.playlist.json"):
         path.unlink()
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["E", "ESC"]), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["S", "ESC"]), RecentLog())  # type: ignore[arg-type]
     run(menu._playlists(controller.settings, fake_tool(), server, Catalogue()))
     text = printed(terminal)
-    assert "(no playlists in playlists/ yet)" in text and "Build one first." in text
+    assert "(no playlists in playlists/ yet)" in text and "There are none to pick: a playlist is made by hand in" in text
     (folder / "bad.playlist.json").write_text("{not json", encoding="utf-8")
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["E", "1", "ENTER", "ESC"]), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["P", "1", "ENTER", "ESC"]), RecentLog())  # type: ignore[arg-type]
     run(menu._playlists(controller.settings, fake_tool(), server, Catalogue()))
     text = printed(terminal)
     assert "(can't read it:" in text and text.count("bad.playlist.json") >= 2  # in the list, then when picked
 
 
-def test_building_with_no_game_types_builds_nothing(tmp_path: Path, run) -> None:
-    settings_path = setup_root(tmp_path)
-    menu, terminal, _ = setup_menu(settings_path, ["1", "ENTER", "ESC"])
-    catalogue = Catalogue(maps=[Entry("Guardian", "guardian", "map")],
-                          game_types=[Entry("Slayer", "Slayer", "game type")])
-    assert run(menu._pick_pairs(catalogue)) is None
-    assert "No game types picked, so nothing was built." in printed(terminal)
+def test_writing_a_playlist_the_host_chose_says_what_went_wrong(tmp_path: Path, run, monkeypatch) -> None:
+    """A copy or a version put back: the program's refusal is its own words with what writing it anyway does, asked
+    once; a program that can't be asked is said and asked the same way; a file that can't be written, or whose
+    version can't be kept first, is left as it was and said."""
+    from huragok.core import versions
+    from huragok.program import plays as plays_module
+    from huragok.program.dedicated import DedicatedError
 
-
-def test_saving_a_playlist_reports_what_the_server_program_cannot_play(tmp_path: Path, run, monkeypatch) -> None:
     settings_path = setup_root(tmp_path)
     controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    tool = fake_tool()
+    settings = controller.settings
+    server = settings.servers[0]
+    dest = server.folder / "playlists" / "nowhere.playlist.json"
+    text = json.dumps({"version": 2, "name": "Nowhere", "games": [{"map": f"Nowhere {n}", "game": "Slayer"}
+                                                                  for n in range(3)]})
 
-    def save_with(keys: list[str], playlist: Playlist) -> tuple[bool, str]:
+    def window(keys: list[str]) -> tuple[Menu, FakeTerminal]:
         terminal = FakeTerminal()
-        menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
-        return run(menu._save_playlist(tool, server, playlist)), printed(terminal)
+        return Menu(controller, terminal, StrictKeyboard(keys), RecentLog()), terminal  # type: ignore[arg-type]
 
-    # Every game names a map the server doesn't have: taking them out would leave nothing, so it isn't offered.
-    nowhere = new_playlist(server.folder, "Nowhere")
-    for number in range(3):
-        nowhere.add(f"Nowhere {number}", "Slayer")
-    ok, text = save_with(["L"], nowhere)
-    assert not ok and "The server program won't play it as it is, so it isn't saved:" in text
-    assert "game 1 (Slayer on Nowhere 0):" in text and "Take out" not in text
-    assert "Not saved: playlists/nowhere.playlist.json stays as it was; the draft is in its history" in text
-    assert not nowhere.path.exists()  # nothing refused is ever written
-    # The program refuses the file without naming a game: what it said, as it said it.
-    from huragok.program import plays as plays_module
+    def asked(keys: list[str]) -> tuple[bool, str]:
+        menu, terminal = window(keys)
+        said = run(menu._checked_or_asked(settings, server, dest, text, "What copying anyway does.", "Copy it anyway"))
+        return said, " ".join(re.sub(r"\x1b\[[0-9;]*m", "", printed(terminal)).split())
 
+    ok, said = asked(["N"])
+    assert not ok and "Alpha Server: its server program won't play it as it is:" in said
+    assert "game 1 (Slayer on Nowhere 0):" in said and "What copying anyway does. Copy it anyway?" in said
+    assert not dest.exists() and not list(server.folder.rglob("*huragok-check*"))
+    # The program refuses the file without naming a game: what it said, as it said it; yes goes ahead.
     monkeypatch.setattr(plays_module, "_refusals", lambda text, name: [])
-    ok, text = save_with(["L"], nowhere)
-    assert not ok and "won't play it as it is" in text and "Take out" not in text
+    ok, said = asked(["Y"])
+    assert ok and "won't play it as it is" in said and "Copy it anyway?" in said
     monkeypatch.undo()
-    # The file can't be written.
-    fine = new_playlist(server.folder, "Fine")
-    for map_name in ("Guardian", "Valhalla", "The Pit"):
-        fine.add(map_name, "Slayer")
 
-    def locked(self: Playlist, program_version: str | None = None) -> Path:
-        raise PlaylistError("locked")
+    def no_program(*args: Any, **kwargs: Any) -> Any:
+        raise DedicatedError("no server program here")
 
-    monkeypatch.setattr(Playlist, "save", locked)
-    ok, text = save_with([], fine)
-    assert not ok and "Not saved: locked" in text
+    monkeypatch.setattr(menu_setup_module, "tool_for", no_program)
+    ok, said = asked(["N"])
+    assert not ok and "Alpha Server: its server program can't check it (no server program here)." in said
+    monkeypatch.undo()
+    source = tmp_path / "source.playlist.json"
+    source.write_text(text, encoding="utf-8")
+
+    def locked(source: Path, target: Path) -> None:
+        raise OSError("locked")
+
+    monkeypatch.setattr(menu_setup_module, "copy_replacing", locked)
+    menu, terminal = window([])
+    assert menu._write_kept(settings, server, dest, source, "copied", "Bravo's") is False
+    assert "Alpha Server: not written: locked" in printed(terminal) and not dest.exists()
+    monkeypatch.undo()
+    playing = server.folder / "playlists" / "slayer.playlist.json"
+    before = playing.read_bytes()
+
+    def full(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(versions, "keep", full)
+    menu, terminal = window([])
+    assert menu._write_kept(settings, server, playing, source, "copied", "Bravo's") is False
+    assert "the version it would replace couldn't be kept in the history first (disk full)" in printed(terminal)
+    assert playing.read_bytes() == before
 
 
-def test_adding_workshop_items_before_steamcmd_is_set_up_says_so(tmp_path: Path, run, monkeypatch) -> None:
+def test_g_3_shows_the_workshop_items_as_the_hosts_to_write(tmp_path: Path, run, monkeypatch) -> None:
+    """0.7.0: G -> 3 no longer adds or removes items (Huragok never writes [workshop] items): it shows them and says
+    where they're written."""
     settings_path = setup_root(tmp_path)
     monkeypatch.setattr(steamsetup, "status", lambda settings: SteamStatus(None, "", "", [], 0, 1))
     controller = SetupController(settings_path)
     server = controller.settings.servers[0]
     terminal = FakeTerminal()
-    keys = ["A", *"123456", "ENTER", "ESC"]
-    menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["ESC"]), RecentLog())  # type: ignore[arg-type]
     run(menu._workshop(controller.settings, fake_tool(), server, Catalogue()))
     text = printed(terminal)
-    assert "items = [123456]" in text
-    assert "SteamCMD isn't set up with a signed-in account, so nothing can download yet: [S] first." in text
+    assert "Items in Alpha Server's dedicated.toml: none" in text and "[workshop] items is yours to write" in text
+    assert "Add items" not in text and "Remove items" not in text
+    assert "Install a mod's Forge layouts into Maps (only when you ask)" in text
 
 
 def test_the_steam_screen_offers_the_path(tmp_path: Path, run, monkeypatch) -> None:
@@ -589,12 +591,13 @@ def test_the_steam_screen_offers_the_path(tmp_path: Path, run, monkeypatch) -> N
     monkeypatch.setattr(steamsetup, "status", lambda settings: SteamStatus(exe, "settings.toml", "me", ["me"], 1, 1))
     monkeypatch.setattr(steamsetup, "cached_accounts", lambda executable: ["me"])
     monkeypatch.setattr(steamsetup, "signed_in", lambda executable, username, timeout=120.0: (True, ""))
-    monkeypatch.setattr(steamsetup, "configure", lambda settings, executable, username: [])
+    monkeypatch.setattr(steamsetup, "configure", lambda settings, executable, username: None)
     monkeypatch.setattr(steamsetup, "add_to_path", lambda folder: f"{folder} added on your PATH (new windows see it)")
-    menu, terminal, _ = setup_menu(settings_path, ["1", "ENTER", "Y", "x", "ESC"])
+    menu, terminal, _ = setup_menu(settings_path, ["1", "ENTER", "Y", "N", "x", "ESC"])
     run(menu.screen_steam())
     text = printed(terminal)
-    assert "me is signed in: the servers can download Workshop items." in text and "added on your PATH" in text
+    assert "me is signed in: Huragok can download game files with it." in text and "added on your PATH" in text
+    assert "written only when you ask, one server at a time" in text
 
 
 # What goes wrong at run time, as the log says it ---------------------------------------------------
@@ -670,7 +673,7 @@ def test_the_supervisor_says_which_check_a_skipped_mod_map_failed(tmp_path: Path
     text = messages(caplog)
     assert "[Alpha] a mod map can't be used: fixedHugeGrassTrapasRemix.map (its tag index is damaged)" in text
     assert "[Alpha]   why: its tag table (600 tags) runs to 0x1ca1a12c0, past the end of the map's tag data" in text
-    assert "ask its author (Workshop 3820687243) for a fixed upload; Huragok installs the fixed version" in text
+    assert "ask its author (Workshop 3820687243) for a fixed upload; the server installs the fixed version" in text
 
 
 def test_the_servers_mod_troubles_are_said_once_a_start_with_what_to_do(tmp_path: Path, caplog) -> None:
@@ -687,11 +690,18 @@ def test_the_servers_mod_troubles_are_said_once_a_start_with_what_to_do(tmp_path
         sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="update failed: Steam gave littlegroove no key "
                                                                       "for MCC's Workshop content")
         sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="installed")
+        for _ in range(4):  # every 5 s while the map in use holds the update up (S1): logged once an hour
+            sup.bus.emit("server.workshop", "Alpha", item=3820687243, text="installing the update failed (cannot move "
+                                                                          "x aside: Access is denied. (os error 5)); "
+                                                                          "trying again")
     text = messages(caplog)
+    assert text.count("Workshop 3820687243: installing the update failed (cannot move x aside") == 1
+    assert "[Alpha]   why: the mod's map is in use, so the downloaded version can't go in until the server restarts" in \
+        text
     assert text.count("[Alpha] Left out of the Forge library: Arena.") == 2  # once a start
     assert "[Alpha]   why: Forge offers fewer objects: those maps' objects are left out of the Forge library" in text
     assert "[Alpha]   why: a map or game variant file the server can't read is left out" in text
-    assert ("[Alpha]   why: files are missing from the installed copy: fetch it again (G → the server → 3 Workshop "
+    assert ("[Alpha]   why: files are missing from the installed copy: fetch it again (G → the server → 4 Workshop "
             "items and mods → I)") in text
     assert "[Alpha]   why: SteamCMD's account doesn't own MCC: sign in with one that does (I, SteamCMD)" in text
     levels = {r.getMessage(): r.levelno for r in caplog.records}
@@ -731,20 +741,14 @@ def test_auto_update_switched_in_the_file_is_noticed(tmp_path: Path, caplog) -> 
 
 
 def test_workshop_update_surfaces(tmp_path: Path, run, caplog) -> None:
-    """The Workshop service's quieter lines: not looking, Steam unreachable, all up to date, a leftover lock,
-    a restart that can't be planned, a server that updated the item itself."""
-    from testkit.workshop import ALPHA as WS_ALPHA, ITEM, NEW, OLD, FakeLifecycle, service_for, workshop_root
+    """The Workshop service's quieter lines: Steam unreachable, all up to date, a restart its console couldn't send,
+    a server that put the new version in itself."""
+    from testkit.workshop import ALPHA as WS_ALPHA, HELD, ITEM, OLD, UPDATED, FakeLifecycle, service_for, workshop_root
 
     from huragok.steam import SteamItem
-    from huragok.updates.workshop import WorkshopUpdateService
 
     settings_path, folder = workshop_root(tmp_path)
-    content = folder / "content"
     with caplog.at_level(logging.INFO):
-        idle = load(settings_path)
-        idle.workshop_updates.check_minutes = 0
-        run(WorkshopUpdateService(idle, EventBus(), FakeLifecycle()).run())  # type: ignore[arg-type]
-
         def unreachable(items: list[int]) -> dict[int, SteamItem]:
             raise UpdateError("couldn't reach Steam: refused")
 
@@ -755,40 +759,25 @@ def test_workshop_update_surfaces(tmp_path: Path, run, caplog) -> None:
         current = service_for(settings_path, FakeLifecycle(), {ITEM: SteamItem(ITEM, "HugeGrass", OLD, "")})
         run(current.check(quiet=False))
         assert "Last look at Steam:" in "\n".join(current.report())
+        lifecycle = FakeLifecycle()
+        lifecycle.refuse.add(WS_ALPHA)
+        refused = service_for(settings_path, lifecycle)
+        refused.titles[ITEM] = "HugeGrass"
 
-        class NoRestarts(FakeLifecycle):
-            async def restart(self, server: str, **options: Any) -> Any:
-                raise LifecycleUnavailable("it isn't running (stopping)")
+        async def lines() -> None:
+            refused.bus.emit("server.workshop", WS_ALPHA, item=str(ITEM), text=HELD)
+            await asyncio.sleep(0.05)
+            refused.bus.emit("server.workshop", WS_ALPHA, item=str(ITEM), text=HELD)  # said once an hour, not again
+            await asyncio.sleep(0.05)
+            current.bus.emit("server.workshop", WS_ALPHA, item=str(ITEM), text=UPDATED)
 
-        refused = service_for(settings_path, NoRestarts(), {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-
-        async def plan_then_swap() -> str:
-            await refused.check()
-            await asyncio.sleep(0.01)
-            (content / "workshop-install.lock").write_text("", encoding="utf-8")  # a crashed install's
-            (folder / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
-            return await refused.install(refused.settings.server(WS_ALPHA))
-
-        said = run(plan_then_swap())
-        assert said.startswith("Workshop updated") and not (content / "workshop-install.lock").exists()
-        async def server_does_it_itself() -> None:
-            refused._found(refused.settings.server(WS_ALPHA), ITEM, NEW, NEW + 1)
-            refused.bus.emit("server.workshop", WS_ALPHA, item=str(ITEM), text="installing the update")
-            await asyncio.sleep(0.01)
-
-        run(server_does_it_itself())
-        assert not refused.waiting
-        assert run(refused.install(refused.settings.server(WS_ALPHA))) == "no Workshop update waiting any more"
-        assert run(refused.install_now(WS_ALPHA, "now")) == (False, "nothing is waiting: the server has the "
-                                                                    "newest version of every item")
-        assert run(refused.install_now("Ghost", "now"))[0] is False
+        run(lines())
+        assert lifecycle.sent == []
     text = messages(caplog)
-    assert "Not looking for new Workshop versions ([workshop_updates] check_minutes = 0)" in text
     assert "Couldn't look for new Workshop versions: couldn't reach Steam: refused" in text
     assert "Workshop: 1 item(s) looked at, every server has the newest" in text
-    assert "couldn't plan a restart for the Workshop update" in text and "installs at its next start" in text
-    assert "removed a leftover workshop-install.lock" in text
-    assert "the server installed the new version of HugeGrass itself" in text
+    assert text.count("couldn't restart it to put the new version of HugeGrass in (its console isn't connected)") == 1
+    assert "the server put the new version of HugeGrass in itself" in text
 
 
 def test_the_workshop_choice_on_the_updates_screen(tmp_path: Path, run) -> None:
@@ -796,18 +785,29 @@ def test_the_workshop_choice_on_the_updates_screen(tmp_path: Path, run) -> None:
         async def verb(self, verb: str, server: str = "all", **options: Any) -> list[tuple[str, Result]]:
             self.calls.append((verb, server, options))
             if verb == "check_workshop":
-                return [("Huragok", Result(True, "new versions waiting on Alpha",
-                                           "Alpha · 1 item(s) · new versions installed after the game\n"
-                                           "  3820687243 HugeGrass   installed 16 Oct 2026 · NEW VERSION WAITING"))]
-            return [("Huragok", Result(True, "Alpha: installing after this game"))]
+                return [("Huragok", Result(True, "every server has the newest version of its Workshop items; "
+                                                 "downloaded and waiting for a restart on Alpha",
+                                           "Alpha · 1 item(s) · the server installs its own mod updates\n"
+                                           "  3820687243 HugeGrass   installed 16 Oct 2026 · DOWNLOADED, WAITING FOR A "
+                                           "RESTART (the map is in use; restart is off)"))]
+            return [("Huragok", Result(True, "Alpha: restarting it to put HugeGrass in"))]
 
     controller = Controller(manage_root(tmp_path))
     terminal = FakeTerminal()
-    menu = Menu(controller, terminal, StrictKeyboard(["3", "A", "x"]), RecentLog())  # type: ignore[arg-type]
+    menu = Menu(controller, terminal, StrictKeyboard(["3", "R", "x"]), RecentLog())  # type: ignore[arg-type]
     run(menu.screen_update())
-    assert controller.calls == [("check_workshop", "all", {}), ("update_workshop", "all", {"when": "after_game"})]
+    assert controller.calls == [("check_workshop", "all", {}), ("update_workshop", "all", {})]
     text = printed(terminal)
-    assert "NEW VERSION WAITING" in text and "installing after this game" in text and "Workshop mods" in text
+    assert "WAITING FOR A RESTART" in text and "restarting it to put HugeGrass in" in text and "Workshop mods" in text
+
+    class Quiet(ManageController):  # nothing downloaded and held up: nothing to offer
+        async def verb(self, verb: str, server: str = "all", **options: Any) -> list[tuple[str, Result]]:
+            self.calls.append((verb, server, options))
+            return [("Huragok", Result(True, "new versions not in yet on Alpha", "  NEW VERSION ON STEAM"))]
+
+    quiet = Quiet(manage_root(tmp_path / "quiet"))
+    run(Menu(quiet, FakeTerminal(), StrictKeyboard(["3", "x"]), RecentLog()).screen_update())  # type: ignore[arg-type]
+    assert quiet.calls == [("check_workshop", "all", {})]
 
 
 def test_a_broken_server_folder_is_left_out_and_never_stops_the_others(tmp_path: Path, caplog) -> None:
@@ -1045,7 +1045,9 @@ def test_the_manager_logs_what_goes_wrong_while_a_server_runs(tmp_path: Path, mo
         assert manager.restart(when="after_game", reason="testing").ok
         assert manager.cancel().message == "the planned restart is cancelled"
         assert manager.restart(when="after_game", reason="testing").ok
-        await cycle(manager, clock, manager_module.AFTER_GAME_LIMIT + 1)
+        await cycle(manager, clock, 7200)  # no time limit: two hours on, it still waits for the game to end
+        assert manager.phase == "running" and manager.planned is not None
+        assert manager.restart(reason="testing").ok  # now instead: the usual countdown
         assert manager.phase == "countdown"
         assert manager.stop().message == "the countdown now ends in a stop"
         backend.up.clear()
@@ -1060,7 +1062,7 @@ def test_the_manager_logs_what_goes_wrong_while_a_server_runs(tmp_path: Path, mo
     assert f"[{SERVER}] could not announce (the connection dropped): Hello" in text
     assert f"[{SERVER}] autostart turned OFF" in text
     assert f"[{SERVER}] planned restart cancelled (testing)" in text
-    assert f"[{SERVER}] the game didn't end within" in text
+    assert f"[{SERVER}] the restart planned after game is now a restart now" in text
     assert f"[{SERVER}] the countdown now ends in a stop" in text
     assert f"[{SERVER}] the server exited on its own during the countdown" in text
 
@@ -1361,7 +1363,9 @@ def test_server_program_update_checks_say_what_they_found(tmp_path: Path, run, c
     monkeypatch.setattr(serverupdates, "latest_program_release", next_answer)
 
     async def scenario() -> None:
-        await service.run()
+        looking = asyncio.ensure_future(service.run())  # it doesn't look for releases; its warnings still go on
+        await asyncio.sleep(0.05)
+        looking.cancel()
         assert await service.check(quiet=False) is None
         assert await service.check(quiet=False) is None
         assert await service.check(quiet=False) == PROGRAM_RELEASE
@@ -1384,7 +1388,6 @@ def test_the_check_on_self_updating_servers_says_what_it_sees(tmp_path: Path, ru
     bus = EventBus()
     service = ProgramUpdateService(settings, bus, lifecycle, {"Alpha": ServerState("Alpha"),  # type: ignore[arg-type]
                                                               "Beta": ServerState("Beta")}, {})
-    later = time.time() + program_updates_module.OVERDUE + 1
 
     async def scenario() -> None:
         bus.emit("server.self_update", "Alpha", text="Automatic updates requested, but the update feed is disabled "
@@ -1392,42 +1395,30 @@ def test_the_check_on_self_updating_servers_says_what_it_sees(tmp_path: Path, ru
         bus.emit("server.update_downloading", "Beta", version="0.9.19")
         bus.emit("rcon.connected", "Alpha", version="0.9.18")
         bus.emit("rcon.connected", "Beta", version="0.9.18")
-        # Alpha said its updater is off: once the release is known it is taken over without waiting, but
-        # GitHub's download fails too; it is tried again within check_hours.
-        monkeypatch.setattr(serverupdates, "_get", lambda url, t, accept="": (_ for _ in ()).throw(
-            UpdateError("couldn't reach GitHub: offline")) if url.endswith("exe") else b"")
         await service.check()
-        await wait_for(lambda: ("Alpha", "program") in lifecycle.flags)
-        assert lifecycle.flags[("Alpha", "program")] == "! Project Reclaimer 0.9.19: the download failed"
-        assert lifecycle.restarts == [] and service.review() == []
-        serve_program(monkeypatch, release, b"program 0.9.19")
-        assert service.review(now=service.retry["Alpha"] + 1) == ["Alpha"]
-        await wait_for(lambda: lifecycle.restarts)
-        # The swap itself fails: the old program stays, the server starts on it.
-        monkeypatch.setattr(serverupdates, "swap_program", lambda *a: (_ for _ in ()).throw(UpdateError("disk full")))
-        assert await lifecycle.jobs["Alpha"]["program"].run() == ""
-        assert lifecycle.flags[("Alpha", "program")] == ("! Project Reclaimer 0.9.19 didn't install: tried again in "
-                                                         "1 hour (U to try now)")
-        # Beta: the file is put in place, yet it comes back on the old version (it runs another file).
-        monkeypatch.setattr(serverupdates, "swap_program", lambda *a: "put in place")
-        assert service.review(now=later, only="Beta") == ["Beta"]
-        await wait_for(lambda: "program" in lifecycle.jobs.get("Beta", {}))
-        assert await lifecycle.jobs["Beta"]["program"].run() == "put in place"
-        bus.emit("rcon.connected", "Beta", version="0.9.18")
-        assert lifecycle.flags[("Beta", "program")] == "! still on 0.9.18 after 0.9.19 was put in place"
-        assert service.review(now=later + 7200, only="Beta") == []  # not again this run
-        # A restart that can't be planned: it installs at the next start.
+        # Alpha said its updater is off: it won't update itself, so it's warned about at once (and restarted after its
+        # game all the same: its updater may be on by then).
+        [warning] = service.warnings.of("Alpha")
+        assert warning.rule.id == "release-overdue"
+        assert "(it said: Automatic updates requested, but the update feed is disabled" in warning.text
+        assert lifecycle.jobs == {}  # nothing put in place
+        # A restart that can't be planned is said once, and tried again at the next look.
 
         class Unplannable(ProgramLifecycle):
             async def restart(self, server: str, **options: Any) -> Any:
                 raise LifecycleUnavailable("backend = attach can't restart servers")
 
         service.lifecycle = Unplannable()
-        assert await service.take_over("Alpha", release, "asked for") == (True, "Alpha installs 0.9.19 at its "
-                                                                                "next start")
+        service.restarting.clear()
+        assert await service.review() == []
+        assert await service.review() == []
         # The look that goes wrong is logged and goes on.
         monkeypatch.setattr(program_updates_module, "REVIEW_SECONDS", 0.01)
-        monkeypatch.setattr(service, "review", lambda **k: 1 / 0)
+
+        async def broken(**options: Any) -> list[str]:
+            raise ZeroDivisionError("a fault")
+
+        monkeypatch.setattr(service, "review", broken)
         loop = asyncio.ensure_future(service._review_loop())
         await asyncio.sleep(0.05)
         loop.cancel()
@@ -1436,23 +1427,15 @@ def test_the_check_on_self_updating_servers_says_what_it_sees(tmp_path: Path, ru
         run(scenario())
     text = messages(caplog)
     assert ("[Alpha] auto_update is on, but the server says: Automatic updates requested, but the update feed is "
-            "disabled (local build or RECLAIMER_UPDATE_URL=off). Huragok installs new releases for it after its "
-            "game") in text
-    assert "[Beta] downloading Project Reclaimer 0.9.19 itself (auto_update)" in text
-    assert ("[Alpha] its own update failed (Automatic updates requested, but the update feed is disabled (local build "
-            "or RECLAIMER_UPDATE_URL=off)), but Huragok couldn't download Project Reclaimer 0.9.19 either: couldn't "
-            "reach GitHub: offline; it tries again within 1 hour") in text
-    assert "[Alpha] Project Reclaimer 0.9.19 didn't install: disk full; it starts on the old one" in text
-    assert "[Beta] still on 0.9.18 over an hour after 0.9.19 came out: Huragok installs Project Reclaimer 0.9.19" \
-           " after its game" in text
-    assert "[Beta] still on Project Reclaimer 0.9.18 after Huragok put 0.9.19 in place at " in text
-    assert "it runs another program file. Update that one by hand" in text
-    assert "[Alpha] couldn't plan a restart (backend = attach can't restart servers); it happens at its next start" \
-           in text
-    assert "Looking at the self-updating servers went wrong" in text
+            "disabled (local build or RECLAIMER_UPDATE_URL=off). Its new releases have to be put in its folder by "
+            "hand") in text
+    assert "[Beta] downloading Project Reclaimer 0.9.19 itself (auto_update): it restarts on it in a few seconds" in text
+    assert text.count("[Alpha] couldn't plan a restart onto Project Reclaimer 0.9.19: backend = attach can't restart "
+                      "servers") == 1
+    assert "Looking at the servers' releases went wrong" in text
 
 
-def test_self_updating_servers_huragok_cant_update_are_named(tmp_path: Path, run, caplog, monkeypatch, capsys) -> None:
+def test_self_updating_servers_huragok_cant_restart_are_named(tmp_path: Path, run, caplog, monkeypatch, capsys) -> None:
     root = self_updating_root(tmp_path, "Alpha", "Beta",
                               body='backend = "attach"\n[process]\ndisable_auto_update = true\n')
     settings = load(root / "settings.toml")
@@ -1469,10 +1452,9 @@ def test_self_updating_servers_huragok_cant_update_are_named(tmp_path: Path, run
         bus.emit("rcon.connected", "Alpha", version="0.9.18")
         bus.emit("rcon.connected", "Beta", version="0.9.18")
         await service.check(quiet=False)
-        assert service.review(now=time.time() + program_updates_module.OVERDUE + 1) == []
-        assert lifecycle.restarts == [] and lifecycle.jobs == {}
-        ok, message = await service.install(when="now")
-        assert not ok and "every server updates itself" in message
+        assert await service.review(now=time.time() + program_updates_module.OVERDUE + 1) == []
+        assert lifecycle.restarts == [] and lifecycle.jobs == {}  # attach: Huragok restarts nothing
+        assert [w.rule.id for w in service.warnings.of("Beta")] == ["release-overdue"]  # still warned about
         monkeypatch.setattr(serverupdates, "latest_program_release", lambda *a, **k: program_release("latest"))
         assert await service.check(quiet=False) is None
 
@@ -1480,39 +1462,14 @@ def test_self_updating_servers_huragok_cant_update_are_named(tmp_path: Path, run
         run(scenario())
     text = messages(caplog)
     assert ("[Alpha] auto_update is on, but the server says: Automatic updates requested, but the update feed is "
-            "disabled. Its new releases have to be installed another way") in text
-    assert ("Project Reclaimer 0.9.19 is out (running: Alpha 0.9.18, Beta 0.9.18); every server updates itself "
-            "(auto_update) within the hour.") in text
-    assert ("[Beta] still on Project Reclaimer 0.9.18 although 0.9.19 is out: its own update didn't happen, and with "
-            "backend = attach Huragok can't put the program in place") in text
+            "disabled. Its new releases have to be put in its folder by hand") in text
+    assert ("Project Reclaimer 0.9.19 is out (running: Alpha 0.9.18, Beta 0.9.18): Alpha, Beta install it themselves "
+            "(auto_update) within the hour") in text
     assert "The newest server program release has no version number (latest)" in text
     # check names the setting that does nothing any more.
     assert cli.main(["-c", str(root / "settings.toml"), "check"]) in (0, 1)
     out = both(capsys)
     assert "Settings that do nothing" in out and "settings.toml [process] disable_auto_update does nothing any more" in out
-
-
-def test_updates_from_u_reach_self_updating_servers_left_behind(tmp_path: Path, run, monkeypatch, caplog) -> None:
-    root = self_updating_root(tmp_path, "Alpha", "Beta", body='backend = "process"\n')
-    settings = load(root / "settings.toml")
-    release = program_release(published=time.time())
-    serve_program(monkeypatch, release, b"program 0.9.19")
-    lifecycle = ProgramLifecycle(up=("Alpha",))
-    clients = {"Alpha": SimpleNamespace(version="0.9.18"), "Beta": SimpleNamespace(version="0.9.18")}
-    service = ProgramUpdateService(settings, EventBus(), lifecycle, {  # type: ignore[arg-type]
-        "Alpha": ServerState("Alpha"), "Beta": ServerState("Beta")}, clients)  # type: ignore[arg-type]
-
-    async def scenario() -> None:
-        await service.check()
-        ok, message = await service.install(when="now")
-        assert ok and message == "Alpha installs 0.9.19 now; Beta update themselves (auto_update)"
-        assert lifecycle.restarts == [("Alpha", "now", "updating to Project Reclaimer 0.9.19")]
-        assert lifecycle.flags[("Alpha", "program")] == "Project Reclaimer 0.9.19: installs now"
-
-    with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert ("every server updates itself (auto_update) within the hour. Huragok makes sure each did, and installs it "
-            "after the game for one that didn't") in messages(caplog)
 
 
 def test_a_refresh_that_fails_is_logged_quietly(run, caplog) -> None:

@@ -5,7 +5,7 @@ Vergil (lore.py). Here the Huragok is the program: it holds what everything shar
 
     Huragok (this file)     the settings, the event bus, the database, every background task; its own services:
                             its updates (core/updates.py), the server program's (content/programupdates.py), the
-                            Workshop's (updates/workshop.py), the Workshop mods it keeps managed
+                            Workshop's restarts (updates/workshop.py), the Workshop mods' files watched
                             (content/workshopmods.py), the game files (content/gamefiles.py), the mod checks
                             (content/mods.py); the parts of both named parts below, each with its own context
       Superintendent        (superintendent.py) built on Huragok: keeps every server up
@@ -27,7 +27,8 @@ from typing import Any, Awaitable, Callable
 from . import __version__
 from .content.gamefiles import GameFiles, shared_target, sources
 from .content.mods import ModWatch
-from .content.workshopmods import WorkshopKeeper
+from .content.playswatch import PlaysWatch
+from .content.workshopmods import WorkshopFiles
 from .core import background, closing
 from .core.context import PartContext
 from .core.events import EventBus
@@ -84,16 +85,23 @@ class Huragok:
         fleet, lifecycle = self.superintendent.fleet, self.superintendent.lifecycle
         self.updates = UpdateService(settings, self.bus, self.relaunch_now)
         self.program_updates = ProgramUpdateService(settings, self.bus, lifecycle, self.superintendent.states,
-                                                    self.superintendent.clients)
-        self.workshop_updates = WorkshopUpdateService(settings, self.bus, lifecycle, tool=self.tool)
-        # Every Workshop mod the servers load kept up to date: hand copies taken over, new items fetched, layouts.
-        self.workshop_mods = WorkshopKeeper(settings, self.bus, lifecycle, self.workshop_updates)
+                                                    self.superintendent.clients, self.superintendent.warnings)
+        # The servers update their own Workshop mods: a restart when the map in use holds one up, and warnings.
+        warnings = self.superintendent.warnings
+        self.workshop_updates = WorkshopUpdateService(settings, self.bus, lifecycle, warnings=warnings)
+        # What the content folders hold that nothing keeps up to date, or that an update left behind: warnings only.
+        states = self.superintendent.states
+        self.workshop_mods = WorkshopFiles(settings, warnings, self.workshop_updates,
+                                           version_of=lambda server: getattr(states.get(server.name), "version", None))
         # What a server arrives without (a ban list, Halo 3's files…), put right before it starts.
-        self.game_files = GameFiles(settings, self.bus, self.tool, release=fleet.release)
+        self.game_files = GameFiles(settings, self.bus, self.tool, release=fleet.release,
+                                    warnings=self.superintendent.warnings)
         self.superintendent.listen(self.game_files)
         fleet.prelaunch = self.game_files.prelaunch
         fleet.live_extra = lambda: {"huragok_update": self.updates.status_text()}
         self.mods = ModWatch(settings, self.bus, self.spawn)
+        # What each server plays: its file health in the warnings catalogue, its own program's check after a change
+        self.plays = PlaysWatch(settings, self.bus, self.superintendent.warnings, self.spawn)
 
         for server in list(settings.servers):
             self.superintendent.add_server(server, listed=True)
@@ -219,47 +227,38 @@ class Huragok:
             self.stop_servers = False
             asyncio.get_running_loop().call_later(0.5, self.stop)  # after the reply is written
             return Result(True, "closing; the servers keep running")
-        if verb == "check_program_update":
+        if verb == "check_program_update":  # U -> The server program, `update --program`: a look, nothing installed
             release = await self.program_updates.check(quiet=False)
             status = self.program_updates.status()
             running = ", ".join(f"{n} {v}" for n, v in sorted(status["running"].items())) or "no server running"
+            report = self.program_updates.report()
             if release is None and self.program_updates.last_error:  # not "the newest": no answer to go by
                 return Result(False, f"couldn't tell whether there's a newer server program: "
-                                     f"{self.program_updates.last_error} ({running})")
+                                     f"{self.program_updates.last_error} ({running})", "\n".join(report))
             if release is None:
-                return Result(True, f"the servers are on the newest server program ({running})")
-            notes = "\n".join(summary(release.notes))
+                return Result(True, f"the servers are on the newest server program ({running})", "\n".join(report))
+            notes = summary(release.notes)
             newer = self.program_updates.newer  # a running server's version, or a stopped one's program file
             return Result(True, f"server program {release.version} is out ({running}); what's new: {release.page}"
                           if newer else f"newest release: {release.version} ({running}; whether it's newer isn't "
-                                        "known until a server is running)", notes or f"version {release.version}")
-        if verb == "update_program":
-            when = str(options.get("when") or "after_game")
-            ok, message = await self.program_updates.install(when=when, why=str(options.get("why") or "asked for"))
-            return Result(ok, message)
+                                        "known until a server is running)",
+                          "\n".join([*report, *(["What's new:", *(f"  {line}" for line in notes)] if notes else [])]))
         if verb == "check_workshop":
-            await self.workshop_updates.check(quiet=False)
-            waiting = self.workshop_updates.installable()
-            left = [name for name in self.workshop_updates.waiting_lists() if name not in waiting]
-            message = (f"new versions waiting on {', '.join(waiting)}" if waiting
-                       else "every server has the newest version of its Workshop items" if not left else
-                       "nothing for Huragok to install")
-            if left:  # a shared content folder: the server program swaps the item for all of them once nobody's on
-                message += (f"; {', '.join(left)} share their content folder, so the server program installs theirs "
-                            "once nobody's on")
+            waiting = await self.workshop_updates.check(quiet=False)
+            held = self.workshop_updates.held()
+            message = (f"new versions not in yet on {', '.join(waiting)}" if waiting
+                       else "every server has the newest version of its Workshop items")
+            if held:  # downloaded, and the map in use holds it up: what U can put in now
+                message += f"; downloaded and waiting for a restart on {', '.join(held)}"
             if self.workshop_updates.last_error:
                 message = f"couldn't ask Steam: {self.workshop_updates.last_error}"
             return Result(not self.workshop_updates.last_error, message, "\n".join(self.workshop_updates.report()))
         if verb == "update_workshop":
-            when = str(options.get("when") or "after_game")
-            results = [(name, await self.workshop_updates.install_now(name, when))
-                       for name in (options.get("servers") or self.workshop_updates.installable())]
+            results = [(name, self.workshop_updates.restart_now(name))
+                       for name in (options.get("servers") or self.workshop_updates.held())]
             if not results:
-                return Result(False, "no new Workshop version is waiting")
+                return Result(False, "no downloaded Workshop update is waiting for a restart")
             return Result(all(ok for _, (ok, _) in results), "; ".join(f"{n}: {m}" for n, (_, m) in results))
-        if verb == "workshop_look":
-            ok, message = self.workshop_mods.look_now(str(options.get("server") or ""))
-            return Result(ok, message)
         if verb == "game_files":
             return await self._get_game_files(str(options.get("kind") or "halo3"), str(options.get("how") or ""))
         if verb == "game_files_retry":
@@ -269,9 +268,8 @@ class Huragok:
 
     async def _get_game_files(self, kind: str, how: str) -> Result:
         """I's "get a game's files" (Halo 3's, the campaign's, ODST's, Reach's, CE's, Halo 2's): in the background, so
-        the window stays free; the servers waiting for them start
-        once they're in. `how`: "mcc" or "steamcmd" (asked by a person: a download is allowed whatever
-        [setup] download_game_files says), or "" for the best way there is."""
+        the window stays free; the servers waiting for them start once they're in. `how`: "mcc" or "steamcmd", or ""
+        for the best way there is."""
         if kind not in KINDS:
             return Result(False, f"'{kind}' isn't one of {', '.join(KINDS)}")
         target, why = shared_target(self.settings, kind)
@@ -380,8 +378,9 @@ class Huragok:
         self.spawn("update checks", self.updates.run, restart=False)
         self.spawn("server program updates", self.program_updates.run, restart=False)
         self.spawn("Workshop updates", self.workshop_updates.run)
-        self.spawn("Workshop mods kept managed", self.workshop_mods.run)
+        self.spawn("Workshop mods' files looked at", self.workshop_mods.run)
         self.spawn("mod checks", self.mods.run)
+        self.spawn("what the servers play", self.plays.run)
         if menu is not None:
             async def run_menu() -> None:
                 outcome = await menu.run()

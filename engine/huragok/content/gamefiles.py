@@ -1,26 +1,23 @@
-"""What a server arrives without, put right by Huragok itself.
+"""What a server's folder lacks: warned about, and put right only when the host asks (I, `start.cmd repair`).
 
 A server folder copied in from another Huragok folder (or from another PC) brings its dedicated.toml, which points
-at what it shared there: `game = "../../game"`, `bans = "../../bans.json"`. When those aren't here the server
-program refuses to start (no game files), or starts with an empty ban list and says nothing. So as soon as a
-server's folder is found, and again before each start, Huragok reads what its dedicated.toml names and:
+at what it had there: `game = "../../game"`, `bans = "../../bans.json"`. Huragok reads what its dedicated.toml names
+as soon as the folder is found and again before each start, and warns (core/serverwarnings.py, templates/
+warnings.toml), changing nothing: since 0.7.0 a server's folder is the host's.
 
-- a ban list that isn't there: one of its own, empty, in its folder, and the host told its old bans may have
-  stayed behind (Huragok's own bans are put on it by themselves);
-- a content folder that isn't there is made, with its four folders;
-- a game folder without Halo 3's files: the server is pointed at a game folder here that has them (this folder's
-  shared game/ first); with none, game/ is filled: copied from MCC when it's on this PC, otherwise downloaded with
-  SteamCMD ([setup] download_game_files). With neither, the server waits ("needs Halo 3's files: press I")
-  instead of failing its starts until it's FAULTED. ODST's files and the campaign missions, for a server that plays
-  them, the same way; and from Project Reclaimer 0.10 Halo: Reach's, Combat Evolved's and Halo 2's, for a server
-  whose map or playlist names their maps (those come from MCC alone: their SteamCMD depots aren't known yet);
-- a [workshop] steamcmd that isn't on this PC: this folder's SteamCMD (the one I set up) in its place;
-- a ban list shared with other servers (bans = "../../bans.json", what [setup] share gave new servers up to 0.4.4):
-  as the server is about to start (the moment it reads the path), a copy of it in the server's own folder, and the
-  server pointed at that. Every server keeps a ban list of its own (the host's call, 24 October): a /ban in game is
-  that server's, and Huragok puts its own bans on every server's. The copy has everything the shared one had (bans,
-  admins added from the console, the vote-kick immune list, VPN allowances): nothing is lost;
-- a start that fails because the program says files are missing (a map the copy left out) gets them too.
+- A game folder without the files it needs for what it plays (Halo 3's, ODST's, the campaign's, and from Project
+  Reclaimer 0.10 Reach's, CE's and Halo 2's, for a server whose map or playlist names their maps): the server waits
+  ("needs Halo 3's files: press I, or run start.cmd repair") instead of failing its starts until it's FAULTED. A
+  start that fails because the program says files are missing waits the same way.
+- A content folder or a ban list named outside its folder and not on this PC; a ban list shared with other servers
+  (a ban on one is a ban on all); a [workshop] steamcmd that isn't on this PC; Reach's files without its game and map
+  variants (0.10.0's init left them out).
+
+`repair` (start.cmd repair, and I → R in the window) puts them right when the host asks, each shown first: the game
+folder pointed at one here that has the files, the files got (copied from MCC on this PC, or downloaded with
+SteamCMD), a content folder or ban list of its own, this PC's SteamCMD in its [workshop] lines, Reach's variants from
+MCC. A version of its dedicated.toml is kept before the first change (content/quickactions.py's history). The I key
+gets a game's files into Huragok's own game/ when the host asks.
 
 Nothing here deletes or overwrites anything that's there.
 """
@@ -33,7 +30,7 @@ import logging
 import re
 import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -53,12 +50,12 @@ if TYPE_CHECKING:
     from ..core.settings import Settings
     from ..program.dedicated import Dedicated
     from ..core.events import Event, EventBus
+    from ..core.serverwarnings import Warnings
 
 log = logging.getLogger(__name__)
 
 EMPTY_BANS = {"players": [], "ips": []}
 CONTENT_FOLDERS = ("Maps", "Game Modes", "Images", "Mods")
-RETRY_SECONDS = 3600.0  # a fetch that failed isn't tried again by itself for this long (I tries at once)
 STILL_MISSING_SECONDS = 900.0  # a start that says files are missing this soon after they arrived: not fetched again
 
 
@@ -186,25 +183,101 @@ def server_missing(settings: Settings, server: ServerConfig, paths: ServerPaths,
     return lacking(paths.game, server_kinds(settings, server, paths, version))
 
 
-# Quick repairs: no copying, no downloading ----------------------------------------------------------------------
+# What a folder lacks: looked at, never changed ---------------------------------------------------------------------
+
+def ban_list_missing(paths: ServerPaths) -> bool:
+    """Its ban list is named outside its folder and isn't on this PC (one in its own folder that isn't there yet is
+    fine: the program writes it with the first ban)."""
+    return paths.bans.parent != paths.folder.resolve() and not paths.bans.exists()
+
+
+def ban_list_shared(paths: ServerPaths) -> bool:
+    """Its ban list is a file outside its folder: every server reading it shares its bans."""
+    return paths.bans.parent != paths.folder.resolve() and paths.bans.is_file()
+
+
+def content_missing(paths: ServerPaths) -> bool:
+    """Its content folder isn't there, and neither is the folder it'd be in (one that only isn't there yet the program
+    makes as it starts)."""
+    return not paths.content.exists() and not paths.content.parent.is_dir()
+
+
+def steamcmd_missing(paths: ServerPaths) -> bool:
+    """Its [workshop] steamcmd names a program that isn't on this PC."""
+    return bool(paths.steamcmd) and not Path(paths.steamcmd).is_file()
+
+
+def reach_variants_missing(paths: ServerPaths) -> bool:
+    """Reach's files without its game and map variants (0.10.0's `dedicated init --maps reach` leaves them out, and
+    with them Reach's own game types), in a game folder Huragok may add to (never MCC's own)."""
+    reach = paths.game / "haloreach"
+    return (reach / "haloreach.dll").is_file() and not (reach / "hopper_game_variants").is_dir() \
+        and not into_mcc(paths.game)
+
+
+def game_path_candidate(settings: Settings, paths: ServerPaths, plays_kind: str,
+                        kinds: list[str] | None = None) -> Path | None:
+    """For a game folder that isn't there, or has no Halo 3 at all: a game folder here that has what it needs
+    (`kinds`: every kind it needs, the one with the most of them first; Huragok's own game/ first on a tie). None for
+    a folder with Halo 3 in it (whatever other game it lacks: their files go beside Halo 3's), or when there's none."""
+    if (paths.game / "halo3" / "halo3.dll").is_file():
+        return None
+    candidates = [game for game in game_folders(settings) if game != paths.game and has_game_files(game)]
+    if plays_kind == "odst":
+        candidates = [game for game in candidates if has_odst_files(game)]
+    if kinds:
+        candidates.sort(key=lambda game: -sum(1 for kind in kinds if has(game, kind)))
+    return candidates[0] if candidates else None
+
+
+def findings(settings: Settings, server: ServerConfig, paths: ServerPaths,
+             missing_kinds: list[str]) -> list[tuple[str, str, Path | str | None, dict[str, Any]]]:
+    """What a server's folder lacks, as warnings (rule, key, the file it's about, fields): templates/warnings.toml's
+    game-files-missing, content-folder-missing, ban-list-missing, ban-list-shared, steamcmd-missing and
+    reach-variants-missing. Nothing is changed."""
+    from ..core.settings import launcher
+
+    run = launcher()
+    found: list[tuple[str, str, Path | str | None, dict[str, Any]]] = []
+    if missing_kinds:
+        found.append(("game-files-missing", "", paths.config, {
+            "game": str(paths.game), "what": _listed([LABELS[kind] for kind in missing_kinds]), "launcher": run}))
+    if content_missing(paths):
+        found.append(("content-folder-missing", "", paths.config, {"content": paths.content_raw, "launcher": run}))
+    if ban_list_missing(paths):
+        found.append(("ban-list-missing", "", paths.config, {"bans": paths.bans_raw, "launcher": run}))
+    elif ban_list_shared(paths):
+        found.append(("ban-list-shared", "", paths.config, {"bans": str(paths.bans), "launcher": run}))
+    if steamcmd_missing(paths):
+        found.append(("steamcmd-missing", "", paths.config, {"steamcmd": paths.steamcmd, "server": server.name,
+                                                             "launcher": run}))
+    if reach_variants_missing(paths):
+        found.append(("reach-variants-missing", "", paths.config, {"game": str(paths.game), "launcher": run}))
+    return found
+
+
+def _listed(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+# Repairs, when the host asks: each shown first ----------------------------------------------------------------------
 
 def _write_bans(path: Path) -> None:
     path.write_text(json.dumps(EMPTY_BANS, indent=2) + "\n", encoding="utf-8")
 
 
 def fix_bans(settings: Settings, paths: ServerPaths) -> str | None:
-    """A ban list that isn't there: one of its own, in its folder (every server keeps its own)."""
+    """A ban list named outside its folder that isn't on this PC: one of its own, empty, in its folder."""
     from ..core.tomledit import set_top_key
 
-    if paths.bans.exists():
+    if not ban_list_missing(paths):
         return None
     behind = ("if this server came from another Huragok folder or PC, its bans stayed there: copy that bans.json "
               "over this one to keep them (Huragok's own bans are put on it by themselves)")
     own = paths.folder / "bans.json"
     if not own.exists():
         _write_bans(own)
-    if paths.bans != own.resolve():
-        set_top_key(paths.config, "bans", "bans.json")
+    set_top_key(paths.config, "bans", "bans.json")
     return f"its ban list ({paths.bans_raw}) wasn't there: it has its own now, {own}; {behind}"
 
 
@@ -222,10 +295,11 @@ def merge_ban_lists(own: dict[str, Any], shared: dict[str, Any]) -> dict[str, An
 
 
 def own_bans(settings: Settings, paths: ServerPaths) -> str | None:
-    """A server that shares a ban list gets one of its own, a copy of the shared one, as it's about to start."""
+    """A server that shares a ban list gets one of its own, a copy of the shared one, when the host asks (a server
+    already running keeps reading the list it started with until its next start)."""
     from ..core.tomledit import set_top_key
 
-    if paths.bans.parent == paths.folder.resolve() or not paths.bans.is_file():
+    if not ban_list_shared(paths):
         return None  # its own already; or none at all (fix_bans)
     own = paths.folder / "bans.json"
     shared_data = json.loads(paths.bans.read_text(encoding="utf-8") or "{}")
@@ -243,8 +317,8 @@ def own_bans(settings: Settings, paths: ServerPaths) -> str | None:
     _record_shared(settings, paths.bans)
     set_top_key(paths.config, "bans", "bans.json")
     return (f"its ban list is its own now ({own}), a copy of the one it shared ({paths.bans}): every ban, admin and "
-            "allowance on it stays. From here a /ban in game is this server's alone; Huragok's own bans are put on "
-            "every server's")
+            "allowance on it stays. From its next start a /ban in game is this server's alone; Huragok's own bans "
+            "are put on every server's")
 
 
 def _record_shared(settings: Settings, shared: Path) -> None:
@@ -261,49 +335,36 @@ def _record_shared(settings: Settings, shared: Path) -> None:
 
 
 def fix_content(paths: ServerPaths) -> str | None:
+    """A content folder named where there's no such folder on this PC: one of its own, with its four folders."""
     from ..core.tomledit import set_top_key
 
-    if paths.content.is_dir():
+    if not content_missing(paths):
         return None
-    if paths.content.exists():
-        return None  # a file of that name: the host's to sort out (`dedicated check` says so)
-    target, said = paths.content, f"made its content folder {paths.content} (it wasn't there)"
-    if not paths.content.parent.is_dir():
-        target = paths.folder / "content"
-        set_top_key(paths.config, "content", "content")
-        said = (f"its content folder ({paths.content_raw}) names a folder that isn't on this PC: it has its own "
-                f"content/ now")
+    target = paths.folder / "content"
     for sub in CONTENT_FOLDERS:
         (target / sub).mkdir(parents=True, exist_ok=True)
-    return said
+    set_top_key(paths.config, "content", "content")
+    return (f"its content folder ({paths.content_raw}) names a folder that isn't on this PC: it has its own "
+            "content/ now")
 
 
 def fix_game_path(settings: Settings, paths: ServerPaths, plays_kind: str,
                   kinds: list[str] | None = None) -> str | None:
-    """A game folder that isn't there, or has no Halo 3 at all: pointed at one here that has what it needs (`kinds`:
-    every kind it needs, the one with the most of them first). A folder with Halo 3 in it is never swapped, whatever
-    other game it lacks (ODST's, the campaign's, Reach's… files are added to it instead)."""
+    """A game folder that isn't there, or has no Halo 3 at all: pointed at one here that has what it needs
+    (game_path_candidate). A folder with Halo 3 in it is never swapped."""
     from ..core.tomledit import set_top_key
 
-    if (paths.game / "halo3" / "halo3.dll").is_file():
+    game = game_path_candidate(settings, paths, plays_kind, kinds)
+    if game is None:
         return None
-    candidates = [game for game in game_folders(settings) if game != paths.game and has_game_files(game)]
-    if plays_kind == "odst":
-        candidates = [game for game in candidates if has_odst_files(game)]
-    if kinds:  # the one with the most of what it needs, the first of those on a tie (the shared game/ comes first)
-        candidates.sort(key=lambda game: -sum(1 for kind in kinds if has(game, kind)))
-    for game in candidates:
-        set_top_key(paths.config, "game", relative_posix(game, paths.folder))
-        return f"its game folder ({paths.game_raw}) has no Halo 3 files here: it uses {game} now"
-    return None
+    set_top_key(paths.config, "game", relative_posix(game, paths.folder))
+    return f"its game folder ({paths.game_raw}) has no Halo 3 files here: it uses {game} now"
 
 
 def fix_reach_variants(settings: Settings, paths: ServerPaths) -> str | None:
-    """A game folder with Reach's files but not its game and map variants (0.10.0's `dedicated init --maps reach`
-    leaves them out, and with them Reach's own game types): added from MCC on this PC, when there is one. MCC's own
-    folder is never written to."""
-    reach = paths.game / "haloreach"
-    if not (reach / "haloreach.dll").is_file() or (reach / "hopper_game_variants").is_dir() or into_mcc(paths.game):
+    """Reach's game and map variants added from MCC on this PC, when there is one. MCC's own folder is never
+    written to."""
+    if not reach_variants_missing(paths):
         return None
     from ..steam import find_mcc
 
@@ -314,13 +375,14 @@ def fix_reach_variants(settings: Settings, paths: ServerPaths) -> str | None:
 
 
 def fix_steamcmd(settings: Settings, paths: ServerPaths) -> str | None:
+    """A [workshop] steamcmd that isn't on this PC: this PC's in its place (and the I key's account)."""
     from ..core.tomledit import set_table_key
 
-    if not paths.steamcmd or Path(paths.steamcmd).is_file():
+    if not steamcmd_missing(paths):
         return None
     executable, _ = steam.find_steamcmd(settings.home, settings.setup.steamcmd)
     if executable is None:
-        return None  # nothing to put in its place: its Workshop updates wait, flagged, until I sets one up
+        return None  # nothing to put in its place: I sets one up
     set_table_key(paths.config, "workshop", "steamcmd", str(executable), before="master")
     username = settings.setup.steam_username
     if username and username != paths.username:
@@ -329,25 +391,115 @@ def fix_steamcmd(settings: Settings, paths: ServerPaths) -> str | None:
             + (f" and the account {username}" if username and username != paths.username else "") + " now")
 
 
-def quick_repairs(settings: Settings, server: ServerConfig) -> list[str]:
-    """What was put right (each as the host reads it); nothing when nothing needed it."""
+@dataclass
+class Repair:
+    """One thing `repair` would put right in a server's folder, as the host reads it before saying yes."""
+
+    text: str
+    run: Callable[[], str | None] | None  # does it (slow ones copy or download gigabytes); None: it can't be done here
+    writes: bool = False  # it changes the server's dedicated.toml: a version is kept first
+    slow: bool = False
+
+
+def repairs(settings: Settings, server: ServerConfig, tool: Callable[[], Dedicated],
+            say: Callable[[str], None] = print, version: Callable[[], str | None] | None = None) -> list[Repair]:
+    """Everything `repair` would put right in the server's folder, in the order it does them; nothing is changed
+    here. Reads Steam's records for MCC (slow-ish): run it in a thread."""
     paths = read_paths(server.folder, settings.config_name)
     if paths is None:
         return []
-    done = []
-    block = paths.block(server.name)
-    kinds = needed_by(block, paths.folder) if block else None  # no program asked: quick
-    for fix in (lambda: fix_bans(settings, paths), lambda: fix_content(paths),
-                lambda: fix_game_path(settings, paths, server.plays_kind, kinds),
-                lambda: fix_steamcmd(settings, paths), lambda: fix_reach_variants(settings, paths)):
+    plan: list[Repair] = []
+    if ban_list_missing(paths):
+        plan.append(Repair(f"its ban list ({paths.bans_raw}) isn't on this PC: one of its own, empty, in its folder "
+                           '(bans = "bans.json")', lambda: fix_bans(settings, paths), writes=True))
+    elif ban_list_shared(paths):
+        plan.append(Repair(f"it shares its ban list ({paths.bans}) with any server reading it: a copy of its own in "
+                           'its folder, every ban, admin and allowance kept (bans = "bans.json")',
+                           lambda: own_bans(settings, paths), writes=True))
+    if content_missing(paths):
+        plan.append(Repair(f"its content folder ({paths.content_raw}) isn't on this PC: a content folder of its own, "
+                           'empty (content = "content")', lambda: fix_content(paths), writes=True))
+    if steamcmd_missing(paths):
+        executable, _ = steam.find_steamcmd(settings.home, settings.setup.steamcmd)
+        plan.append(Repair(f"its [workshop] steamcmd ({paths.steamcmd}) isn't on this PC: this PC's, {executable}",
+                           lambda: fix_steamcmd(settings, paths), writes=True) if executable is not None else
+                    Repair(f"its [workshop] steamcmd ({paths.steamcmd}) isn't on this PC, and SteamCMD isn't set up "
+                           "here: I → 1 sets it up", None))
+    kinds = server_kinds(settings, server, paths, version)
+    game = paths.game
+    candidate = game_path_candidate(settings, paths, server.plays_kind, kinds)
+    if candidate is not None:
+        plan.append(Repair(f"its game folder ({paths.game_raw}) has no Halo 3 files: it uses {candidate}, which "
+                           f'has them (game = "{relative_posix(candidate, paths.folder)}")',
+                           lambda: fix_game_path(settings, paths, server.plays_kind, kinds), writes=True))
+        game = candidate
+    for kind in lacking(game, kinds):
+        target, why = target_for(settings, replace(paths, game=game), kind)
+        if target is None:
+            plan.append(Repair(f"{LABELS[kind]}: {why}", None))
+            continue
+        found, no_download = sources(settings, kind)
+        if not found:
+            plan.append(Repair(f"{LABELS[kind]} can't be got here: {no_way(kind, no_download)}", None))
+            continue
+        source = found[0]
+        point = kind == "halo3" and target.resolve() != game.resolve()  # Huragok's own game/: the server is pointed at it
+
+        def get(kind: str = kind, target: Path = target, source: Source = source, point: bool = point) -> str:
+            said = fetch(settings, kind, source, target, tool, say)
+            pointed = fix_game_path(settings, paths, server.plays_kind, kinds) if point else None
+            return said + (f"; {pointed}" if pointed else "")
+
+        plan.append(Repair(f"{LABELS[kind]} into {target}: {source.text(kind)}"
+                           + (f'; then the server uses that folder (game = "{relative_posix(target, paths.folder)}")'
+                              if point else ""), get, writes=point, slow=True))
+    if reach_variants_missing(paths):
+        plan.append(Repair(f"Halo: Reach's game and map variants into {paths.game}, from MCC on this PC",
+                           lambda: fix_reach_variants(settings, paths)))
+    return plan
+
+
+def run_repairs(settings: Settings, server: ServerConfig, plan: list[Repair],
+                say: Callable[[str], None] = print) -> tuple[list[str], list[str]]:
+    """The repairs the host said yes to, in order: (what was done, what couldn't be). A version of the server's
+    dedicated.toml is kept before the first change to it, and after the last (content/quickactions.py's history):
+    when the first can't be kept, nothing that changes the file is done. Slow: run it in a thread."""
+    from ..core import versions
+    from .quickactions import HISTORY, owner_of
+
+    done: list[str] = []
+    failed: list[str] = []
+    kept: bool | None = None  # None: not yet; False: couldn't be (no changes to the file then)
+    owner = owner_of(server.config_path)
+    for repair in plan:
+        if repair.run is None:
+            continue
+        if repair.writes and kept is None:
+            try:
+                versions.keep_current(settings.records, HISTORY, owner, server.config_path)
+                kept = True
+            except OSError as error:
+                kept = False
+                failed.append(f"its {server.config_path.name} couldn't be kept in its history first ({error}), so "
+                              "nothing in it was changed")
+        if repair.writes and not kept:
+            continue
         try:
-            said = fix()
-        except OSError as error:  # TomlEditError too: the file is as it was
-            log.warning("[%s] couldn't put this right by itself: %s", server.name, error)
+            said = repair.run()
+        except Exception as error:  # noqa: BLE001 - OSError, SteamSetupError, the program's own: the next one runs
+            failed.append(f"{repair.text}: {error or type(error).__name__}")
+            say(f"not done: {repair.text}: {error}")
             continue
         if said:
             done.append(said)
-    return done
+            say(said)
+    if kept:
+        try:
+            versions.keep(settings.records, HISTORY, owner, server.config_path, "repaired, as the host asked")
+        except OSError as error:
+            log.warning("[%s] repaired, but its %s couldn't be kept in its history: %s", server.name,
+                        server.config_path.name, error)
+    return done, failed
 
 
 # Getting game files ---------------------------------------------------------------------------------------------
@@ -388,20 +540,20 @@ def no_way(kind: str, why: str) -> str:
     return f"MCC isn't on this PC and {why}" if kind in DEPOTS else why
 
 
-def sources(settings: Settings, kind: str, *, downloads: bool | None = None) -> tuple[list[Source], str]:
+def sources(settings: Settings, kind: str, *, downloads: bool = True) -> tuple[list[Source], str]:
     """Every way to get `kind` here, best first, and why there's no SteamCMD way when there isn't (for a kind
-    SteamCMD can't get: why MCC is the only way)."""
+    SteamCMD can't get: why MCC is the only way). Only ever when the host asks (I, `repair`): `downloads` False leaves
+    SteamCMD out."""
     found: list[Source] = []
     mcc = mcc_source(settings, kind)
     if mcc is not None:
         found.append(Source("mcc", mcc))
     if kind not in DEPOTS:
         return found, mcc_only(kind)
-    allowed = settings.setup.download_game_files if downloads is None else downloads
     executable, _ = steam.find_steamcmd(settings.home, settings.setup.steamcmd)
     username = settings.setup.steam_username
-    if not allowed:
-        why = "downloads are off ([setup] download_game_files = false)"
+    if not downloads:
+        why = "downloads are left out"
     elif executable is None:
         why = "SteamCMD isn't set up"
     elif not username:
@@ -606,18 +758,20 @@ def target_for(settings: Settings, paths: ServerPaths, kind: str) -> tuple[Path 
 
 
 class GameFiles:
-    """The repairs above, for the Superintendent: quick ones whenever a server is found or about to start, and the
-    game files got in the background while the servers that need them wait. Looking for MCC reads Steam's records
-    and the getting is gigabytes: both run in threads, never on the loop."""
+    """What a server's folder lacks, for the Superintendent: warned about whenever a server is found and before each
+    start (never put right by itself, 0.7.0), and a server lacking its game files held until they're there. A game's
+    files are got only when the host asks (I), in the background. Looking for MCC reads Steam's records and the
+    getting is gigabytes: both run in threads, never on the loop."""
 
     def __init__(self, settings: Settings, bus: EventBus, tool: Callable[[], Dedicated],
-                 release: Callable[[], None] | None = None) -> None:
+                 release: Callable[[], None] | None = None, warnings: Warnings | None = None) -> None:
         self.settings = settings
         self.bus = bus
         self.tool = tool
         self.release = release  # tells the waiting servers to look again (Fleet.release)
+        self.warnings = warnings  # the catalogue (core/serverwarnings.py) the findings go into
         self.getting: dict[str, str] = {}  # kind -> what's happening ("looking for…", "copying…", "downloading…")
-        self.failed: dict[str, tuple[float, str]] = {}  # kind -> (when, why): not tried again by itself for a while
+        self.failed: dict[str, tuple[float, str]] = {}  # kind -> (when, why) the host's last ask for them failed
         self.fetched: dict[str, float] = {}  # kind -> when its files last arrived
         self.forced: dict[str, set[str]] = {}  # server -> kinds a failed start said are missing
         self.tasks: set[asyncio.Task[None]] = set()
@@ -658,40 +812,28 @@ class GameFiles:
     @property
     def here(self) -> bool:
         """Only the process backend runs the program on this PC with its folder's paths. In a container (docker)
-        or wherever a command runs it, dedicated.toml's paths aren't this PC's: nothing is put right from here."""
+        or wherever a command runs it, dedicated.toml's paths aren't this PC's: nothing is looked at from here."""
         return self.settings.backend == "process"
 
     def server_added(self, server: ServerConfig, *, running: bool) -> None:
-        self.arrived(server)
+        self.look(server)
 
     def server_removed(self, name: str) -> None:
-        pass
+        self.forced.pop(name, None)
 
-    def arrived(self, server: ServerConfig) -> list[str]:
-        """The quick repairs, each logged; for a server just found and before each start."""
+    def look(self, server: ServerConfig) -> list[str]:
+        """What its folder lacks, into the warnings (nothing is changed); for a server just found and before each
+        start. The rules found."""
         if not self.here:
             return []
-        done = quick_repairs(self.settings, server)
-        for line in done:
-            log.warning("[%s] %s", server.name, line)
-            self.bus.emit("server.repaired", server.name, text=line)
-        return done
+        paths, kinds = self.needed(server)
+        return self._warn(server, paths, kinds)
 
-    def _own_bans(self, server: ServerConfig) -> None:
-        """Only as it's about to start: a server already running keeps reading the list it started with, so a copy
-        made now would miss the bans given until its next start."""
-        paths = read_paths(server.folder, self.settings.config_name)
-        if paths is None:
-            return
-        try:
-            said = own_bans(self.settings, paths)
-        except (OSError, ValueError) as error:  # TomlEditError too: the file is as it was
-            log.warning("[%s] couldn't give it a ban list of its own (it keeps the shared one for now): %s",
-                        server.name, error)
-            return
-        if said:
-            log.warning("[%s] %s", server.name, said)
-            self.bus.emit("server.repaired", server.name, text=said)
+    def _warn(self, server: ServerConfig, paths: ServerPaths | None, kinds: list[str]) -> list[str]:
+        found = findings(self.settings, server, paths, kinds) if paths is not None else []
+        if self.warnings is not None:
+            self.warnings.sync(server.name, "files", found)
+        return [rule for rule, *_ in found]
 
     def needed(self, server: ServerConfig) -> tuple[ServerPaths | None, list[str]]:
         paths = read_paths(server.folder, self.settings.config_name)
@@ -704,29 +846,23 @@ class GameFiles:
         return paths, kinds
 
     def prelaunch(self, server: ServerConfig) -> str | None:
-        """Why the server can't start yet (it waits), or None. Sets about getting what it lacks when it may."""
+        """Why the server can't start yet (it waits), or None. Never gets anything by itself: the host does (I, or
+        `repair`), and the warning says so."""
         if not self.here:
             return None
-        self.arrived(server)
-        self._own_bans(server)
         paths, kinds = self.needed(server)
+        self._warn(server, paths, kinds)
         if paths is None or not kinds:
             self.forced.pop(server.name, None)
             return None
         for kind in kinds:
             if kind in self.getting:
                 return f"getting {LABELS[kind]}: {self.getting[kind]}"
-        kind = kinds[0]
-        failed = self.failed.get(kind)
-        if failed is not None and time.monotonic() - failed[0] < RETRY_SECONDS:
-            return f"needs {LABELS[kind]}: {failed[1]}; press I"
-        target, why = target_for(self.settings, paths, kind)
-        if target is None:
-            self.failed[kind] = (time.monotonic(), why)
-            log.warning("[%s] needs %s: %s", server.name, LABELS[kind], why)
-            return f"needs {LABELS[kind]}: {why}"
-        self.get(kind, target)
-        return f"getting {LABELS[kind]}: {self.getting[kind]}"
+        from ..core.settings import launcher
+
+        failed = next((self.failed[kind][1] for kind in kinds if kind in self.failed), None)
+        return (f"needs {_listed([LABELS[kind] for kind in kinds])}: press I, or run {launcher()} repair"
+                + (f" (the last try: {failed})" if failed else ""))
 
     def get(self, kind: str, target: Path, source: Source | None = None) -> bool:
         """Get `kind` into `target` in the background (from `source`, else the best way there is). False: it's
@@ -788,7 +924,7 @@ class GameFiles:
                 self.failed[kind] = (time.monotonic(), "they arrived, but the server still says files are missing "
                                                        "(its console, A, says which)")
         self.forced.setdefault(event.server, set()).update(kinds)
-        log.warning("[%s] it stopped for missing game files (%s): Huragok gets them before it tries again",
+        log.warning("[%s] it stopped for missing game files (%s): it waits until they're there (I, or repair)",
                     event.server, ", ".join(LABELS[k] for k in kinds))
 
     def summary(self) -> list[str]:

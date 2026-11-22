@@ -16,7 +16,7 @@ from conftest import free_ports, staff, wait_for, write_root
 from testkit import FAKE, os_as
 from testkit.manage import StubClient
 from testkit.mcc import fake_mcc
-from testkit.setup import TEMPLATE_COMMAND, setup_root
+from testkit.setup import TEMPLATE_COMMAND, setup_root, write_playlist
 
 from huragok import steam as steamsetup
 from huragok.commandline import cli
@@ -83,9 +83,11 @@ def test_import_through_the_command_and_the_fake_lists_them(tmp_path: Path, caps
     assert cli.main(["-c", str(settings_path), "content", "-s", "Alpha Server", "--import", "--from",
                      str(tmp_path / "missing")]) == 2
     tool = Dedicated(FAKE, template=TEMPLATE_COMMAND)
-    made = tool.playlist_new(settings_path.parent / "SERVERS" / "Alpha Server", "MLG", ["mlg_guardian_8", "Guardian"],
-                             ["Slayer", "team_slayer"])
-    assert made.ok, made.text  # an imported variant works in a playlist
+    folder = settings_path.parent / "SERVERS" / "Alpha Server"
+    write_playlist(folder, "mlg", [{"map": name, "game": game} for name in ("mlg_guardian_8", "Guardian")
+                                   for game in ("Slayer", "team_slayer")], name="MLG")  # made by hand, as hosts do
+    shown = tool.playlist_show(folder, "playlists/mlg.playlist.json")
+    assert shown.ok, shown.text  # an imported variant works in a playlist
 
 
 # Source RCON through the relay ----------------------------------------------------------------

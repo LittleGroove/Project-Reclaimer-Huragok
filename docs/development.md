@@ -55,7 +55,8 @@ engine/huragok/
                        logs, the keepalive, and the watchdog and event log parts
   players/             Vergil's: the ledger, roles, the router, who a command means, the relay, and the automod,
                        commands and messages parts
-  content/             what Huragok builds and mends: new servers, packages, content, mods, game files, clean-up
+  content/             what Huragok reads of a server's files, and the tools the host asks for: new servers, file
+                       health, quick actions, content, mods, game files and repair, clean-up
   updates/             Huragok's own updates, the server program's, the Workshop's, and the host's files after one
   discordbot/          the Discord bot: discord.toml, Discord's web API, what each feature needs, one way out to
                        Discord, the part. discord.py is only imported in bot mode
@@ -117,16 +118,26 @@ What a host sets comes in three areas, each with its own home in the code:
 | --- | --- | --- |
 | **Huragok's own**: how Huragok runs, for every server and per server | `settings.toml` (its `[[server]]` blocks for one server) | `core/settings.py`, `core/serversettings.py`, and `core/hostsettings.py` for the window's guided editors |
 | **How the server runs**: joining, voice, safety, mods, the network | each server's `dedicated.toml` | `program/settings.py` (every setting, grouped for D) |
-| **What it plays and how**: a playlist, one map and game type, a custom game, campaign co-op or ODST, with each game's rules and options | the `[[server]]` block of `dedicated.toml` names it; the playlist, variant and map files it names | `program/plays.py` writes it; `games/plays.py` (the kinds), `games/halo3.py` (playlists), `games/halo3_options.py` (custom games and options), `games/odst.py`; `content/catalogue.py` (what's installed to play); `servers/state.py` (what's on now) |
+| **What it plays and how**: a playlist, playlists by lobby size, one map and game type, a custom game, campaign co-op or ODST | the `[[server]]` block of `dedicated.toml` names it; the playlist, game mode and layout files it names | read only: `games/plays.py` (the kinds), `games/halo3.py` (playlists), `games/halo3_options.py` and `games/gamemodes.py` (game modes, `.rmeg`, layouts), `games/odst.py`; `content/catalogue.py` (what's installed to play); `content/filehealth.py` (every name resolved, and its warnings); `program/plays.py` (the program's own verdict); `servers/state.py` (what's on now) |
 
-The third has one home in the window, G (D → What it plays opens it), and one gate in the code:
-`program/plays.check_plays` checks every change of what a server plays with that server's own program
-(`dedicated check` on `.huragok-check.toml`, a draft beside its file holding its block alone on a port of its own),
-counting only the problems the change brings, before anything is written. Every version of a playlist is kept by
-`core/versions.py` (`records/playlists/<server>/<file>/<time>/`, with how it was made and where it came from);
-each ballot's pick is kept in the `ballots` table (`servers/logs.py` reads the server's ballot lines, the
-Superintendent records them, G → Playlists → P shows them). Choices in a playlist are written as numbers
-(`halo3_options.choices_as_numbers`); the window shows their labels.
+Since 0.7.0 Huragok writes none of the second and third areas by itself: a server's folder is the host's. Its
+writes into a server folder are moderation (through the console, and the voice toggles), the stats relay's
+`stats_server` while `[stats] relay` is on, Huragok's own per-server `intervalmessages.txt`, and what the host asks for
+in the window or on the command line: a quick action (`content/quickactions.py`), a copy, a version put back, a file set
+aside, a repair (`content/gamefiles.py`). `tests/architecture/test_hands_off.py` runs Huragok on a folder made the way
+`dedicated init` makes one, through its start, rescans, warnings and stop, and fails if any file in it changed.
+
+The third has one home in the window, G (one server's home: what its file names, what's on, its file health), and one
+reader in the code: `content/filehealth.py` resolves every name a playlist game, `map =`, `game =` or `variant =` gives
+the way Project Reclaimer 0.10 does, and `program/plays.plays_verdict` asks the server's own program
+(`dedicated check` of a draft, `dedicated playlist list`); `content/playswatch.py` runs both as files change and hands
+the findings to the warnings catalogue (`core/serverwarnings.py`, the words in `templates/warnings.toml`). A copy or a
+version put back is checked first by the target's own program (`program/plays.check_plays`), never refused: the host
+reads its words and is asked once. Every version of a playlist is kept by `core/versions.py`
+(`records/playlists/<server>/<file>/<time>/`, with how it was made and where it came from), and so is a
+`dedicated.toml` before a quick action or repair writes it (`records/settings/`); each ballot's pick is kept in the
+`ballots` table (`servers/logs.py` reads the server's ballot lines, the Superintendent records them, G → Playlists → P
+shows them).
 
 ## Module by module
 
@@ -139,19 +150,22 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `vergil.py` | The ledger, roles, the router, commands.toml in force, the relay; `VergilContext` |
 | `parts.py` | `PARTS`, and checking a part's section of settings.toml |
 | `rcon.py` | One RCON connection per server (a refused password is tried again only when trying can't add up to a lockout: see the top of `rcon.py`); `ban_list`, the server's ban list in one shape |
-| `steam.py` | SteamCMD found, installed, signed in and written into every server; one depot of MCC downloaded (`download_depot`); whether a server's SteamCMD can fetch at all (`cannot_fetch`); MCC found only where Steam's own records say it is (`find_mcc`: the registry, `libraryfolders.vdf`, `appmanifest_976730.acf`; never a drive search); the Workshop's API |
+| `steam.py` | SteamCMD found, installed and signed in (a server's `[workshop]` lines are a quick action, for one server when the host asks); one depot of MCC downloaded (`download_depot`); whether a server's SteamCMD can fetch at all (`cannot_fetch`); MCC found only where Steam's own records say it is (`find_mcc`: the registry, `libraryfolders.vdf`, `appmanifest_976730.acf`; never a drive search); the Workshop's API |
 
 **`core/`**
 
 | Module | |
 | --- | --- |
 | `settings.py`, `tables.py` | `settings.toml`. Types and minimums (`MINIMUMS`) are checked as it loads; a key that isn't a setting (`KNOWN_KEYS`), a value an older version wrote (`OLD_VALUES`) and a retired setting (`RETIRED`) become warnings. `tables.py` reads each value with its kind and names every mistake with the file and key. `launcher()` is what the host types to run Huragok, for the messages that tell them to |
-| `serverfolders.py`, `serversettings.py` | The servers: every `SERVERS/<folder>/dedicated.toml` (plus `server_folder`) read into a `ServerConfig`, checked against each other (unique names, slugs and ports; RCON on); what each one uses (`settings.of(server)`, above) |
+| `serverfolders.py`, `serversettings.py` | The servers: every `SERVERS/<folder>/dedicated.toml` (plus `server_folder`), each `[[server]]` block a server of its own, read into a `ServerConfig`, checked against each other (unique names and slugs: the one already looked after keeps running; no console is a warning, not a refusal); what each one uses (`settings.of(server)`, above) |
+| `serverenv.py` | `RECLAIMER_DEDICATED_<SETTING>` set where Huragok runs: read over the file, the way the program reads it (`apply`), each override a warning |
+| `renames.py` | A server renamed in its own `dedicated.toml` told apart from one removed and another added (same folder and game port, else the same place among its blocks), and Huragok's own settings, records and database rows carried to the new name (`follow_renames`) |
+| `serverwarnings.py`, `handsoff.py` | **The warnings**: one catalogue, the words in `templates/warnings.toml` (kind, text, fix, the newest version each was checked on, whether the staff channel hears of it), set and cleared per server and rule, dismissed per server until the file changes (`records/warnings-dismissed.json`); what Huragok had set in the servers' folders before 0.7.0 (`records/hands-off-0.7.0.json`), listed once per server |
 | `commandsfile.py`, `hostsettings.py` | `commands.toml` (a file missing or empty for a moment keeps what's in force); settings.toml as a catalogue of every setting, for the window's guided editors |
 | `part.py`, `runner.py`, `context.py` | The part system: `Part`, `@command`, `@on`, `@every`; each part's queue, its handlers' time limit (`max(handler_timeout, [rcon] command_timeout + 5)`), switching a failing part off and, after `COOL_DOWN`, on again; `PartContext` |
 | `events.py`, `storage.py`, `mailbox.py`, `lock.py` | The bus; SQLite (players seen, the ledger, each part's tables); requests from outside (`start.cmd stop`, a second window) and their replies, as files; one Huragok per folder (`records/huragok.pid`) |
 | `tomledit.py` | Editing `settings.toml` and `dedicated.toml` in place (keys, tables, `[[server]]` blocks), keeping comments. Every write makes the change in memory, reads the result back, and replaces the file (temp + replace) only if exactly that change differs; otherwise `TomlEditError`, with the file untouched |
-| `versions.py` | Every version of a host's file Huragok keeps (playlists): `keep` before and after each change Huragok makes, `seen` for a change made by hand, `versions` newest first, each in a folder of its own under `records/<kind>/<owner>/<file>/` with its `about.json` |
+| `versions.py` | Every version of a host's file Huragok keeps (playlists, custom games, a `dedicated.toml` before a quick action or repair): `keep` before and after each write Huragok makes at the host's asking, `seen` for a change made by hand, `versions` newest first, each in a folder of its own under `records/<kind>/<owner>/<file>/` with its `about.json` |
 | `files.py`, `text.py` | Written once for everyone: `write_atomic`, `read_text`, `mtime`, folder sizes; durations read and written (`seconds_of`, `describe_seconds`), `one_line`, `size_text`, `slug` (a name as a file's), player IDs (`PLAYER_ID`, `is_player_id`), text as it looks (`lookalike`: Greek, Cyrillic, small capitals, fullwidth and styled letters as Latin, for the word list and player lookups alike). They import nothing of Huragok's, so `games/` uses them too |
 | `background.py` | Work started to run by itself (a reply, a restart, an install, a ban passed on): `background(work, what, log)` keeps the task until it ends, logs a failure at once as "<what> failed", and `stop()` calls off what's left as Huragok stops, before the database closes. **Never a bare `asyncio.ensure_future`** for work nobody waits on: asyncio keeps only a weak reference, and a failure is logged without saying what it was. Long-running tasks are `Huragok.spawn`'s (restarted after a failure) |
 | `web.py`, `jobs.py`, `requests.py` | One way to fetch from GitHub (`fetch`, `UpdateError`); work that needs a server stopped (`StoppedJob`); what a request gets back (`Result`) |
@@ -162,20 +176,21 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 
 | Module | |
 | --- | --- |
-| `halo3.py` | Playlist files built and edited from picks; Halo 3's campaign missions, difficulties and its 27 maps |
-| `halo3_options.py`, `halo3_options_data.py` | **Game options**: the catalogue (generated: see below), presets (saved custom games) and playlist-game overrides; `LABEL_CHANGES` |
+| `halo3.py` | Playlist files read (games, weights, `teams`, co-op games, values that follow the lobby size); Halo 3's campaign missions, difficulties and its 27 maps |
+| `halo3_options.py`, `gamemodes.py` | **Game options and game modes**, read and described in words: saved custom games (`.json`, `.rmeg`, `.bin`), what a playlist game changes, the labels each program version takes (`LABEL_CHANGES`); game modes and Forge layouts as 0.10 writes them (a layout's objects counted against 9,999) |
 | `halo3_mapfile.py` | Why the server program skipped a mod map, from its own checks on the `.map` |
 | `odst.py` | ODST servers: what they can play and how Huragok says it |
-| `plays.py`, `files.py` | What a server plays (`plays_kind`, co-op, ODST's console refusal); the game files each kind needs and where MCC keeps them (`DEPOTS`) |
+| `plays.py`, `files.py` | What a server plays (`plays_kind`, `playlists` by lobby size, co-op, ODST's console refusal); the game files each kind needs and where MCC keeps them (`DEPOTS`) |
+| `byplayers_retired.py` | Playlists by player count, retired in 0.7.0: a host's old `playlists-by-players.toml` written as the server's own `playlists = [...]`, for the warning to show |
 
 **`program/`**
 
 | Module | |
 | --- | --- |
 | `dedicated.py` | Running the server program's own `dedicated` commands (exe on Windows, wine on Linux; a server folder's own copy, else `[setup] program` or the newest copy here) and reading their listings, a timeout or Esc ending the whole process tree |
-| `settings.py` | Every setting a host can change about how a server runs (`SETTINGS`: key, scope, type, default, group, when it applies; add a row for a new one); `path_setting` says where a server's `game`, `content` or `bans` points |
-| `plays.py` | What a server plays, written into its `dedicated.toml` (`write_plays`: one kind in, every other kind out, in one write), and which kinds and campaign modifiers each version of the program takes (`PLAYS_SINCE`, `plays_problem`) |
-| `releases.py` | The server program's releases on GitHub |
+| `settings.py` | Every setting of how a server runs, for D to show and explain (`SETTINGS`: key, scope, type, default, group, when it applies, the version it came in; add a row for a new one), and Huragok's own per-server settings, which D changes; `path_setting` says where a server's `game`, `content` or `bans` points |
+| `plays.py` | What a server plays as its own program judges it: `plays_verdict` (`dedicated check` of a draft, `dedicated playlist list`), each refusal tied to its file and game; `check_plays` before a copy or a version put back; which kinds each version takes (`PLAYS_SINCE`, `plays_problem`). It writes nothing into a server's file |
+| `releases.py`, `environment.py` | The server program's releases on GitHub, and which release a program file is; what each server's process is given (`RECLAIMER_DEDICATED_ONLY`, the host's variables as they are) |
 
 **`servers/`** (the Superintendent's)
 
@@ -184,8 +199,8 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | `server.py` | **One `ServerManager` per server**: the state machine below, ticked once a second. Timers run on `time.monotonic()`; wall time only for the hourly restart count, history, uptime and the daily slot |
 | `fleet.py` | The `Fleet`, which ticks every manager, writes `records/live.json`, answers requests from `records/requests/` and is what the window's keys call; `Lifecycle`, the thin view parts get (`restart`, `cancel`, `planned`, `busy`) |
 | `backends.py`, `ports.py`, `keepalive.py` | The **backends**: `process` (one `dedicated` per server, Windows or Linux), `docker`, `command`, `attach`. A backend only starts, stops and watches processes; it decides nothing. `PortWatch` reads the system's listening sockets (psutil) at most once a second for every stopped server, so no check blocks the loop. `Keepalive` restarts a hung server. `memory_mb` is what a server's process tree uses, for the watchdog and V alike |
-| `state.py`, `logs.py` | The live picture of each server; `server.log`, `status.json` and the console output as events. `logs.py` matches every pattern at the start of the server's own message, and the lines that carry someone's words (console echoes, refusals, kick and ban reasons: `ECHOES`) first, so typed text never passes for a server line |
-| `watchdog.py`, `eventlog.py`, `tempdiscord.py`, `stats.py`, `statsrelay.py` | The Superintendent's parts: the temporary record; every reported game counted, through the relay that stands in the middle |
+| `state.py`, `logs.py`, `statusclient.py` | The live picture of each server; `server.log`, `status.json` and the console output as events (a game skipped, `GAME_SKIPS`, among them); a server with no console watched through its `status.json` in the console's place. `logs.py` matches every pattern at the start of the server's own message, and the lines that carry someone's words (console echoes, refusals, kick and ban reasons: `ECHOES`) first, so typed text never passes for a server line |
+| `watchdog.py`, `eventlog.py`, `tempdiscord.py`, `stats.py`, `statsrelay.py` | The Superintendent's parts: the temporary record; every reported game counted, through the stats relay that stands in the middle while `[stats] relay` is on (off, every server's `stats_server` goes back and is never touched) |
 
 **`players/`** (Vergil's)
 
@@ -201,13 +216,14 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 
 | Module | |
 | --- | --- |
-| `content/newserver.py`, `packages.py` | **Setting servers up**: making a server folder from a package with the root's shared `game/` and `content/` (never a ban list: every server keeps its own); packages (`PACKAGES/`, the starters in `templates/packages`) |
+| `content/newserver.py`, `quickactions.py` | **A new server**: the program's own `dedicated init` in `SERVERS/.new-<slug>/`, and nothing more, named once the host is done; the **quick actions**, small writes into a server's `dedicated.toml` the host chooses (one server only, free ports, the console, SteamCMD lines), each worked out on a copy and shown before it's written, the file's version kept first |
 | `content/catalogue.py`, `mccimport.py` | What a server can play as one catalogue (the listing, the mods' ModInfo.json and Forge layouts, the Workshop items) with numbered picking; MCC's variants imported |
-| `content/gamefiles.py` | **What a server arrives without**, put right as its folder is found and before each start (`GameFiles.prelaunch`, the Fleet's `prelaunch` hook): a missing ban list or content folder made, a ban list shared from before 0.5.0 copied into the server's folder as it starts (`own_bans`), a game path or `[workshop] steamcmd` from another PC pointed at this one's, Halo 3's files (and the campaign's, ODST's) got in the background from MCC here or with SteamCMD while the server waits as WAITING. Process backend only |
-| `content/modcheck.py`, `mods.py` | Each mod's health, from its files; the servers' mods watched while Huragok runs |
+| `content/gamefiles.py` | **What a server's folder lacks**: read as its folder is found and before each start, and warned about, changing nothing (a game folder without the files it needs holds the server's start). `repairs` lists what `repair` (I → R, `start.cmd repair`) would put right, and `run_repairs` does it when the host says yes: a game path pointed here, the files got from MCC or with SteamCMD, a content folder or ban list of its own, this PC's SteamCMD lines, Reach's variants |
+| `content/filehealth.py`, `playswatch.py` | **File health**: one resolver for every name a server plays, the program's verdict beside it, as warnings; watched while Huragok runs (files changed, a reload, a game skipped) |
+| `content/modcheck.py`, `mods.py` | Each mod's health, from its files; the servers' mods watched while Huragok runs, and warned about (a hand copy not listed, a leftover download) |
 | `content/serverops.py`, `upkeep.py` | Renaming a server and giving it its own content folder; clean-up, firewall rules, Halo 3's engine file |
 | `updates/engine.py` | New versions of Huragok from GitHub (renames only, the backup in `records/previous-<version>/`, `records/last-update.json`, `put_back`) |
-| `updates/program.py`, `workshop.py` | New releases of the server program (servers with `auto_update` update themselves; the others from GitHub after their game, with `follow`); new Workshop versions swapped in after the game, as a job the manager runs while the server is stopped (the `preparing` phase) |
+| `updates/program.py`, `workshop.py` | The server program's releases: each server installs its own (`auto_update`); Huragok looks every `check_minutes`, restarts self-updating servers after their game once a release is out (`follow`), tells players before a server's own updater cuts their game, and warns. Workshop updates: the servers install their own; Huragok restarts a server (RCON `restart`) whose map in use holds one up, and a shared content folder's servers as one group |
 | `updates/hostfiles.py` | **The host's own files brought up to date** after an update: the `STEPS`, run at Huragok's start under its lock, each once (`records/files.json`), each file backed up first (`records/previous-files/<version>/`). See "Hosts' files across updates" below |
 
 **`discordbot/`** (Huragok's: the `discord` part, in the layers above)
@@ -230,11 +246,11 @@ Superintendent records them, G → Playlists → P shows them). Choices in a pla
 | Module | |
 | --- | --- |
 | `window/dashboard.py`, `controllers.py` | The dashboard and its keys (`key_rows`); what the window talks to: the running Huragok (`LocalController`) or, in a second window, its files (`RemoteController`, fed by `live.json`) |
-| `window/screens/` | One `Screens` base (drawing, asking, the pickers several screens share) and a file per group: `setup.py` (N, G, I, C), `manage.py` (A, D's server settings, B, U), `files.py` (D's guided editors for Huragok's own files, O), `games.py` (playlist games' rules and options, custom games), `discordsetup.py` (J) |
+| `window/screens/` | One `Screens` base (drawing, asking, the pickers several screens share) and a file per group: `setup.py` (N and the quick actions, G, I, C), `manage.py` (A, D's read-only server page, B, U), `files.py` (D's guided editors for Huragok's own files, O), `games.py` (G's game modes: shown, copied, set aside), `discordsetup.py` (J) |
 | `window/tui.py`, `statuscard.py` | The terminal: the keyboard (Windows console key events, `ReadConsoleInputW`, with `msvcrt` when the console can't be opened; Linux `termios`), colours and in-place redraw. `ConsoleWriter` writes the console from a thread of its own, so a paused console (Edit > Mark) never holds up the loop; `clean` takes control characters out of what players and servers send, `cells` measures wide characters. The status card (V) |
 | `commandline/cli.py`, `common.py` | The commands `start`, `status`, `stop`, `close`, `restart`, `say`, `rcon`, `watch`, `check`, `update`, `init`, and `--help` grouped by named part (`HELP_GROUPS`); the exit codes |
 | `commandline/launcher.py`, `run.py` | The start loop below; Huragok in this process (`start --child`) |
-| `commandline/setup.py`, `check.py`, `firstrun.py` | The `new`, `package`, `content`, `playlist`, `variant`, `workshop`, `steam` and `dedicated` commands (they work without the fleet, as the window's setup screens do); `check`; the first start's files |
+| `commandline/setup.py`, `check.py`, `firstrun.py` | The `new`, `repair`, `content`, `playlist`, `variant`, `workshop`, `steam` and `dedicated` commands (they work without the fleet, as the window's setup screens do; `package`, `playlist new`/`use` and `workshop add`/`remove` only say where they went); `check`; the first start's files |
 | `commandline/console.py`, `logsetup.py`, `shell.py`, `watch.py` | Typed commands without a dashboard (`--no-menu`); where log lines go; what the commands print; following a log |
 
 ## A server's phases
@@ -254,21 +270,31 @@ comes straight back with the next cool-down, a run of `good_run_seconds` is back
 to normal), and S starts it at once. A countdown says the `warn_seconds` rungs as absolute deadlines (if a
 slow tick lets two fall due at once, the smaller is said), skips itself when
 nobody is on, and ends early once everyone has left. `preparing` runs the jobs
-queued for the next start (a program swap, a Workshop install) while the server is
-stopped: a snapshot taken as it begins (a job added meanwhile waits for the next
+queued for the next start (since 0.7.0 only deleting the program's old file after a
+self-update) while the server is stopped: a snapshot taken as it begins (a job added meanwhile waits for the next
 start), each job with `JOB_LIMIT` (20 minutes), then `launch` again; a stop calls
 them off. A restart planned for later (`after_game`, `when_empty`) belongs to the
-run it was made in: `_run_ended` drops it when that run ends some other way. Nothing
+run it was made in: `_run_ended` drops it when that run ends some other way. An
+`after_game` restart waits for the game to end however long it runs (there's no cap
+since 0.7.0, so a Forge session's save is never cut); everyone leaving sets it off at
+once. The daily restart is planned `after_game` too. A server in `external` is never
+stopped, started or killed from here: a restart planned for it goes through its own
+console's `restart` (`console=True`), and only its game restarts while its process
+stays. Nothing
 in a manager waits: a stop in progress is a task the next tick looks at, and a stop
 whose process outlives the kill leaves the server running and flagged (`! couldn't
 stop it`), never reported stopped. What survives closing the window is in
 `records/servers/<server>.json` and `records/running-servers.json`.
 
 Before `launch` starts a stopped server, the Fleet's `prelaunch` hook (content/gamefiles.py)
-puts right what its folder lacks; while something is missing (Halo 3's files being
-got, or no way to get them) the server stays `idle` with `waiting_for` set: the row
-says WAITING and why, it looks again every `WAIT_RECHECK` (30 s) or as soon as
-`Fleet.release()` says the files arrived, and nothing counts as a failed start. A
+looks at what its folder lacks and warns, getting nothing by itself; while game files
+it needs are missing the server stays `idle` with `waiting_for` set ("needs Halo 3's
+files: press I, or run start.cmd repair"): the row says WAITING and why, it looks again
+every `WAIT_RECHECK` (30 s) or as soon as `Fleet.release()` says the files arrived (I or
+`repair` got them), and nothing counts as a failed start. Before every start the server's
+own `data/<server>/supervision.json` is read too: a live supervisor Huragok didn't start
+makes the server `external` instead of a second copy, which would crash-loop and wipe
+its `status.json` and log. A
 stopped server whose port answers but writes no `status.json` in its own folder isn't
 taken for `external`: it waits the same way (`waiting_kind = "port"`), since that's
 another copy of it, running from another folder.
@@ -555,9 +581,11 @@ Huragok adds its own:
 | `server.fault_retry` | `attempt`, `reason`: one more try after a FAULTED server's cool-down |
 | `server.hung`, `server.recovered` | `status_age` on `hung` |
 | `server.workshop`, `server.map_skipped` | from the console: `item`, `text`; `path`, `reason` |
-| `server.workshop_update`, `server.workshop_updated` | a new Workshop version seen (`item`, `newest`, `installed`); swapped in (`items`) |
-| `server.program_updated` | `version`, and `before` (a server that updated itself) or `restarted` (Huragok's install) |
-| `server.repaired` | `text`: what Huragok put right in a server's folder (a ban list made, a game path pointed here: content/gamefiles.py) |
+| `server.workshop_update`, `server.workshop_updated` | a new Workshop version on Steam (`item`, `title`, `newest`); installed (`items`, `names`) |
+| `server.program_updated` | `version`, `before`: a server that updated itself |
+| `server.worker_restarted` | `reason`, `by`, `now`: its game restarted over its console (RCON `restart`), its process kept: a mod update put in, or a server Huragok didn't start restarted |
+| `server.game_skip`, `log.game_skip` | `what` and the game: a game the server skipped or couldn't play, from its console or `server.log` (`servers/logs.py` `GAME_SKIPS`) |
+| `warning.raised`, `warning.cleared` | `id`, `rule`, `kind`, `text`, `fix`, `discord`: one of a server's warnings (`core/serverwarnings.py`) |
 | `log.falling_behind` | `fps`, `behind`, `window`, `average`, `longest_ms`, `players` |
 | `log.upload` | `rate`, `unit`, `players` |
 | `log.roster_lost` | `lost`, `of`, `present`, `details` (the engine's JSON snapshot, as text) |
@@ -586,7 +614,7 @@ Switch on `[eventlog]` to see every event as JSON while you work.
 ## Ground rules
 - **Hosts' files move forward with Huragok, never backward or by hand.** Since 0.4.0
   went out, every release reads `settings.toml`, `commands.toml`, `automod.txt`,
-  `names.txt`, `intervalmessages.txt`, `PACKAGES/` and `records/` as any version from
+  `names.txt`, `intervalmessages.txt` and `records/` as any version from
   0.4.0 on wrote them, and
   a change to their format comes with a step in `updates/hostfiles.py` that brings an existing
   file up to date. No release may need a clean install. See "Hosts' files across
@@ -670,8 +698,7 @@ release changes what a host's file should say:
 
 `always` steps run at every start and only add what's missing: in-game commands newer
 than `commands.toml` (under their default role; settled, so 150 s after the start),
-starter packages newer than `PACKAGES/` (`records/files.json` remembers which were
-offered, so one the host removed stays removed), and for `discord.toml` every setting its
+and for `discord.toml` every setting its
 template has and the file doesn't (`discord-lines`, with its note), and every setting by the
 name it has now (`discord-moved`, from the table in `core/discordmoved.py`, so a rename is a row
 there with nothing more to do). A rename that narrows who can do what needs a settled step of
@@ -778,28 +805,19 @@ python -m venv .venv
 A server is only called hung when `status.json` (rewritten every 5 seconds) and
 RCON have **both** gone quiet.
 
-## The game option catalogue
-`huragok/games/halo3_options_data.py` is generated, not written by hand: every key the server
-program accepts, its label, range and the meaning of every number, from the program's
-own answers kept in `tests/data/game-options-probe.txt`. After a Project Reclaimer
-release that adds or renames game options, probe again from `engine/`:
-`python tools/reprobe_gameoptions.py <project-reclaimer.exe> <a server folder>
-tests/data/game-options-probe.txt new.txt` (`mode-check` with one option at 99999 per
-game type, and `dedicated playlist show` on scratch playlists naming every number;
-about 20 seconds; the server folder needs Guardian). Compare `new.txt` with the probe
-file, move it over it, and run `python tools/gen_gameoptions.py`. `tests/games/test_halo3_options.py`
-checks the catalogue against the probe file. A renamed label matters: a playlist that
-names a label the server's program doesn't take stops `dedicated check`, so the
-server won't start. Add it to `halo3_options.LABEL_CHANGES` (the option, the old label,
-the new one, and the first version that calls it the new one, or `None` when every
-version does). 0.9.19 renamed the character set's "Vanilla characters" to "Halo 3"
-(0.9.18 refuses "Halo 3", 0.9.19 on refuse the old one); "On, with firebombs" is
-what every version calls it, and the "On with firebombs" some files have is
-refused by all of them. As it starts a server, the Superintendent writes its
-playlists' labels the way the program about to run calls them (its file's own
-`--version`, else the version it last reported; when neither is known, only what
-no version takes is rewritten), and `check` names them. The option editor writes
-a version-dependent choice as its number, which every version takes.
+## Option labels across program versions
+Huragok no longer edits game options (0.7.0), so the generated option catalogue
+(`games/halo3_options_data.py`) and the scripts that probed the program for it are gone
+(the scripts and their probe file are kept in `engine/tools/archive/`). What stays is
+`halo3_options.LABEL_CHANGES`: a renamed label matters, as a playlist that names a label
+the server's program doesn't take stops `dedicated check`, so the server won't start.
+Add a row when a Project Reclaimer release renames one (the option, the old label, the
+new one, and the first version that calls it the new one, or `None` when every version
+does). 0.9.19 renamed the character set's "Vanilla characters" to "Halo 3" (0.9.18
+refuses "Halo 3", 0.9.19 on refuse the old one); "On, with firebombs" is what every
+version calls it, and the "On with firebombs" some files have is refused by all of
+them. Huragok never rewrites a label in a server's playlists: `check` and the file
+health warn of one its server's program won't take, and say what to write instead.
 
 ## Linux
 Huragok is run on Windows 11. Linux is experimental and on hold: the code keeps
@@ -835,8 +853,7 @@ limit (60 minutes for the suites, 10 for the rest) so a hang fails the run:
   run from that, so a module that was never committed fails here even though every
   test passes in a working copy; then a plain (not editable) install of the
   unzipped engine runs `init` and must write every template (`settings.toml`,
-  `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt` and the
-  `PACKAGES/` starters), and
+  `commands.toml`, `automod.txt`, `names.txt` and `intervalmessages.txt`), and
   `check` reads them;
 - **start.sh sets itself up**: a first start (exit code 3), `init --force --backend
   attach`, `check`, `status`;

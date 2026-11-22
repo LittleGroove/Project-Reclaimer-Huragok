@@ -412,3 +412,23 @@ def test_the_relay_forwards_on_threads_of_its_own(tmp_path: Path, run, monkeypat
 
     run(scenario())
     assert threads and all(name.startswith(("stats relay", "stats reports")) for name in threads)  # its own: reports in a lane apart (audit 0.6.1, 1.5)
+
+
+def test_with_the_relay_off_a_server_is_never_pointed_at_it(tmp_path: Path, run) -> None:
+    """0.7.0, plan 4.8: with [stats] relay = false Huragok never touches stats_server, even once the server says where
+    it reports, and every server says the relay is off."""
+    async def scenario() -> None:
+        async with FakeService() as service:
+            config = tmp_path / "server" / "dedicated.toml"
+            async with running(tmp_path, "[stats]\nrelay = false\n") as (supervisor, _, _):
+                log = supervisor.settings.server(SERVER).log_path
+                with log.open("a", encoding="utf-8") as file:
+                    file.write(f"10:00:00 Stats reporting to {service.url}; server key k= (whitelist this public key "
+                               "on the service)\n")
+                await asyncio.sleep(1.5)
+                assert configured(config) == (False, None)  # never pointed at the relay
+                rules = [w.rule.id for w in supervisor.superintendent.warnings.of(SERVER)]
+                assert "stats-relay-off" in rules
+            assert configured(config) == (False, None)
+
+    run(scenario())

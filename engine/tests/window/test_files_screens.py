@@ -1,5 +1,5 @@
-"""D: Huragok's own files a step at a time (settings.toml, commands.toml, automod.txt, names.txt), a server's
-mods switched on or off, and O, which opens the folder or any file as it is."""
+"""D: Huragok's own files a step at a time (settings.toml, commands.toml, automod.txt, names.txt), a server's page
+(its bans; its playlists, custom games and mods are G's now), and O, which opens the folder or any file as it is."""
 
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from conftest import MOD, FACULTY
 from testkit.screens import screen, template_root, text_of
 from testkit.setup import ALPHA
 
-from huragok.content.catalogue import DisabledModsError, disabled_mods, set_mod_disabled
+from huragok.content.catalogue import DisabledModsError, disabled_mods
 from huragok.core import desktop
 from huragok.core import hostsettings as hs
 from huragok.core.commandsfile import (
     ROLES, PermissionsError, add_player, all_commands, load_permissions, player_notes, remove_player, set_command_off,
     set_command_role, set_top,
 )
+from huragok.core.settings import OUTGOING
 from huragok.core.storage import Storage, recent_players
 from huragok.core.tomledit import (
     TomlEditError, add_array_block, read_toml, remove_array_block, remove_top_key, set_array_block_key,
@@ -41,7 +42,7 @@ def test_every_setting_the_template_writes_is_in_the_catalogue(tmp_path: Path) -
     written = {("", key) for key, value in data.items() if not isinstance(value, dict)}
     written |= {(section, key) for section, table in data.items() if isinstance(table, dict)
                 for key in table if key != "user"}
-    assert written - known == set()
+    assert written - known - OUTGOING == set()  # (what 0.7.0 reads and ignores isn't offered)
     # [docker] and [command] are there only with their backend; mcc_folder is optional (left out: link instead).
     assert {s.section for s in hs.SETTINGS} - set(data) - {""} == set()
     groups = [key for key, *_ in hs.GROUPS]
@@ -93,7 +94,7 @@ def test_typed_values_are_read_as_the_file_takes_them() -> None:
         ["wine", "C:/Program Files/x.exe", "run"]
     for setting, text, why in ((hs.find("restarts", "max_failures"), "0", "between 1 and 100"),
                                (hs.find("watchdog", "drop_share"), "2", "between 0 and 1"),
-                               (hs.find("workshop_updates", "check_minutes"), "3", "5 at least"),
+                               (hs.find("workshop_updates", "restart"), "sometimes", "answer on or off"),
                                (hs.find("restarts", "faulted_retry_minutes"), "30, 0", "each 1 or more"),
                                (hs.find("restarts", "daily_restart"), "25:00", "24-hour clock"),
                                (hs.find("watchdog", "dead"), "restart", "one of watch, act, actnow")):
@@ -232,16 +233,15 @@ def test_banned_names_are_added_and_taken_off_with_their_notes(tmp_path: Path) -
 
 # A server's mods, and the players seen -------------------------------------------------------------------------
 
-def test_mods_switched_off_and_on(tmp_path: Path) -> None:
+def test_the_mods_switched_off_are_read_from_the_hosts_file(tmp_path: Path) -> None:
     content = tmp_path / "content"
     (content / "Mods").mkdir(parents=True)
     assert disabled_mods(content) == []
-    assert set_mod_disabled(content, "Mods/canyon", True) == ["Mods/canyon"]
-    assert json.loads((content / "disabled-mods.json").read_text(encoding="utf-8")) == {"packages": ["Mods/canyon"]}
-    assert set_mod_disabled(content, "Mods/Canyon", False) == [] and not (content / "disabled-mods.json").exists()
+    (content / "disabled-mods.json").write_text('{"packages": ["Mods/canyon"]}', encoding="utf-8")
+    assert disabled_mods(content) == ["Mods/canyon"]
     (content / "disabled-mods.json").write_text('{"mods": ["Mods/canyon"]}', encoding="utf-8")
     with pytest.raises(DisabledModsError, match="isn't written as"):
-        set_mod_disabled(content, "Mods/canyon", True)  # a shape this doesn't know is never written over
+        disabled_mods(content)  # a shape the server doesn't read either: said, never written over
     assert json.loads((content / "disabled-mods.json").read_text(encoding="utf-8")) == {"mods": ["Mods/canyon"]}
 
 
@@ -272,7 +272,7 @@ def test_d_changes_settings_toml_a_step_at_a_time(tmp_path: Path, run) -> None:
             "A", "ENTER", *"Alice", "ENTER", *"alice-long-password", "ENTER", "1",  # Alice, moderator
             "1", "ENTER", "R", "2",  # Alice: admin
             "ESC", "ESC",
-            *"10", "ENTER", "4", "ENTER", *"not a repository", "ENTER", "x",  # refused: not owner/name
+            *"10", "ENTER", "3", "ENTER", *"not a repository", "ENTER", "x",  # refused: not owner/name
             "ESC", "ESC", "ESC"]
     menu, terminal = screen(path, keys)
     run(menu.screen_settings())
@@ -377,17 +377,12 @@ def test_d_adds_vergils_rules_and_banned_names(tmp_path: Path, run) -> None:
     assert "it has 'worseword' in it, the word list's worseword (slurs line)" in text
 
 
-def test_d_switches_a_servers_mods_and_o_opens_everything(tmp_path: Path, run, monkeypatch) -> None:
+def test_o_opens_the_folder_and_any_file_as_it_is(tmp_path: Path, run, monkeypatch) -> None:
+    """The dashboard's O: Huragok's folder, settings.toml, and a server's folder and its dedicated.toml, each opened
+    as it is. (A server's mods, which this test also looked at in D → M, are G's now: test_content.py,
+    test_g_lists_a_servers_mods_as_its_disabled_mods_json_has_them.)"""
     path = template_root(tmp_path)
     folder = path.parent / "SERVERS" / ALPHA
-    mod = folder / "content" / "Mods" / "canyon"
-    mod.mkdir(parents=True)
-    (mod / "ModInfo.json").write_text(json.dumps({"Title": {"Neutral": "Canyon"}}), encoding="utf-8")
-    menu, terminal = screen(path, ["1", "ENTER", "M", "ENTER", "1", "ENTER", "ESC", "ESC", "ESC"])
-    run(menu.screen_settings())
-    assert json.loads((folder / "content" / "disabled-mods.json").read_text(encoding="utf-8")) == \
-        {"packages": ["Mods/canyon"]}
-    assert "Canyon switched off." in text_of(terminal) and "mods on or off" in text_of(terminal)
     opened: list[Path] = []
     monkeypatch.setattr(desktop, "open_editor", lambda p: opened.append(p) or f"opened {p.name}")
     monkeypatch.setattr(desktop, "open_path", lambda p: opened.append(p) or f"opened {p}")
@@ -423,8 +418,7 @@ def test_d_settings_toml_refuses_and_takes_out(tmp_path: Path, run) -> None:
             "3", "ENTER", "1", "ENTER", *"none", "ENTER",  # warn_seconds: none
             "2", "ENTER", *"soon", "ENTER", "x",  # after_game_seconds: not a number
             "ESC",
-            *"12", "ENTER", "2", "ENTER", *"D:/MCC", "ENTER", "2", "ENTER", "-", "ENTER",  # mcc_folder, then out
-            "1", "ENTER", *"9", "ENTER", "x",  # share: 9 isn't on the list
+            *"12", "ENTER", "1", "ENTER", *"D:/MCC", "ENTER", "1", "ENTER", "-", "ENTER",  # mcc_folder, then out
             "ESC",
             "7", "ENTER", "7", "ENTER", "-", "ENTER",  # exempt_roles: none
             "ESC",
@@ -440,7 +434,7 @@ def test_d_settings_toml_refuses_and_takes_out(tmp_path: Path, run) -> None:
     assert data["restarts"]["warn_seconds"] == [] and "mcc_folder" not in data["setup"]
     assert data["automod"]["exempt_roles"] == [] and "user" not in data["relay"]
     assert "That's what it is already." in text and "Careful: this changes where Huragok looks" in text
-    assert "Not changed: a number." in text and "Not changed: the numbers in the list." in text
+    assert "Not changed: a number." in text
     assert "[setup] mcc_folder = D:/MCC, written" in text and "[setup] mcc_folder taken out of the file" in text
     assert "has that password" in text and "Alice's password changed." in text and "Alice taken out." in text
 
@@ -526,45 +520,51 @@ def test_d_word_list_mutes_for_good_after_a_number_of_strikes(tmp_path: Path, ru
     assert "(no: 7d each time from then on)" in text and "(no: perm each time" not in text
 
 
-def test_d_a_servers_playlists_custom_games_and_bans(tmp_path: Path, run) -> None:
+def test_d_has_a_servers_bans_and_g_its_playlists_and_custom_games(tmp_path: Path, run) -> None:
+    """0.7.0: a server's page in D keeps its bans (B); its playlists, custom games and mods are G's (1, 2 and 4), and
+    D no longer offers them."""
     from testkit.setup import setup_root
 
     settings_path = setup_root(tmp_path)
     keys = ["1", "ENTER",
-            "P", "ENTER", "ESC",  # its playlists: G's screen
-            "G", "ENTER", "ESC",  # its custom games
             "B", "ENTER", "x",  # its bans: not running, so the ban list from its folder
-            "M", "ENTER", "x",  # its mods: none yet
             "ESC", "ESC"]
     menu, terminal = screen(settings_path, keys)
     run(menu.screen_settings())
     text = text_of(terminal)
-    assert "Playlists" in text and "Custom games" in text and "isn't running: the ban list from its folder" in text
-    assert "No mods in its content folder yet" in text
-    # Without the server program, the screens that need it say so.
+    assert "isn't running: the ban list from its folder" in text
+    assert "[ P]" not in text and "[ G]" not in text and "[ M]" not in text  # not D's letters any more
+    keys = ["1", "ENTER",  # Alpha; the catalogue is read
+            "1", "ESC",  # its playlists
+            "2", "ESC",  # its custom games
+            "ESC"]
+    menu, terminal = screen(settings_path, keys)
+    run(menu.screen_content())
+    text = text_of(terminal)
+    assert "What it plays › Playlists" in text and "What it plays › Custom games" in text
+    # Without the server program, the screen that needs it says so.
     path = template_root(tmp_path / "other")
-    menu, terminal = screen(path, ["1", "ENTER", "P", "ENTER", "x", "ESC", "ESC"])
-    run(menu.screen_settings())
+    menu, terminal = screen(path, ["1", "ENTER", "x"])
+    run(menu.screen_content())
     assert "project-reclaimer" in text_of(terminal).lower() or "program" in text_of(terminal)
 
 
-def test_d_asks_before_switching_off_a_mod_other_servers_share(tmp_path: Path, run) -> None:
-    """A content folder shared by several servers has one mod list: switching a mod off for one switched it off for
-    them all, with no word of it (audit 2026-11, 7.2)."""
-    from conftest import free_port
-
-    from huragok.core.tomledit import replace_server_blocks, server_blocks
+def test_d_puts_back_a_version_of_dedicated_toml_kept_around_a_quick_action(tmp_path: Path, run) -> None:
+    """D -> a server -> F: the versions kept before and after each quick action, newest first; one put back as it was,
+    the file as it is now kept first."""
+    from huragok.content.quickactions import HISTORY, owner_of
+    from huragok.core import versions
+    from huragok.core.settings import load
 
     path = template_root(tmp_path)
-    folder = path.parent / "SERVERS" / ALPHA
-    replace_server_blocks(folder / "dedicated.toml", [*server_blocks(folder / "dedicated.toml"), {"name": "Second Server", "port": free_port()}])
-    mod = folder / "content" / "Mods" / "canyon"
-    mod.mkdir(parents=True)
-    (mod / "ModInfo.json").write_text(json.dumps({"Title": {"Neutral": "Canyon"}}), encoding="utf-8")
-    menu, terminal = screen(path, ["1", "ENTER", "M", "ENTER", "1", "ENTER", "N", "ESC", "ESC", "ESC"])
+    config = path.parent / "SERVERS" / ALPHA / "dedicated.toml"
+    settings = load(path)
+    original = config.read_text(encoding="utf-8")
+    versions.keep_current(settings.records, HISTORY, owner_of(config), config)
+    config.write_text(original + "\n# a quick action's line\n", encoding="utf-8")
+    versions.keep(settings.records, HISTORY, owner_of(config), config, "quick action: a test")
+    menu, terminal = screen(path, ["1", "ENTER", "F", "ENTER", "2", "ENTER", "Y", "ESC", "ESC"])
     run(menu.screen_settings())
-    assert "Second Server shares this content folder: the mod is switched off for them too" in text_of(terminal)
-    assert not (folder / "content" / "disabled-mods.json").exists()
-    menu, terminal = screen(path, ["1", "ENTER", "M", "ENTER", "1", "ENTER", "Y", "ESC", "ESC", "ESC"])
-    run(menu.screen_settings())
-    assert json.loads((folder / "content" / "disabled-mods.json").read_text(encoding="utf-8")) == {"packages": ["Mods/canyon"]}
+    text = text_of(terminal)
+    assert "History" in text and "Put back." in text
+    assert config.read_text(encoding="utf-8") == original

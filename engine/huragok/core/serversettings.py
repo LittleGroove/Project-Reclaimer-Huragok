@@ -9,9 +9,9 @@ Superintendent, Vergil, the window, `check` and the status card all say the same
   daily_restart        [restarts] daily_restart             its own, else every server's
   warn_seconds         [restarts] warn_seconds              its own, else every server's
   min_uptime_seconds   [restarts] min_uptime_seconds        its own, else every server's
-  workshop_updates     [workshop_updates] install           after_game on a content folder other servers share
-                                                            becomes when_empty (the program swaps a shared item
-                                                            for all of them at once, once nobody's on)
+  workshop_updates     [workshop_updates] restart           on (restarted to put in a mod update its map in use
+                                                            holds up) or off (only warned about); 0.6's
+                                                            after_game and when_empty are read as unset
   priority             [process] priority                   "off" unless the process backend runs it
   automod              [automod] dry_run                    "off" while [automod] enabled = false
   service, data, rcon_host, rcon_port                       where the server is: its own only
@@ -33,7 +33,8 @@ if TYPE_CHECKING:
     from .settings import Settings
 
 AUTOMOD_MODES = ("on", "dry_run", "off")  # Vergil on one server
-WORKSHOP_INSTALLS = ("after_game", "when_empty", "off")
+WORKSHOP_UPDATES = ("on", "off")  # a server restarted for its mod updates, or only warned about
+WORKSHOP_OLD = ("after_game", "when_empty")  # 0.6's values: still read, as unset (the general setting applies)
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ OVERRIDES = {override.key: override for override in (
     Override("daily_restart", "restarts", "daily_restart"),
     Override("warn_seconds", "restarts", "warn_seconds"),
     Override("min_uptime_seconds", "restarts", "min_uptime_seconds"),
-    Override("workshop_updates", "workshop_updates", "install", WORKSHOP_INSTALLS),
+    Override("workshop_updates", "workshop_updates", "restart", WORKSHOP_UPDATES),
     Override("priority", "process", "priority", PRIORITIES),
     Override("automod", "automod", "dry_run", AUTOMOD_MODES),
     Override("service"), Override("data"), Override("rcon_host"), Override("rcon_port"),
@@ -57,10 +58,10 @@ OVERRIDES = {override.key: override for override in (
 CHANGEABLE = ("autostart", "daily_restart", "workshop_updates", "priority", "automod")  # from the window (D)
 SERVER_KEYS = {"name", *OVERRIDES}  # what a [[server]] block may hold
 
-# How a server's Workshop items are kept up to date, as the host reads it.
-WORKSHOP_HOW = {"after_game": "new versions installed after the game",
-                "when_empty": "new versions installed by the server once nobody's on",
-                "off": "Workshop updates off"}
+# What Huragok does about a server's Workshop mod updates, as the host reads it (the server downloads and installs
+# them itself; its map in use can hold one up, which only a restart frees).
+WORKSHOP_HOW = {"on": "the server installs its own mod updates; Huragok restarts it when its map in use holds one up",
+                "off": "the server installs its own mod updates; Huragok only warns when its map in use holds one up"}
 
 
 def automod_mode(own: Any, dry_run: bool, everything_dry: bool = False) -> str:
@@ -83,10 +84,12 @@ class ServerSettings:
         """The server's own value, from its [[server]] block, or None when it has none."""
         block = self.settings.server_overrides.get(self.server.name.lower(), {})
         if key in block:
-            return block[key]
-        if key in ("daily_restart", "workshop_updates", "priority", "automod"):
-            return getattr(self.server, key, None)  # as the block was read with its dedicated.toml
-        return None
+            value = block[key]
+        elif key in ("daily_restart", "workshop_updates", "priority", "automod"):
+            value = getattr(self.server, key, None)  # as the block was read with its dedicated.toml
+        else:
+            return None
+        return None if key == "workshop_updates" and value in WORKSHOP_OLD else value
 
     def where(self, key: str) -> str:
         """Where the value in force comes from: "settings.toml" (its own [[server]] block) or the section for every
@@ -132,8 +135,16 @@ class ServerSettings:
 
     @property
     def workshop_updates(self) -> str:
-        """How new Workshop versions are installed, as set: after_game, when_empty or off."""
-        return str(self.own("workshop_updates") or self.settings.workshop_updates.install)
+        """"on": Huragok restarts the server to put in a mod update its map in use holds up; "off": it only warns.
+        Its own [[server]] value, else [workshop_updates] restart."""
+        own = self.own("workshop_updates")
+        if own in WORKSHOP_UPDATES:
+            return str(own)
+        return "on" if self.settings.workshop_updates.restart else "off"
+
+    @property
+    def workshop_restart(self) -> bool:
+        return self.workshop_updates == "on"
 
     def shares_content_with(self) -> list[str]:
         """Other servers using the same content folder, so the same installed Workshop items."""
@@ -142,19 +153,11 @@ class ServerSettings:
         return [s.name for s in self.settings.servers
                 if s is not self.server and s.content_dir == self.server.content_dir]
 
-    @property
-    def workshop_install(self) -> str:
-        """How new Workshop versions are installed, as it happens: after_game on a shared content folder is
-        when_empty, since the program swaps a shared item for every server at once, once nobody's on."""
-        mode = self.workshop_updates
-        return "when_empty" if mode == "after_game" and self.shares_content_with() else mode
-
     def workshop_text(self) -> str:
-        """`new versions installed after the game` (with why when it's the program's, not Huragok's)."""
+        """What happens to its mod updates, with the servers it shares them with (one update reaches all of them)."""
         shared = self.shares_content_with()
-        if self.workshop_updates == "after_game" and shared:
-            return f"new versions installed by the server once nobody's on (content shared with {', '.join(shared)})"
-        return WORKSHOP_HOW[self.workshop_updates]
+        return WORKSHOP_HOW[self.workshop_updates] + (f" (content shared with {', '.join(shared)}: one update "
+                                                      "reaches all of them at once)" if shared else "")
 
     @property
     def automod(self) -> str:

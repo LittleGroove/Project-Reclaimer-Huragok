@@ -346,8 +346,12 @@ class Stats(Part):
     persona = SUPERINTENDENT
     name = "stats"
     description = "Every finished game, from its server's report to the stats service: what players' stats count"
-    always_on = True  # nothing to set: the servers report their games anyway
+    always_on = True  # the servers report their games anyway
+    # relay: Huragok stands between each server and the stats service (statsrelay.py), for leaderboards and the kill
+    # feed. false: every server's own stats_server goes back as it was, and Huragok never touches it (0.7.0, plan 4.8)
+    defaults = {"relay": True}
     capture: StatsCapture | None = None
+    relay = True
 
     async def setup(self) -> None:
         self.ctx.db.migrate(SCHEMA)
@@ -363,7 +367,15 @@ class Stats(Part):
         self.asked: dict[str, float] = {}
         self.was: dict[str, str] = {}  # each server's last phase
         self.capture = StatsCapture(self.records, self.copy, self.scrub, home=home, on_report=self.take)
-        await self.capture.apply(list(self.ctx.servers), {name: self._paths(name) for name in self.ctx.servers})
+        self.relay = bool(self.config.get("relay", True))
+        if self.relay:
+            await self.capture.apply(list(self.ctx.servers), {name: self._paths(name) for name in self.ctx.servers})
+        else:
+            # Off: every server's own stats_server back as it was, at once, and never touched again
+            await self.capture.apply([], {name: self._paths(name) for name in self.ctx.servers})
+            self.log.warning("The stats relay is off ([stats] relay = false in settings.toml): every server reports "
+                             "straight to the stats service, and leaderboards and the kill feed get nothing new")
+        self._relay_warnings()
         self._notes()
         background(self.backfill(), what="stats: reading in the reports already kept")
         background(self.count_medals(), what="stats: counting how often each medal's been earned")
@@ -446,6 +458,23 @@ class Stats(Part):
     def _paths(self, name: str) -> tuple[Path | None, Path | None]:
         return self.ctx.config_path(name), self.ctx.server_option(name, "log_path")
 
+    def _relay_warnings(self) -> None:
+        """With the relay off, each server says so once (the warnings catalogue)."""
+        warnings = getattr(self.ctx, "warnings", None)
+        if warnings is None:
+            return
+        for name in self.ctx.servers:
+            if self.relay:
+                warnings.clear(name, "stats-relay-off")
+            else:
+                warnings.set(name, "stats-relay-off", source="stats")
+
+    @on("rcon.connected")
+    async def connected(self, event: Event) -> None:
+        """A server found while running: it says so too, as it first connects."""
+        if not self.relay:
+            self._relay_warnings()
+
     def _notes(self) -> None:
         if self.capture is None:
             return
@@ -458,7 +487,7 @@ class Stats(Part):
     async def reporting(self, event: Event) -> None:
         """Where a server reports, as it starts: one Huragok isn't standing in the middle of yet (new, or its server.log
         didn't say before) it is from now on, from its next start."""
-        if self.capture is None or event.server is None or event.server not in self.ctx.servers:
+        if self.capture is None or not self.relay or event.server is None or event.server not in self.ctx.servers:
             return
         await self.capture.learned(event.server, str(event.get("url", "")), *self._paths(event.server))
         self._notes()

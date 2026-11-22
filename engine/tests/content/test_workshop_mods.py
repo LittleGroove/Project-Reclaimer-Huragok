@@ -1,296 +1,218 @@
-"""Every Workshop mod a server loads kept up to date: hand copies taken over, the program's unlisted copies listed
-again, new items fetched at once, and the Forge layouts mods ship kept in step with them."""
+"""Workshop mods as the files have them (0.7.0): what nothing keeps up to date, and what an update left behind, said as
+warnings, with nothing written into a server's folder; and a mod's own Forge layouts copied into content/Maps when the
+host asks, the server's version-2 rewrite of one not taken for a hand edit (bug B2)."""
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import json
-import logging
+import os
 from pathlib import Path
+
+import pytest
 
 from conftest import free_port
 from testkit.mods import a_map, a_mod
 from testkit.setup import make_server_folder, setup_root
-from testkit.workshop import ALPHA, ITEM, NEW, OLD, FakeLifecycle, service_for
+from testkit.workshop import ALPHA, ITEM, FakeLifecycle, service_for, workshop_root
 
-from huragok.content.catalogue import SET_ASIDE, installed_mods, sync_layouts
-from huragok.content.workshopmods import RECORD, STAGING, WorkshopKeeper, layouts_by_hand, look_through, \
-    switch_workshop_copies
+from huragok.content.catalogue import SET_ASIDE, installed_mods, layout_hashes, sync_layouts
+from huragok.content import workshopmods
+from huragok.content.workshopmods import RECORD, WorkshopFiles, layouts_by_hand, look_through, steam_folder_mods
+from huragok.core.serverwarnings import Warnings, load_rules
 from huragok.core.settings import load
-from huragok.core.tomledit import read_toml, set_table_key, set_top_key
-from huragok.steam import MCC_APP, SteamItem
-from huragok.updates.workshop import installed_version
+from huragok.core.tomledit import set_table_key, set_top_key
+from huragok.steam import MCC_APP
 
 TITLE = "HugeGrass Rebalance"
 
 
-def root_with_hand_copy(tmp_path: Path, *, steam: int = NEW, maps: dict[str, bytes] | None = None,
-                        folder: str = "HugeGrass") -> tuple[Path, Path, Path]:
-    """Alpha with no Workshop items, and a mod copied into its content/Mods by hand that names ITEM."""
+def hashes_of(folder: Path) -> dict[str, str]:
+    """Every file under the folder, by its content: what "nothing written" is checked against."""
+    return {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def files_for(settings_path: Path, steam: Path | None = None, updates=None) -> WorkshopFiles:  # type: ignore[no-untyped-def]
+    settings = load(settings_path)
+    return WorkshopFiles(settings, Warnings(load_rules(), settings.records), updates, steam_folder=lambda: steam)
+
+
+def found_rules(files: WorkshopFiles, server: str = ALPHA) -> dict[str, dict]:  # type: ignore[type-arg]
+    files.say(files.look())
+    assert files.warnings is not None
+    return {f"{w.rule.id}:{w.key}" if w.key else w.rule.id: {"text": w.line(), "rule": w.rule}
+            for w in files.warnings.of(server)}
+
+
+# What nothing keeps up to date (answer 18) ------------------------------------------------------------------------
+
+def test_a_hand_copy_not_in_items_is_warned_about_and_left_as_it_is(tmp_path: Path) -> None:
     settings_path = setup_root(tmp_path)
     server = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    (server / "fake-steam.json").write_text(json.dumps({str(ITEM): steam}), encoding="utf-8")
-    hand = a_mod(server / "content" / "Mods" / folder, maps if maps is not None else {f"fake{ITEM}": a_map()},
-                 title=TITLE, workshop=ITEM)
-    return settings_path, server, hand
+    a_mod(server / "content" / "Mods" / "Albatross Hand", {"shrine_albatross_rc": a_map()}, title="Albatross Battle",
+          workshop=2898980746)
+    before = hashes_of(server)
+    files = files_for(settings_path)
+    found = found_rules(files)
+    warning = found["mod-hand-copy:2898980746:Mods/Albatross Hand"]
+    assert warning["text"] == (
+        "Check: This copy of Albatross Battle names Workshop item 2898980746 but isn't in this server's [workshop] "
+        "items, so it never updates (Mods/Albatross Hand). Add the item to items and take the copy out: the server "
+        "fetches and updates listed mods itself (its own check does it too).")
+    assert not warning["rule"].discord
+    assert hashes_of(server) == before  # nothing taken over, listed or moved
+    set_table_key(server / "dedicated.toml", "workshop", "items", [2898980746], before="master")  # the host lists it
+    files.settings = load(settings_path)
+    assert "mod-hand-copy:2898980746:Mods/Albatross Hand" not in found_rules(files)
 
 
-def keeper_for(settings_path: Path, lifecycle: FakeLifecycle, steam: dict[int, SteamItem] | None = None
-               ) -> WorkshopKeeper:
-    updates = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, TITLE, NEW, "n", MCC_APP)}
-                          if steam is None else steam)
-    return WorkshopKeeper(updates.settings, updates.bus, lifecycle, updates)  # type: ignore[arg-type]
-
-
-def items_of(server: Path) -> list[int]:
-    return read_toml(server / "dedicated.toml").get("workshop", {}).get("items", [])
-
-
-def staging_left(server: Path) -> list[Path]:
-    """What's left in the staging folder beside the server's content folder."""
-    return list((server / STAGING).iterdir()) if (server / STAGING).is_dir() else []
-
-
-# Taking over hand copies ------------------------------------------------------------------------------------------
-
-def test_a_hand_copy_is_taken_over_after_the_game(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
-    lifecycle = FakeLifecycle()
-    keeper = keeper_for(settings_path, lifecycle)
-    server = keeper.settings.server(ALPHA)
-    assert installed_version(server.content_dir, ITEM) is None
-
-    async def scenario() -> None:
-        await keeper.look_at(server)
-        await asyncio.sleep(0)
-        # Fetched beside the running server; nothing it uses has changed yet.
-        assert hand.is_dir() and items_of(folder) == [] and ITEM in keeper.adopting[ALPHA]
-        assert [j.key for j in lifecycle.jobs[ALPHA]] == ["workshop-adopt"]
-        assert lifecycle.restarts == [(ALPHA, "after_game", f"putting the Workshop's own copy of {TITLE} in place of "
-                                                            "a hand copy, to keep it up to date")]
-        assert lifecycle.told == [f"[^_^] YOUR TAX DOLLARS AT WORK! This server restarts after this game to bring "
-                                  f"{TITLE} up to date."]
-        await keeper.look_at(server)  # looked at again while it waits: no second fetch, no second plan
-        await asyncio.sleep(0)
-        assert len(lifecycle.restarts) == 1
-        said = await lifecycle.jobs[ALPHA][0].run()  # the game ended: the server is stopped
-        assert said.startswith(f"kept up to date from now on: {TITLE}")
-
-    with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert not hand.exists() and (folder / SET_ASIDE / "Mods" / "HugeGrass" / "ModInfo.json").is_file()
-    assert installed_version(server.content_dir, ITEM)["updated"] == NEW
-    assert items_of(folder) == [ITEM] and server.workshop_items == [ITEM]
-    assert staging_left(folder) == []
-    assert "is a hand copy (Mods/HugeGrass) that nothing keeps up to date" in caplog.text
-    assert f"{TITLE} (Workshop {ITEM}) is kept up to date now" in caplog.text
-    record = json.loads((keeper.settings.records / RECORD).read_text(encoding="utf-8"))
-    assert record["adopted"][0]["item"] == ITEM and record["adopted"][0]["server"] == ALPHA
-    # From now on the update service keeps it up to date like any listed item.
-    assert run(keeper.updates.check()) == {}
-
-
-def test_a_stopped_servers_hand_copy_is_swapped_at_once(tmp_path: Path, run) -> None:
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
-    lifecycle = FakeLifecycle(phase="idle")
-    keeper = keeper_for(settings_path, lifecycle)
-    run(keeper.look_at(keeper.settings.server(ALPHA)))
-    assert not hand.exists() and items_of(folder) == [ITEM] and not lifecycle.restarts and not lifecycle.jobs
-
-
-def test_a_hand_copy_in_the_workshop_folder_is_replaced(tmp_path: Path, run) -> None:
-    """Copied into Mods/Workshop/<item> by hand, with no receipt: the program refuses to fetch over it."""
+def test_the_programs_copy_of_an_item_no_longer_listed(tmp_path: Path) -> None:
     settings_path = setup_root(tmp_path)
     folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    set_table_key(folder / "dedicated.toml", "workshop", "items", [ITEM], before="master")
-    a_mod(folder / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM,
-          receipt=False)
-    lifecycle = FakeLifecycle(phase="idle")
-    keeper = keeper_for(settings_path, lifecycle)
-    server = keeper.settings.server(ALPHA)
-    assert look_through(server.content_dir).hand.keys() == {ITEM}
-    run(keeper.look_at(server))
-    assert installed_version(server.content_dir, ITEM) is not None  # the program's own copy, with its receipt
-    assert (folder / SET_ASIDE / "Mods" / "Workshop" / str(ITEM) / "ModInfo.json").is_file()
-    assert items_of(folder) == [ITEM]
+    a_mod(folder / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE)  # receipts too
+    found = found_rules(files_for(settings_path))
+    assert found[f"mod-unlisted:{ITEM}"]["text"] == (
+        f"Check: Mods/Workshop/{ITEM} ({TITLE}) was installed by the server program, but Workshop item {ITEM} isn't "
+        "in [workshop] items any more: the server still loads it and never updates it. Add the item back to items to "
+        "keep it up to date, or move the folder out if it isn't wanted.")
+    assert read_items(folder) == []  # never listed again by Huragok
 
 
-def test_hand_copies_left_as_they_are(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
+def read_items(folder: Path) -> list[int]:
+    from huragok.core.tomledit import read_toml
+
+    return read_toml(folder / "dedicated.toml").get("workshop", {}).get("items", [])
+
+
+def test_a_hand_copy_listed_by_another_server_on_the_folder_is_kept_up_to_date_by_it(tmp_path: Path) -> None:
+    settings_path = setup_root(tmp_path)
+    alpha = tmp_path / "reclaimer" / "SERVERS" / ALPHA
+    a_mod(alpha / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE)
+    beta = tmp_path / "reclaimer" / "SERVERS" / "Beta"
+    make_server_folder(beta, "Beta", free_port())
+    set_top_key(beta / "dedicated.toml", "content", f"../{ALPHA}/content")
+    set_table_key(beta / "dedicated.toml", "workshop", "items", [ITEM], before="master")
+    files = files_for(settings_path)
+    assert not [key for key in found_rules(files) if key.startswith("mod-")]
+    assert not [key for key in found_rules(files, "Beta") if key.startswith("mod-")]
+
+
+def test_a_switched_off_mod_and_other_games_hand_copies_are_left_out(tmp_path: Path) -> None:
+    settings_path = setup_root(tmp_path)
+    content = tmp_path / "reclaimer" / "SERVERS" / ALPHA / "content"
+    a_mod(content / "Mods" / "Off", {"off": a_map()}, title="Off", workshop=111111111)
+    a_mod(content / "Mods" / "Reach", {"forge": a_map()}, title="Reach Mod", engine="HaloReach", workshop=222222222)
+    (content / "disabled-mods.json").write_text(json.dumps({"packages": ["Mods/Off"]}), encoding="utf-8")
+    assert not [k for k in found_rules(files_for(settings_path)) if k.startswith("mod-hand-copy")]
+    assert look_through(content).hand == {}
+
+
+# What an update left behind (answers 16 and 20) -----------------------------------------------------------------
+
+def test_a_leftover_copy_of_a_dead_server_is_warned_about_with_its_size(tmp_path: Path, monkeypatch) -> None:
+    settings_path, folder = workshop_root(tmp_path)
     content = folder / "content"
-    a_mod(content / "Mods" / "Other Game", {"other": a_map()}, title="Reach map", workshop=111, engine="HaloReach")
-    a_mod(content / "Mods" / "Hidden", {"hidden": a_map()}, title="My own upload", workshop=222)
-    a_mod(content / "Mods" / "Not MCC", {"notmcc": a_map()}, title="Something else", workshop=333)
-    a_mod(content / "Mods" / "Switched Off", {"off": a_map()}, title="Off", workshop=444)
-    (content / "disabled-mods.json").write_text(json.dumps({"packages": ["Mods/Switched Off"]}), encoding="utf-8")
-    steam = {ITEM: SteamItem(ITEM, TITLE, NEW, "n", MCC_APP), 333: SteamItem(333, "Else", NEW, "n", 4000)}
-    asked: list[list[int]] = []
-    lifecycle = FakeLifecycle()
-    keeper = keeper_for(settings_path, lifecycle, steam)
-    real = keeper.updates.fetch
-
-    def fetch(items: list[int]) -> dict[int, SteamItem]:
-        asked.append(items)
-        return real(items)
-
-    keeper.updates.fetch = fetch  # type: ignore[assignment]
-    with caplog.at_level(logging.INFO):
-        run(keeper.look_at(keeper.settings.server(ALPHA)))
-    assert set(keeper.adopting[ALPHA]) == {ITEM}  # only the real one
-    assert sorted(i for (i,) in asked) == [222, 333, ITEM]  # never asked about another game's or a switched-off one
-    assert "My own upload is left a hand-installed mod (Mods/Hidden): Steam doesn't list Workshop item 222 " \
-           "publicly" in caplog.text
-    assert "Workshop item 333 isn't an MCC mod" in caplog.text
+    dead = content / f".workshop-{ITEM}-6832-17"
+    (dead / "maps").mkdir(parents=True)
+    (dead / "maps" / "shrine.map").write_bytes(b"x" * 3000)
+    live = content / f".workshop-{ITEM}-{os.getpid()}-1"  # a running process's: an update under way
+    live.mkdir()
+    monkeypatch.setattr(workshopmods, "program_running", lambda pid: pid == os.getpid())
+    found = found_rules(files_for(settings_path))
+    leftovers = {key: value for key, value in found.items() if key.startswith("mod-leftover")}
+    assert list(leftovers) == [f"mod-leftover:.workshop-{ITEM}-6832-17"]
+    text = leftovers[f"mod-leftover:.workshop-{ITEM}-6832-17"]["text"]
+    assert "(process 6832) is no longer running" in text and "3 KB" in text and "Delete the folder" in text
+    assert dead.is_dir()  # warned about only (answer 16)
 
 
-def test_a_mod_made_from_an_item_is_left_and_remembered(tmp_path: Path, run, caplog) -> None:
-    """A host's own version of a map that kept the item's ID in its ModInfo.json: its maps aren't the item's."""
-    settings_path, folder, hand = root_with_hand_copy(tmp_path, maps={"lg_hugegrass": a_map()}, folder="LG HugeGrass")
-    lifecycle = FakeLifecycle()
-    keeper = keeper_for(settings_path, lifecycle)
-    with caplog.at_level(logging.INFO):
-        run(keeper.look_at(keeper.settings.server(ALPHA)))
-    assert hand.is_dir() and not keeper.adopting.get(ALPHA) and not lifecycle.restarts and items_of(folder) == []
-    assert "is left as it is: Mods/LG HugeGrass names Workshop item" in caplog.text
-    assert "its maps (lg_hugegrass) aren't the item's" in caplog.text
-    assert staging_left(folder) == []
-    # Huragok starts again: it doesn't fetch 2 GB again to find the same.
-    again = keeper_for(settings_path, FakeLifecycle())
-    tries: list[int] = []
-    again._stage = lambda *a, **k: tries.append(1)  # type: ignore[assignment,method-assign]
-    run(again.look_at(again.settings.server(ALPHA)))
-    assert tries == []
+def test_a_program_running_is_told_by_its_name(monkeypatch) -> None:
+    assert not workshopmods.program_running(os.getpid())  # this is Python, not the server program
+    assert not workshopmods.program_running(2 ** 22 + 12345)
 
 
-def test_no_taking_over_when_workshop_updates_are_off_or_content_is_shared(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
-    settings = load(settings_path)
-    settings.workshop_updates.install = "off"
-    lifecycle = FakeLifecycle()
-    updates = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, TITLE, NEW, "n", MCC_APP)})
-    updates.settings = settings
-    keeper = WorkshopKeeper(settings, updates.bus, lifecycle, updates)  # type: ignore[arg-type]
-    run(keeper.look_at(settings.server(ALPHA)))
-    assert hand.is_dir() and not keeper.adopting.get(ALPHA)
-    # Beta shares Alpha's content folder: both would have to stop.
-    second = tmp_path / "reclaimer" / "SERVERS" / "Beta"
-    make_server_folder(second, "Beta", free_port())
-    set_table_key(second / "dedicated.toml", "rcon", "password", "secretsecret")
-    set_top_key(second / "dedicated.toml", "content", f"../{ALPHA}/content")
-    keeper = keeper_for(settings_path, FakeLifecycle())
-    with caplog.at_level(logging.INFO):
-        run(keeper.look_at(keeper.settings.server(ALPHA)))
-    assert hand.is_dir() and not keeper.adopting.get(ALPHA)
-    assert "in a content folder Beta use too: it's left as it is" in caplog.text
+def test_the_download_kept_beside_an_installed_update_is_said_with_its_size(tmp_path: Path, run) -> None:
+    settings_path, folder = workshop_root(tmp_path)
+    updates = service_for(settings_path, FakeLifecycle())
+    updates.titles[ITEM] = TITLE
+    cache = folder / "data" / "workshop-cache" / "steamapps" / "workshop" / "content" / str(MCC_APP) / str(ITEM)
+    (cache / "maps").mkdir(parents=True)
+    (cache / "maps" / "fake.map").write_bytes(b"x" * 2048)
+    files = files_for(settings_path, updates=updates)
+    assert not [k for k in found_rules(files) if k.startswith("mod-download-kept")]  # only after an install
+
+    async def install() -> None:
+        updates.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="updated to the version of 18 Oct 2026 "
+                                                                         "between games; 1 server(s) play it")
+
+    run(install())
+    found = found_rules(files)
+    text = found[f"mod-download-kept:{ITEM}"]["text"]
+    assert text.startswith(f"Info: {TITLE}'s download stays in data/workshop-cache/steamapps/workshop/content/976730/"
+                           f"{ITEM} (2 KB) beside the installed copy")
+    for path in sorted(cache.rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+    cache.rmdir()
+    assert not [k for k in found_rules(files) if k.startswith("mod-download-kept")]
 
 
-def test_taking_over_switched_off(tmp_path: Path, run) -> None:
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
-    settings = load(settings_path)
-    settings.workshop_updates.adopt = False
-    lifecycle = FakeLifecycle(phase="idle")
-    updates = service_for(settings_path, lifecycle, {})
-    keeper = WorkshopKeeper(settings, updates.bus, lifecycle, updates)  # type: ignore[arg-type]
-    run(keeper.look_at(settings.server(ALPHA)))
-    assert hand.is_dir() and items_of(folder) == []
+# This PC's own Steam Workshop folder ------------------------------------------------------------------------------
+
+def test_mods_only_in_this_pcs_steam_folder_are_said_for_information(tmp_path: Path) -> None:
+    settings_path, folder = workshop_root(tmp_path)
+    steam = tmp_path / "Steam" / "steamapps" / "workshop" / "content" / str(MCC_APP)
+    a_mod(steam / str(ITEM), {"x": a_map()}, title="Installed Here Too")  # the server has it: not "only"
+    a_mod(steam / "2898916793", {"y": a_map()}, title="Fonts Pack")
+    (steam / "3830420359").mkdir(parents=True)  # no ModInfo.json: named by its number
+    assert steam_folder_mods(steam) == {2898916793: "Fonts Pack", 3830420359: "Workshop item 3830420359",
+                                        ITEM: "Installed Here Too"}
+    found = found_rules(files_for(settings_path, steam))
+    text = found["mod-steam-folder"]["text"]
+    assert text.startswith("Info: Loads 2 mod(s) found only in this PC's own Steam Workshop folder (")
+    assert text.endswith("): Fonts Pack, Workshop item 3830420359. Steam updates or removes those on its own schedule; "
+                         "to keep one, list its item in [workshop] items.")
+    assert "mod-steam-folder" not in found_rules(files_for(settings_path, None))
 
 
-# The program's own copies that aren't listed ---------------------------------------------------------------------
+def test_the_steam_folder_is_found_from_steams_own_records(tmp_path: Path, monkeypatch) -> None:
+    from huragok import steam as steamsetup
 
-def test_an_unlisted_copy_is_listed_again_unless_removed_with_r(tmp_path: Path, run, caplog) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    a_mod(folder / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
-    lifecycle = FakeLifecycle()
-    keeper = keeper_for(settings_path, lifecycle)
-    server = keeper.settings.server(ALPHA)
-    with caplog.at_level(logging.INFO):
-        run(keeper.look_at(server))
-    assert items_of(folder) == [ITEM] and not lifecycle.restarts and not lifecycle.jobs  # no restart for that
-    assert f"is in its content folder (Mods/Workshop/{ITEM}) but wasn't in [workshop] items: the server loads it all " \
-           "the same, so it's listed now" in caplog.text
-    # R in the window: out of the list, and its files switched off, so it isn't listed again.
-    set_table_key(folder / "dedicated.toml", "workshop", "items", [], before="master")
-    server.workshop_items = []
-    lines = switch_workshop_copies(server, [ITEM], off=True)
-    assert lines == [f"Mods/Workshop/{ITEM} switched off in disabled-mods.json: its files stay, but the server stops "
-                     "loading them, and Huragok doesn't list it again"]
-    run(keeper.look_at(server))
-    assert items_of(folder) == []
-    assert switch_workshop_copies(server, [ITEM], off=True) == []  # once
-    assert switch_workshop_copies(server, [ITEM], off=False) == [f"Mods/Workshop/{ITEM} switched back on in "
-                                                                "disabled-mods.json"]
-    assert not (folder / "content" / "disabled-mods.json").exists()
+    library = tmp_path / "Library"
+    folder = library / "steamapps" / "workshop" / "content" / str(MCC_APP)
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(steamsetup, "steam_libraries", lambda: iter([(tmp_path / "Other", {"440": "1"}),
+                                                                     (library, {str(MCC_APP): "1"})]))
+    assert steamsetup.workshop_content() == folder
+    monkeypatch.setattr(steamsetup, "steam_libraries", lambda: iter([]))
+    assert steamsetup.workshop_content() is None
 
 
-# Fetching what's added ---------------------------------------------------------------------------------------------
+# Layouts, only when the host asks (S3), and bug B2 --------------------------------------------------------------
 
-def test_an_item_added_to_a_stopped_server_is_fetched_at_once(tmp_path: Path, run, caplog) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    set_table_key(folder / "dedicated.toml", "workshop", "items", [ITEM], before="master")
-    lifecycle = FakeLifecycle(phase="idle")
-    keeper = keeper_for(settings_path, lifecycle)
-    server = keeper.settings.server(ALPHA)
-    with caplog.at_level(logging.INFO):
-        assert run(keeper.fetch_missing(server)) == [ITEM]
-    assert installed_version(server.content_dir, ITEM) is not None
-    assert f"fetching Workshop {ITEM} now (just added), so it's ready as the server starts" in caplog.text
-    assert f"Workshop {ITEM} fetched (version of 13 Oct 2026)" in caplog.text
-    assert run(keeper.fetch_missing(server)) == []  # there now
-
-
-def test_a_fetch_that_fails_is_tried_again_later_three_times(tmp_path: Path, run, caplog) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    set_table_key(folder / "dedicated.toml", "workshop", "items", [ITEM], before="master")
-    (folder / "fake_steam_down").write_text("", encoding="utf-8")
-    keeper = keeper_for(settings_path, FakeLifecycle(phase="idle"))
-    server = keeper.settings.server(ALPHA)
-    with caplog.at_level(logging.INFO):
-        assert run(keeper.fetch_missing(server)) == []
-        assert run(keeper.fetch_missing(server)) == []  # not again straight away
-        for _ in range(2):
-            keeper.tries[(ALPHA, ITEM)] = (keeper.tries[(ALPHA, ITEM)][0] - 3600, keeper.tries[(ALPHA, ITEM)][1])
-            run(keeper.fetch_missing(server))
-        keeper.tries[(ALPHA, ITEM)] = (keeper.tries[(ALPHA, ITEM)][0] - 3600, keeper.tries[(ALPHA, ITEM)][1])
-        run(keeper.fetch_missing(server))
-    assert caplog.text.count("couldn't be fetched: ") == 3 and "(try 3 of 3)" in caplog.text
-    assert "couldn't be fetched in 3 tries" in caplog.text
-    (folder / "fake_steam_down").unlink()
-
-    async def added_again() -> None:  # a person adds it again in the window: tried again at once
-        ok, said = keeper.look_now(ALPHA)
-        assert ok and said == "Huragok fetches what's new now; the log says when it's in"
-        from conftest import wait_for
-
-        await wait_for(lambda: installed_version(server.content_dir, ITEM) is not None)
-
-    run(added_again())
-
-
-def test_a_running_server_fetches_its_own_or_gets_it_beside(tmp_path: Path, run, caplog) -> None:
-    settings_path = setup_root(tmp_path)
-    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    set_table_key(folder / "dedicated.toml", "workshop", "items", [ITEM], before="master")
-    keeper = keeper_for(settings_path, FakeLifecycle(phase="running"))
-    server = keeper.settings.server(ALPHA)
-    with caplog.at_level(logging.INFO):
-        assert run(keeper.fetch_missing(server)) == []
-    assert "the running server fetches it itself (auto_reload)" in caplog.text
-    set_top_key(folder / "dedicated.toml", "auto_reload", False)
-    assert run(keeper.fetch_missing(server)) == [ITEM]  # staged beside it and moved in: a new folder
-    assert installed_version(server.content_dir, ITEM) is not None
-
-
-# Forge layouts -----------------------------------------------------------------------------------------------------
-
-def layout(path: Path, name: str, body: str = "v1") -> None:
+def layout(path: Path, name: str, body: str = "v1", version: int = 1) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    (path / f"{name}.json").write_text(json.dumps({"name": name, "objects": body}), encoding="utf-8")
+    target = path / f"{name}.json"
+    target.write_text(json.dumps({"version": version, "name": name, "objects": body}, indent=2), encoding="utf-8")
+    return target
 
 
-def test_layouts_follow_the_mods_versions(tmp_path: Path) -> None:
+def rewrite_as_version_two(path: Path) -> None:
+    """What a 0.10 server does at its start: only the digit changes, the modified time kept."""
+    stat = path.stat()
+    path.write_bytes(path.read_bytes().replace(b'"version": 1', b'"version": 2', 1))
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+
+def test_the_servers_version_two_rewrite_is_still_the_mods_layout(tmp_path: Path) -> None:
+    copied = layout(tmp_path, "Balanced")
+    original = layout_hashes(copied)
+    rewrite_as_version_two(copied)
+    assert original <= layout_hashes(copied)  # the rewrite reads as the file Huragok copied
+    assert not layout_hashes(layout(tmp_path / "other", "Balanced", "an edit")) & original
+
+
+def test_layouts_are_copied_when_asked_and_a_rewritten_one_still_gets_the_mods_next_version(tmp_path: Path) -> None:
     content = tmp_path / "content"
     mod_folder = a_mod(content / "Mods" / "HugeGrass", {"hugegrass": a_map()}, title="HugeGrass")
     shipped = mod_folder / "Project Reclaimer Layouts"
@@ -299,112 +221,47 @@ def test_layouts_follow_the_mods_versions(tmp_path: Path) -> None:
     maps = content / "Maps" / "HugeGrass"
     layout(maps, "Mine", "made with L long ago")  # there before Huragok kept track, and different
     written: dict[str, str] = {}
-    mod = installed_mods(content)[0]
-    result = sync_layouts(mod, content, written)
+    result = sync_layouts(installed_mods(content)[0], content, written)
     assert sorted(result.copied) == ["Maps/HugeGrass/Balanced.json", "Maps/HugeGrass/Gone.json",
                                      "Maps/HugeGrass/Spirits.json"]
     assert result.replaced == ["Maps/HugeGrass/Mine.json"]
     assert (tmp_path / SET_ASIDE / "Maps" / "HugeGrass" / "Mine.json").read_text(encoding="utf-8").count("long ago")
-    # A new version of the mod; meanwhile someone changed Spirits here and deleted Gone.
+    # The server starts and rewrites every copy as version 2 (bug B2: these read as hand edits before)
+    for name in ("Balanced", "Spirits", "Gone", "Mine"):
+        rewrite_as_version_two(maps / f"{name}.json")
+    assert not sync_layouts(installed_mods(content)[0], content, written).changed  # the same layouts: nothing to do
+    # The mod's next version; meanwhile someone changed Spirits here and deleted Gone
     for name in ("Balanced", "Spirits", "Gone"):
         layout(shipped, name, "v2")
-    layout(maps, "Spirits", "my own edit")
+    layout(maps, "Spirits", "my own edit", version=2)
     (maps / "Gone.json").unlink()
     result = sync_layouts(installed_mods(content)[0], content, written)
     assert result.updated == ["Maps/HugeGrass/Balanced.json"] and result.kept == ["Maps/HugeGrass/Spirits.json"]
+    assert result.copied == ["Maps/HugeGrass/Gone.json"]  # asked for again: the deleted one comes back
     assert "v2" in (maps / "Balanced.json").read_text(encoding="utf-8")
-    assert "my own edit" in (maps / "Spirits.json").read_text(encoding="utf-8") and not (maps / "Gone.json").exists()
-    assert not sync_layouts(installed_mods(content)[0], content, written).changed  # nothing more to do
+    assert "my own edit" in (maps / "Spirits.json").read_text(encoding="utf-8")
+    assert not sync_layouts(installed_mods(content)[0], content, written).changed
 
 
-def test_layouts_are_kept_in_step_by_the_keeper(tmp_path: Path, run, caplog) -> None:
+def test_the_windows_l_remembers_what_it_copied(tmp_path: Path) -> None:
     settings_path = setup_root(tmp_path)
     folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
     mod_folder = a_mod(folder / "content" / "Mods" / "HugeGrass", {"hugegrass": a_map()}, title="HugeGrass")
     layout(mod_folder / "Project Reclaimer Layouts", "Balanced")
-    keeper = keeper_for(settings_path, FakeLifecycle())
-    with caplog.at_level(logging.INFO):
-        lines = keeper.sync_layouts()
-    assert lines and "Forge layouts from HugeGrass: 1 copied in Maps/HugeGrass" in caplog.text
-    assert (folder / "content" / "Maps" / "HugeGrass" / "Balanced.json").is_file()
-    assert keeper.sync_layouts() == []  # once
-    # The window's L remembers what it copied, so the next version is copied over it.
-    layout(mod_folder / "Project Reclaimer Layouts", "Spirits")
-    assert layouts_by_hand(keeper.settings, folder / "content", installed_mods(folder / "content")[0]) == \
-        ["Maps/HugeGrass/Spirits.json"]
-    layout(mod_folder / "Project Reclaimer Layouts", "Spirits", "v2")
-    keeper.sync_layouts()
-    assert "v2" in (folder / "content" / "Maps" / "HugeGrass" / "Spirits.json").read_text(encoding="utf-8")
     settings = load(settings_path)
-    settings.workshop_updates.layouts = False
-    assert WorkshopKeeper(settings, keeper.bus, keeper.lifecycle, keeper.updates).layouts_for(  # type: ignore[arg-type]
-        settings.server(ALPHA)) == []
+    assert layouts_by_hand(settings, folder / "content", installed_mods(folder / "content")[0]) == \
+        ["Maps/HugeGrass/Balanced.json"]
+    rewrite_as_version_two(folder / "content" / "Maps" / "HugeGrass" / "Balanced.json")
+    layout(mod_folder / "Project Reclaimer Layouts", "Balanced", "v2")
+    assert layouts_by_hand(settings, folder / "content", installed_mods(folder / "content")[0]) == \
+        ["Maps/HugeGrass/Balanced.json"]  # its next version over the server's rewrite of the last
+    assert "v2" in (folder / "content" / "Maps" / "HugeGrass" / "Balanced.json").read_text(encoding="utf-8")
+    assert json.loads((settings.records / RECORD).read_text(encoding="utf-8"))["layouts"]
 
 
-def test_a_swap_that_cant_move_the_hand_copy_leaves_it_and_waits(tmp_path: Path, run, monkeypatch, caplog) -> None:
-    from huragok.content import workshopmods
-
-    settings_path, folder, hand = root_with_hand_copy(tmp_path)
-    lifecycle = FakeLifecycle()
-    keeper = keeper_for(settings_path, lifecycle)
-    server = keeper.settings.server(ALPHA)
-    run(keeper.look_at(server))
-    monkeypatch.setattr(workshopmods, "set_aside", lambda root, paths: ([], [f"{p.name} (in use)" for p in paths]))
-    with caplog.at_level(logging.INFO):
-        said = run(lifecycle.jobs[ALPHA][0].run())
-    assert said == "no hand-copied Workshop mod taken over: HugeGrass Rebalance (HugeGrass (in use))"
-    assert hand.is_dir() and items_of(folder) == [] and installed_version(server.content_dir, ITEM) is None
-    assert "couldn't take over HugeGrass Rebalance (HugeGrass (in use)): it's left as it was, tried again in 10 " \
-           "minutes" in caplog.text
-    assert keeper.tries[(ALPHA, ITEM)][1] == 1 and staging_left(folder) == []
-    stages: list[int] = []
-    keeper._stage = lambda *a, **k: stages.append(1)  # type: ignore[assignment,method-assign]
-    run(keeper.look_at(server))  # not fetched again at the next look
-    assert stages == []
-
-
-def test_a_hand_copy_that_cant_be_set_aside_isnt_tried_after_every_game(tmp_path: Path, run, monkeypatch) -> None:
-    """With the Workshop's own copy installed, a hand copy whose folder can't be moved (a file in it held open) was
-    taken up again at the next look after each restart: a restart after every game, all night, until the hourly budget
-    FAULTED the server (audit 2026-11, 8.1). Tried again after FETCH_AGAIN, MAX_TRIES at most."""
-    from huragok.content import workshopmods
-
-    settings_path = setup_root(tmp_path)
-    server_dir = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    (server_dir / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
-    set_table_key(server_dir / "dedicated.toml", "workshop", "items", [ITEM], before="master")
-    a_mod(server_dir / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
-    a_mod(server_dir / "content" / "Mods" / "HugeGrass", {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
-    lifecycle = FakeLifecycle()
-    updates = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, TITLE, NEW, "n", MCC_APP)})
-    keeper = WorkshopKeeper(updates.settings, updates.bus, lifecycle, updates)  # type: ignore[arg-type]
-    server = keeper.settings.server(ALPHA)
-    monkeypatch.setattr(workshopmods, "set_aside", lambda root, paths: ([], [f"{p.name} (Access is denied)" for p in paths]))
-
-    async def games() -> None:
-        for _ in range(5):
-            await keeper.look_at(server)
-            await asyncio.sleep(0)
-            for job in lifecycle.jobs.pop(ALPHA, []):  # the game ends: the server stops and the job runs
-                await job.run()
-
-    run(games())
-    assert len(lifecycle.restarts) == 1
-
-
-def test_an_item_another_server_sharing_the_folder_lists_stays_on(tmp_path: Path) -> None:
-    """R on one server switched the copy off in the content folder's one mod list: off for every server sharing it,
-    including one that still lists it (audit 2026-11, 7.2)."""
-    from dataclasses import replace
-
-    settings_path = setup_root(tmp_path)
-    folder = tmp_path / "reclaimer" / "SERVERS" / ALPHA
-    a_mod(folder / "content" / "Mods" / "Workshop" / str(ITEM), {f"fake{ITEM}": a_map()}, title=TITLE, workshop=ITEM)
-    server = load(settings_path).server(ALPHA)
-    server.workshop_items = []
-    other = replace(server, name="Second Server", workshop_items=[ITEM])  # the same folder's content
-    lines = switch_workshop_copies(server, [ITEM], off=True, servers=[server, other])
-    assert len(lines) == 1 and lines[0].startswith(f"Mods/Workshop/{ITEM} stays on: Second Server still lists it")
-    assert not (folder / "content" / "disabled-mods.json").exists()
-    other.workshop_items = []
-    assert switch_workshop_copies(server, [ITEM], off=True, servers=[server, other])[0].startswith(f"Mods/Workshop/{ITEM} switched off")
+@pytest.mark.parametrize("written", ['{"version":2,"name":"a"}', '{\n  "version": 2.5,\n  "name": "a"\n}'])
+def test_only_a_whole_version_two_is_read_as_the_rewrite(tmp_path: Path, written: str) -> None:
+    path = tmp_path / "a.json"
+    path.write_text(written, encoding="utf-8")
+    forms = layout_hashes(path)
+    assert len(forms) == (2 if "2.5" not in written else 1)

@@ -1,5 +1,5 @@
-"""Setting servers up: the `dedicated` runner, packages, new server folders, the window's N/G/C/E screens and
-the commands, all against the fake `dedicated` (Windows and Linux)."""
+"""Setting servers up: the `dedicated` runner, new server folders (the program's own init, then the quick actions),
+the window's N/G/C/E screens and the commands, all against the fake `dedicated` (Windows and Linux)."""
 
 from __future__ import annotations
 
@@ -9,33 +9,26 @@ from typing import Any
 
 import pytest
 
-from conftest import free_port, staff, write_settings
+from conftest import free_port, free_ports, staff, write_settings
 from testkit.fake_dedicated import TEMPLATE
 from testkit.setup import (
-    ALPHA, FAKE, PYTHON, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root,
+    ALPHA, FAKE, PYTHON, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root, write_playlist,
 )
 from testkit.window import FakeTerminal
 
 from huragok.commandline import cli, firstrun
-from huragok.content.newserver import NewServer, SetupError, create_server, next_free_port, relative_posix, valid_name
-from huragok.content.packages import (
-    PackageError, apply_package, install_starters, list_packages, load_package, save_package,
-)
-from huragok.core import desktop
+from huragok.content import quickactions
+from huragok.content.newserver import SetupError, create_server, finish, read_folder, relative_posix, valid_name
+from huragok.core import desktop, versions
 from huragok.core.logs import RecentLog
 from huragok.core.settings import load
 from huragok.core.tomledit import (
     read_toml, replace_server_blocks, server_blocks, set_server_setting, set_table_key, set_top_key,
 )
-from huragok.program.dedicated import DedicatedError, parse_content, parse_playlists, tool_for, workshop_references
+from huragok.program.dedicated import (
+    DedicatedError, ToolResult, parse_content, parse_playlists, tool_for, workshop_references,
+)
 from huragok.window.dashboard import Menu
-
-
-def starters(tmp_path: Path) -> Path:
-    folder = tmp_path / "PACKAGES"
-    folder.mkdir(exist_ok=True)
-    install_starters(folder)
-    return folder
 
 
 # The runner and what it reads -------------------------------------------------------------------
@@ -91,10 +84,9 @@ def test_the_fake_program_inits_checks_and_lists(tmp_path: Path) -> None:
     assert "The Pit" in narrowed and "MLG Pit 8" in narrowed and "Epitaph" not in narrowed and "Guardian" not in narrowed
     shown = tool.playlist_show(folder, "slayer")
     assert shown.ok and "Every game is installed" in shown.text and "33%" in shown.text
-    made = tool.playlist_new(folder, "Snipers", ["Guardian", "The Pit"], ["Slayer", "rockets"], vote_seconds=30)
-    assert made.ok and (folder / "playlists" / "snipers.playlist.json").is_file()
-    assert "exists" in tool.playlist_new(folder, "Snipers", ["Guardian"], ["Slayer"]).problem
-    assert tool.playlist_new(folder, "Snipers", ["Guardian", "Narrows"], ["Slayer", "rockets"], replace=True).ok
+    write_playlist(folder, "snipers", [{"map": name, "game": game} for name in ("Guardian", "The Pit")
+                                       for game in ("Slayer", "rockets")], name="Snipers", vote_seconds=30)
+    assert tool.playlist_show(folder, "playlists/snipers.playlist.json").ok  # one made by hand, as hosts do
     assert len(parse_playlists(tool.playlists(folder).text)) == 2
     assert "No mod maps" in tool.mods(folder).text
 
@@ -138,271 +130,362 @@ def test_editing_dedicated_toml_keeps_its_comments(tmp_path: Path) -> None:
     assert server_blocks(config)[0]["playlist"] == "playlists/other.playlist.json"
 
 
-# Packages ---------------------------------------------------------------------------------------
+# New servers: the program's own `dedicated init`, then the quick actions ------------------------------------------
 
-def test_starter_packages_load(tmp_path: Path) -> None:
-    folder = starters(tmp_path)
-    packages = list_packages(folder)
-    assert {p.key for p in packages} == {"team-slayer", "big-team-battle", "mlg-hardcore", "infection",
-                                         "scripted-modes", "campaign-coop", "odst-firefight", "every-halo"}
-    infection = load_package(folder / "infection")
-    assert infection.plays == "playlist infection" and infection.server["max_players"] == 16
-    assert [p.name for p in infection.playlists] == ["infection.playlist.json"] and not infection.workshop_items
-    coop = load_package(folder / "campaign-coop")
-    assert coop.needs_campaign and coop.plays.startswith("campaign co-op") and coop.server["campaign"]["mission"] == 3010
-    odst = load_package(folder / "odst-firefight")
-    assert odst.needs_odst and odst.plays == "ODST Firefight Crater (Night), Ff Classic (heroic)"
-    assert odst.server["max_players"] == 4 and "needs Halo 3: ODST's files" in odst.summary()
-    assert install_starters(folder) == []  # a second time copies nothing: the host may have edited them
-    (folder / "broken").mkdir()
-    (folder / "broken" / "package.toml").write_text('name = "x"\n[server]\nport = 5\n', encoding="utf-8")
-    broken = next(p for p in list_packages(folder) if p.key == "broken")
-    assert broken.name.endswith("(broken)") and "chosen when the server is made" in broken.description
-    # A shared package can't hand its author the new server's admin list or console through [defaults] either.
-    for key, value in (("admins", '["' + "a" * 64 + '"]'), ("rcon_password", '"theirs"')):
-        (folder / "shared").mkdir(exist_ok=True)
-        (folder / "shared" / "package.toml").write_text(f'name = "x"\n[defaults]\n{key} = {value}\n', encoding="utf-8")
-        with pytest.raises(PackageError, match=rf"\[defaults\] can't set '{key}'"):
-            load_package(folder / "shared")
-    with pytest.raises(PackageError, match="isn't in the package"):
-        (folder / "nofile").mkdir()
-        (folder / "nofile" / "package.toml").write_text('[server]\nplaylist = "playlists/x.json"\n', encoding="utf-8")
-        load_package(folder / "nofile")
+INIT_PORTS = {49175, 49176, 49177}  # init's master and two servers: taken on most hosts (simulation S4)
 
-
-def test_saving_a_server_as_a_package(tmp_path: Path) -> None:
-    folder = tmp_path / "Slayer"
-    make_server_folder(folder, "Slayer", free_port())
-    playlist = {"version": 2, "name": "Mixed", "games": [
-        {"map": "Maps/my forge map.json", "base_map": "workshop:3014096841/forge_halo", "game": "Game Modes/snipers.bin",
-         "preview_image": "snipers.png"},
-        {"map": "Guardian", "game": "Slayer"}, {"map": "workshop:55/x", "game": "Slayer"}]}
-    (folder / "playlists" / "mixed.playlist.json").write_text(json.dumps(playlist), encoding="utf-8")
-    for relative in ("Maps/my forge map.json", "Game Modes/snipers.bin", "Images/snipers.png"):
-        (folder / "content" / relative).parent.mkdir(parents=True, exist_ok=True)
-        (folder / "content" / relative).write_bytes(b"x")
-    config = folder / "dedicated.toml"
-    replace_server_blocks(config, [{"name": "Slayer", "port": free_port(), "playlist": "playlists/mixed.playlist.json",
-                                    "max_players": 12, "password": "secret", "admins": ["a" * 64], "voice": False}])
-    package = save_package(folder, "Slayer", tmp_path / "PACKAGES" / "mixed", name="Mixed", description="Saved")
-    assert package.server == {"playlist": "playlists/mixed.playlist.json", "max_players": 12, "voice": False}
-    assert package.workshop_items == [3014096841, 55]  # from the playlist's references
-    assert {p.relative_to(package.folder / "content").as_posix() for p in package.content_files} == {
-        "Maps/my forge map.json", "Game Modes/snipers.bin", "Images/snipers.png"}
-    with pytest.raises(PackageError, match="already exists"):
-        save_package(folder, "Slayer", tmp_path / "PACKAGES" / "mixed")
-    target = tmp_path / "Other"
-    (target / "playlists").mkdir(parents=True)
-    copied = apply_package(package, target, target / "content")
-    assert "playlists/mixed.playlist.json" in copied and (target / "content" / "Images" / "snipers.png").is_file()
-
-
-# New servers ------------------------------------------------------------------------------------
 
 def test_names_ports_and_paths(tmp_path: Path) -> None:
     assert valid_name("Infection Night") is None and valid_name("Rat's Nest BTB") is None
     assert "ignores" in valid_name(".hidden") and "empty" in valid_name("  ")
     assert "can't have" in valid_name("a/b") and "at most" in valid_name("x" * 65)
-    settings = load(setup_root(tmp_path))
-    port = next_free_port(settings)
-    assert port >= 49176 and port not in {settings.servers[0].game_port, 49175}
     assert relative_posix(tmp_path / "reclaimer" / "game", tmp_path / "reclaimer" / "SERVERS" / "X") == "../../game"
 
 
-def test_a_new_server_shares_the_roots_folders(tmp_path: Path) -> None:
+def test_a_new_server_is_what_init_makes_and_nothing_more(tmp_path: Path) -> None:
+    """Answer 6: make the folder, run the program's own `dedicated init` in it, and stop. No package, no shared
+    folders, no console password, no auto_update, no SteamCMD lines, nothing of Huragok's."""
     settings_path = setup_root(tmp_path)
     settings = load(settings_path)
-    package = load_package(starters(tmp_path) / "infection")
-    port = free_port()
+    root = settings_path.parent
     said: list[str] = []
-    tool = tool_for(settings)  # Alpha's project-reclaimer.exe, run as the fake through [process] command
-    outcome = create_server(settings, NewServer("Infection Night", port=port, package=package, hidden=True,
-                                                password="letmein", welcome=["hi {name}"]), tool, said.append)
-    root = tmp_path / "reclaimer"
-    assert outcome.ready and outcome.folder == root / "SERVERS" / "Infection Night", outcome.check and outcome.check.text
-    assert not [p for p in (root / "SERVERS").iterdir() if p.name.startswith(".new")]
-    assert (root / "game" / "halo3" / "halo3.dll").is_file()  # linked from Alpha, which had them
-    assert (root / "content" / "Game Modes").is_dir()
-    data = read_toml(outcome.folder / "dedicated.toml")
-    assert data["game"] == "../../game" and data["content"] == "../../content"
-    # Never the ban list: every server keeps its own (a /ban there is that server's), even when share says bans.
-    assert data.get("bans", "bans.json") == "bans.json" and not (root / "bans.json").exists()
-    assert not (outcome.folder / "game").exists() and not (outcome.folder / "content").exists()
-    assert len(data["rcon"]["password"]) == 32 and data["rcon"]["password"] == outcome.rcon_password
-    assert data["host_name"] == "Dedicated server"  # copied from Alpha's folder
-    assert data["auto_update"] is True  # new servers install Project Reclaimer releases themselves ([setup])
-    assert data["server"] == [{"name": "Infection Night", "port": port, "playlist": "playlists/infection.playlist.json",
-                               "max_players": 16, "hidden": True, "password": "letmein", "welcome": ["hi {name}"]}]
-    assert (outcome.folder / "playlists" / "infection.playlist.json").is_file()
-    assert (outcome.folder / "project-reclaimer.exe").is_file()  # the program, linked in: the root has none
-    assert outcome.check is not None and ".new-" not in outcome.check.text
-    assert any("sharing Halo 3's files" in s for s in said) and any("checking" in s for s in said)
-    fresh = load(settings_path)
-    assert [s.name for s in fresh.servers] == [ALPHA, "Infection Night"]
-    new = fresh.server("Infection Night")
-    assert new.game_port == port and new.plays == "playlist infection" and new.autostart and not new.errors
-    with pytest.raises(SetupError, match="exists already"):
-        create_server(fresh, NewServer("infection night", port=free_port()), fake_tool(), said.append)
-    with pytest.raises(SetupError, match="used by another server"):
-        create_server(fresh, NewServer("Third", port=port), fake_tool(), said.append)
-    with pytest.raises(SetupError, match="folder name"):
-        create_server(fresh, NewServer("a/b"), fake_tool(), said.append)
-    with pytest.raises(SetupError, match="would share their records and logs"):  # infection-night to Huragok
-        create_server(fresh, NewServer("Infection-Night", port=free_port()), fake_tool(), said.append)
-    # A second new server links nothing: the root's game folder is there already.
-    said.clear()
-    (root / "project-reclaimer.exe").write_bytes(b"")  # one copy at the root for every server...
-    second = create_server(fresh, NewServer("Second", port=free_port()), tool_for(fresh), said.append)
-    assert second.ready and not any("linking" in s for s in said)
-    assert read_toml(second.folder / "dedicated.toml")["server"][0]["playlist"] == "playlists/slayer.playlist.json"
-    assert (second.folder / "project-reclaimer.exe").is_file()  # ...but one that updates itself needs its own
-    later = load(settings_path)
-    later.setup.steamcmd, later.setup.steam_username = "C:/steamcmd/steamcmd.exe", "host"  # the I key's sign-in
-    third = create_server(later, NewServer("Third", port=free_port(), auto_update=False), tool_for(later), said.append)
-    data = read_toml(third.folder / "dedicated.toml")
-    assert data["auto_update"] is False and not (third.folder / "project-reclaimer.exe").exists()
-    assert data["workshop"] == {"steamcmd": "C:/steamcmd/steamcmd.exe", "username": "host"}
-
-
-def test_a_new_server_with_its_own_files_from_mcc(tmp_path: Path) -> None:
-    settings = load(setup_root(tmp_path, with_game=False))
-    said: list[str] = []
-    with pytest.raises(SetupError, match="no Halo 3 files to share"):
-        create_server(settings, NewServer("Own", port=free_port()), fake_tool(), said.append)
-    outcome = create_server(settings, NewServer("Own", port=free_port(), share=set(), mcc_folder="",
-                                                maps=["Guardian", "Valhalla", "Last Resort", "The Pit"]),
-                            fake_tool(), said.append)
-    assert outcome.ready
-    assert (outcome.folder / "game" / "halo3" / "maps" / "guardian.map").is_file()
-    assert not (tmp_path / "reclaimer" / "game").exists()
-    data = read_toml(outcome.folder / "dedicated.toml")
+    outcome = create_server(settings, "LG Test 2", tool_for(settings), said.append)
+    assert outcome.staging == root / "SERVERS" / ".new-lg-test-2" and outcome.folder == root / "SERVERS" / "LG Test 2"
+    assert not outcome.folder.exists() and outcome.config == outcome.staging / "dedicated.toml"
+    assert [s.name for s in load(settings_path).servers] == [ALPHA]  # a folder being made is never picked up
+    init = tmp_path / "init"  # what `dedicated init` writes, by itself
+    assert fake_tool().init(init).ok
+    assert outcome.config.read_text(encoding="utf-8") == (init / "dedicated.toml").read_text(encoding="utf-8")
+    made = {p.relative_to(outcome.staging).as_posix() for p in outcome.staging.rglob("*")}
+    assert made - {"project-reclaimer.exe"} == {p.relative_to(init).as_posix() for p in init.rglob("*")}
+    assert outcome.program == outcome.staging / "project-reclaimer.exe"  # Huragok's folder has none: linked in
+    assert any("linked from" in line for line in said)
+    assert outcome.servers == [("Reclaimer Slayer", 49176), ("Reclaimer Guardian", 49177)] and outcome.master == 49175
+    assert outcome.ports == [49176, 49177, 49175] and outcome.shown == str(Path("SERVERS") / "LG Test 2" / "dedicated.toml")
+    data = read_toml(outcome.config)
+    assert data["rcon"]["password"] == "" and data["auto_update"] is False and "workshop" not in data
     assert data["game"] == "game" and data["content"] == "content" and data["bans"] == "bans.json"
-    # Sharing from a root with no game files yet copies them from MCC into the root once.
-    settings = load(tmp_path / "reclaimer" / "settings.toml")
-    (outcome.folder / "game").rename(outcome.folder / "game-off")  # Own has none to link any more
-    # What game/ holds already (ODST's files, or what the background fetch is putting there) stays: merged into,
-    # never deleted, and never a game/game inside it.
-    odst = tmp_path / "reclaimer" / "game" / "halo3odst" / "maps" / "h100.map"
-    odst.parent.mkdir(parents=True)
-    odst.write_bytes(b"odst")
-    outcome2 = create_server(settings, NewServer("Shared", port=free_port(), mcc_folder=""), fake_tool(), said.append)
-    assert outcome2.ready and (tmp_path / "reclaimer" / "game" / "halo3" / "halo3.dll").is_file()
-    assert odst.read_bytes() == b"odst" and not (tmp_path / "reclaimer" / "game" / "game").exists()
-    assert not (settings.records / "new-server-stage").exists()
+    assert finish(outcome) == outcome.folder and not outcome.staging.exists()
+    assert finish(outcome) == outcome.folder  # done already: nothing to do
+    assert [s.name for s in load(settings_path).servers] == [ALPHA, "Reclaimer Slayer", "Reclaimer Guardian"]
+    # With a program in Huragok's folder, a new server runs that one: nothing linked in.
+    (root / "project-reclaimer.exe").write_bytes(b"")
+    second = create_server(load(settings_path), "Second", tool_for(load(settings_path)), said.append)
+    assert second.program is None and not (second.staging / "project-reclaimer.exe").exists()
 
 
-def test_a_server_whose_check_fails_is_kept_but_not_started(tmp_path: Path) -> None:
+def test_a_new_server_never_takes_a_name_that_is_there_and_leaves_nothing_when_init_fails(tmp_path: Path) -> None:
+    settings_path = setup_root(tmp_path)
+    root = settings_path.parent
+    make_server_folder(root / "SERVERS" / "Bravo", "Bravo", free_port())
+    set_server_setting(root / "SERVERS" / "Bravo" / "dedicated.toml", "Bravo", "enabled", False)
+    (root / "SERVERS" / "Broken").mkdir()
+    (root / "SERVERS" / "Broken" / "dedicated.toml").write_text("[[server]\nname = ", encoding="utf-8")
+    (root / "SERVERS" / "Taken").mkdir()
+    settings = load(settings_path)
+    assert [s.name for s in settings.servers] == [ALPHA]  # Bravo is off, Broken left out
+    for name, why in (("bravo", "exists already"), ("a/b", "folder name"), ("Taken", "exists already"),
+                      ("Alpha-Server", "would share their records and logs")):
+        with pytest.raises(SetupError, match=why):
+            create_server(settings, name, fake_tool(), lambda _: None)
+    # A folder left half made by a window closed part way is nobody's: made again from scratch.
+    (root / "SERVERS" / ".new-fresh" / "left-over").mkdir(parents=True)
+    fresh = create_server(settings, "Fresh", fake_tool(), lambda _: None)
+    assert not (fresh.staging / "left-over").exists() and fresh.config.is_file()
+    # The program's own init refusing, or the drive: nothing left behind.
+    tool = fake_tool()
+    tool.init = lambda folder, **more: ToolResult(False, 2, "Error: the drive is full")  # type: ignore[method-assign]
+    with pytest.raises(SetupError, match="dedicated init failed: Error: the drive is full"):
+        create_server(settings, "Full", tool, lambda _: None)
+
+    def denied(folder: Path, **more: Any) -> ToolResult:
+        folder.mkdir(parents=True)
+        raise PermissionError(13, "Access is denied", str(folder))
+
+    tool.init = denied  # type: ignore[method-assign]
+    with pytest.raises(SetupError, match="couldn't make Denied: .*Access is denied.*nothing was left half-made"):
+        create_server(settings, "Denied", tool, lambda _: None)
+    assert sorted(p.name for p in (root / "SERVERS").iterdir()) == [".new-fresh", ALPHA, "Bravo", "Broken", "Taken"]
+
+
+def test_the_quick_actions_after_n_make_one_server_with_free_ports_and_its_console(tmp_path: Path,
+                                                                                    monkeypatch) -> None:
+    """Answer 33, on the folder init made: each worked out on a copy and shown (the file untouched), then written as
+    shown, a version of the file kept first. Ports free on this PC and not another server's."""
     settings_path = setup_root(tmp_path)
     settings = load(settings_path)
-    package = load_package(starters(tmp_path) / "team-slayer")
-    outcome = create_server(settings, NewServer("Partial", port=free_port(), package=package, share=set(),
-                                                mcc_folder="", maps=["Guardian"]), fake_tool(), lambda _: None)
-    assert not outcome.ready and outcome.folder.is_dir() and outcome.check is not None
-    assert any("autostart is off" in n for n in outcome.notes) and "The Pit" in outcome.check.text
-    fresh = load(settings_path)
-    assert fresh.server("Partial").autostart is False
-    assert 'autostart = false' in settings_path.read_text(encoding="utf-8")
+    alpha_port = settings.servers[0].game_port
+    monkeypatch.setattr(quickactions, "ports_in_use", lambda: set(INIT_PORTS))  # the live servers' ports, here too
+    outcome = create_server(settings, "LG Test 2", fake_tool(), lambda _: None)
+    init_text = outcome.config.read_text(encoding="utf-8")
+    assert quickactions.taken_ports(settings, outcome.config, outcome.ports) == [
+        (49176, ""), (49177, ""), (49175, f"{ALPHA}'s master")]
+    where, owner = outcome.shown, "lg-test-2"
+    one = quickactions.one_server(outcome.config, "LG Test 2", where=where, owner=owner)
+    assert [(line.sign, line.text) for line in one.lines()] == [
+        ("~", 'name = "LG Test 2"'), ("-", "[[server]]"), ("-", 'name = "Reclaimer Guardian"'), ("-", "port = 49177"),
+        ("-", 'map = "Guardian"'), ("-", 'game = "Slayer"')]
+    assert one.lines()[0].note == 'was "Reclaimer Slayer"' and one.ask == "Keep one server?"
+    assert outcome.config.read_text(encoding="utf-8") == init_text  # shown, not written
+    preview = "\n".join(text for text, _ in one.preview())
+    assert f"This writes 6 line(s) in {where}:" in preview and "A copy of the file is kept first" in preview
+    quickactions.write(settings, one)
+    assert read_folder(outcome.config) == ([("LG Test 2", 49176)], 49175)
+    ports = quickactions.free_ports(settings, outcome.config, master="off", where=where, owner=owner)
+    lines = {line.text: line for line in ports.lines()}
+    assert lines["enabled = false"].sign == "~" and "public masters still list its servers" in lines["enabled = false"].note
+    [port_line] = [line for text, line in lines.items() if text.startswith("port = ")]
+    new_port = int(port_line.text.split(" = ")[1])
+    assert new_port not in INIT_PORTS | {alpha_port} and new_port > 49176
+    assert "free on this PC: LG Test 2's game port" in port_line.note and "49176 was in use on this PC" in port_line.note
+    quickactions.write(settings, ports)
+    console = quickactions.add_console(settings, outcome.config, where=where, owner=owner)
+    [line] = console.lines()
+    assert line.sign == "~" and line.text.startswith('password = "') and line.text.endswith('…"')
+    assert "random, 24 characters, shown in full in the file" in line.note and console.ask == "Add it?"
+    assert f"LG Test 2's on TCP {new_port} (its game port's number)" in "\n".join(console.why)
+    quickactions.write(settings, console)
+    data = read_toml(outcome.config)
+    assert len(data["rcon"]["password"]) == 24 and data["master"] == {"enabled": False, "port": 49175, "peers": [],
+                                                                        "origin": ""}
+    assert data["server"] == [{"name": "LG Test 2", "port": new_port, "playlist": "playlists/slayer.playlist.json"}]
+    for again in (quickactions.one_server(outcome.config, "LG Test 2"), quickactions.free_ports(settings, outcome.config),
+                  quickactions.add_console(settings, outcome.config)):
+        assert not again.needed and again.preview()[0][0] == again.nothing
+    kept = versions.versions(settings.records, "settings", owner, "dedicated.toml")
+    assert [v.how for v in kept] == ["quick action: Add the console", "quick action: Free ports",
+                                     "quick action: One server only", versions.FIRST]
+    assert versions.read(kept[-1]) == init_text  # init's own, to put back
+    folder = finish(outcome)
+    assert quickactions.history(settings, folder / "dedicated.toml") == kept
+    server = load(settings_path).server("LG Test 2")
+    assert server.rcon_password == data["rcon"]["password"] and server.game_port == new_port and not server.warnings
+
+
+def test_a_quick_action_is_written_as_shown_or_not_at_all(tmp_path: Path) -> None:
+    settings_path = setup_root(tmp_path)
+    settings = load(settings_path)
+    config = settings.servers[0].config_path
+    set_table_key(config, "rcon", "password", "")
+    action = quickactions.add_console(settings, config, ALPHA, in_use=set())
+    assert action.needed and quickactions.write(settings, quickactions.one_server(config, ALPHA)) is None  # nothing
+    config.write_text(config.read_text(encoding="utf-8") + "# a line written by hand meanwhile\n", encoding="utf-8")
+    with pytest.raises(quickactions.QuickActionError, match="changed since this was shown: nothing was written"):
+        quickactions.write(settings, action)
+    assert read_toml(config)["rcon"]["password"] == ""
+    replace_server_blocks(config, [{"name": "Twin", "port": free_port()}, {"name": "twin", "port": free_port()}])
+    with pytest.raises(quickactions.QuickActionError, match="have the same name"):
+        quickactions.one_server(config, "Twin")
+    # A form tomledit won't guess at: refused, the file as it was.
+    inline = tmp_path / "Inline" / "dedicated.toml"
+    inline.parent.mkdir()
+    written = 'rcon = { password = "" }\n\n[[server]]\nname = "Inline"\nport = 5000\n'
+    inline.write_text(written, encoding="utf-8")
+    with pytest.raises(quickactions.QuickActionError, match=r"couldn't change \[rcon\] password safely"):
+        quickactions.add_console(settings, inline, in_use=set())
+    assert inline.read_text(encoding="utf-8") == written
+
+
+def test_the_console_for_one_server_of_several_and_a_port_of_its_own(tmp_path: Path) -> None:
+    """A folder whose servers have passwords of their own: the console goes in the server's own block
+    (rcon_password); its TCP port, its game port's number, taken on this PC: an rcon_port of its own."""
+    settings_path = setup_root(tmp_path)
+    settings = load(settings_path)
+    config = settings.servers[0].config_path
+    first, second = free_ports(2)
+    set_table_key(config, "rcon", "password", "")
+    replace_server_blocks(config, [{"name": ALPHA, "port": first, "rcon_password": "theirs-theirs"},
+                                   {"name": "Second", "port": second}])
+    action = quickactions.add_console(settings, config, "Second", in_use={second}, password="p" * 24)
+    texts = {line.text: line for line in action.lines()}
+    [port_text] = [text for text in texts if text.startswith("rcon_port = ")]
+    rcon_port = int(port_text.split(" = ")[1])
+    assert set(texts) == {'rcon_password = "pppp…"', port_text} and rcon_port not in (first, second)
+    assert "its game port's number is taken" in texts[port_text].note
+    assert action.ask == "Add them?"
+    quickactions.write(settings, action)
+    blocks = server_blocks(config)
+    assert blocks[1] == {"name": "Second", "port": second, "rcon_password": "p" * 24, "rcon_port": rcon_port}
+    assert blocks[0]["rcon_password"] == "theirs-theirs" and read_toml(config)["rcon"]["password"] == ""
+    assert not quickactions.add_console(settings, config, ALPHA).needed  # it has its own already
+    with pytest.raises(quickactions.QuickActionError, match="no \\[\\[server\\]\\] block named Nobody"):
+        quickactions.add_console(settings, config, "Nobody")
+
+
+def test_free_means_free_on_this_pc_and_no_other_servers(tmp_path: Path, monkeypatch) -> None:
+    settings_path = setup_root(tmp_path)
+    root = settings_path.parent
+    bravo, other_master = free_ports(2)
+    make_server_folder(root / "SERVERS" / "Bravo", "Bravo", bravo)
+    set_server_setting(root / "SERVERS" / "Bravo" / "dedicated.toml", "Bravo", "enabled", False)  # off: still its
+    set_table_key(root / "SERVERS" / "Bravo" / "dedicated.toml", "master", "port", other_master)
+    settings = load(settings_path)
+    alpha = settings.servers[0]
+    known = quickactions.known_ports(settings)
+    assert known[bravo] == "Bravo" and known[alpha.game_port] == ALPHA and known[other_master] == "Bravo's master"
+    assert alpha.game_port not in quickactions.known_ports(settings, skip=alpha.config_path)  # its own don't count
+    ports = quickactions.look_at_ports(settings, alpha.config_path, in_use={5000})
+    assert ports.taken(bravo) == "used by Bravo" and ports.taken(5000) == "in use on this PC" and ports.taken(5001) is None
+    picked = ports.free(5000)
+    assert picked == 5001 and ports.taken(5001) == "given to another server here"
+    # The system's own table can't be read: each port is probed (never one of the real servers', in the tests)
+    assert quickactions.Ports({}, None).taken(49176) == "in use on this PC"
+    monkeypatch.setattr(quickactions, "ports_in_use", lambda: None)
+    assert quickactions.look_at_ports(settings, alpha.config_path).in_use is None
+    # SteamCMD lines need SteamCMD here
+    with pytest.raises(quickactions.QuickActionError, match="SteamCMD isn't set up on this PC"):
+        quickactions.steamcmd_lines(settings, alpha.config_path)
 
 
 # The commands -----------------------------------------------------------------------------------
 
-def test_the_setup_commands(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_the_setup_commands(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch) -> None:
     settings_path = setup_root(tmp_path)
     root = settings_path.parent
-    firstrun.write_files(root)  # the first start: PACKAGES/ with the starters
-    assert (root / "PACKAGES" / "infection" / "package.toml").is_file()
-    assert cli.main(["-c", str(settings_path), "package", "list"]) == 0
+    firstrun.write_files(root)  # the first start: no PACKAGES/ since 0.7.0
+    assert not (root / "PACKAGES").exists()
+    monkeypatch.setattr(quickactions, "ports_in_use", lambda: set(INIT_PORTS))
+    # Its quick actions asked for, with nothing here to answer yes: each shown, nothing written.
+    assert cli.main(["-c", str(settings_path), "new", "Gamma", "--console"]) == 1
     out = capsys.readouterr().out
-    assert "team-slayer" in out and "Campaign Co-op" in out
-    port = free_port()
-    assert cli.main(["-c", str(settings_path), "new", "Beta", "--package", "team-slayer", "--port", str(port),
-                     "--no-start", "--welcome", "Welcome {name}"]) == 0
+    assert "Add the console" in out and "Not written: nothing here can answer yes" in out and "Made" in out
+    assert read_toml(root / "SERVERS" / "Gamma" / "dedicated.toml")["rcon"]["password"] == ""
+    assert cli.main(["-c", str(settings_path), "new", "Beta", "--all", "--yes"]) == 0
     out = capsys.readouterr().out
-    assert "Made" in out and f"UDP {port}" in out
+    assert "Made" in out and "49176, 49177 in use on this PC" in out and "--free-ports" in out
     beta = read_toml(root / "SERVERS" / "Beta" / "dedicated.toml")
-    assert beta["server"][0]["welcome"] == ["Welcome {name}"] and beta["server"][0]["max_players"] == 16
-    assert cli.main(["-c", str(settings_path), "new", "Beta", "--no-start"]) == 1
+    [block] = beta["server"]
+    assert block["name"] == "Beta" and block["port"] not in INIT_PORTS and beta["master"]["enabled"] is False
+    assert len(beta["rcon"]["password"]) == 24 and "workshop" not in beta
+    assert cli.main(["-c", str(settings_path), "new", "Beta"]) == 1
     assert "exists already" in capsys.readouterr().err
-    assert cli.main(["-c", str(settings_path), "new", "Gamma", "--package", "nope", "--no-start"]) == 2
-    assert "Packages:" in capsys.readouterr().err
+    assert cli.main(["-c", str(settings_path), "new", "Delta", "--package", "team-slayer"]) == 2
+    assert "--package is gone" in capsys.readouterr().err and not (root / "SERVERS" / "Delta").exists()
+    # Its game files: `repair` points it at Alpha's, which has them (shown first; --yes says yes).
+    assert cli.main(["-c", str(settings_path), "repair", "Beta", "--yes"]) == 0
+    assert "has no Halo 3 files here: it uses" in capsys.readouterr().out
+    assert read_toml(root / "SERVERS" / "Beta" / "dedicated.toml")["game"] == f"../{ALPHA}/game"
 
     assert cli.main(["-c", str(settings_path), "content", "-s", "Beta", "pit"]) == 0
     assert "The Pit" in capsys.readouterr().out
     assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta"]) == 0
-    assert "team-slayer.playlist.json" in capsys.readouterr().out
-    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "show", "team-slayer"]) == 0
+    assert "slayer.playlist.json" in capsys.readouterr().out
+    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "show", "slayer"]) == 0
     assert "Every game is installed" in capsys.readouterr().out
-    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "new", "Snipers", "--maps", "Guardian,Narrows",
-                     "--games", "rockets,Slayer", "--vote-seconds", "30"]) == 0
-    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "use", "snipers"]) == 0
-    assert "from the next vote" in capsys.readouterr().out
-    assert read_toml(root / "SERVERS" / "Beta" / "dedicated.toml")["server"][0]["playlist"] == "playlists/snipers.playlist.json"
-    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "use", "missing"]) == 2
+    before = (root / "SERVERS" / "Beta" / "dedicated.toml").read_text(encoding="utf-8")
+    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "new", "Snipers"]) == 2  # gone (0.7.0)
+    assert cli.main(["-c", str(settings_path), "playlist", "-s", "Beta", "use", "slayer"]) == 2
+    assert capsys.readouterr().err.count("is gone: Huragok no longer makes playlists") == 2
+    assert (root / "SERVERS" / "Beta" / "dedicated.toml").read_text(encoding="utf-8") == before
 
     assert cli.main(["-c", str(settings_path), "workshop", "-s", "Beta"]) == 0
     assert "no Workshop items" in capsys.readouterr().out
-    assert cli.main(["-c", str(settings_path), "workshop", "-s", "Beta", "add", "3014096841",
-                     "https://steamcommunity.com/sharedfiles/filedetails/?id=2905749191"]) == 0
-    assert read_toml(root / "SERVERS" / "Beta" / "dedicated.toml")["workshop"]["items"] == [3014096841, 2905749191]
-    assert cli.main(["-c", str(settings_path), "workshop", "-s", "Beta", "remove", "2905749191"]) == 0
+    assert cli.main(["-c", str(settings_path), "workshop", "-s", "Beta", "add", "3014096841"]) == 2  # 0.7.0: the host's
+    assert "write them in [workshop] items" in capsys.readouterr().err
+    assert "items" not in read_toml(root / "SERVERS" / "Beta" / "dedicated.toml").get("workshop", {})
+    set_table_key(root / "SERVERS" / "Beta" / "dedicated.toml", "workshop", "items", [3014096841], before="master")
     assert cli.main(["-c", str(settings_path), "workshop", "-s", "Beta", "install"]) == 0
     assert "workshop:3014096841/fake3014096841" in capsys.readouterr().out
     assert cli.main(["-c", str(settings_path), "dedicated", "-s", "Beta", "check"]) == 0
     assert "Everything is ready" in capsys.readouterr().out
     assert cli.main(["-c", str(settings_path), "dedicated", "-s", "Beta"]) == 2
-
-    assert cli.main(["-c", str(settings_path), "package", "save", "Beta", "Beta Copy", "--description", "mine"]) == 0
-    assert "Saved" in capsys.readouterr().out
-    saved = load_package(root / "PACKAGES" / "beta-copy")
-    assert saved.workshop_items == [3014096841] and saved.server["playlist"] == "playlists/snipers.playlist.json"
-    assert cli.main(["-c", str(settings_path), "package", "show", "beta-copy"]) == 0
+    assert cli.main(["-c", str(settings_path), "package", "list"]) == 2  # gone (0.7.0): says where it went
+    assert "package is gone" in capsys.readouterr().err
+    code = cli.main(["-c", str(settings_path), "check"])  # the supervisor's own check
     out = capsys.readouterr().out
-    assert "Workshop items" in out and "3014096841" in out and "playlists/snipers.playlist.json" in out
-    assert cli.main(["-c", str(settings_path), "check"]) == 0  # the supervisor's own check still passes
-    assert "Beta" in capsys.readouterr().out
+    assert "Beta" in out and "lacks Halo 3's files" in out and "repair" in out, out  # Gamma's: init made no game files
+    assert code == 0, out
 
 
 # The window -------------------------------------------------------------------------------------
 
 
-def test_the_setup_screens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run) -> None:
+def test_n_makes_a_bare_server_and_offers_its_quick_actions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                             run) -> None:
+    """Mockup 6: init, then what it holds and which ports are taken, then the quick actions (all three here), each
+    shown before it's written and asked; Esc when done gives the folder its name."""
     settings_path = setup_root(tmp_path)
-    firstrun.write_files(settings_path.parent)
-    opened: list[Path] = []
-    monkeypatch.setattr(desktop, "open_editor", lambda path: opened.append(path) or f"opened {path.name}")
-    monkeypatch.setattr(desktop, "open_path", lambda path: f"opened {path}")
+    monkeypatch.setattr(quickactions, "ports_in_use", lambda: set(INIT_PORTS))
     controller = SetupController(settings_path)
-    port = free_port()
-    keys = [
-        # N: package 4 (infection, in the starters' folder order), name, port, not hidden, no password, 16 players,
-        # make it, start it, a key to return.
-        "N", "4", "ENTER", *"Night Server", "ENTER", *str(port), "ENTER", "N", "ENTER", "ENTER", "Y", "Y", "x",
-        # C: check both servers.
-        "C", "A", "ENTER", "x",
-        # G on server 2: browse its maps, playlists (show the first, then back), check, then back out.
-        "G", "2", "ENTER", "1", "1", "ESC", "2", "S", "1", "ENTER", "ESC", "4", "ESC",
-        # O: the second server's files (the folder, then the four files of Huragok's, come first), its
-        # dedicated.toml (its folder comes first).
-        "O", "8", "ENTER", "2", "ENTER", "x",
-        "Q", "Y"]
+    keys = [*"LG Test 2", "ENTER",
+            "A", "Y",  # all three: one server only (yes),
+            "O", "Y",  # free ports: the master off (yes),
+            "Y",  # the console (yes)
+            "ESC", "x"]  # done
     terminal = FakeTerminal()
     menu = Menu(controller, terminal, StrictKeyboard(keys), RecentLog())  # type: ignore[arg-type]
-    try:
-        outcome = run(menu.run())
-    except RuntimeError as error:
-        raise AssertionError(f"{error}\n{''.join(terminal.output)}") from None
-    assert outcome == "quit"
+    run(menu.screen_new())
     printed = "".join(terminal.output)
-    assert "Made" in printed and "Night Server" in printed, printed
-    assert controller.discovered == 1 and controller.calls == [("start", "Night Server", {})]
-    folder = settings_path.parent / "SERVERS" / "Night Server"
-    assert read_toml(folder / "dedicated.toml")["server"][0] == {"name": "Night Server", "port": port,
-                                                                 "playlist": "playlists/infection.playlist.json",
-                                                                 "max_players": 16}
-    assert printed.count("Everything is ready") >= 3  # C on both, G's check
-    assert "The Pit" in printed and "Every game is installed" in printed
-    assert opened == [folder / "dedicated.toml"] and "re-checks its files" in printed
-    assert (folder / "intervalmessages.txt").read_text(encoding="utf-8").startswith("# This server's own interval")
+    folder = settings_path.parent / "SERVERS" / "LG Test 2"
+    assert f"Made {Path('SERVERS') / 'LG Test 2'} with the program's own `dedicated init`" in printed, printed
+    assert "It holds two servers, on ports 49176 and 49177, with its master on 49175." in printed
+    assert "! 49176 and 49177 are in use on this PC: it won't start until that changes." in printed
+    assert "Its master's port 49175 is in use too" in printed
+    assert "Esc leaves the folder exactly as init made it" in printed and "Esc leaves the folder as it is now" in printed
+    assert "Keep one server? (y/N)" in printed and "Change them? (y/N)" in printed and "Add it? (y/N)" in printed
+    assert "It holds one server, on port" in printed and "with its master off." in printed
+    data = read_toml(folder / "dedicated.toml")
+    [block] = data["server"]
+    assert block["name"] == "LG Test 2" and block["port"] not in INIT_PORTS and len(data["rcon"]["password"]) == 24
+    assert data["master"]["enabled"] is False and controller.discovered == 1 and controller.calls == []
+    assert f"{folder} is ready" in printed and not (settings_path.parent / "SERVERS" / ".new-lg-test-2").exists()
+
+
+def test_n_then_esc_leaves_the_folder_exactly_as_init_made_it(tmp_path: Path, run) -> None:
+    settings_path = setup_root(tmp_path)
+    controller = SetupController(settings_path)
+    menu = Menu(controller, FakeTerminal(), StrictKeyboard([*"Plain", "ENTER", "1", "N", "2", "ESC", "ESC", "x"]),
+                RecentLog())  # type: ignore[arg-type]
+    run(menu.screen_new())  # one server only: no; free ports: Esc at the master; then done
+    init = tmp_path / "init"
+    assert fake_tool().init(init).ok
+    folder = settings_path.parent / "SERVERS" / "Plain"
+    assert (folder / "dedicated.toml").read_text(encoding="utf-8") == (init / "dedicated.toml").read_text(encoding="utf-8")
+    assert not (settings_path.parent / "records" / "settings").exists()  # nothing written: no version kept
+
+
+def test_d_adds_the_console_to_a_server_when_the_host_says_yes(tmp_path: Path, run) -> None:
+    """D → a server → Q → Add the console (mockup 5): the D screen calls screen_add_console."""
+    settings_path = setup_root(tmp_path)
+    config = load(settings_path).servers[0].config_path
+    set_table_key(config, "rcon", "password", "")
+    controller = SetupController(settings_path)
+    server = controller.settings.servers[0]
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, StrictKeyboard(["N"]), RecentLog())  # type: ignore[arg-type]
+    assert run(menu.screen_add_console(server)) is False
+    printed = "".join(terminal.output)
+    assert "Alpha Server › Quick action › Add the console" in printed
+    assert "Without its console Huragok can't see players, warn them or moderate." in printed
+    assert f"This writes 1 line(s) in {Path('SERVERS') / ALPHA / 'dedicated.toml'}:" in printed
+    assert "random, 24 characters, shown in full in the file" in printed and "Add it? (y/N)" in printed
+    assert "Nothing was written." in printed and read_toml(config)["rcon"]["password"] == ""
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, StrictKeyboard(["ESC"]), RecentLog())  # type: ignore[arg-type]
+    assert run(menu.screen_add_console(server)) is None and read_toml(config)["rcon"]["password"] == ""
+    menu = Menu(controller, FakeTerminal(), StrictKeyboard(["Y"]), RecentLog())  # type: ignore[arg-type]
+    assert run(menu.screen_add_console(server)) is True and len(read_toml(config)["rcon"]["password"]) == 24
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, StrictKeyboard([]), RecentLog())  # type: ignore[arg-type]
+    assert run(menu.screen_add_console(server)) is False and "It has its console already" in "".join(terminal.output)
+
+
+def test_i_writes_one_servers_steamcmd_lines_when_asked(tmp_path: Path, run, monkeypatch) -> None:
+    from huragok import steam as steamsetup
+
+    settings_path = setup_root(tmp_path)
+    program = settings_path.parent / "steamcmd" / steamsetup.executable_name()
+    program.parent.mkdir()
+    program.write_bytes(b"")
+    set_table_key(settings_path, "setup", "steam_username", "lilgremlin", before="process")
+    controller = SetupController(settings_path)
+    config = controller.settings.servers[0].config_path
+    terminal = FakeTerminal()
+    menu = Menu(controller, terminal, StrictKeyboard(["L", "1", "ENTER", "Y", "x", "ESC"]), RecentLog())  # type: ignore[arg-type]
+    run(menu.screen_steam())
+    printed = "".join(terminal.output)
+    assert "SteamCMD lines" in printed and "the account I signed in" in printed and "Write them? (y/N)" in printed
+    assert read_toml(config)["workshop"] == {"steamcmd": str(program), "username": "lilgremlin"}
 
 
 def test_dot_folders_are_ignored_and_plays_is_read(tmp_path: Path) -> None:
@@ -416,16 +499,14 @@ def test_dot_folders_are_ignored_and_plays_is_read(tmp_path: Path) -> None:
     config = root / "SERVERS" / ALPHA / "dedicated.toml"
     replace_server_blocks(config, [{"name": ALPHA, "port": free_port(), "map": "Guardian", "game": "rockets"}])
     assert load(settings_path).servers[0].plays == "rockets on Guardian"
-    assert load(settings_path).setup.share == ["game"] and load(settings_path).setup.mcc_folder is None
-    # "bans" (what 0.4.0 to 0.4.4 wrote) is read and does nothing: every server keeps a ban list of its own.
-    write_settings(root, None, 'backend = "attach"\n[setup]\nshare = ["bans"]\nmcc_folder = ""\n', staff())
-    assert load(settings_path).setup.share == [] and load(settings_path).setup.mcc_folder == ""
-    write_settings(root, None, 'backend = "attach"\n[setup]\nshare = ["maps"]\n', staff())
-    with pytest.raises(Exception, match="isn't one of game, content"):
-        load(settings_path)
+    assert load(settings_path).setup.mcc_folder is None
+    # share does nothing since 0.7.0 (read past, whatever it says): named, never an error.
+    write_settings(root, None, 'backend = "attach"\n[setup]\nshare = ["maps"]\nmcc_folder = ""\n', staff())
+    assert load(settings_path).setup.mcc_folder == ""
+    assert any("[setup] share does nothing any more" in line for line in load(settings_path).retired)
 
 
-# Names the program refuses, and what other servers use ---------------------------------------------
+# Names the program refuses ------------------------------------------------------------------------
 
 def test_names_the_server_program_refuses_are_refused(tmp_path: Path) -> None:
     assert valid_name("A" * 48) is None and valid_name("Café Ünicode 😀") is None
@@ -433,88 +514,6 @@ def test_names_the_server_program_refuses_are_refused(tmp_path: Path) -> None:
     for bad in ("DEL\x7fNAME", "a\u2028b", "a\x85b", "zero\u200bwidth", "tab\tname", "nul\x00"):
         assert "invisible" in valid_name(bad), repr(bad)
     assert "Windows keeps" in valid_name("CON") and "Windows keeps" in valid_name("nul.txt")
-
-
-def test_a_new_server_never_takes_a_disabled_or_left_out_servers_name_or_port(tmp_path: Path) -> None:
-    settings_path = setup_root(tmp_path)
-    root = settings_path.parent
-    bravo_port = free_port()
-    make_server_folder(root / "SERVERS" / "Bravo", "Bravo", bravo_port)
-    set_server_setting(root / "SERVERS" / "Bravo" / "dedicated.toml", "Bravo", "enabled", False)
-    (root / "SERVERS" / "Broken").mkdir()
-    (root / "SERVERS" / "Broken" / "dedicated.toml").write_text("[[server]\nname = ", encoding="utf-8")
-    settings = load(settings_path)
-    assert [s.name for s in settings.servers] == [ALPHA]  # Bravo is off, Broken left out
-    with pytest.raises(SetupError, match="exists already"):
-        create_server(settings, NewServer("bravo", port=free_port()), fake_tool(), lambda _: None)
-    with pytest.raises(SetupError, match=f"port {bravo_port} is used by another server"):
-        create_server(settings, NewServer("Charlie", port=bravo_port), fake_tool(), lambda _: None)
-    assert next_free_port(settings, start=bravo_port) != bravo_port
-
-
-def test_ports_and_player_counts_the_program_refuses_are_refused(tmp_path: Path) -> None:
-    settings = load(setup_root(tmp_path))
-    for port in (70000, 80):
-        with pytest.raises(SetupError, match="from 1024 to 65535"):
-            create_server(settings, NewServer("Ported", port=port), fake_tool(), lambda _: None)
-    for players in (0, 500):
-        with pytest.raises(SetupError, match="max_players must be from 1 to 127"):
-            create_server(settings, NewServer("Crowded", port=free_port(), max_players=players), fake_tool(),
-                          lambda _: None)
-    package = load_package(starters(tmp_path) / "campaign-coop")
-    with pytest.raises(SetupError, match="from 1 to 16 \\(campaign co-op and ODST hold 16\\)"):
-        create_server(settings, NewServer("Co-op", port=free_port(), max_players=24, package=package), fake_tool(),
-                      lambda _: None)
-    assert not [p for p in (tmp_path / "reclaimer" / "SERVERS").iterdir() if p.name.startswith(".new-")]
-
-
-def test_a_build_that_fails_leaves_nothing_and_a_failed_check_is_off_before_it_appears(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import os
-
-    settings_path = setup_root(tmp_path)
-    settings = load(settings_path)
-    servers = tmp_path / "reclaimer" / "SERVERS"
-    package = load_package(starters(tmp_path) / "team-slayer")
-
-    def denied(*args: Any, **kwargs: Any) -> list[str]:
-        raise PermissionError(13, "Access is denied", "content")
-
-    monkeypatch.setattr("huragok.content.newserver.apply_package", denied)
-    with pytest.raises(SetupError, match="couldn't make Broken: .*Access is denied.*nothing was left half-made"):
-        create_server(settings, NewServer("Broken", port=free_port(), package=package), fake_tool(), lambda _: None)
-    assert sorted(p.name for p in servers.iterdir()) == [ALPHA]
-    monkeypatch.undo()
-
-    real = os.replace
-    seen: list[str] = []
-
-    def spy(source: Any, target: Any) -> None:
-        if Path(source).name.startswith(".new-"):
-            seen.append(settings_path.read_text(encoding="utf-8"))
-        real(source, target)
-
-    monkeypatch.setattr(os, "replace", spy)
-    outcome = create_server(settings, NewServer("Partial", port=free_port(), package=package, share=set(),
-                                                mcc_folder="", maps=["Guardian"]), fake_tool(), lambda _: None)
-    assert not outcome.ready and "autostart = false" in seen[0]  # written before discovery could see the folder
-
-
-def test_a_server_that_shares_no_game_links_the_game_files_here(tmp_path: Path) -> None:
-    """With neither the root's game shared nor an MCC to copy from, the first game folder here is linked."""
-    settings = load(setup_root(tmp_path))
-    outcome = create_server(settings, NewServer("Linked", port=free_port(), share={"content", "bans"}), fake_tool(),
-                            lambda _: None)
-    assert outcome.ready and (outcome.folder / "game" / "halo3" / "halo3.dll").is_file()
-    mcc = tmp_path / "MCC"
-    (mcc / "halo3" / "maps").mkdir(parents=True)
-    (mcc / "halo3" / "halo3.dll").write_bytes(b"")
-    (mcc / "halo3" / "maps" / "shared.map").write_bytes(b"")
-    (mcc / "mcclauncher.exe").write_bytes(b"")
-    from huragok.content.newserver import game_link_source
-    from huragok.steam import is_mcc_install
-
-    assert is_mcc_install(mcc) and game_link_source(settings) != mcc
 
 
 # Renaming --------------------------------------------------------------------------------------------
@@ -634,106 +633,6 @@ def test_the_rename_screen_reads_the_servers_phase_as_it_is_now(tmp_path: Path, 
     assert (settings_path.parent / "SERVERS" / ALPHA).is_dir()
 
 
-# What it plays ---------------------------------------------------------------------------------------
-
-def test_using_a_playlist_takes_out_the_servers_map_and_game(tmp_path: Path, capsys, run) -> None:
-    settings_path = setup_root(tmp_path)
-    config = settings_path.parent / "SERVERS" / ALPHA / "dedicated.toml"
-    port = free_port()
-    replace_server_blocks(config, [{"name": ALPHA, "port": port, "map": "Guardian", "game": "Slayer"}])
-    assert cli.main(["-c", str(settings_path), "playlist", "-s", ALPHA, "use", "slayer"]) == 0
-    assert server_blocks(config) == [{"name": ALPHA, "port": port, "playlist": "playlists/slayer.playlist.json"}]
-    replace_server_blocks(config, [{"name": ALPHA, "port": port, "campaign": {"mission": 3010}}])
-    settings = load(settings_path)
-    menu = Menu(SetupController(settings_path), FakeTerminal(), StrictKeyboard([]), RecentLog())
-    menu._use_playlist(settings.servers[0], config.parent / "playlists" / "slayer.playlist.json")
-    assert server_blocks(config) == [{"name": ALPHA, "port": port, "playlist": "playlists/slayer.playlist.json"}]
-
-
-# Packages --------------------------------------------------------------------------------------------
-
-def test_a_package_with_a_mistyped_field_is_listed_as_broken(tmp_path: Path) -> None:
-    folder = tmp_path / "PACKAGES"
-    for name, line in (("decimal", 'version = "1.0"'), ("yes", 'needs_campaign = "false"')):
-        (folder / name).mkdir(parents=True)
-        (folder / name / "package.toml").write_text(f'name = "{name}"\n{line}\n', encoding="utf-8")
-    listed = {p.key: p for p in list_packages(folder)}
-    assert "version must be a whole number" in listed["decimal"].description
-    assert "needs_campaign must be true or false" in listed["yes"].description
-    assert all(p.name.endswith("(broken)") for p in listed.values())
-
-
-def test_a_saved_package_carries_its_files_and_lands_in_the_right_content(tmp_path: Path) -> None:
-    from huragok.content.packages import server_values
-
-    root = tmp_path / "reclaimer"
-    server = root / "SERVERS" / "Snipers"
-    make_server_folder(server, "Snipers", free_port())
-    config = server / "dedicated.toml"
-    set_top_key(config, "content", "../../content")
-    (root / "content" / "Game Modes").mkdir(parents=True)
-    (root / "content" / "Game Modes" / "snipers.bin").write_bytes(b"snipers")
-    (root / "content" / "Game Modes" / "night.json").write_text('{"mode": "Slayer"}', encoding="utf-8")
-    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "map": "Guardian",
-                                    "game": "Game Modes/snipers.bin"}])
-    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "snipers")
-    assert (package.folder / "content" / "Game Modes" / "snipers.bin").read_bytes() == b"snipers"
-    assert package.server["game"] == "Game Modes/snipers.bin"
-    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "variant": "../../content/Game Modes/night.json"}])
-    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "night")
-    assert package.server["variant"] == "content/Game Modes/night.json"
-    assert (package.folder / "content" / "Game Modes" / "night.json").is_file()
-    new = root / "SERVERS" / "New"
-    assert server_values(package, new, root / "content")["variant"] == "../../content/Game Modes/night.json"
-    assert server_values(package, new, new / "content")["variant"] == "content/Game Modes/night.json"
-
-
-def test_a_saved_package_carries_what_its_server_names_by_name(tmp_path: Path) -> None:
-    """A custom game, a game variant and a map variant named by name, in the playlist and in the server's block
-    (one map and a custom game: `game = "BR Slayer"`), are in the package; game types and base maps aren't files."""
-    server = tmp_path / "reclaimer" / "SERVERS" / "Snipers"
-    make_server_folder(server, "Snipers", free_port())
-    content = server / "content"
-    (content / "Game Modes").mkdir(parents=True, exist_ok=True)
-    (content / "Maps").mkdir(parents=True, exist_ok=True)
-    (content / "Game Modes" / "gun-game.json").write_text('{"name": "Gun Game", "mode": "Slayer"}', encoding="utf-8")
-    (content / "Game Modes" / "br-slayer.json").write_text('{"name": "BR Slayer", "mode": "Slayer"}', encoding="utf-8")
-    (content / "Game Modes" / "snipers.bin").write_bytes(b"snipers")
-    (content / "Maps" / "MLG Amp V7.mvar").write_bytes(b"amp")
-    playlist = server / "playlists" / "mixed.playlist.json"
-    playlist.parent.mkdir(parents=True, exist_ok=True)
-    playlist.write_text(json.dumps({"version": 2, "name": "Mixed", "games": [
-        {"map": "Guardian", "game": "Gun Game"}, {"map": "MLG Amp V7", "game": "snipers"},
-        {"map": "Valhalla", "game": "Slayer"}]}), encoding="utf-8")
-    config = server / "dedicated.toml"
-    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "playlist": "playlists/mixed.playlist.json"}])
-    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "mixed")
-    carried = sorted(p.relative_to(package.folder / "content").as_posix()
-                     for p in (package.folder / "content").rglob("*") if p.is_file())
-    assert carried == ["Game Modes/gun-game.json", "Game Modes/snipers.bin", "Maps/MLG Amp V7.mvar"]
-    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "map": "Valhalla", "game": "BR Slayer"}])
-    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "br")
-    assert (package.folder / "content" / "Game Modes" / "br-slayer.json").is_file()
-    assert package.server["game"] == "BR Slayer"
-
-
-def test_applying_a_package_keeps_the_shared_contents_own_files(tmp_path: Path) -> None:
-    package_folder = tmp_path / "PACKAGES" / "maps"
-    (package_folder / "content" / "Maps").mkdir(parents=True)
-    (package_folder / "package.toml").write_text('name = "maps"\n', encoding="utf-8")
-    (package_folder / "content" / "Maps" / "same.mvar").write_bytes(b"same")
-    (package_folder / "content" / "Maps" / "differs.mvar").write_bytes(b"package's")
-    (package_folder / "content" / "Maps" / "new.mvar").write_bytes(b"new")
-    shared = tmp_path / "content"
-    (shared / "Maps").mkdir(parents=True)
-    (shared / "Maps" / "same.mvar").write_bytes(b"same")
-    (shared / "Maps" / "differs.mvar").write_bytes(b"another server's")
-    kept: list[str] = []
-    copied = apply_package(load_package(package_folder), tmp_path / "Server", shared, kept)
-    assert copied == ["content/Maps/new.mvar"] and kept == ["content/Maps/differs.mvar"]
-    assert (shared / "Maps" / "differs.mvar").read_bytes() == b"another server's"
-
-
 def test_a_server_sharing_its_folder_with_a_running_one_is_not_renamed(tmp_path: Path, run) -> None:
     """One dedicated.toml can have several servers: renaming moves the folder under all of them, and own content
     changes `content` for them all, but only the one picked was checked (audit 2026-11, 7.5)."""
@@ -788,23 +687,3 @@ def test_a_rename_takes_everything_under_its_name_along(tmp_path: Path) -> None:
     folder_moved = new.folder != server.folder
     assert moves == [[str(new.content_dir / "Mods" / "Workshop" / "42") if folder_moved and server.content_dir.is_relative_to(server.folder) else str(live),
                       str(aside_folders(new.content_dir) / f"{old}-42-20261102-010101") if folder_moved and aside.is_relative_to(server.folder) else str(kept)]]
-
-
-def test_a_saved_package_never_copies_from_or_to_outside_its_folders(tmp_path: Path) -> None:
-    """A playlist naming "../../x.json" was copied from outside the content folder to outside the package, out of
-    PACKAGES/ even (audit 2026-11, 7.9)."""
-    root = tmp_path / "reclaimer"
-    server = root / "SERVERS" / "Snipers"
-    make_server_folder(server, "Snipers", free_port())
-    config = server / "dedicated.toml"
-    set_top_key(config, "content", "../../content")
-    (root / "content" / "Game Modes").mkdir(parents=True)
-    (root / "content" / "Game Modes" / "snipers.json").write_text("{}", encoding="utf-8")
-    (root / "secret.json").write_text('{"not": "content"}', encoding="utf-8")
-    (server / "playlists").mkdir(exist_ok=True)
-    (server / "playlists" / "odd.playlist.json").write_text(json.dumps({"games": [
-        {"map": "Guardian", "game": "Game Modes/snipers.json"}, {"map": "Guardian", "game": "../secret.json"}]}), encoding="utf-8")
-    replace_server_blocks(config, [{"name": "Snipers", "port": 1, "playlist": "playlists/odd.playlist.json"}])
-    package = save_package(server, "Snipers", tmp_path / "PACKAGES" / "odd")
-    assert (package.folder / "content" / "Game Modes" / "snipers.json").is_file()
-    assert not (package.folder / "secret.json").exists() and not list((tmp_path / "PACKAGES").rglob("secret.json"))

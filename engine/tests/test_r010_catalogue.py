@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from huragok.content.catalogue import (Catalogue, Entry, Mod, add_searched, game_of_source, installed_mods,
-                                       load_catalogue, parse_listing, set_mod_disabled)
+                                       load_catalogue, parse_listing)
 from huragok.games import odst
 
 # Trimmed from 0.10.0's own output on this PC (2026-11-06), the odd lines kept: the program's notes between entries,
@@ -199,7 +199,7 @@ def test_one_call_lists_everything_and_halo_3_mods_come_from_the_content_folder(
     a_mod(content / "Mods" / "Mine", "My Mod", {"my map": "my_map"})
     a_mod(content / "Mods" / "Off", "Switched Off", {"off map": "off"}, workshop=5)
     a_mod(content / "Mods" / "Booglooch", "CE Mod", {"booglooch": "halo1_bloodgulch_6381b55e"}, engine="Halo1")
-    set_mod_disabled(content, "Mods/Off", True)
+    (content / "disabled-mods.json").write_text('{"packages": ["Mods/Off"]}', encoding="utf-8")  # the host's
     heading = "Map variants and Forge saves"
     tool = Tool(LISTING.split(heading)[0] + heading + EVERY_VARIANT.split(heading, 1)[1])
     catalogue = load_catalogue(tool, tmp_path, content, tmp_path / "dedicated.toml")  # type: ignore[arg-type]

@@ -19,8 +19,8 @@ from .files import mtime, write_atomic
 FOLDER = "requests"
 STALE_SECONDS = 600
 VERBS = ("start", "stop", "restart", "cancel", "say", "rcon", "autostart", "server_setting", "stop_all", "close",
-         "update", "check_update", "check_program_update", "update_program", "check_workshop", "update_workshop",
-         "game_files", "game_files_retry", "workshop_look")
+         "update", "check_update", "check_program_update", "check_workshop", "update_workshop",
+         "game_files", "game_files_retry", "dismiss_warning")
 
 
 @dataclass

@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..core.files import write_atomic
 from ..games import bungie
 from ..games.odst import Listing
 from ..games.odst import parse_listing as parse_odst
@@ -552,12 +551,31 @@ def layout_target(mod: Mod, content_root: Path, name: str, path: Path) -> Path:
             / f"{safe_file_name(name, safe_file_name(path.stem, 'layout'))}.json")
 
 
-def sync_layouts(mod: Mod, content_root: Path, written: dict[str, str], *, skip: set[str] | None = None) -> LayoutSync:
+VERSION_TWO = re.compile(rb'("version"\s*:\s*)2(?![0-9.eE])')
+
+
+def layout_hashes(path: Path) -> set[str]:
+    """A layout file's hash, with its hash as version 1 for each `"version": 2` in it: a server rewrites a version-1
+    file as version 2 when it starts, changing only that digit, byte for byte otherwise (0.10.0 on, verified 0.10.8),
+    so the rewrite is still the file Huragok copied, not one changed by hand (bug B2)."""
+    import hashlib
+
+    data = path.read_bytes()
+    found = {hashlib.sha256(data).hexdigest()}
+    for match in VERSION_TWO.finditer(data):
+        found.add(hashlib.sha256(data[:match.end(1)] + b"1" + data[match.end():]).hexdigest())
+    return found
+
+
+def sync_layouts(mod: Mod, content_root: Path, written: dict[str, str], *, skip: set[str] | None = None,
+                 deleted_too: bool = True) -> LayoutSync:
     """A mod's shipped Forge layouts into content/Maps/<mod title>/ as its version has them, where install_layouts
-    copies them once. `written` (brought up to date here) holds what Huragok put there, by file under the content
-    folder, as each file's hash: one changed since was changed by hand and is left; one a person deleted stays
-    deleted; one that was there before Huragok kept track and differs (an older version, copied with L) is replaced,
-    the old copy moved to `content set aside`. `skip`: files another mod of the same name saw to already."""
+    copies them once: the host's L (layouts_by_hand), never by itself (0.7.0). `written` (brought up to date here)
+    holds what Huragok put there, by file under the content folder, as each file's hash: one changed since was changed
+    by hand and is left (the server's own version-2 rewrite of it isn't a change: layout_hashes); one a person deleted
+    is copied again only with `deleted_too`; one that was there before Huragok kept track and differs (an older
+    version) is replaced, the old copy moved to `content set aside`. `skip`: files another mod of the same name saw to
+    already."""
     from .mccimport import copy_replacing
 
     result = LayoutSync()
@@ -569,17 +587,17 @@ def sync_layouts(mod: Mod, content_root: Path, written: dict[str, str], *, skip:
                 continue
             skip.add(key)
         try:
-            new = file_hash(path)
-            current = file_hash(destination) if destination.is_file() else None
+            new, forms = file_hash(path), layout_hashes(path)
+            current = layout_hashes(destination) if destination.is_file() else None
         except OSError:
             continue  # one in use or gone since: looked at again next time
         known = written.get(key)
-        if current == new:
-            written[key] = new
+        if current is not None and (new in current or current & forms):
+            written[key] = new  # the mod's own, as it is or as the server rewrote it
             continue
-        if current is None and known is not None:
+        if current is None and known is not None and not deleted_too:
             continue  # deleted by hand: stays deleted
-        if current is not None and known is not None and current != known:
+        if current is not None and known is not None and known not in current:
             result.kept.append(key)
             continue
         if current is not None and known is None:
@@ -627,14 +645,18 @@ def parse_picks(text: str, count: int) -> list[int] | None:
 
 
 def describe_games(games: list[dict[str, Any]], limit: int = 6) -> str:
-    """"Team Slayer on Guardian, CTF on Valhalla, and 12 more" for a playlist's entries."""
-    names = [f"{g.get('name') or g.get('game', '?')} on {g.get('map', '?')}" for g in games if isinstance(g, dict)]
+    """"Team Slayer on Guardian, CTF on Valhalla, Campaign: Sierra 117 (normal), and 12 more" for a playlist's entries
+    (co-op entries named by their mission: games/halo3.py game_label)."""
+    from ..games.halo3 import coop_kind, game_label
+
+    names = [game_label(g) if coop_kind(g) != "multiplayer" else f"{g.get('name') or g.get('game', '?')} on "
+             f"{g.get('map', '?')}" for g in games if isinstance(g, dict)]
     if len(names) <= limit:
         return ", ".join(names)
     return ", ".join(names[:limit]) + f", and {len(names) - limit} more"
 
 
-# Mods kept but not used: content/disabled-mods.json ------------------------------------------
+# Mods kept but not used: content/disabled-mods.json, the host's (read here, never written: 0.7.0) ----------------
 
 DISABLED_MODS = "disabled-mods.json"  # {"packages": ["Mods/canyon"]}: mods the server keeps on disk but doesn't use
 
@@ -669,17 +691,3 @@ def mod_package(content_root: Path, mod: Mod) -> str:
 
 def is_disabled(packages: list[str], package: str) -> bool:
     return any(p.strip().strip("/").replace("\\", "/").lower() == package.lower() for p in packages)
-
-
-def set_mod_disabled(content_root: Path, package: str, off: bool) -> list[str]:
-    """Switch one mod off (listed in disabled-mods.json) or on again; the file goes once nothing is listed. The
-    list as it is now. Raises DisabledModsError or OSError."""
-    packages = [p for p in disabled_mods(content_root) if not is_disabled([p], package)]
-    if off:
-        packages.append(package)
-    path = content_root / DISABLED_MODS
-    if packages:  # replaced, not written through: a server's own content made by hard links shares nothing (7.1)
-        write_atomic(path, json.dumps({"packages": packages}, indent=2) + "\n")
-    else:
-        path.unlink(missing_ok=True)
-    return packages

@@ -20,11 +20,12 @@ def settings_with(tmp_path: Path, body: str = "", backend: str = "attach") -> ob
 
 def test_a_server_without_a_block_has_every_servers_settings(tmp_path: Path) -> None:
     settings = settings_with(tmp_path, '[restarts]\ndaily_restart = "04:00"\nwarn_seconds = [120, 30]\n'
-                                       '[workshop_updates]\ninstall = "when_empty"\n', backend="process")
+                                       '[workshop_updates]\nrestart = false\n', backend="process")
     alpha = settings.of("Alpha")
     assert alpha.daily_restart == "04:00" and alpha.where("daily_restart") == "[restarts]"
     assert alpha.restart("warn_seconds") == [120.0, 30.0]
-    assert alpha.workshop_updates == "when_empty" and alpha.where("workshop_updates") == "[workshop_updates]"
+    assert alpha.workshop_updates == "off" and alpha.where("workshop_updates") == "[workshop_updates]"
+    assert not alpha.workshop_restart
     assert alpha.priority == "high" and alpha.where("priority") == "[process]"
     assert alpha.automod == "on" and alpha.autostart is True
 
@@ -39,7 +40,7 @@ def test_a_servers_own_block_wins_for_it_alone(tmp_path: Path) -> None:
     assert bravo.daily_restart == "04:00"
     assert (alpha.priority, bravo.priority) == ("realtime", "high")
     assert (alpha.automod, bravo.automod) == ("dry_run", "on")
-    assert (alpha.workshop_updates, bravo.workshop_updates) == ("off", "after_game")
+    assert (alpha.workshop_updates, bravo.workshop_updates) == ("off", "on")  # [workshop_updates] restart: on
     assert alpha.restart("min_uptime_seconds") == 60.0 and bravo.restart("min_uptime_seconds") == 900.0
 
 
@@ -63,16 +64,31 @@ def test_vergil_is_off_where_automod_is_switched_off_and_follows_every_dry_run(t
     assert automod_mode("on", False, everything_dry=True) == "dry_run" and automod_mode("off", False, True) == "off"
 
 
-def test_a_shared_content_folder_leaves_workshop_installs_to_the_program(tmp_path: Path) -> None:
+def test_a_shared_content_folder_is_said_with_what_it_costs(tmp_path: Path) -> None:
     settings = settings_with(tmp_path)
     alpha, bravo = settings.servers
     bravo.content_dir = alpha.content_dir = tmp_path / "content"
     assert settings.of(alpha).shares_content_with() == ["Bravo"]
-    assert settings.of(alpha).workshop_updates == "after_game" and settings.of(alpha).workshop_install == "when_empty"
-    assert "content shared with Bravo" in settings.of(alpha).workshop_text()
+    assert settings.of(alpha).workshop_updates == "on" and settings.of(alpha).workshop_restart
+    assert settings.of(alpha).workshop_text().endswith("(content shared with Bravo: one update reaches all of them at "
+                                                       "once)")
     bravo.content_dir = tmp_path / "its own"
-    assert settings.of(alpha).workshop_install == "after_game"
-    assert settings.of(alpha).workshop_text() == "new versions installed after the game"
+    assert settings.of(alpha).workshop_text() == ("the server installs its own mod updates; Huragok restarts it when "
+                                                  "its map in use holds one up")
+
+
+def test_0_6s_workshop_settings_are_read_and_do_nothing(tmp_path: Path) -> None:
+    """install, check_minutes (even one 0.6 refused), adopt and layouts: accepted, never an error; install = "off"
+    (no automatic mod swaps, the host's choice) reads as restart = false until the line goes. A server's own
+    after_game or when_empty reads as unset."""
+    settings = settings_with(tmp_path, '[workshop_updates]\ninstall = "off"\ncheck_minutes = 2\nadopt = false\n'
+                                       'layouts = true\n[[server]]\nname = "Bravo"\nworkshop_updates = "when_empty"\n')
+    assert settings.workshop_updates.restart is False
+    assert settings.of("Alpha").workshop_updates == "off" and settings.of("Bravo").workshop_updates == "off"
+    assert settings.retired == [] and settings.problems == []
+    on = settings_with(tmp_path / "on", '[workshop_updates]\ninstall = "after_game"\nrestart = true\n'
+                                        '[[server]]\nname = "Bravo"\nworkshop_updates = "after_game"\n')
+    assert on.of("Bravo").workshop_updates == "on" and on.of("Bravo").where("workshop_updates") == "[workshop_updates]"
 
 
 def test_a_server_huragok_doesnt_list_gets_every_servers_settings(tmp_path: Path) -> None:

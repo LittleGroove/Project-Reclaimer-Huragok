@@ -1,5 +1,5 @@
 """Steam: its library folders and MCC's place in them, the Workshop's API, and SteamCMD for the Workshop and
-Halo 3's files (finding it, installing it, signing in, telling every server).
+Halo 3's files (finding it, installing it, signing in).
 
 MCC is found only where Steam's own records say it is (the registry, libraryfolders.vdf, appmanifest_976730.acf),
 never by searching drives.
@@ -15,13 +15,15 @@ sign-in can't fetch MCC's items (checked). So the supervisor:
 3. signs in: `steamcmd +login <account>` in a window of its own, where Steam asks for the
    password and the Steam Guard code once; after that the account's login is cached and
    `dedicated mods` runs without prompts (never a password in any file);
-4. writes `[workshop] steamcmd` and `username` into every server's dedicated.toml and
-   `[setup] steamcmd` / `steam_username` into settings.toml;
+4. writes `[setup] steamcmd` / `steam_username` into settings.toml (Huragok's own file). A server's own
+   `[workshop] steamcmd` and `username` are written only when the host asks, one server at a time, shown first
+   (0.7.0: content/quickactions.py's steamcmd_lines);
 5. downloads one depot of MCC (a piece of it, such as Halo 3's multiplayer files) with `download_depot`, for a
    server with no MCC on its PC (content/gamefiles.py keeps what a server uses and leaves out sound and video).
 
-Before a Workshop update restarts a server, cannot_fetch() says whether its SteamCMD can fetch anything here: a
-copied server can name a SteamCMD that's on another PC, or an account with no saved sign-in on this one.
+cannot_fetch() says whether a server's SteamCMD can fetch anything here: a copied server can name a SteamCMD that's on
+another PC, or an account with no saved sign-in on this one. workshop_content() finds this PC's own Steam Workshop
+folder for MCC, whose mods Project Reclaimer 0.10 loads by itself.
 """
 
 from __future__ import annotations
@@ -203,6 +205,22 @@ def mcc_in(library: Path) -> Path | None:
     state = read_vdf(library / "steamapps" / f"appmanifest_{MCC_APP}.acf").get("AppState")
     folder = state.get("installdir") if isinstance(state, dict) else None
     return library / "steamapps" / "common" / str(folder) if folder else None
+
+
+def workshop_content() -> Path | None:
+    """This PC's own Steam Workshop folder for MCC (steamapps/workshop/content/976730 in a library Steam says MCC is
+    in), where Steam keeps the host's own subscriptions; None when Steam's records name none. From Project Reclaimer
+    0.10 the servers load the mods there by themselves."""
+    for library, apps in steam_libraries():
+        if apps is not None and str(MCC_APP) not in apps:
+            continue
+        folder = library / "steamapps" / "workshop" / "content" / str(MCC_APP)
+        try:
+            if folder.is_dir():
+                return folder
+        except OSError:
+            continue
+    return None
 
 
 def _mcc_candidates(hint: str | None) -> Iterator[Path]:
@@ -506,23 +524,15 @@ def login_window(executable: Path, username: str) -> str:
     return f"no desktop terminal found; run this in another terminal, then come back: {line}"
 
 
-def configure(settings: Settings, executable: Path, username: str) -> list[Path]:
-    """Write [workshop] steamcmd and username into every server folder, and [setup] into settings.toml."""
+def configure(settings: Settings, executable: Path, username: str) -> None:
+    """Write [setup] steamcmd and steam_username into settings.toml. Never a server's own dedicated.toml (0.7.0):
+    its [workshop] lines are a quick action the host asks for, one server at a time (content/quickactions.py)."""
     from .core.tomledit import set_table_key
 
-    written: list[Path] = []
-    for folder in settings.server_folders:
-        config = folder / settings.config_name
-        if not config.is_file():
-            continue
-        set_table_key(config, "workshop", "steamcmd", str(executable), before="master")
-        set_table_key(config, "workshop", "username", username, before="master")
-        written.append(config)
     set_table_key(settings.path, "setup", "steamcmd", str(executable), before="process")
     set_table_key(settings.path, "setup", "steam_username", username, before="process")
     settings.setup.steamcmd = str(executable)
     settings.setup.steam_username = username
-    return written
 
 
 def add_to_path(folder: Path) -> str:

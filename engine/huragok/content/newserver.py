@@ -1,19 +1,19 @@
-"""Making a server folder: `dedicated init`, the package, the root's shared folders, its
-dedicated.toml, then `dedicated check`.
+"""A new server folder (0.7.0, answer 6): the folder in SERVERS/, the program's own `dedicated init` in it, and
+nothing more. No package, no folders shared from Huragok's, no console password, no auto_update, no SteamCMD lines:
+what `init` writes is what the server gets.
 
-    SERVERS/<name>/            the new folder: dedicated.toml, playlists/, data/
-    game/  content/            at the root, shared by every server made here ([setup] share):
-                               Halo 3's files once, one content folder (never a ban list: every
-                               server keeps its own, and Huragok puts its bans on each)
+0.10.8's `init` makes two servers in the folder, on 49176 and 49177, with its master on 49175 (simulation S4), and on
+most hosts those ports are taken. So the quick actions follow (content/quickactions.py: one server only, free ports,
+the console), each shown before it's written, and only when the host says yes.
 
-Halo 3's multiplayer files always come first; the other games' (ODST's, the campaign missions, and from
-Project Reclaimer 0.10 Halo: Reach's, Combat Evolved's and Halo 2's) are copied from MCC beside them with
-`dedicated init --maps <words>`, for the games the host picks (N asks) and the ones its package needs.
+The folder is made as SERVERS/.new-<name>/ (a folder starting with a dot is never picked up) and given its name once
+the host is done with its quick actions (finish), so Huragok never starts a server half made, nor one whose quick
+actions are still being chosen. A server with no copy of the program in its folder runs the one in Huragok's; when
+there's none there either, the program that made it is linked in (copied where the drive can't link), or it couldn't
+run at all.
 
-The folder is built as SERVERS/.new-<name>/ (folders starting with a dot are never
-picked up) and renamed when it's done, so a half-made server is never started. If
-its check fails, the folder stays, with autostart off and the problems reported, for
-the host to fix.
+Also here, for the host's own tools: the names a server can have, whether a port is free, getting Halo 3: ODST's
+files from MCC (C's check offers it), and the game folders Huragok's folder has.
 """
 
 from __future__ import annotations
@@ -28,31 +28,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from ..core import versions
 from ..core.serverfolders import slug_taken, slugify
 from ..core.settings import Settings
-from ..core.tomledit import (
-    read_toml, remove_server_setting, replace_server_blocks, set_server_setting, set_table_key, set_top_key,
-)
-from ..games.bungie import GAMES
-from ..games.files import (
-    GAME_OF_KIND, LABELS, MAPS_FOR, add_reach_variants, has, has_game_files, has_odst_files, in_mcc, plays_on,
-)
-from ..games.odst import FILES_HINT
-from ..games.halo3_options import version_tuple
-from ..games.plays import CO_OP_MAX_PLAYERS, is_co_op
-from ..program.dedicated import Dedicated, ToolResult, find_executable
-from ..program.settings import every_block, used_ports
-from ..steam import find_mcc, is_mcc_install
-from .packages import Package, apply_package, server_values
+from ..core.tomledit import read_toml
+from ..games.files import has_game_files, has_odst_files
+from ..program.dedicated import Dedicated, find_executable
+from ..program.settings import every_block
+from ..steam import find_mcc
 
-FIRST_PORT = 49176
-SHAREABLE = ("game", "content")  # never the ban list: every server keeps its own (a /ban is that server's)
-COPIED_FROM_EXISTING = ("host_name", "stats_server", "public_address", "upnp")
+FIRST_PORT = 49176  # where a free port is looked for first: init's own first port
 MAX_NAME = 48  # the server program's limit for a [[server]] name
 MIN_PORT, MAX_PORT = 1024, 65535
-MAX_PLAYERS, MAX_PLAYERS_010 = 127, 128  # max_players's top before Project Reclaimer 0.10, and from it
 WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+STAGING = ".new-"  # SERVERS/.new-<slug>: a folder being made
 Say = Callable[[str], None]
 
 
@@ -61,36 +49,32 @@ class SetupError(Exception):
 
 
 @dataclass
-class NewServer:
-    name: str
-    port: int = 0  # 0: the next free one
-    package: Package | None = None
-    hidden: bool = False
-    password: str = ""  # join password; empty lets anyone join
-    max_players: int | None = None
-    share: set[str] = field(default_factory=lambda: set(SHAREABLE))  # what comes from the root
-    mcc_folder: str | None = None  # Halo 3's files from here ("" for Steam's default) when none can be shared or linked
-    maps: list[str] | None = None  # with mcc_folder: only these maps
-    games: list[str] | None = None  # more games' files beside Halo 3's, from MCC: odst, campaign, reach,
-    #                                 reach-campaign, halo1, halo2 (games/files.py's kinds)
-    link_from: Path | None = None  # a server folder whose game/ is hard-linked, or a game folder (same drive: no
-    #                                space used); with neither this nor mcc_folder, the first game folder here
-    host_name: str | None = None
-    rcon_password: str = ""  # empty: made up
-    welcome: list[str] | None = None
-    extra: dict[str, Any] = field(default_factory=dict)  # more [[server]] keys (map, game, voice...)
-    auto_update: bool | None = None  # installs new Project Reclaimer releases itself; None: [setup] auto_update
-
-
-@dataclass
 class Outcome:
-    folder: Path
-    name: str
-    port: int
-    rcon_password: str
-    check: ToolResult | None
-    ready: bool
-    notes: list[str] = field(default_factory=list)
+    """A folder `dedicated init` made, waiting in SERVERS/.new-<slug>/ for the host's quick actions."""
+
+    name: str  # the folder's name, as the host gave it
+    folder: Path  # where it goes: SERVERS/<name>
+    staging: Path  # where it is until finish(): SERVERS/.new-<slug>
+    config_name: str
+    servers: list[tuple[str, int | None]] = field(default_factory=list)  # init's [[server]] blocks: name, game port
+    master: int | None = None  # init's master port while it's on; None: off
+    version: str | None = None  # the program that made it, as its --version says
+    program: Path | None = None  # the program linked in (there's none in Huragok's folder), or None
+
+    @property
+    def config(self) -> Path:
+        """Its dedicated.toml where it is now (the staging folder until finish())."""
+        return (self.staging if self.staging.is_dir() else self.folder) / self.config_name
+
+    @property
+    def shown(self) -> str:
+        """Its dedicated.toml as the host will find it: SERVERS\\<name>\\dedicated.toml."""
+        return str(Path(self.folder.parent.name) / self.folder.name / self.config_name)
+
+    @property
+    def ports(self) -> list[int]:
+        """Every port init gave it: its servers' game ports, then its master's."""
+        return [port for _, port in self.servers if port] + ([self.master] if self.master else [])
 
 
 def valid_name(name: str) -> str | None:
@@ -118,7 +102,8 @@ def taken_names(settings: Settings) -> set[str]:
 
 
 def port_free(port: int) -> bool:
-    """Nothing listens on TCP port (RCON) and UDP port (the game) can be bound right now."""
+    """Nothing listens on TCP port (RCON) and UDP port (the game) can be bound right now. For when the system's own
+    table of sockets can't be read (content/quickactions.py reads that first)."""
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.3):
             return False
@@ -132,16 +117,6 @@ def port_free(port: int) -> bool:
     return True
 
 
-def next_free_port(settings: Settings, start: int = FIRST_PORT) -> int:
-    taken = used_ports(settings) | {49175}
-    port = max([start, *(p + 1 for p in taken if start <= p < MAX_PORT)])
-    while port in taken or not port_free(port):
-        port += 1
-        if port > MAX_PORT:
-            raise SetupError(f"no free port from {start} to {MAX_PORT}: give the server one (--port)")
-    return port
-
-
 def check_port(port: Any) -> str | None:
     """Why a game port can't be used (its console listens on it too), or None."""
     if not isinstance(port, int) or isinstance(port, bool) or not MIN_PORT <= port <= MAX_PORT:
@@ -149,22 +124,7 @@ def check_port(port: Any) -> str | None:
     return None
 
 
-def most_players(version: str | None) -> int:
-    """max_players's top on program `version`: 128 from 0.10, 127 before (and when it isn't known: safe on both)."""
-    have = version_tuple(version)
-    return MAX_PLAYERS_010 if have is not None and have >= (0, 10) else MAX_PLAYERS
-
-
-def check_players(players: Any, *, co_op: bool = False, version: str | None = None) -> str | None:
-    """Why a max_players can't be used, or None: 1-127 (1-128 from Project Reclaimer 0.10: `version`), at most 16 for
-    campaign co-op and ODST."""
-    high = CO_OP_MAX_PLAYERS if co_op else most_players(version)
-    if not isinstance(players, int) or isinstance(players, bool) or not 1 <= players <= high:
-        return f"max_players must be from 1 to {high}" + (" (campaign co-op and ODST hold 16)" if co_op else "")
-    return None
-
-
-def generate_password(length: int = 32) -> str:
+def generate_password(length: int = 24) -> str:
     alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
@@ -201,7 +161,7 @@ def link_tree(source: Path, target: Path, say: Say | None = None) -> tuple[int, 
 
 
 def add_odst_files(tool: Dedicated, game: Path, mcc_folder: str, stage: Path, say: Say) -> tuple[int, int]:
-    """ODST's files from MCC into a game folder that has Halo 3's (the root's shared one too): `dedicated init
+    """ODST's files from MCC into a game folder that has Halo 3's, when the host asks (C's check): `dedicated init
     --maps odst` copies them into a scratch folder, then they're linked in beside what's there, which stays as it
     is. (linked, copied) files; raises SetupError when the program couldn't copy them."""
     if stage.exists():
@@ -219,41 +179,6 @@ def add_odst_files(tool: Dedicated, game: Path, mcc_folder: str, stage: Path, sa
     return linked, copied
 
 
-def add_game_files(tool: Dedicated, game: Path, mcc_folder: str, kinds: list[str], stage: Path,
-                   say: Say) -> tuple[int, int]:
-    """Other games' files from MCC into a game folder that has Halo 3's (the root's shared one too): one `dedicated
-    init --maps reach,halo1,…` into a scratch folder, then linked in beside what's there, which stays as it is.
-    (linked, copied) files; raises SetupError when the program couldn't copy them all."""
-    if stage.exists():
-        shutil.rmtree(stage)
-    words = [word for kind in kinds for word in MAPS_FOR[kind] or []]
-    say(f"copying {', '.join(LABELS[k] for k in kinds)} from {mcc_folder or 'Steam'} with dedicated init --maps "
-        f"{','.join(words)} (hard links on the same drive)")
-    try:
-        result = tool.init(stage, mcc=mcc_folder, maps=words)
-        if not result.ok:
-            raise SetupError(f"dedicated init couldn't copy them: {result.problem or 'it failed'}")
-        if lacking := [kind for kind in kinds if not has(stage / "game", kind)]:
-            raise SetupError(f"dedicated init didn't copy {', '.join(LABELS[k] for k in lacking)}")
-        if mcc_folder and {"reach", "reach-campaign"} & set(kinds):
-            add_reach_variants(stage / "game", Path(mcc_folder))
-        linked, copied = link_tree(stage / "game", game)
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-    say(f"{', '.join(LABELS[k] for k in kinds)} are in {game}: {linked} hard-linked, {copied} copied")
-    return linked, copied
-
-
-def mcc_kinds(mcc: Path | None, version: str | None = None) -> list[str]:
-    """The kinds of game files besides Halo 3's that MCC's folder has installed, as far as program `version` plays
-    them (None: unknown, it does)."""
-    return [kind for kind in MAPS_FOR if kind != "halo3" and plays_on(kind, version) and in_mcc(mcc, kind)]
-
-
-def needs_odst(spec_server: dict[str, Any]) -> bool:
-    return "odst" in spec_server
-
-
 def odst_mcc(hint: str | None) -> Path | None:
     """The MCC folder to copy ODST's files from: the hint ([setup] mcc_folder) or one found on this PC, when it has
     Halo 3: ODST installed (it's a DLC: Steam, MCC, Properties, DLC)."""
@@ -262,7 +187,7 @@ def odst_mcc(hint: str | None) -> Path | None:
 
 
 def game_folders(settings: Settings) -> list[Path]:
-    """Every folder with Halo 3's files on this root: the shared one first, then the servers' own."""
+    """Every folder with Halo 3's files on this root: Huragok's own game/ first, then the servers' own."""
     found: list[Path] = []
     candidates = [settings.home / "game"]
     for folder in settings.server_folders:
@@ -277,100 +202,12 @@ def game_folders(settings: Settings) -> list[Path]:
     return found
 
 
-def existing_top_keys(settings: Settings) -> dict[str, Any]:
-    """Settings worth copying from a server folder that exists (the same machine, the same host)."""
-    for folder in settings.server_folders:
-        try:
-            data = read_toml(folder / settings.config_name)
-        except (OSError, ValueError):
-            continue
-        return {k: data[k] for k in COPIED_FROM_EXISTING if k in data}
-    return {}
+# A new server -----------------------------------------------------------------------------------------------------
 
-
-def shared_paths(settings: Settings, share: set[str]) -> dict[str, Path]:
-    home = settings.home
-    paths = {"game": home / "game", "content": home / "content"}
-    return {k: v for k, v in paths.items() if k in share}
-
-
-def ensure_shared(settings: Settings, spec: NewServer, tool: Dedicated, say: Say) -> dict[str, Path]:
-    """The root's shared folders, made if missing. Returns what the new server points at."""
-    paths = shared_paths(settings, spec.share)
-    for key, path in paths.items():
-        if key == "content" and not path.is_dir():
-            for sub in ("Maps", "Game Modes", "Images", "Mods"):
-                (path / sub).mkdir(parents=True, exist_ok=True)
-            say(f"made the shared content folder {path}")
-        elif key == "game" and not has_game_files(path):
-            make_shared_game(settings, spec, tool, path, say)
-    return paths
-
-
-def make_shared_game(settings: Settings, spec: NewServer, tool: Dedicated, target: Path, say: Say) -> None:
-    """Halo 3's files at the root: linked from a server that has them, or copied from MCC with `dedicated init`."""
-    sources = [spec.link_from / "game"] if spec.link_from else []
-    sources += [g for g in game_folders(settings) if g != target.resolve()]
-    source = next((s for s in sources if has_game_files(s) and not is_mcc_install(s)), None)
-    if source is not None:
-        say(f"sharing Halo 3's files: linking {source} into {target} (no space used on the same drive)")
-        link_tree(source, target, say)
-        return
-    if spec.mcc_folder is None:
-        raise SetupError(f"no Halo 3 files to share yet: name your MCC folder ([setup] mcc_folder in "
-                         f"{settings.path.name}, or --from), or put a server that has them in SERVERS/ first")
-    stage = settings.records / "new-server-stage"
-    if stage.exists():
-        shutil.rmtree(stage)
-    say(f"copying Halo 3's files from {spec.mcc_folder or 'Steam'} with dedicated init (hard links on the same drive)")
-    result = tool.init(stage, mcc=spec.mcc_folder, maps=spec.maps)
-    if not result.ok or not has_game_files(stage / "game"):
-        shutil.rmtree(stage, ignore_errors=True)
-        raise SetupError(f"dedicated init couldn't copy the game files: {result.problem}")
-    # Into what's there, never in its place: game/ may hold ODST's or the campaign's files already, or files the
-    # background fetch (content/gamefiles.py) is putting there now, and a folder made meanwhile mustn't get a
-    # game/game inside it.
-    _merge_into(stage / "game", target)
-    shutil.rmtree(stage, ignore_errors=True)
-    say(f"Halo 3's files are at {target}")
-
-
-def _merge_into(source: Path, target: Path) -> None:
-    """Every file of `source` moved into `target` at the same path (one of the same name replaced, by rename);
-    target's other files stay."""
-    target.mkdir(parents=True, exist_ok=True)
-    for path in sorted(source.rglob("*")):
-        if path.is_file():
-            destination = target / path.relative_to(source)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(path, destination)
-
-
-def game_link_source(settings: Settings) -> Path | None:
-    """The game folder a new server that doesn't share the root's links Halo 3's files from: the first here that
-    has them (the root's, then each server's own, as its file names it; never MCC's own folder). None: there's
-    none (they're copied from MCC). The window's N can pass it as link_from."""
-    return next((game for game in game_folders(settings) if not is_mcc_install(game)), None)
-
-
-def game_to_link(settings: Settings, spec: NewServer) -> Path | None:
-    """Where a server that doesn't share the root's game folder links Halo 3's files from: link_from (a server
-    folder with a game/, or a game folder) when it has them; with no link_from and no MCC to copy from, the first
-    game folder here (game_link_source). None: `dedicated init` copies them from MCC, or there are none."""
-    if spec.link_from is not None:
-        return next((game for game in (spec.link_from / "game", spec.link_from)
-                     if has_game_files(game) and not is_mcc_install(game)), None)
-    return game_link_source(settings) if spec.mcc_folder is None else None
-
-
-def plays_co_op(spec: NewServer) -> bool:
-    return is_co_op({**(spec.package.server if spec.package else {}), **spec.extra})
-
-
-def create_server(settings: Settings, spec: NewServer, tool: Dedicated, say: Say = print) -> Outcome:
-    """Make SERVERS/<name>/ and check it. Raises SetupError when nothing could be made; a build that fails part
-    way leaves nothing behind (its staging folder is removed)."""
-    name = spec.name.strip()
+def create_server(settings: Settings, name: str, tool: Dedicated, say: Say = print) -> Outcome:
+    """SERVERS/.new-<slug>/ made with the program's own `dedicated init`, and nothing else written (finish() gives it
+    its name). Raises SetupError, with nothing left behind, when it can't be made."""
+    name = name.strip()
     if problem := valid_name(name):
         raise SetupError(problem)
     if settings.servers_folder is None:
@@ -383,202 +220,68 @@ def create_server(settings: Settings, spec: NewServer, tool: Dedicated, say: Say
     final = settings.servers_folder / name
     if final.exists():
         raise SetupError(f"{final} exists already")
-    if spec.port and (problem := check_port(spec.port)):
-        raise SetupError(problem)
-    if spec.max_players is not None:
-        from .gamefiles import program_version_of
-
-        version = program_version_of(tool) if spec.max_players == MAX_PLAYERS_010 else None  # only 128 needs it
-        if problem := check_players(spec.max_players, co_op=plays_co_op(spec), version=version):
-            raise SetupError(problem)
-    port = spec.port or next_free_port(settings)
-    if port in used_ports(settings):
-        raise SetupError(f"port {port} is used by another server here (or a discovery master)")
-    if not port_free(port):
-        raise SetupError(f"something on this machine already listens on port {port}")
-    staging = settings.servers_folder / f".new-{slugify(name)}"
-    if staging.exists():
+    staging = settings.servers_folder / f"{STAGING}{slugify(name)}"
+    if staging.exists():  # left by a window closed half way: never picked up, nobody's
         shutil.rmtree(staging)
-    shared = ensure_shared(settings, spec, tool, say) if spec.share else {}
-    autostart_off = False
+    say(f"making {name} with dedicated init")
+    program = None
     try:
-        rcon_password, check, notes = _build(settings, spec, tool, say, name, port, staging, final, shared)
-        ready = check.ok
-        if not ready:  # before the folder gets its real name: discovery would start it
-            notes.append(f"check found problems; autostart is off until they're fixed: {check.problem}")
+        result = tool.init(staging)
+        if not result.ok:
+            raise SetupError(f"dedicated init failed: {result.problem}")
+        config = staging / settings.config_name
+        if not config.is_file():
+            raise SetupError(f"dedicated init made no {settings.config_name} in {staging}")
+        if find_executable(staging) is None and find_executable(settings.home) is None:
+            program = staging / tool.executable.name  # the program that made it, as a hard link (no space) or a copy
             try:
-                set_server_setting(settings.path, name, "autostart", False)
-                autostart_off = True
-            except OSError as error:
-                notes.append(f"couldn't write autostart = false to {settings.path.name}: {error}")
-        os.replace(staging, final)
+                os.link(tool.executable, program)
+            except OSError:
+                shutil.copy2(tool.executable, program)
+            say(f"the server program: {program.name}, linked from {tool.executable} (Huragok's folder has none)")
+        data = read_toml(config)
     except BaseException as error:
         shutil.rmtree(staging, ignore_errors=True)
-        if autostart_off:
-            try:
-                remove_server_setting(settings.path, name, "autostart")
-            except OSError:
-                pass
         if isinstance(error, SetupError) or not isinstance(error, Exception):
             raise
         raise SetupError(f"couldn't make {name}: {error}; nothing was left half-made") from error
-    check.text = check.text.replace(str(staging), str(final)).replace(staging.name, final.name)
-    return Outcome(final, name, port, rcon_password, check, ready, notes)
-
-
-def _build(settings: Settings, spec: NewServer, tool: Dedicated, say: Say, name: str, port: int, staging: Path,
-           final: Path, shared: dict[str, Path]) -> tuple[str, ToolResult, list[str]]:
-    """Everything that goes into the staging folder, then `dedicated check`: (its console password, the check,
-    notes for the host)."""
-    notes: list[str] = []
-    wants_odst = needs_odst(spec.extra) or spec.package is not None and (spec.package.needs_odst
-                                                                       or needs_odst(spec.package.server))
-    wants_odst = wants_odst or "odst" in (spec.games or [])
-    others = list(dict.fromkeys(kind for kind in [*(spec.games or []), *(spec.package.file_kinds if spec.package
-                                                                         else [])] if kind not in ("halo3", "odst")))
-    link_game = game_to_link(settings, spec) if "game" not in shared else None
-    own_game_from_mcc = "game" not in shared and link_game is None and spec.mcc_folder is not None
-    say(f"making {final.name} with dedicated init")
-    result = tool.init(staging, mcc=spec.mcc_folder if own_game_from_mcc else None,
-                       maps=spec.maps if own_game_from_mcc else None)
-    if not result.ok:
-        raise SetupError(f"dedicated init failed: {result.problem}")
-    config = staging / settings.config_name
-    if not config.is_file():
-        raise SetupError(f"dedicated init made no {settings.config_name} in {staging}")
-    if link_game is not None:
-        link_tree(link_game, staging / "game", say)
-    auto_update = settings.setup.auto_update if spec.auto_update is None else spec.auto_update
-    # A server that updates itself replaces the program file it runs: that file must be its own, never the
-    # root's copy every server shares.
-    if find_executable(staging) is None and (auto_update or find_executable(settings.home) is None):
-        program = staging / tool.executable.name  # the program that built it, as a hard link (no space) or a copy
-        try:
-            os.link(tool.executable, program)
-        except OSError:
-            shutil.copy2(tool.executable, program)
-        say(f"the server program: {program.name}, linked from {tool.executable}")
-    set_top_key(config, "auto_update", auto_update)
-    say("it installs new Project Reclaimer releases itself (auto_update; the update restarts it at once, and "
-        "Huragok steps in when one doesn't arrive)" if auto_update
-        else "Project Reclaimer updates: by Huragok (U), as auto_update is off")
-
-    for key, path in shared.items():
-        set_top_key(config, key, relative_posix(path, staging))
-        own = staging / key
-        if own.is_dir():
-            shutil.rmtree(own, ignore_errors=True)
-        elif own.is_file():
-            own.unlink()
-    say("shared from the root: " + ", ".join(shared) if shared else "its own game, content and ban list")
-
-    for key, value in existing_top_keys(settings).items():
-        if key == "host_name" and spec.host_name:
-            continue
-        set_top_key(config, key, value)
-    if spec.host_name:
-        set_top_key(config, "host_name", spec.host_name)
-    rcon_password = spec.rcon_password or generate_password()
-    set_table_key(config, "rcon", "password", rcon_password)
-
-    package = spec.package
-    content_root = shared.get("content") or staging / "content"
-    block: dict[str, Any] = {"name": name, "port": port}
-    if package is not None:
-        block.update(server_values(package, staging, content_root))
-        for key, value in package.defaults.items():
-            set_table_key(config, "defaults", key, value)
-    elif not any(k in spec.extra for k in ("playlist", "map", "game", "variant", "campaign", "odst")):
-        block["playlist"] = "playlists/slayer.playlist.json"  # the example rotation `dedicated init` writes
-    if spec.hidden:
-        block["hidden"] = True
-    if spec.password:
-        block["password"] = spec.password
-    if spec.max_players:
-        block["max_players"] = spec.max_players
-    if spec.welcome:
-        block["welcome"] = list(spec.welcome)
-    block.update(spec.extra)
-    replace_server_blocks(config, [block])
-    from ..players.messages.intervals import FILE as MESSAGES_FILE, write_template
-
-    write_template(staging / MESSAGES_FILE, "server")  # its own interval messages, none yet
-
-    if settings.setup.steamcmd and settings.setup.steam_username:  # the I key's sign-in, for its Workshop items
-        set_table_key(config, "workshop", "steamcmd", settings.setup.steamcmd, before="master")
-        set_table_key(config, "workshop", "username", settings.setup.steam_username, before="master")
-        say(f"Workshop items come through SteamCMD as {settings.setup.steam_username}")
-    workshop_items: list[int] = []
-    if package is not None:
-        kept: list[str] = []
-        for copied in apply_package(package, staging, content_root, kept):
-            say(f"copied {copied} from the package")
-            if copied.startswith("playlists/"):
-                try:
-                    versions.keep(settings.records, "playlists", slugify(name), staging / copied, "from a package",
-                                  package.name)
-                except OSError:
-                    pass  # the history is a convenience; the server is made either way
-        for path in kept:
-            notes.append(f"{path}: kept the one already in {content_root} (other servers may use it); the "
-                         "package's own differs")
-        workshop_items = list(package.workshop_items)
-    if workshop_items:
-        set_table_key(config, "workshop", "items", workshop_items, before="master")
-        say(f"installing {len(workshop_items)} Workshop item(s) with dedicated mods (this can take a while)")
-        mods = tool.mods(staging)
-        for line in mods.lines[:20]:
-            say(f"  {line}")
-        if not mods.ok:
-            notes.append(f"Workshop items not installed: {mods.problem}")
-
-    if others:
-        notes += _add_others(settings, spec, tool, shared.get("game") or staging / "game", others, say)
-    if wants_odst:
-        game = shared.get("game") or staging / "game"
-        mcc = odst_mcc(spec.mcc_folder)
-        if has_odst_files(game):
-            say(f"Halo 3: ODST's files: already in {game}")
-        elif mcc is None:
-            notes.append(f"it plays Halo 3: ODST, whose files aren't in {game}, and no MCC with ODST installed was "
-                         "found on this PC ([setup] mcc_folder names it; ODST is a DLC: Steam, MCC, Properties, DLC). "
-                         f"D -> What it plays adds them once it's there, or run {FILES_HINT}")
-        else:
-            try:
-                add_odst_files(tool, game, str(mcc), settings.records / "odst-stage", say)
-            except (SetupError, OSError) as error:
-                notes.append(f"Halo 3: ODST's files weren't added: {error}")
-
-    say("checking it with dedicated check")
-    return rcon_password, tool.check(staging), notes
-
-
-def _add_others(settings: Settings, spec: NewServer, tool: Dedicated, game: Path, kinds: list[str],
-                say: Say) -> list[str]:
-    """The other games' files the host picked or the package needs (not ODST's: those have their own words), from
-    MCC into the new server's game folder. Notes for the host on what couldn't be added."""
     from .gamefiles import program_version_of
 
-    lacking = [kind for kind in kinds if not has(game, kind)]
-    for kind in kinds:
-        if kind not in lacking:
-            say(f"{LABELS[kind]}: already in {game}")
-    if not lacking:
-        return []
-    notes: list[str] = []
-    version = program_version_of(tool)
-    if old := [kind for kind in lacking if not plays_on(kind, version)]:
-        notes.append(f"{', '.join(LABELS[k] for k in old)} weren't added: they need Project Reclaimer "
-                     f"{GAMES[GAME_OF_KIND[old[0]]].since} or later, and this program is {version} (U updates it)")
-    mcc = find_mcc(spec.mcc_folder)
-    copy = [kind for kind in lacking if kind not in old and in_mcc(mcc, kind)]
-    if absent := [kind for kind in lacking if kind not in old and kind not in copy]:
-        notes.append(f"it needs {', '.join(LABELS[k] for k in absent)}, which aren't in {game}, and no MCC with "
-                     "them was found on this PC (install each game in MCC: Steam, MCC, Properties, DLC; [setup] "
-                     "mcc_folder names MCC's folder): I adds them once they're there")
-    if copy:
-        try:
-            add_game_files(tool, game, str(mcc), copy, settings.records / "games-stage", say)
-        except (SetupError, OSError) as error:
-            notes.append(f"{', '.join(LABELS[k] for k in copy)} weren't added: {error}")
-    return notes
+    servers, master = _servers_in(data)
+    return Outcome(name, final, staging, settings.config_name, servers, master, program_version_of(tool), program)
+
+
+def finish(outcome: Outcome) -> Path:
+    """The folder given its name: from here Huragok picks it up (within seconds while it runs) and starts it once its
+    ports are free. Raises SetupError when it can't be renamed (it stays where it is, never picked up)."""
+    if not outcome.staging.is_dir():
+        return outcome.folder
+    if outcome.folder.exists():
+        raise SetupError(f"{outcome.folder} exists now: the new folder stays as {outcome.staging.name}; rename it by "
+                         "hand once the other is out of the way")
+    try:
+        os.replace(outcome.staging, outcome.folder)
+    except OSError as error:
+        raise SetupError(f"{outcome.staging.name} couldn't be renamed {outcome.folder.name} ({error.strerror or error}):"
+                         " a program may have a file in it open; close it and rename the folder by hand") from None
+    return outcome.folder
+
+
+def read_folder(config: Path) -> tuple[list[tuple[str, int | None]], int | None]:
+    """A folder's servers as its dedicated.toml has them now, (name, game port) each, and its master's port while it's
+    on (None: off). Raises SetupError when the file can't be read."""
+    try:
+        return _servers_in(read_toml(config))
+    except (OSError, ValueError) as error:
+        raise SetupError(f"{config} can't be read: {error}") from None
+
+
+def _servers_in(data: dict[str, Any]) -> tuple[list[tuple[str, int | None]], int | None]:
+    blocks = [b for b in data.get("server", []) if isinstance(b, dict)] if isinstance(data.get("server"), list) else []
+    master = data.get("master") if isinstance(data.get("master"), dict) else {}
+    return ([(str(b.get("name") or ""), _port(b.get("port"))) for b in blocks],
+            _port(master.get("port")) if master.get("enabled", True) is not False else None)
+
+
+def _port(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None

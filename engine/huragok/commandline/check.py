@@ -15,7 +15,8 @@ from ..core.serverfolders import ServerConfig
 from ..core.settings import COMMANDS_FILE, SETTINGS_FILE, Settings
 from ..discordbot.config import FILE as DISCORD_FILE
 from ..discordbot.config import load as load_discord
-from ..games.halo3 import old_labels, playlist_files
+from ..games.byplayers_retired import retired_warning
+from ..games.halo3 import label_fixes, old_labels, playlist_files
 from . import common, firstrun
 from .common import LAUNCHER, SETTINGS_PROBLEM
 from .shell import console as out
@@ -27,7 +28,7 @@ def _check_mods(settings: Settings) -> None:
     from ..content import modcheck
     from ..content.gamefiles import read_paths
 
-    from ..games.halo3_options import version_tuple
+    from ..core.text import version_tuple
 
     roots: dict[Path, tuple[list[str], Path | None, list[str]]] = {}
     for server in settings.servers:
@@ -143,8 +144,8 @@ def cmd_check(args: argparse.Namespace) -> int:
             rows.append(("RCON", f"{endpoint.host}:{endpoint.port} · password set · host key "
                                  f"{'found' if server.host_key() else 'not found (server not started?)'}"))
         else:
-            rows.append(("RCON", "off"))
-            problems.insert(0, "RCON is off: set [rcon] password in dedicated.toml")
+            rows.append(("RCON", "none: Huragok keeps it on, watching its status.json, but can't tell players anything or "
+                                 "moderate. Add password = \"...\" under [rcon] in dedicated.toml to give it a console"))
         rows.append(("updates", updates_text(settings, server)))
         priority_warning = ""
         if settings.backend == "process":
@@ -157,19 +158,21 @@ def cmd_check(args: argparse.Namespace) -> int:
             rows.append(("running", "unknown (no status.json)"))
         else:
             rows.append(("running", f"{'yes' if status_age < 30 else 'no'} (status.json written {status_age:.0f} s ago)"))
-        by_players, by_players_warnings = _by_players(server)
-        if by_players:
-            rows.append(("by players", by_players))
         out.fields(rows)
         for problem in problems:
             out.warn(f"PROBLEM  {problem}")
             ok = False
         if priority_warning:
             out.warn(priority_warning)
-        for warning in by_players_warnings:
-            out.warn(f"warning: playlists by player count: {warning}")
+        retired = retired_warning(server.folder, server.name)  # playlists by player count, set up before 0.7.0
+        if retired:
+            out.warn(f"warning: {retired[0]}")
+            for line in retired[1:]:
+                out.say(f"  {line}")
         for line in _label_warnings(settings, server):
             out.warn(line)
+        for line in _file_warnings(settings, server):
+            out.warn(f"warning: {line}")
     _check_mods(settings)
     _check_content_files(settings, bool(getattr(args, "set_aside", False)))
     if settings.problems:
@@ -282,34 +285,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
-def _by_players(server: ServerConfig) -> tuple[str, list[str]]:
-    """Playlists by player count (G -> P): a row ("" when it isn't set up) and what the window warns of."""
-    from ..core.tomledit import read_toml
-    from ..games.byplayers import FILE, ByPlayersError, setup_of, warnings
-    from ..games.plays import plays_kind
-    from ..program.settings import effective
-
-    try:
-        setup = setup_of(server.folder, server.name)
-    except ByPlayersError as error:
-        return f"{FILE} can't be read", [str(error)]
-    if setup is None:
-        return "", []
-    try:
-        data = read_toml(server.config_path)
-    except (OSError, ValueError):
-        data = {}
-    blocks = data.get("server", []) if isinstance(data.get("server"), list) else []
-    block = next((b for b in blocks if isinstance(b, dict) and str(b.get("name", "")).lower() == server.name.lower()), {})
-    found = warnings(setup, server.folder, max_players=effective(data, "max_players", server.name) if data else None,
-                     auto_reload=data.get("auto_reload") is not False, kind=plays_kind(block))
-    return f"{'on' if setup.on else 'off'} · {len(setup.steps)} playlists (G -> P)", found
-
-
 def _label_warnings(settings: Settings, server: ServerConfig) -> list[str]:
     """Choice labels in the server's playlists that its own program refuses. Which those are depends on its version
     (0.9.19 renamed "Vanilla characters" to "Halo 3": 0.9.18 refuses "Halo 3"), asked of the program file only when
-    a playlist has one of the labels at all."""
+    a playlist has one of the labels at all. A warning only: the playlist is the host's to change (0.7.0)."""
     from ..games.halo3_options import NEWEST
 
     files = [path for path in playlist_files(server.folder) if old_labels(path, NEWEST) or old_labels(path, "0")]
@@ -321,12 +300,14 @@ def _label_warnings(settings: Settings, server: ServerConfig) -> list[str]:
         if not (labels := sorted(set(old_labels(path, version)))):
             continue
         named = f"{path.name} names {', '.join(repr(label) for label in labels)}"
+        taken = sorted({new for _, _, new in label_fixes(path, version)})
+        how = f"write {' and '.join(repr(label) for label in taken)} instead" if taken else "change them"
         if version:
-            found.append(f"{named}, which Project Reclaimer {version} (this server's program) calls otherwise: the "
-                         "Superintendent writes them as its program calls them as it starts the server")
+            found.append(f"warning: {named}, which Project Reclaimer {version} (this server's program) calls "
+                         f"otherwise, so it won't play that playlist: {how} (the window's O opens it)")
         else:
-            found.append(f"{named}, which no version of Project Reclaimer takes: the Superintendent writes the name "
-                         "it takes as it starts the server")
+            found.append(f"warning: {named}, which no version of Project Reclaimer takes, so the server won't play "
+                         f"that playlist: {how} (the window's O opens it)")
     return found
 
 
@@ -346,6 +327,29 @@ def _backend_problems(backend: Any, server: ServerConfig) -> list[str]:
     return list(backend.problems(server))
 
 
+def _file_warnings(settings: Settings, server: ServerConfig) -> list[str]:
+    """What the server's folder lacks (content/gamefiles.py: its game files, a folder or ban list it names that isn't
+    here, SteamCMD), in the warnings catalogue's words (templates/warnings.toml), each with what to do. Nothing is
+    changed: `repair` does that when the host asks."""
+    from ..content import gamefiles
+    from ..core.serverwarnings import load_rules
+
+    paths = gamefiles.read_paths(server.folder, settings.config_name) if settings.backend == "process" else None
+    if paths is None:
+        return []
+    rules = load_rules()
+    said = []
+    for rule_id, _, _, fields in gamefiles.findings(settings, server, paths,
+                                                    gamefiles.server_missing(settings, server, paths)):
+        rule = rules.get(rule_id)
+        if rule is not None:
+            try:
+                said.append(" ".join(part.format(**fields) for part in (rule.text, rule.fix) if part))
+            except (KeyError, IndexError, ValueError):
+                said.append(rule.text)
+    return said
+
+
 def _named_above(part: str, warning: str) -> bool:
     """A part's own "isn't a setting" warning for a key that check already named with what it was meant to be."""
     return part == "watchdog" and warning.endswith("isn't a watchdog setting, so it does nothing")
@@ -354,8 +358,9 @@ def _named_above(part: str, warning: str) -> bool:
 def updates_text(settings: Settings, server: ServerConfig) -> str:
     """How a server keeps up: Project Reclaimer itself or by Huragok, and its Workshop mods."""
     text = "Project Reclaimer " + ("installs its own releases (auto_update)" + (
-        "; Huragok steps in when one doesn't arrive" if settings.server_updates.fallback and
-        settings.backend == "process" else "") if server.auto_update else "updated by Huragok (U)")
+        "; Huragok restarts it after its game once a release is out" if settings.server_updates.follow and
+        settings.backend in ("process", "command") else "") if server.auto_update else
+        "pinned to its version by its own file (auto_update off)")
     if not server.workshop_items:
         return text
     return f"{text} · {len(server.workshop_items)} Workshop item(s): {settings.of(server).workshop_text()}"

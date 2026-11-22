@@ -1,4 +1,5 @@
-"""Setting servers up from the command line: `new`, `package`, `content`, `playlist`, `workshop`, `dedicated`.
+"""Setting servers up from the command line: `new`, `repair`, `content`, `playlist`, `workshop`, `steam`,
+`dedicated` (and `package`, gone in 0.7.0, which says where it went).
 
 They work without the window (files and the server program's own commands), so a host
 running at boot with no dashboard has them too. A new server appears in a running
@@ -8,17 +9,15 @@ window within seconds and is started from here when one is running.
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import textwrap
-import time
 from pathlib import Path
 from typing import Any, Callable
 
-from ..content.newserver import NewServer, SetupError, create_server
-from ..content.packages import PackageError, find_package, list_packages, save_package
-from ..core import lock, mailbox
-from ..core.serverfolders import ServerConfig
+from ..content import quickactions
+from ..content.newserver import SetupError, create_server, finish
+from ..core import lock
+from ..core.serverfolders import ServerConfig, slugify
 from ..core.settings import Settings
 from ..core.text import slug
 from ..core.tomledit import read_toml, set_table_key
@@ -28,8 +27,6 @@ from ..games.files import KINDS
 from ..lore import MOTTO
 from ..program.dedicated import SLOW, Dedicated, DedicatedError, ToolResult, parse_playlists, tool_for
 from .shell import console as out
-
-ITEM_ID = re.compile(r"(?:id=)?(\d{6,})")
 
 
 def _tool(settings: Settings) -> Dedicated:
@@ -58,141 +55,188 @@ def _show(result: ToolResult) -> int:
     return 0 if result.ok else 1
 
 
-def parse_item_ids(words: list[str]) -> list[int]:
-    """Workshop item IDs from numbers, or Workshop URLs (…?id=3014096841), in any mix."""
-    found: list[int] = []
-    for word in words:
-        for part in word.replace(",", " ").split():
-            match = ITEM_ID.search(part)
-            if match and int(match.group(1)) not in found:
-                found.append(int(match.group(1)))
-    return found
-
-
 # new ------------------------------------------------------------------------------------------
+
+# What `new` took before 0.7.0 (a package, shared folders, a port, settings written into the new file): still taken
+# for one release, to say where they went.
+GONE_NEW_OPTIONS: list[tuple[str, ...]] = [
+    ("--package", "-p"), ("--port",), ("--hidden",), ("--password",), ("--max-players",), ("--map",), ("--game",),
+    ("--welcome",), ("--host-name",), ("--share",), ("--own",), ("--from",), ("--maps",), ("--games",),
+    ("--link-from",), ("--no-auto-update",)]
+
+
+def _gone_dest(option: tuple[str, ...]) -> str:
+    return f"gone_{option[0].lstrip('-').replace('-', '_')}"
+
+
+def _shown(settings: Settings, server: ServerConfig) -> str:
+    try:
+        return str(server.config_path.resolve().relative_to(settings.home.resolve()))
+    except ValueError:
+        return str(server.config_path)
+
+
+def _quick_action(settings: Settings, name: str, action: quickactions.QuickAction, yes: bool, launcher: str,
+                  again: str) -> int:
+    """A quick action as the window shows it (mockup 5): what it writes first, then written with --yes, or when the
+    host says yes at a terminal. 0: written, or nothing to write, or the host said no; 1: not written."""
+    from ..window.tui import is_terminal
+
+    out.heading(name, "Quick action", action.title)
+    for text, colour in action.preview():
+        out.write(f"  {text}", None if colour == "white" else colour)
+    if not action.needed:
+        return 0
+    if not yes:
+        if not is_terminal():
+            out.warn(f"Not written: nothing here can answer yes. To write it: {again}")
+            return 1
+        try:
+            answer = input(f"  {action.ask} [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            out.note("Nothing was written.")
+            return 0
+    try:
+        quickactions.write(settings, action)
+    except (quickactions.QuickActionError, OSError) as error:
+        out.fail(f"Not written: {error}")
+        return 1
+    out.ok(f"Written in {action.where}; the version before it is kept in its history.")
+    return 0
+
 
 def cmd_new(args: argparse.Namespace, load: Callable[[str], Settings], launcher: str) -> int:
     settings = load(args.config)
-    tool = _tool(settings)
-    package = None
-    if args.package:
-        package = find_package(settings.packages_folder, args.package)
-        if package is None:
-            names = ", ".join(p.key for p in list_packages(settings.packages_folder)) or "none"
-            out.fail(f"No package called {args.package} in {settings.packages_folder}. Packages: {names}")
-            return 2
-        if package.name.endswith("(broken)"):
-            out.fail(f"Package {package.key} is broken: {package.description}")
-            return 2
-    share = set() if args.own else set(settings.setup.share)
-    if args.share is not None:
-        share = {s.strip().lower() for s in args.share.split(",") if s.strip()}
-    games = [g.strip().lower() for g in (args.games or "").split(",") if g.strip()]
-    if unknown := [g for g in games if g not in KINDS]:
-        out.fail(f"--games: '{unknown[0]}' isn't one of {', '.join(k for k in KINDS if k != 'halo3')}")
+    if gone := [option[0] for option in GONE_NEW_OPTIONS if getattr(args, _gone_dest(option), None) is not None]:
+        out.fail(f"{gone[0]} is gone: since Huragok 0.7.0 `new` makes a bare server, the program's own `dedicated init`"
+                 " and nothing more (no package, no shared folders, nothing written into its dedicated.toml). Set what "
+                 "you want in the new folder's dedicated.toml by hand afterwards; its quick actions (each shown first) "
+                 f"are --one-server, --free-ports and --console; its game files: {launcher} repair, or I in the window")
         return 2
-    extra: dict[str, Any] = {}
-    if args.map:
-        extra["map"] = args.map
-    if args.game:
-        extra["game"] = args.game
-    spec = NewServer(
-        name=args.name, port=args.port or 0, package=package, hidden=args.hidden, password=args.password or "",
-        max_players=args.max_players, share=share,
-        mcc_folder=args.mcc if args.mcc is not None else settings.setup.mcc_folder,
-        maps=[m.strip() for m in args.maps.split(",")] if args.maps else None,
-        games=[g for g in games if g != "halo3"] or None,
-        link_from=Path(args.link_from).resolve() if args.link_from else None,
-        host_name=args.host_name, welcome=[args.welcome] if args.welcome else None, extra=extra,
-        auto_update=False if args.no_auto_update else None)
-    from ..games.plays import plays_of
-
-    plays = package.summary() if package else plays_of(extra) if extra else "the example rotation"
-    out.heading(args.name, note=f"UDP {spec.port or 'the next free port'} · {plays}")
+    tool = _tool(settings)
+    out.heading(args.name, note="the program's own dedicated init, and nothing more")
     try:
-        outcome = create_server(settings, spec, tool, say=out.note)
+        outcome = create_server(settings, args.name, tool, say=out.note)
     except SetupError as error:
         out.fail(f"Not made: {error}")
         return 1
-    out.write()
-    if outcome.ready:
-        out.ok(f"Made {outcome.folder}. {MOTTO}")
-    else:
-        out.warn(f"Made {outcome.folder}, but it isn't ready:")
-    out.note(f"server {outcome.name} · UDP {outcome.port} · RCON password set in its {settings.config_name}")
-    if outcome.check is not None and not outcome.ready:
-        for line in outcome.check.lines[-12:]:
-            out.say(line)
-    for note in outcome.notes:
-        out.warn(note)
-    if not outcome.ready:
-        out.fail(f"Fix the problems, then check it again: {launcher} dedicated --server \"{outcome.name}\" check")
+    steps = ["one-server", "free-ports", "console"] if args.all else [
+        step for step, chosen in (("one-server", args.one_server), ("free-ports", args.free_ports),
+                                  ("console", args.console)) if chosen]
+    folder = None
+    try:
+        code = _new_actions(settings, outcome, steps, args, launcher)
+    finally:
+        try:
+            folder = finish(outcome)
+        except SetupError as error:
+            out.fail(str(error))
+    if folder is None:
         return 1
-    if args.no_start:
+    out.write()
+    out.ok(f"Made {folder}. {MOTTO}")
+    if not steps:
+        out.note(f"Its quick actions, each shown before it's written: {launcher} new <name> --one-server --free-ports "
+                 "--console (or --all) as a folder is made; for this one now, the window (D → Q).")
+    out.note("Huragok picks it up within seconds and starts it once its ports are free on this PC."
+             if lock.running_supervisor(settings) else f"Start Huragok to run it: {launcher}")
+    return code
+
+
+def _new_actions(settings: Settings, outcome: Any, steps: list[str], args: argparse.Namespace, launcher: str) -> int:
+    """What the new folder holds (mockup 6), then each quick action asked for, in turn."""
+    from ..content.newserver import read_folder
+
+    servers, master = read_folder(outcome.config)
+    ports = [port for _, port in servers if port]
+    out.say(f"Made with the program's own `dedicated init`"
+            + (f" (Project Reclaimer {outcome.version})" if outcome.version else "") + f": {len(servers)} server(s)"
+            + (f", on port(s) {', '.join(str(p) for p in ports)}" if ports else "")
+            + (f", with its master on {master}" if master else ", with its master off"))
+    taken = [(port, whose) for port, whose in quickactions.taken_ports(settings, outcome.config, ports)]
+    if taken:
+        out.warn(f"{', '.join(str(p) for p, _ in taken)} in use on this PC"
+                 + (f" ({', '.join(w for _, w in taken if w)})" if any(w for _, w in taken) else "")
+                 + ": it won't start until that changes (--free-ports)")
+    where, owner = outcome.shown, slugify(outcome.name)
+    again = f"{launcher} new <another name> {' '.join('--' + s for s in steps)} --yes"
+    code = 0
+    for step in steps:
+        try:
+            if step == "one-server":
+                action = quickactions.one_server(outcome.config, outcome.name, where=where, owner=owner)
+            elif step == "free-ports":
+                action = quickactions.free_ports(settings, outcome.config, master=args.master, where=where, owner=owner)
+            else:
+                action = quickactions.add_console(settings, outcome.config, where=where, owner=owner)
+        except quickactions.QuickActionError as error:
+            out.warn(f"Not offered: {error}")
+            code = 1
+            continue
+        code = max(code, _quick_action(settings, outcome.name, action, args.yes, launcher, again))
+    return code
+
+
+# repair ---------------------------------------------------------------------------------------------------------
+
+def cmd_repair(args: argparse.Namespace, load: Callable[[str], Settings], launcher: str) -> int:
+    """What each server's folder lacks (content/gamefiles.py's repairs), shown, then put right when the host says so
+    (--yes, or y at a terminal); a version of each dedicated.toml kept before its first change."""
+    from ..content import gamefiles
+    from ..window.tui import is_terminal
+
+    settings = load(args.config)
+    servers = [_server(settings, name) for name in args.servers] if args.servers else list(settings.servers)
+    if not servers:
+        out.warn("No servers to look at.")
         return 0
-
+    plans = []
+    for server in servers:
+        plan = gamefiles.repairs(settings, server, lambda server=server: tool_for(settings, server), out.note)
+        out.heading(server.name, "Repair")
+        if not plan:
+            out.ok("Nothing to put right: its folder has what it needs, as far as Huragok can tell.")
+            continue
+        for number, repair in enumerate(plan, 1):
+            (out.say if repair.run else out.warn)(f"{number}. {repair.text}"
+                                                  + ("" if repair.run else " (can't be done from here)"))
+        if doable := [repair for repair in plan if repair.run is not None]:
+            plans.append((server, doable))
+    if not plans:
+        return 0
+    if not args.yes:
+        if not is_terminal():
+            out.warn(f"Nothing was changed. To put these right: {launcher} repair "
+                     + " ".join(f'"{s.name}"' for s, _ in plans) + " --yes")
+            return 1
+        try:
+            answer = input("  Put these right? A copy of each dedicated.toml is kept first [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            out.note("Nothing was changed.")
+            return 0
+    code = 0
+    for server, plan in plans:
+        out.heading(server.name, "Repairing")
+        _, failed = gamefiles.run_repairs(settings, server, plan, out.note)
+        for line in failed:
+            out.warn(f"Not done: {line}")
+            code = 1
     if lock.running_supervisor(settings):
-        out.note("Huragok picks it up within 10 s, and the Superintendent starts it…")
-        for _ in range(8):
-            reply = mailbox.send(settings.records, "start", outcome.name, wait=10)
-            if reply.ok or "no server called" not in reply.message:
-                (out.ok if reply.ok else out.warn)(reply.message)
-                break
-            time.sleep(3)
-    else:
-        out.note(f"Start Huragok to run it: {launcher}")
-    return 0
+        out.note("Huragok sees the changes within seconds; a running server takes a changed path at its next start.")
+    return code
 
 
-# package ----------------------------------------------------------------------------------------
+# package: gone ----------------------------------------------------------------------------------------------------
 
 def cmd_package(args: argparse.Namespace, load: Callable[[str], Settings], launcher: str) -> int:
-    settings = load(args.config)
-    folder = settings.packages_folder
-    if args.action == "list":
-        packages = list_packages(folder)
-        if not packages:
-            out.warn(f"No packages in {folder}. The starter packages are written on the first start; "
-                     f"save a server as one: {launcher} package save <server> <name>")
-            return 0
-        out.heading("Packages", note=f"{folder} · a package is a playlist, settings and content a new server "
-                                     f"starts with ({launcher} new <name> --package <package>)")
-        out.listing([(package.key, package.name, package.description + (f" · {package.summary()}" if package.description
-                                                                        else "") or package.summary())
-                     for package in packages], wrap=True)
-        return 0
-    if args.action == "save":
-        server = _server(settings, args.server)
-        name = args.name or server.name
-        dest = folder / slug(name, "package")
-        try:
-            package = save_package(server.folder, server.name, dest, config_name=settings.config_name, name=name,
-                                   description=args.description or f"Saved from {server.name}")
-        except PackageError as error:
-            out.fail(f"Not saved: {error}")
-            return 1
-        out.ok(f"Saved {package.folder}: {package.summary()}")
-        for path in package.playlists:
-            out.note(f"playlists/{path.name}")
-        for path in package.content_files:
-            out.note(f"content/{path.relative_to(package.folder / 'content').as_posix()}")
-        return 0
-    # show: the parser allows list, save and show only
-    ref = args.name or args.server or ""
-    package = find_package(folder, ref)
-    if package is None:
-        out.fail(f"No package called {ref or '(none named)'}")
-        return 2
-    out.heading(package.name, note=str(package.folder))
-    rows: list[tuple[str, str]] = [("about", package.description), ("plays", package.plays)]
-    rows += [(f"[server] {key}", str(value)) for key, value in package.server.items()]
-    if package.workshop_items:
-        rows.append(("Workshop items:", ", ".join(str(i) for i in package.workshop_items)))
-    rows += [("file", f"playlists/{path.name}") for path in package.playlists]
-    rows += [("file", f"content/{path.relative_to(package.folder / 'content').as_posix()}")
-             for path in package.content_files]
-    out.fields(rows)
-    return 0
+    out.fail(f"package is gone: Huragok 0.7.0 has no packages. A new server is the program's own dedicated init "
+             f"({launcher} new <name>), and a playlist goes from one server to another in the window (G → 1 → C). "
+             "PACKAGES/ is left as it is; the starter packages are kept in engine/tools/archive/starter-packages.")
+    return 2
 
 
 # content, playlist, workshop, dedicated --------------------------------------------------------
@@ -242,7 +286,8 @@ def cmd_variant(args: argparse.Namespace, load: Callable[[str], Settings], launc
     if args.action == "list":
         out.heading(f"{server.name} · custom games", note=str((server.content_dir or server.folder) / "Game Modes"))
         if not presets:
-            out.note(f"None yet: G -> Custom games in the window makes one ({launcher}).")
+            out.note("None: custom games are made by hand (or imported from MCC: content --import) into its "
+                     "content folder's Game Modes.")
             return 0
         out.listing([(p.name, p.mode_label, p.relative) for p in presets], index=False)
         return 0
@@ -261,27 +306,35 @@ def cmd_variant(args: argparse.Namespace, load: Callable[[str], Settings], launc
         return 1
     if args.action == "show":
         out.heading(preset.name, note=f"{info.mode_label} · {info.relative}")
-        for line in go.describe(preset.mode, preset.options, preset.rules, preset.world) or \
-                ["(plays as its game type has it)"]:
+        for line in go.describe(preset.options, preset.rules, preset.world) or ["(plays as its game type has it)"]:
             out.say(line)
         return 0
-    problems = preset.problems()
-    with tempfile.TemporaryDirectory() as folder:
-        result = _tool(settings).mode_check(preset.check_copy(Path(folder)))
-    for problem in problems:
-        out.warn(f"PROBLEM  {problem}")
-    if result.ok and not problems:
+    with tempfile.TemporaryDirectory() as folder:  # the server program's own check, of a copy
+        try:
+            result = _tool(settings).mode_check(preset.check_copy(Path(folder)))
+        except go.PresetError as error:  # an MCC .bin variant: mode-check doesn't read those
+            out.note(f"{preset.name}: {error}")
+            return 0
+    problem = go.mode_check_problem(result)  # 0.10.8 answers 0 for a bad file too: its words say
+    if problem is None:
         out.ok(f"{preset.name}: valid ({result.lines[-1] if result.lines else 'mode-check'})")
         return 0
-    out.fail(f"{preset.name}: {result.problem if not result.ok else 'see the problems above'}")
+    out.fail(f"{preset.name}: {problem}")
     return 1
 
 
 def cmd_playlist(args: argparse.Namespace, load: Callable[[str], Settings], launcher: str) -> int:
     settings = load(args.config)
     server = _server(settings, args.server)
-    tool = _tool(settings)
     action = args.action or "list"
+    if action in ("new", "use"):  # gone in 0.7.0: said where they went, for one release
+        out.fail(f"playlist {action} is gone: Huragok no longer makes playlists or changes what a server plays. Make "
+                 f"or change a playlist by hand in {server.folder / 'playlists'}, and name it in the server's own "
+                 f"[[server]] block (playlist = \"playlists/<file>.playlist.json\") in {server.config_path}; the "
+                 f"server takes it by itself (auto_reload). {launcher} playlist show <file> shows it as the server "
+                 "reads it.")
+        return 2
+    tool = _tool(settings)
     if action == "list":
         result = tool.playlists(server.folder)
         infos = parse_playlists(result.text) if result.ok else []
@@ -300,61 +353,10 @@ def cmd_playlist(args: argparse.Namespace, load: Callable[[str], Settings], laun
             rows.append((info.file.removeprefix("playlists/"), about))
         out.listing(rows, wrap=True)
         return 0
-    if action == "show":
-        if not args.name:
-            out.fail("Name the playlist: its file, or its name in playlists/")
-            return 2
-        return _show(tool.playlist_show(server.folder, args.name))
-    if action == "new":
-        if not (args.name and args.maps and args.games):
-            out.fail("playlist new needs a name, --maps and --games")
-            return 2
-        result = tool.playlist_new(server.folder, args.name, args.maps.split(","), args.games.split(","),
-                                   vote_seconds=args.vote_seconds, replace=args.replace)
-        return _show(result)
-    # use: the parser allows list, show, new and use only
-    if not args.name:
-        out.fail("Name the playlist file to use, e.g. playlists/infection.playlist.json")
+    if not args.name:  # show
+        out.fail("Name the playlist: its file, or its name in playlists/")
         return 2
-    # By its file, its file's stem, or its name, as `playlist new` named the file ("Night Shift" is night-shift: the
-    # simulation's finding 1, 26 October: `use` looked only for "Night Shift.playlist.json").
-    from ..games.halo3 import resolve as resolve_playlist
-
-    found = resolve_playlist(server.folder, args.name)
-    if not found.is_file():
-        out.fail(f"No playlist {args.name!r} in {server.folder / 'playlists'}: {launcher} playlist list shows them")
-        return 2
-    try:
-        path = found.relative_to(server.folder).as_posix()
-    except ValueError:
-        path = str(found)
-    from ..program.plays import applies_when, check_plays, write_plays
-
-    check = check_plays(tool, server, {"playlist": path})
-    if check.ok and not check.asked:
-        out.warn(f"Not checked by the server program: {check.unasked}")
-    if not check.ok:
-        out.fail(f"Not used: the server program won't play {path} as it is:")
-        for problem in check.problems:
-            out.warn(f"  {problem.text}")
-        return 1
-    try:
-        write_plays(server.config_path, server.name, {"playlist": path})  # and its map, game, campaign… out
-    except OSError as error:
-        out.fail(f"Couldn't write {server.config_path.name}: {error}")
-        return 1
-    out.ok(f"{server.name} now plays {path}: with auto_reload on, {applies_when(server.plays_kind, 'playlist')} (the "
-           "window's events say when it's applied)")
-    from ..games.byplayers import ByPlayersError, setup_of
-
-    try:
-        by_players = setup_of(server.folder, server.name)
-    except ByPlayersError:
-        by_players = None
-    if by_players is not None and by_players.on:
-        out.warn(f"{server.name} picks its playlist by player count (the window's G -> P), so Huragok changes it back "
-                 "as players come and go: turn that off there to keep this one")
-    return 0
+    return _show(tool.playlist_show(server.folder, args.name))
 
 
 def workshop_items(server: ServerConfig) -> list[int]:
@@ -366,10 +368,6 @@ def workshop_items(server: ServerConfig) -> list[int]:
     return [int(i) for i in items if isinstance(i, int) and not isinstance(i, bool)]
 
 
-def set_workshop_items(server: ServerConfig, items: list[int]) -> None:
-    set_table_key(server.config_path, "workshop", "items", items, before="master")
-
-
 def cmd_workshop(args: argparse.Namespace, load: Callable[[str], Settings], launcher: str) -> int:
     settings = load(args.config)
     server = _server(settings, args.server)
@@ -378,8 +376,8 @@ def cmd_workshop(args: argparse.Namespace, load: Callable[[str], Settings], laun
     if action == "list":
         out.heading(server.name, "Workshop items")
         if not items:
-            out.warn(f"{server.name} has no Workshop items ([workshop] items in its {settings.config_name}). "
-                     f"Add some: {launcher} workshop --server \"{server.name}\" add <item ID or URL>…")
+            out.warn(f"{server.name} has no Workshop items: list them in [workshop] items in its "
+                     f"{settings.config_name} (items = [<item ID>, ...]); the server fetches them itself")
             return 0
         out.say(f"[workshop] items = {items}")
         out.note("Installed mod maps, as the server lists them (dedicated mods):")
@@ -387,23 +385,12 @@ def cmd_workshop(args: argparse.Namespace, load: Callable[[str], Settings], laun
         out.program(textwrap.indent(result.text.rstrip(), "  "))
         return 0 if result.ok else 1
     if action in ("add", "remove"):
-        ids = parse_item_ids(args.ids or [])
-        if not ids:
-            out.fail("Give Workshop item IDs (the number after id= in the item's address)")
-            return 2
-        new = [i for i in items if i not in ids] if action == "remove" else items + [i for i in ids if i not in items]
-        set_workshop_items(server, new)
-        out.ok(f"{server.name}'s Workshop items: {', '.join(str(i) for i in new) or 'none'}")
-        from ..content.workshopmods import switch_workshop_copies
-
-        for line in switch_workshop_copies(server, ids, off=action == "remove", config_name=settings.config_name,
-                                           servers=list(settings.servers)):
-            out.note(line)
-        if action == "add":
-            out.note("Huragok fetches them within a minute while it runs (a running server with auto_reload fetches "
-                     "them itself), or the server does as it starts; to fetch them now: "
-                     f"{launcher} workshop --server \"{server.name}\" install")
-        return 0
+        # 0.7.0: a server's files are the host's; Huragok no longer writes [workshop] items
+        out.fail(f"Huragok doesn't change a server's Workshop items any more: write them in [workshop] items in "
+                 f"{server.config_path} (items = [<item ID>, ...]). The server fetches what it lists and keeps it up to "
+                 f"date itself; to fetch now with the server stopped: {launcher} workshop --server \"{server.name}\" "
+                 "install")
+        return 2
     return _show(_tool(settings).mods(server.folder))  # install: the parser allows no other action
 
 
@@ -452,15 +439,23 @@ def cmd_steam(args: argparse.Namespace, load: Callable[[str], Settings], launche
         if not ok:
             out.say(steam.login_window(status.executable, username))
             out.note(f"Then run this again to check and to tell the servers: {launcher} steam login {username}")
-        written = steam.configure(settings, status.executable, username)
-        (out.ok if ok else out.warn)(f"[workshop] steamcmd and username written into {len(written)} server folder(s)"
-                                     + (" and the account is signed in" if ok else "")
-                                     + "; a server's [workshop] takes effect when its `dedicated` restarts "
-                                     f"({launcher} restart <server>).")
+        steam.configure(settings, status.executable, username)
+        (out.ok if ok else out.warn)("[setup] steamcmd and steam_username written in settings.toml"
+                                     + (" and the account is signed in" if ok else "") + ". A server's own [workshop] "
+                                     f"lines, one server at a time and shown first: {launcher} steam lines <server>")
         return 0 if ok else 1
     if action == "files":
         return _steam_files(settings, args, launcher)
-    # path: the parser allows status, install, login, files and path only
+    if action == "lines":
+        server = _server(settings, args.account)
+        try:
+            action_ = quickactions.steamcmd_lines(settings, server.config_path, where=_shown(settings, server))
+        except quickactions.QuickActionError as error:
+            out.fail(f"Not offered: {error}")
+            return 1
+        return _quick_action(settings, server.name, action_, args.yes, launcher,
+                             f"{launcher} steam lines \"{server.name}\" --yes")
+    # path: the parser allows status, install, login, files, lines and path only
     if status.executable is None:
         out.fail("SteamCMD isn't installed")
         return 1
@@ -486,7 +481,8 @@ def _steam_files(settings: Settings, args: argparse.Namespace, launcher: str) ->
         (out.ok if colour == "green" else out.warn if colour == "yellow" else out.say)(f"{label:<13} {text}")
     if not game_files.plays_on(kind, version):
         out.fail(f"{game_files.LABELS[kind]} need Project Reclaimer {bungie.GAMES[game_files.GAME_OF_KIND[kind]].since}"
-                 f" or later; the program here is {version}: {launcher} update --program")
+                 f" or later; the program here is {version}: put the newest in place (a server with auto_update on "
+                 "installs it as it starts)")
         return 1
     target, why = gamefiles.shared_target(settings, kind)
     if target is None:
@@ -512,9 +508,11 @@ def _steam_files(settings: Settings, args: argparse.Namespace, launcher: str) ->
         out.fail(f"Not got: {error}")
         return 1
     out.ok(said)
-    for server in settings.servers:  # a server whose game folder has no Halo 3 now uses this one
-        for line in gamefiles.quick_repairs(settings, server):
-            out.say(f"{server.name}: {line}")
+    for server in settings.servers:  # a server whose own game folder has no Halo 3: said, never changed by itself
+        paths = gamefiles.read_paths(server.folder, settings.config_name)
+        if paths is not None and gamefiles.game_path_candidate(settings, paths, server.plays_kind) is not None:
+            out.note(f"{server.name}: its game folder ({paths.game_raw}) has no Halo 3 files; "
+                     f"{launcher} repair \"{server.name}\" points it at one here that has them (shown first)")
     return 0
 
 
@@ -536,38 +534,34 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     def bind(function: Callable[..., int]) -> Callable[[argparse.Namespace], int]:
         return lambda args: function(args, load, launcher)
 
-    new = commands.add_parser("new", help="Make a new server folder in SERVERS/ (from a package), check it, start it")
-    new.add_argument("name", help="the server's name (its folder's name too)")
-    new.add_argument("--package", "-p", help="a package from PACKAGES/ (its name, folder or number in `package list`)")
-    new.add_argument("--port", type=int, help="its UDP game port (default: the next free one)")
-    new.add_argument("--hidden", action="store_true", help="not listed in the server browser")
-    new.add_argument("--password", help="the join password")
-    new.add_argument("--max-players", type=int, help="players at once (1-127; 1-128 from Project Reclaimer 0.10)")
-    new.add_argument("--map", help="one map for every game (instead of a package or the example playlist)")
-    new.add_argument("--game", help="the game type with --map")
-    new.add_argument("--welcome", help="the chat line players read as they join")
-    new.add_argument("--host-name", help="shown beneath the server's name in the browser")
-    new.add_argument("--share", help="what it takes from the root: game,content (default: [setup] share; the ban "
-                                     "list is always its own)")
-    new.add_argument("--own", action="store_true", help="its own game folder, content and ban list")
-    new.add_argument("--from", dest="mcc", nargs="?", const="", help="copy Halo 3's files from this MCC folder "
-                     "(no folder: Steam's default) when none can be shared or linked")
-    new.add_argument("--maps", help="with --from: only these Halo 3 maps, e.g. \"Guardian,Valhalla\" (the other "
-                                    "games: --games)")
-    new.add_argument("--games", help="also copy these games' files from MCC beside Halo 3's, e.g. "
-                                     "\"reach,halo1,halo2\" (Project Reclaimer 0.10; odst, campaign and "
-                                     "reach-campaign too)")
-    new.add_argument("--link-from", help="a server folder whose game/ is hard-linked into the new one")
-    new.add_argument("--no-start", action="store_true", help="don't start it")
-    new.add_argument("--no-auto-update", action="store_true",
-                     help="don't let it install new Project Reclaimer releases itself (default: [setup] auto_update)")
+    new = commands.add_parser("new", help="Make a new server folder in SERVERS/ with the program's own `dedicated "
+                                           "init`, and nothing more; then its quick actions, each shown first")
+    new.add_argument("name", help="the new folder's name (and its server's, with --one-server)")
+    new.add_argument("--one-server", action="store_true", help="quick action: keep the first [[server]] block, "
+                                                                "named as the folder, and take out the others")
+    new.add_argument("--free-ports", action="store_true", help="quick action: a free game port for each server, and "
+                                                                "its master off (or --master free)")
+    new.add_argument("--master", choices=["off", "free"], default="off",
+                     help="with --free-ports: the folder's master off (default), or on a free port")
+    new.add_argument("--console", action="store_true", help="quick action: the console, a random [rcon] password")
+    new.add_argument("--all", action="store_true", help="all three quick actions, in turn")
+    new.add_argument("-y", "--yes", action="store_true", help="write the quick actions without asking (each is still "
+                                                                "shown)")
+    for old in GONE_NEW_OPTIONS:  # gone in 0.7.0: still taken, to say where they went (one release)
+        new.add_argument(*old, dest=f"gone_{old[0].lstrip('-').replace('-', '_')}", nargs="?", const=True,
+                         default=None, help=argparse.SUPPRESS)
+    new.add_argument("--no-start", action="store_true", help=argparse.SUPPRESS)  # kept for scripts: it never starts
     new.set_defaults(func=bind(cmd_new))
 
-    package = commands.add_parser("package", help="The packages in PACKAGES/: list, show, save a server as one")
-    package.add_argument("action", nargs="?", default="list", choices=["list", "show", "save"])
-    package.add_argument("server", nargs="?", help="save: the server to save")
-    package.add_argument("name", nargs="?", help="save: the package's name; show: the package")
-    package.add_argument("--description", help="save: a line about it")
+    repair = commands.add_parser("repair", help="What a server's folder lacks (its game files, a game folder or "
+                                                "ban list it names that isn't here, SteamCMD lines), shown, then put "
+                                                "right when you say yes")
+    repair.add_argument("servers", nargs="*", help="the servers (default: every one)")
+    repair.add_argument("-y", "--yes", action="store_true", help="put them right without asking (each is still shown)")
+    repair.set_defaults(func=bind(cmd_repair))
+
+    package = commands.add_parser("package", help=argparse.SUPPRESS)  # gone in 0.7.0: says where it went
+    package.add_argument("words", nargs=argparse.REMAINDER)
     package.set_defaults(func=bind(cmd_package))
 
     content = commands.add_parser("content", help="The maps, map variants, game types and variants a server can play "
@@ -583,14 +577,11 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     content.add_argument("words", nargs="*", help="only names containing every word")
     content.set_defaults(func=bind(cmd_content))
 
-    playlist = commands.add_parser("playlist", help="A server's playlists: list, show, new, use")
+    playlist = commands.add_parser("playlist", help="A server's playlists: list, show")
     playlist.add_argument("-s", "--server", help="the server, when there are several")
+    # new and use are gone (0.7.0): still taken, to say where they went
     playlist.add_argument("action", nargs="?", default="list", choices=["list", "show", "new", "use"])
-    playlist.add_argument("name", nargs="?", help="show/use: the playlist; new: its name")
-    playlist.add_argument("--maps", help="new: maps, separated by commas")
-    playlist.add_argument("--games", help="new: game types or variants, separated by commas")
-    playlist.add_argument("--vote-seconds", type=int, help="new: seconds players have to vote (5-120)")
-    playlist.add_argument("--replace", action="store_true", help="new: overwrite a playlist of the same name")
+    playlist.add_argument("name", nargs="?", help="show: the playlist, its file or its name in playlists/")
     playlist.set_defaults(func=bind(cmd_playlist))
 
     variant = commands.add_parser("variant", help="A server's saved custom games (game variants): list, show, check")
@@ -599,18 +590,21 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     variant.add_argument("name", nargs="?", help="show/check: the custom game, by name or file")
     variant.set_defaults(func=bind(cmd_variant))
 
-    workshop = commands.add_parser("workshop", help="A server's Steam Workshop items: list, add, remove, install")
+    workshop = commands.add_parser("workshop", help="A server's Steam Workshop items: list, install (fetch them now)")
     workshop.add_argument("-s", "--server", help="the server, when there are several")
     workshop.add_argument("action", nargs="?", default="list", choices=["list", "add", "remove", "install"])
     workshop.add_argument("ids", nargs="*", help="item IDs or Workshop addresses")
     workshop.set_defaults(func=bind(cmd_workshop))
 
     steam = commands.add_parser("steam", help="SteamCMD: status, install, login <account>, files [halo3|campaign|odst|"
-                                              "reach|reach-campaign|halo1|halo2], path")
-    steam.add_argument("action", nargs="?", default="status", choices=["status", "install", "login", "files", "path"])
+                                              "reach|reach-campaign|halo1|halo2], lines <server>, path")
+    steam.add_argument("action", nargs="?", default="status",
+                       choices=["status", "install", "login", "files", "lines", "path"])
     steam.add_argument("account", nargs="?", help="login: the Steam account that owns MCC; files: halo3 (the default), "
                                                   "campaign, odst, or from Project Reclaimer 0.10 reach, "
-                                                  "reach-campaign, halo1 or halo2 (those from MCC only)")
+                                                  "reach-campaign, halo1 or halo2 (those from MCC only); lines: the "
+                                                  "server whose [workshop] steamcmd and username are written")
+    steam.add_argument("-y", "--yes", action="store_true", help="lines: write them without asking (still shown)")
     steam.add_argument("--download", action="store_true", help="files: download with SteamCMD even when MCC is here "
                                                                "(Halo 3's, the campaign's and ODST's)")
     steam.add_argument("--standard", action="store_true", help="install: into SteamCMD's standard folder, not the root's")

@@ -25,7 +25,6 @@ from ..lore import HURAGOK, SUPERINTENDENT, VERGIL
 from ..players.targets import ago
 from .controllers import Controller, Row
 from .screens.base import WIDE
-from .screens.byplayers import ByPlayersScreens
 from .screens.discordsetup import DiscordScreens
 from .screens.files import FileScreens
 from .screens.games import GameScreens
@@ -136,7 +135,7 @@ def players_on(rows: list[Row]) -> list[str]:
 # The menu ----------------------------------------------------------------------------------------
 
 
-class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens, ByPlayersScreens):
+class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens):
     """Every screen is written the same way: a title, then sections headed by where you are (a path like
     `LG Test Server › What it plays › Playlists`), numbered or lettered lists in aligned columns, a menu
     block of [key] options, and one question. Log lines and server events that arrive while a question
@@ -510,12 +509,14 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
                       ("A", "the console: commands over Huragok's connection, events as they happen, "
                             "your name on what you do"),
                       ("B", "bans, admins and the VPN block")]),
-            (HURAGOK, [("N", "a new server: a folder in SERVERS/, from a package in PACKAGES/, checked and started"),
-                       ("G", "what a server plays: maps, variants, game types, playlists built from numbered lists, "
-                             "playlists picked by player count, Workshop items and mods"),
-                       ("I", "SteamCMD: finds or installs it, signs in once, tells every server; gets Halo 3's files "
-                             "(copied from MCC here, or downloaded), the campaign missions and ODST's, and from "
-                             "Project Reclaimer 0.10 Reach's, Combat Evolved's and Halo 2's (from MCC)"),
+            (HURAGOK, [("N", "a new server: a folder in SERVERS/ made with the program's own `dedicated init`, then "
+                             "its quick actions (one server only, free ports, the console), each shown first"),
+                       ("G", "what a server plays, from its own files: maps, variants, game types, its playlists "
+                             "(shown, ballot picks, history, copied) and custom games, Workshop items and mods"),
+                       ("I", "SteamCMD: finds or installs it, signs in once; a server's own SteamCMD lines (shown "
+                             "first); gets Halo 3's files (copied from MCC here, or downloaded), the campaign missions "
+                             "and ODST's, and from Project Reclaimer 0.10 Reach's, Combat Evolved's and Halo 2's (from "
+                             "MCC); repairs what a server's folder lacks, when you ask"),
                        ("D", "settings, a step at a time, no file formats to know: Huragok's own (how it runs, "
                              "roles and commands, Vergil's word list and banned names), and everything about each "
                              "server in groups, changed while it runs (or after the game when it needs a restart), "
@@ -538,7 +539,7 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
         self.heading("From another terminal")
         for line in (f"{launcher} status | stop [server] [--now] | close | restart <server> [--now] | say <server|all> <text>",
                      f"{launcher} rcon [-s server] <command> | watch <server|huragok> | check | update",
-                     f"{launcher} new <name> [--package ...] | package [list|show|save] | content | playlist | workshop | "
+                     f"{launcher} new <name> [--all] | repair [server] | content | playlist | workshop | steam | "
                      "dedicated ...",
                      "A second window opened on the same folder shows the same dashboard and hands its keys to the first."):
             self.note(line, None)

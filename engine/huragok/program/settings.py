@@ -256,14 +256,13 @@ SETTINGS: list[Setting] = [
       "mods", default=""),
     # Updates
     S("auto_update", "folder", "bool", "restart", "install new Project Reclaimer releases by itself (looked for at "
-      "the start and hourly); the update restarts the servers at once, mid-game. Huragok checks it happened and "
-      "installs the release after the game when it didn't; off: Huragok only tells you (U)", "updates",
+      "the start and hourly); the update restarts the servers at once, mid-game. Huragok restarts it after its game "
+      "once a release is out, so it installs it as it starts; off: it stays on its version (pinned), and Huragok "
+      "only says so", "updates",
       default=False),
     S("update_check_minutes", "workshop", "int", "restart", "minutes between the server's looks for newer Workshop "
-      "mod versions (5 at least; 0 never); [workshop_updates] check_minutes keeps it for every server", "updates",
+      "mod versions (5 at least; 0 never): it downloads one during a game and installs it between games", "updates",
       low=0, high=10080, default=60),
-    S("workshop_updates", "huragok", "choice", "huragok", "how new Workshop versions are installed: after the game, "
-      "by the server once nobody's on, or by hand", "updates", choices=("after_game", "when_empty", "off")),
     # Listing and network
     S("host_name", "server", "str", "now", "shown beneath this server's name in the browser", "network",
       label="host_name (this server)"),
@@ -326,6 +325,11 @@ SETTINGS: list[Setting] = [
       "names), dry_run (it watches and only logs what it would do) or off (it leaves this server's chat and names "
       "alone). Only what Vergil catches by itself: the staff's strikes, and mutes already decided, still count here "
       "as [automod] across_servers says. - takes its own out, so [automod] dry_run applies", "huragok", choices=AUTOMOD_MODES),
+    # In Huragok's own group, not Updates: D's other groups are the server's dedicated.toml, shown read-only (0.7.0),
+    # and this one is Huragok's to change (serversettings.CHANGEABLE), so it's edited under H with the rest.
+    S("workshop_updates", "huragok", "choice", "huragok", "on: Huragok restarts the server to put in a mod update "
+      "its map in use holds up (at once when nobody is on, when the game ends otherwise); off: it only warns",
+      "huragok", choices=("on", "off")),
 ]
 
 SERVER_SETTINGS = [s for s in SETTINGS if s.scope == "server"]

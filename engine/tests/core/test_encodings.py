@@ -60,7 +60,7 @@ def test_a_change_for_a_server_renamed_by_hand_adds_no_phantom_server(tmp_path: 
     """D, G's playlists and playlists by player count wrote to the name they knew: after a rename by hand that added
     a [[server]] block with the old name, which Huragok then listed as a new server on port 0 (audit 2026-11, 4.4)."""
     from huragok.core.tomledit import TomlEditError
-    from huragok.program.plays import write_plays
+    from testkit.setup import write_plays
     from huragok.program.settings import find, write
 
     config = tmp_path / "dedicated.toml"

@@ -10,9 +10,9 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 
-from ..games.plays import plays_kind, plays_of
+from ..games.plays import plays_block, plays_kind, plays_of
 from .tables import ConfigError, Table, _read_toml, check_clock_time
 from .text import STORED_ID
 from .text import slug as text_slug
@@ -71,6 +71,8 @@ class ServerConfig:
     plays: str = ""  # what its [[server]] block says it plays: "playlist slayer", "Slayer on Guardian"...
     plays_kind: str = ""  # playlist, map, variant, campaign, odst or default (games/plays.py)
     errors: list[str] = field(default_factory=list)  # shown in red; a server with errors is never started
+    # (rule, fields) for the warnings catalogue (core/serverwarnings.py): it's started all the same (0.7.0: Huragok warns)
+    warnings: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     auto_update: bool = False  # dedicated.toml auto_update: the server program installs its own new releases
     content_dir: Path | None = None  # its content folder (maps, game types, content/Mods/Workshop/<item>)
     workshop_items: list[int] = field(default_factory=list)  # [workshop] items
@@ -82,6 +84,7 @@ class ServerConfig:
     # which wins over the address the server writes in its instance.json (audit 2026-11, 4.5)
     rcon_host_set: bool = False
     rcon_port_set: bool = False
+    block: int = 0  # its place among its dedicated.toml's [[server]] blocks, from 1: how a rename is told (renames.py)
 
     @property
     def host_key_path(self) -> Path:
@@ -200,7 +203,8 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
         workshop_updates = extra.get("workshop_updates", str, None)  # checked as settings.toml is read
         priority = extra.get("priority", str, None)  # so is this
         automod = extra.get("automod", str, None)  # and this
-        plays = plays_of(block)
+        plays_from = plays_block(block, defaults.data)  # its own, else what [defaults] names for every server
+        plays = plays_of(plays_from)
         server = ServerConfig(
             name=name,
             slug=slugify(name),
@@ -216,7 +220,7 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
             autostart=extra.get("autostart", bool, True),
             daily_restart=check_clock_time(daily, f"[[server]] {name} daily_restart") if daily is not None else None,
             plays=plays,
-            plays_kind=plays_kind(block),
+            plays_kind=plays_kind(plays_from),
             auto_update=auto_update,
             content_dir=content_dir,
             workshop_items=items,
@@ -227,10 +231,11 @@ def read_dedicated(path: Path, overrides: dict[str, dict[str, Any]]) -> list[Ser
             automod=automod,
             rcon_host_set="rcon_host" in extra.data,
             rcon_port_set="rcon_port" in extra.data,
+            block=number,
         )
         if not server.rcon_password:
-            server.errors.append(f"RCON is off in {path.name}: set [rcon] password. The Superintendent needs it to "
-                                 "see players, warn them and moderate")
+            # Started and kept on all the same, watched through its status.json (servers/statusclient.py): answer 7
+            server.warnings.append(("no-console", {}))
         servers.append(server)
     return servers
 
@@ -252,7 +257,8 @@ def find_server_folders(home: Path, servers_folder: Path | None, single_folder: 
 
 def read_servers(folders: list[Path], config_name: str, overrides: dict[str, dict[str, Any]],
                  only: list[str], problems: list[FolderProblem] | None = None,
-                 known: set[str] | None = None) -> list[ServerConfig]:
+                 known: set[str] | None = None, known_folders: dict[str, Path] | None = None,
+                 environment: Mapping[str, str] | None = None) -> list[ServerConfig]:
     """The servers in these folders, checked against each other: names, slugs and ports must be unique.
 
     With `problems`, a folder whose dedicated.toml can't be read, or a server named
@@ -268,10 +274,14 @@ def read_servers(folders: list[Path], config_name: str, overrides: dict[str, dic
             raise ConfigError(text)
         problems.append(FolderProblem(folder, text + outcome))
 
+    from .serverenv import apply, overrides as environment_overrides
+
+    found = environment_overrides(environment) if environment is not None else {}
     servers: list[ServerConfig] = []
     for folder in folders:
         try:
-            servers.extend(read_dedicated(folder / config_name, overrides))
+            # As the program runs it: a RECLAIMER_DEDICATED_ variable set where Huragok runs wins over the file (4.2)
+            servers.extend(apply(server, found) for server in read_dedicated(folder / config_name, overrides))
         except (ConfigError, OSError, ValueError, TypeError, AttributeError) as error:  # one folder, not every server
             text = str(error) if str(folder) in str(error) else f"{folder / config_name}: {error}"
             left_out(folder, text, ". Its servers are left out until that's fixed")
@@ -287,7 +297,10 @@ def read_servers(folders: list[Path], config_name: str, overrides: dict[str, dic
         other = seen.get(key)
         if other is not None:
             keep, drop = other, server
-            if server.folder.name.lower() == key and other.folder.name.lower() != key:
+            where = (known_folders or {}).get(key)
+            if where is not None and server.folder == where and other.folder != where:
+                keep, drop = server, other  # the one Huragok already looks after keeps running (0.7.0, answer 31)
+            elif where is None and server.folder.name.lower() == key and other.folder.name.lower() != key:
                 keep, drop = server, other  # the folder named after the server is the real one, the other a copy
             left_out(drop.folder, f"two servers are called '{server.name}': in {other.folder} and {server.folder}. "
                      "Server names must be unique across the SERVERS folder",
@@ -317,7 +330,8 @@ def read_servers(folders: list[Path], config_name: str, overrides: dict[str, dic
             unique[unique.index(other)] = slugs[slug] = server
     servers = unique
     ports: dict[int, ServerConfig] = {}
-    for server in servers:
+    # One already looked after keeps its port; the newcomer is the one left off, saying why (0.7.0, plan 4.6)
+    for server in sorted(servers, key=lambda s: s.name.lower() not in (known or set())):
         for port in {p for p in (server.game_port, server.rcon_port) if p}:
             other = ports.get(port)
             if other is not None and other is not server:
@@ -331,7 +345,17 @@ def discover_servers(settings: Settings, problems: list[FolderProblem] | None = 
     folders = find_server_folders(settings.home, settings.servers_folder, settings.single_folder,
                                   settings.config_name)
     return read_servers(folders, settings.config_name, settings.server_overrides, settings.only, problems,
-                        known={s.name.lower() for s in settings.servers})
+                        known={s.name.lower() for s in settings.servers},
+                        known_folders={s.name.lower(): s.folder for s in settings.servers},
+                        environment=server_environment_of(settings.backend))
+
+
+def server_environment_of(backend: str) -> Mapping[str, str] | None:
+    """The environment Huragok's servers run with, for reading them as the program does: Huragok's own, except with
+    docker, whose containers get compose's."""
+    import os
+
+    return None if backend == "docker" else os.environ
 
 
 def slug_taken(settings: Settings, name: str, *, ignore: str | None = None) -> ServerConfig | None:

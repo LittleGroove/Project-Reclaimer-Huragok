@@ -18,7 +18,7 @@ from huragok.core.tomledit import (
     TomlEditError, change_server_settings, read_toml, remove_server_setting, replace_server_blocks, set_server_setting,
     set_table_key, set_top_key,
 )
-from huragok.program.plays import write_plays
+from testkit.setup import write_plays
 
 
 def _block(data: dict[str, Any], name: str) -> dict[str, Any] | None:

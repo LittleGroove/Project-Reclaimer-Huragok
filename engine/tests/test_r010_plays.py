@@ -1,7 +1,7 @@
-"""Project Reclaimer 0.10: what a server plays, for every game. Each game's maps in the pickers (only on a program that
-plays them), each map offered the game types it plays, Combat Evolved's and Halo 2's games left alone by Halo 3's
-option catalogue, playlists of 1 to 256 games, the dashboard naming the game, the 0.10 settings in D (and not on 0.9),
-and `dedicated check`'s 0.10 refusals read game by game (their text as 0.10.0 printed it on this PC, 2026-11-06)."""
+"""Project Reclaimer 0.10: what a server plays, for every game. Each game's maps in G's Browse (only on a program that
+plays them), which game types each map plays, Combat Evolved's and Halo 2's games left alone by Halo 3's label
+warnings, the dashboard naming the game, the 0.10 settings in D (and not on 0.9), and `dedicated check`'s 0.10
+refusals read game by game (their text as 0.10.0 printed it on this PC, 2026-11-06)."""
 
 from __future__ import annotations
 
@@ -12,22 +12,21 @@ from typing import Any
 
 import pytest
 
-from testkit.setup import ALPHA, SetupController, StrictKeyboard, setup_root
+from testkit.setup import ALPHA, SetupController, StrictKeyboard, setup_root, write_playlist
 from testkit.window import FakeTerminal
 
 from huragok.content.catalogue import Catalogue, Entry, parse_listing
 from huragok.core.logs import RecentLog
 from huragok.core.settings import load
 from huragok.core.tomledit import read_toml, set_server_setting
-from huragok.games import halo3_options as go
 from huragok.games.bungie import GAMES
-from huragok.games.halo3 import Playlist, entry_game, games_range, own_rules_only, problems_from_show, rename_old_labels
+from huragok.games.halo3 import Playlist, entry_game, old_labels, own_rules_only, problems_from_show
 from huragok.games.plays import PLAYS_KEYS, games_in, plays_kind, plays_of, takes
 from huragok.program import settings as ps
 from huragok.program.dedicated import ToolResult
-from huragok.program.plays import _refusals, check_plays, plays_problem
+from huragok.program.plays import PlaylistDraft, _refusals, check_plays, plays_problem
 from huragok.window.dashboard import Menu
-from huragok.window.screens.base import fits, game_sections, map_sections
+from huragok.window.screens.base import map_sections
 
 # Trimmed from 0.10.0's `dedicated content` on this PC: each game's section, a CE mod map in CE's, the other games'.
 LISTING = '''[reach] Halo: Reach installed in H:/MCC
@@ -74,7 +73,7 @@ def names(entries: list[Entry]) -> list[str]:
     return [e.name for e in entries]
 
 
-# Playlists: CE's and Halo 2's games left as written, 1 to 256 games ------------------------------------------------
+# Playlists: CE's and Halo 2's games left as written -------------------------------------------------------------
 
 def test_ce_and_halo_2_games_are_left_as_they_are_written() -> None:
     assert entry_game({"map": "Blood Gulch"}).key == "halo1" and entry_game({"map": "halo2_lockout"}).key == "halo2"
@@ -85,37 +84,19 @@ def test_ce_and_halo_2_games_are_left_as_they_are_written() -> None:
         {"map": "Guardian", "game": "Slayer", "options": {"player.primary_weapon": "Battle rifle"}},
         {"map": "Blood Gulch", "game": "Slayer", "options": {"player.primary_weapon": "Battle rifle"}},
         {"map": "Sword Base", "game": "Slayer", "name": "Reach"}])
-    playlist.number_choices()
-    assert playlist.games[0]["options"] == {"player.primary_weapon": 0}  # Halo 3's: its number
-    assert playlist.games[1]["options"] == {"player.primary_weapon": "Battle rifle"}  # CE's: untouched
-    assert playlist.duplicates() == {}
     labels = playlist.labels()
     assert labels == ["Slayer on Guardian · options", "Slayer on Blood Gulch · CE · options",
                       "Reach on Sword Base (Slayer) · Reach"]
 
 
-def test_old_labels_are_renamed_only_in_halo_3s_games(tmp_path: Path) -> None:
+def test_old_labels_are_warned_of_only_in_halo_3s_games(tmp_path: Path) -> None:
     path = tmp_path / "x.playlist.json"
-    path.write_text(json.dumps({"version": 2, "name": "X", "games": [
+    text = json.dumps({"version": 2, "name": "X", "games": [
         {"map": "Guardian", "game": "Slayer", "options": {"player.character_set": "Vanilla characters"}},
-        {"map": "halo2_lockout", "game": "Slayer", "options": {"player.character_set": "Vanilla characters"}}]}),
-        encoding="utf-8")
-    assert rename_old_labels(path, "0.10.0") == [("Vanilla characters", "Halo 3")]
-    games = json.loads(path.read_text(encoding="utf-8"))["games"]
-    assert games[0]["options"]["player.character_set"] == "Halo 3"
-    assert games[1]["options"]["player.character_set"] == "Vanilla characters"
-
-
-def test_a_playlist_holds_1_to_256_games_from_0_10_and_3_to_128_before() -> None:
-    assert games_range("0.9.23") == (3, 128) and games_range("0.10.0") == (1, 256) and games_range(None) == (3, 256)
-    two = Playlist(Path("x.playlist.json"), "Two", 20, [{"map": "Guardian", "game": "Slayer"},
-                                                        {"map": "Blood Gulch", "game": "Slayer"}])
-    assert two.problems("0.10.0") == []  # 0.10.0's check took a 2-game playlist; not known: 3, as ever
-    assert two.problems() == ["a playlist needs 3 or more games (this one has 2)"]
-    assert two.problems("0.9.23") == ["a playlist needs 3 or more games (this one has 2)"]
-    big = Playlist(Path("x.playlist.json"), "Big", 20, [{"map": "Guardian", "game": f"Slayer {n}"} for n in range(200)])
-    assert big.problems("0.10.0") == []
-    assert "at most 128 games before Project Reclaimer 0.10.0" in big.problems("0.9.23")[0]
+        {"map": "halo2_lockout", "game": "Slayer", "options": {"player.character_set": "Vanilla characters"}}]})
+    path.write_text(text, encoding="utf-8")
+    assert old_labels(path, "0.10.0") == ["Vanilla characters"]  # Halo 2's game isn't Halo 3's options
+    assert path.read_text(encoding="utf-8") == text  # never rewritten (0.7.0)
 
 
 def test_playlist_show_s_0_10_line_is_read_game_by_game() -> None:
@@ -139,23 +120,23 @@ def test_the_dashboard_names_the_game_where_it_isnt_halo_3() -> None:
 
 
 def test_the_status_card_names_a_playlists_games(tmp_path: Path) -> None:
-    from huragok.program.plays import write_plays
+    from testkit.setup import write_plays
     from huragok.window import statuscard
 
     settings = load(setup_root(tmp_path))
     server = settings.servers[0]
-    Playlist(server.folder / "playlists" / "every-halo.playlist.json", "Every Halo", 20, [
-        {"map": "Guardian", "game": "Slayer"}, {"map": "Sword Base", "game": "Slayer"},
-        {"map": "Blood Gulch", "game": "Slayer"}]).save()
+    write_playlist(server.folder, "every-halo", [{"map": "Guardian", "game": "Slayer"},
+                                                 {"map": "Sword Base", "game": "Slayer"},
+                                                 {"map": "Blood Gulch", "game": "Slayer"}], name="Every Halo")
     write_plays(server.config_path, ALPHA, {"playlist": "playlists/every-halo.playlist.json"})
     lines = dict(statuscard.build(settings, server, {"status": "stopped"}))["What it plays"]
     text = " | ".join(f"{label} {said}" for label, said, _ in lines)
     assert "playlist every-halo" in text and '"Every Halo" · 3 games · 20 s votes · Halo 3, Reach, CE' in text
 
 
-# The pickers: each game's maps, each map's game types -------------------------------------------------------------
+# Browse: each game's maps; which game types each map plays ---------------------------------------------------------
 
-def test_each_games_maps_are_offered_only_on_a_program_that_plays_them() -> None:
+def test_each_games_maps_are_listed_only_on_a_program_that_plays_them() -> None:
     catalogue = catalogue_010()
     sections = map_sections(catalogue, "0.10.0")
     assert [name for name, _, _ in sections] == ["Halo 3", "Halo: Reach", "Halo: Combat Evolved", "Halo 2",
@@ -164,71 +145,18 @@ def test_each_games_maps_are_offered_only_on_a_program_that_plays_them() -> None
     assert names(ce[1]) == ["Blood Gulch", "Booglooch"]
     assert ce[2] == [("Halo: Combat Evolved's maps", 1), ("Halo: Combat Evolved's mod maps", 2)]
     assert [name for name, _, _ in map_sections(catalogue, "0.9.23")] == ["Halo 3"]  # a 0.9 program: Halo 3's only
-    custom = map_sections(catalogue, None, halo3_types=True)  # a saved custom game: Halo 3's game types
-    assert [name for name, _, _ in custom] == ["Halo 3", "Halo: Reach", "other games' mods' maps"]
     before = Catalogue(maps=[Entry("Guardian", "Guardian", "map"), Entry("Forge World", "Forge World", "map")],
                        mod_maps=[Entry("Hugegrass", "workshop:1/hugegrass", "mod map")])
     assert [(n, h) for n, _, h in map_sections(before, "0.9.23")] == [  # before 0.10: as ever, one game
         ("Halo 3", [("Halo 3's maps", 1), ("mod maps", 3)])]
 
 
-def test_the_map_groups_follow_all_maps(tmp_path: Path) -> None:
-    menu, _ = menu_on(SetupController(setup_root(tmp_path)), [])
-    groups = menu._map_groups(catalogue_010())
-    assert groups == [("Halo 3's maps", 1), ("Halo: Reach's maps", 3), ("Halo: Combat Evolved's maps", 5),
-                      ("Halo 2's maps", 6), ("Halo: Combat Evolved's mod maps", 7), ("other games' mods' maps", 8)]
-
-
-def test_each_map_is_offered_the_game_types_it_plays() -> None:
-    catalogue = catalogue_010()
-    blood_gulch, sword_base, guardian = (catalogue.find_map(n) for n in ("Blood Gulch", "Sword Base", "Guardian"))
-    [(heading, ce)] = game_sections(catalogue, [blood_gulch])
-    assert heading == "Halo: Combat Evolved's game types" and names(ce) == list(GAMES["halo1"].game_types)
-    assert [e.reference for e in ce] == ["Slayer", "Capture the Flag", "Oddball", "King of the Hill", "Race"]
-    reach = game_sections(catalogue, [sword_base])
-    assert [(h, names(e)) for h, e in reach] == [
-        ("Halo 3's game types (Reach's maps play them too)", ["Slayer", "Capture the Flag"]),
-        ("game variants (Reach's play on Reach's maps)", ["Headhunter"])]
-    halo3 = game_sections(catalogue, [guardian])
-    assert [(h, names(e)) for h, e in halo3] == [("game types", ["Slayer", "Capture the Flag"]),
-                                                  ("game variants", ["HARDCORE TS"])]
-    headhunter, slayer = catalogue.find_game("Headhunter"), catalogue.find_game("Slayer")
-    assert fits(sword_base, headhunter, catalogue) and not fits(guardian, headhunter, catalogue)
-    assert fits(sword_base, slayer, catalogue) and not fits(blood_gulch, slayer, catalogue)
-    assert fits(catalogue.find_map("Scarif"), headhunter, catalogue)  # its game isn't known: anything
+def test_each_map_plays_the_game_types_the_guide_says() -> None:
+    """games/plays.takes: what a later warning ("options on a CE map") reads; the pickers that used it have gone."""
+    assert takes(GAMES["halo1"], GAMES["halo1"]) and not takes(GAMES["halo1"], GAMES["halo3"])
+    assert takes(GAMES["reach"], GAMES["halo3"]) and takes(GAMES["reach"], GAMES["reach"], "game variant")
     assert takes(GAMES["halo2"], GAMES["halo2"]) and not takes(GAMES["reach"], GAMES["halo3"], "game variant")
-
-
-def test_d_offers_a_ce_map_its_own_game_types(tmp_path: Path, run, monkeypatch) -> None:
-    async def catalogue(self: Any, tool: Any, settings: Any, server: Any) -> Catalogue:
-        return catalogue_010()
-
-    async def version(self: Any, settings: Any, server: Any, row: Any) -> str:
-        return "0.10.0"
-
-    async def checked(self: Any, settings: Any, server: Any, values: dict[str, Any]) -> bool:
-        return True
-
-    monkeypatch.setattr(Menu, "_catalogue", catalogue)
-    monkeypatch.setattr(Menu, "_program_version", version)
-    monkeypatch.setattr(Menu, "_plays_checked", checked)
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    keys = ["1", "ENTER",  # Alpha
-            "2", "ENTER", "Y", "W",  # What it plays
-            "2",  # one map and game type
-            "3", "1", "ENTER",  # Combat Evolved's maps: Blood Gulch
-            "2", "ENTER",  # its own game types: Capture the Flag
-            "x", "ESC", "ESC", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    text = plain(terminal)
-    assert "Their campaigns and Reach's Firefight: not yet" in text
-    assert "Halo: Combat Evolved's game types" in text and "Race" in text and "HARDCORE TS" not in text
-    assert "now plays Capture the Flag on halo1_bloodgulch (CE)" in text
-    block = read_toml(server.config_path)["server"][0]
-    assert (block["map"], block["game"]) == ("halo1_bloodgulch", "Capture the Flag") and "playlist" not in block
+    assert takes(GAMES["halo3"], GAMES["halo3"]) and not takes(GAMES["halo3"], GAMES["reach"], "game variant")
 
 
 def test_a_ce_map_is_refused_for_a_0_9_program() -> None:
@@ -238,31 +166,6 @@ def test_a_ce_map_is_refused_for_a_0_9_program() -> None:
     assert plays_problem({"map": "Blood Gulch", "game": "Slayer"}, "0.10.0") is None
     assert plays_problem({"map": "Guardian", "game": "Slayer"}, "0.9.23") is None
     assert plays_problem({"reach": {"map": "Beachhead"}}, "0.9.23").startswith("reach needs Project Reclaimer 0.10.0")
-
-
-def test_a_ce_playlist_game_offers_no_halo_3_options(tmp_path: Path, run) -> None:
-    controller = SetupController(setup_root(tmp_path))
-    server = controller.settings.servers[0]
-    playlist = Playlist(server.folder / "playlists" / "x.playlist.json", "X", 20, [
-        {"map": "halo1_bloodgulch", "game": "Slayer", "options": {"rounds.minutes": 5}},
-        {"map": "Sword Base", "game": "Headhunter"}])
-    menu, terminal = menu_on(controller, ["ESC", "ESC"])
-    assert not run(menu._edit_entry(server, catalogue_010(), playlist, 0))
-    assert not run(menu._edit_entry(server, catalogue_010(), playlist, 1))
-    text = plain(terminal)
-    assert "Rules and options: not on Halo: Combat Evolved's maps" in text and "options.rounds.minutes: 5" in text
-    assert "not for a Reach variant here" in text and "[O] Rules and options" not in text
-
-
-def test_custom_games_offer_however_many_game_types_there_are(tmp_path: Path, run, monkeypatch) -> None:
-    monkeypatch.setattr(go, "GAME_TYPES", [*go.GAME_TYPES, ("Eleventh Type", "Slayer")])
-    controller = SetupController(setup_root(tmp_path))
-    settings = controller.settings
-    server = settings.servers[0]
-    menu, terminal = menu_on(controller, ["N", "B", "ESC", "ESC"])  # the 11th, by B; its name not given; back
-    run(menu._custom_games(settings, None, server))
-    text = plain(terminal)
-    assert "[0] Escalation Slayer" in text and "[B] Eleventh Type" in text and "[Eleventh Type custom]" in text
 
 
 # The settings 0.10 adds ---------------------------------------------------------------------------------------
@@ -373,20 +276,26 @@ class Tool010:
 
 
 def test_check_plays_names_each_game_0_10_refuses(tmp_path: Path) -> None:
+    """Only the program's own words: Huragok's own guesses (a game count, two games the same) no longer stand in
+    front of them (0.7.0). A draft is checked exactly as it would be written, and nothing of the server's changes."""
     settings = load(setup_root(tmp_path))
     server = settings.servers[0]
     playlist = Playlist(server.folder / "playlists" / "typo.playlist.json", "Typo", 20, [
         {"map": "Guardian", "game": "Slayer"}, {"map": "Atlantiss", "game": "Slayer"},
         {"map": "Blood Gulch", "game": "ctf"}, {"map": "Valhalla", "game": "Slayer"}])
-    check = check_plays(Tool010(), server, {"playlist": playlist.relative}, playlist, program_version="0.10.0")
+    check = check_plays(Tool010(), server, {"playlist": playlist.relative}, playlist)
     assert [p.game for p in check.problems] == [2, 3, 6, 4]
     assert check.problems[3].text == "shown only by playlist show"
-    assert not list(server.folder.rglob("*huragok-check*"))
-    two = Playlist(playlist.path, "Two", 20, [{"map": "Guardian", "game": "Slayer"}, {"map": "Valhalla",
+    assert not list(server.folder.rglob("*huragok-check*")) and not playlist.path.exists()
+    two = Playlist(playlist.path, "Two", 20, [{"map": "Guardian", "game": "Slayer"}, {"map": "Guardian",
                                                                                     "game": "Slayer"}])
-    assert check_plays(Tool010(), server, {"playlist": two.relative}, two, program_version="0.10.0").ok
-    assert "3 or more" in check_plays(Tool010(), server, {"playlist": two.relative}, two,
-                                      program_version="0.9.23").problems[0].text
+    assert check_plays(Tool010(), server, {"playlist": two.relative}, two).ok  # the program took it: so does Huragok
+    text = json.dumps({"name": "As typed", "games": [{"map": "Atlantiss", "game": "Slayer",
+                                                      "options": {"player.character_set": "Vanilla characters"}}]})
+    draft = PlaylistDraft(playlist.path, text)
+    assert [p.game for p in check_plays(Tool010(), server, {"playlist": playlist.relative}, draft).problems] == \
+        [2, 3, 6, 4]
+    assert not playlist.path.exists() and not list(server.folder.rglob("*huragok-check*"))
 
 
 def test_max_players_128_is_written_for_a_0_10_server(tmp_path: Path) -> None:

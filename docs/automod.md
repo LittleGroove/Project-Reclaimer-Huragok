@@ -410,7 +410,7 @@ another slur) and a player's name, with nothing caught by mistake in 761 lines.
 
 ## Vergil on each server
 Each server has its own Vergil, on its page in the window (D → the server →
-Huragok's own → `automod`), applied at once:
+H, Huragok's own → `automod`), applied at once:
 
 | | What Vergil does on that server |
 | --- | --- |

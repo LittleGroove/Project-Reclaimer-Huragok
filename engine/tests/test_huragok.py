@@ -472,6 +472,90 @@ def test_a_stopped_servers_folder_renamed_by_hand_is_picked_up_where_it_is_now(t
     run(scenario())
 
 
+def test_a_server_renamed_in_its_dedicated_toml_stays_the_same_server(tmp_path: Path, run) -> None:
+    """0.7.0, answers 32 and 39: the same folder and game port under a new name is the same server. Huragok's own block
+    for it in settings.toml, its records and its history follow it; its folder isn't touched."""
+    async def scenario() -> None:
+        root = tmp_path / "reclaimer"
+        folder = root / "SERVERS" / "Lobby"
+        write_server_folder(folder, 46398, name="Old Name")  # nothing answers: stopped
+        path = write_settings(root, None, commands=staff())
+        with open(path, "a", encoding="utf-8") as file:
+            file.write('\n[[server]]\nname = "Old Name"\nautostart = false\n')
+        settings = load(path)
+        supervisor = Huragok(settings)
+        task = asyncio.ensure_future(supervisor.run())
+        try:
+            sup = supervisor.superintendent
+            await wait_for(lambda: "Old Name" in sup.fleet.managers)
+            supervisor.storage.record_pick("Old Name", "slayer", "Guardian", "Slayer on Guardian")
+            record = settings.record_file("old-name")
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text("{}", encoding="utf-8")  # what Huragok remembers of it (a stopped server may have none yet)
+            before = (folder / "dedicated.toml").read_text(encoding="utf-8")
+            write_server_folder(folder, 46398, name="New Name")
+            after = (folder / "dedicated.toml").read_text(encoding="utf-8")
+            sup.discover()
+            assert list(sup.fleet.managers) == ["New Name"] and [s.name for s in settings.servers] == ["New Name"]
+            assert not record.exists() and settings.record_file("new-name").exists()
+            assert 'name = "New Name"' in path.read_text(encoding="utf-8")  # Huragok's own block for it
+            assert settings.server("New Name").autostart is False  # its settings came with it
+            picks = supervisor.storage.query("SELECT server FROM ballots")
+            assert [row[0] for row in picks] == ["New Name"]
+            assert (folder / "dedicated.toml").read_text(encoding="utf-8") == after != before  # the host's file, as left
+        finally:
+            supervisor.stop()
+            await asyncio.wait_for(task, 10)
+
+    run(scenario())
+
+
+def test_a_server_with_no_console_is_listed_with_its_warning(tmp_path: Path, run) -> None:
+    """0.7.0, answer 7: started and kept on all the same; the warnings catalogue says what to add, on its row."""
+    async def scenario() -> None:
+        root = tmp_path / "reclaimer"
+        write_server_folder(root / "SERVERS" / "Quiet", 46396, name="Quiet", rcon_password=None)
+        supervisor = Huragok(load(write_settings(root, None, commands=staff())))
+        task = asyncio.ensure_future(supervisor.run())
+        try:
+            sup = supervisor.superintendent
+            await wait_for(lambda: "Quiet" in sup.fleet.managers)
+            assert [w.rule.id for w in sup.warnings.of("Quiet")] == ["no-console"]
+            [row] = sup.fleet.rows()
+            assert row["errors"] == [] and row["warnings"][0].startswith("Check: No console")
+        finally:
+            supervisor.stop()
+            await asyncio.wait_for(task, 10)
+
+    run(scenario())
+
+
+def test_with_follow_renames_off_a_new_name_starts_afresh(tmp_path: Path, run) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "reclaimer"
+        folder = root / "SERVERS" / "Lobby"
+        write_server_folder(folder, 46397, name="Old Name")
+        path = write_settings(root, None, commands=staff())
+        text = path.read_text(encoding="utf-8")
+        path.write_text("follow_renames = false\n" + text, encoding="utf-8")
+        settings = load(path)
+        assert settings.follow_renames is False
+        supervisor = Huragok(settings)
+        task = asyncio.ensure_future(supervisor.run())
+        try:
+            sup = supervisor.superintendent
+            await wait_for(lambda: "Old Name" in sup.fleet.managers)
+            write_server_folder(folder, 46397, name="New Name")
+            sup.discover()
+            assert sorted(sup.fleet.managers) == ["New Name"]  # the old one, stopped and gone from the file, forgotten
+            assert not settings.record_file("new-name").exists()  # nothing of the old one's was moved
+        finally:
+            supervisor.stop()
+            await asyncio.wait_for(task, 10)
+
+    run(scenario())
+
+
 def test_a_restart_planned_for_when_its_empty_happens_as_the_last_player_leaves(tmp_path: Path, run) -> None:
     async def scenario() -> None:
         async with running(tmp_path, _marker_backend(tmp_path)) as (sup, fake, seen):

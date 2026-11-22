@@ -561,10 +561,9 @@ def test_the_default_docker_service_keeps_its_number_as_folders_come_and_go(tmp_
     assert backend.values(d)["service"] == "server-4"  # type: ignore[arg-type]
 
 
-def test_the_host_commands_start_a_server_without_what_its_file_says(tmp_path: Path, monkeypatch) -> None:
-    """Audit 6 November, 3.5: the command backend passed RECLAIMER_DEDICATED_CONTENT and the rest to the program it
-    started, which reads them over its dedicated.toml: the folder mismatch the take-over is for came back. (Docker's
-    compose file may use them for the containers' folders, so it keeps them.)"""
+def test_the_host_commands_start_a_server_with_huragoks_environment_as_it_is(tmp_path: Path, monkeypatch) -> None:
+    """0.7.0 (plan 4.2): a RECLAIMER_DEDICATED_ variable set where Huragok runs is the host's, passed on as it is, and
+    Huragok reads the server as the program does, the variable over the file. Before, it was kept from the servers."""
     from huragok.servers.backends import CommandBackend, DockerBackend
 
     out = tmp_path / "seen.txt"
@@ -578,5 +577,5 @@ def test_the_host_commands_start_a_server_without_what_its_file_says(tmp_path: P
     monkeypatch.setenv("KEPT_HERE", "yes")
     settings = load(path)
     asyncio.run(CommandBackend(settings, EventBus(), {}).start(settings.server("Alpha")))
-    assert out.read_text() == "None None yes"
+    assert out.read_text() == "content2 1,2 yes"
     assert not DockerBackend.leaves_out_the_environment

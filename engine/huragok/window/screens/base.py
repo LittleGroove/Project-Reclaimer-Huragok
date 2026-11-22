@@ -1,12 +1,11 @@
-"""What every screen of the window stands on: drawing a screen and asking the host, the pickers several screens
+"""What every screen of the window stands on: drawing a screen and asking the host, the lists several screens
 share, and the screens one group opens in another.
 
-    SetupScreens   (setup.py)    N new server, G content, I SteamCMD and game files, C check
+    SetupScreens   (setup.py)    N new server, G what it plays, I SteamCMD and game files, C check
     ManageScreens  (manage.py)   A console, D settings, B bans and admins, U updates
-    GameScreens    (games.py)    custom games and a playlist's games
+    GameScreens    (games.py)    custom games: listed, shown, copied, set aside
     FileScreens    (files.py)    D's Huragok files, O open
     DiscordScreens (discordsetup.py)  J the Discord bot
-    ByPlayersScreens (byplayers.py)   G -> P, playlists by player count
 
 Each extends Screens; Menu (dashboard.py) is all of them, with the dashboard and its keys. A screen asks with
 `choose`, `prompt_line`, `prompt_key`, `prompt_yes_no`; it draws with `title`, `heading`, `note`, `listing`; slow work
@@ -26,7 +25,7 @@ from ...core.requests import Result
 from ...core.serverfolders import ServerConfig
 from ...core.settings import Settings
 from ...games.bungie import GAMES, MULTIPLAYER_GAMES
-from ...games.plays import game_type_game, map_game, takes
+from ...games.plays import map_game
 from ...program.dedicated import SLOW, Dedicated, DedicatedError, ToolResult, tool_for
 from ..controllers import Row
 from ..tui import Parts, cells, format_listing, heading_parts, pad
@@ -63,16 +62,15 @@ def _map_key(entry: Entry, catalogue: Catalogue) -> str:
     return map_game(entry).key
 
 
-def map_sections(catalogue: Catalogue, version: str | None = None, *, halo3_types: bool = False) -> list[Section]:
-    """The maps a server can be given, a section per game (its stock maps, then its mods' maps), then the other
-    games' mods' maps (0.10) and the map variants. Games the server's program doesn't play (`version`; not known:
-    every one) are left out; `halo3_types`: only maps that play Halo 3's game types (a saved custom game is one), so
-    not Combat Evolved's or Halo 2's. Before 0.10 that's Halo 3's maps, mod maps and map variants, as ever."""
+def map_sections(catalogue: Catalogue, version: str | None = None) -> list[Section]:
+    """The maps a server can play, a section per game (its stock maps, then its mods' maps), then the other games'
+    mods' maps (0.10) and the map variants, for G's Browse. Games the server's program doesn't play (`version`; not
+    known: every one) are left out. Before 0.10 that's Halo 3's maps, mod maps and map variants, as ever."""
     newer = getattr(catalogue, "shape", "0.9") == "0.10"
     sections: list[Section] = []
     for key in MULTIPLAYER_GAMES:
         game = GAMES[key]
-        if not game.plays_on(version) or halo3_types and not takes(game, GAMES["halo3"]):
+        if not game.plays_on(version):
             continue
         stock = [e for e in catalogue.maps if _map_key(e, catalogue) == key]
         mods = [e for e in catalogue.mod_maps if _map_key(e, catalogue) == key]
@@ -85,59 +83,10 @@ def map_sections(catalogue: Catalogue, version: str | None = None, *, halo3_type
         other = [e for e in catalogue.mod_maps if _map_key(e, catalogue) == OTHER]
         if other:
             sections.append(("other games' mods' maps", other, [("other games' mods' maps", 1)]))
-    variants = [e for e in catalogue.map_variants if not newer or map_game(e).plays_on(version)
-                and (not halo3_types or takes(map_game(e), GAMES["halo3"]))]
+    variants = [e for e in catalogue.map_variants if not newer or map_game(e).plays_on(version)]
     if variants:
         sections.append(("map variants", variants, [("map variants (each plays on its own map)", 1)]))
     return sections
-
-
-def flat(sections: list[Section]) -> tuple[list[Entry], list[tuple[str, int]]]:
-    """Sections as one numbered list and its headings, for _pick."""
-    entries: list[Entry] = []
-    groups: list[tuple[str, int]] = []
-    for _, own, headings in sections:
-        groups += [(heading, len(entries) + number) for heading, number in headings]
-        entries += own
-    return entries, groups
-
-
-def own_game_types(key: str) -> list[Entry]:
-    """A game's own game types, as `game = ` takes them by name on its maps (Combat Evolved's and Halo 2's: 0.10's
-    listing doesn't list them; its guide names them)."""
-    game = GAMES[key]
-    return [Entry(name, name, "game type", game.title, game=key) for name in game.game_types]
-
-
-def fits(map_entry: Entry, game_entry: Entry, catalogue: Catalogue) -> bool:
-    """Whether a map plays a game type or variant, as 0.10's guide says (games/plays.takes): for the pairs a
-    playlist builder makes of several maps and games. Before 0.10, and for a mod map whose game isn't known: yes."""
-    key = _map_key(map_entry, catalogue)
-    if getattr(catalogue, "shape", "0.9") != "0.10" or key == OTHER:
-        return True
-    return takes(GAMES[key], game_type_game(game_entry), game_entry.kind)
-
-
-def game_sections(catalogue: Catalogue, maps: list[Entry]) -> list[tuple[str, list[Entry]]]:
-    """The game types and variants the picked maps play, headed by whose they are: Halo 3's maps Halo 3's types and
-    variants, Reach's Halo 3's types and Reach's variants, Combat Evolved's and Halo 2's only their own types (from
-    the guide: the listing has none of theirs). Several maps: what any of them plays (the pairs are matched after)."""
-    keys = {_map_key(m, catalogue) for m in maps} or {"halo3"}
-    every = OTHER in keys or getattr(catalogue, "shape", "0.9") != "0.10"  # before 0.10: every variant, as ever
-    sections: list[tuple[str, list[Entry]]] = []
-    for key in ("halo1", "halo2"):
-        if key in keys:
-            sections.append((f"{GAMES[key].title}'s game types", own_game_types(key)))
-    if every or keys & {"halo3", "reach"}:
-        only_halo3 = keys <= {"halo3"}
-        sections.append(("game types" if only_halo3 else "Halo 3's game types (Reach's maps play them too)",
-                         list(catalogue.game_types)))
-        variants = [v for v in catalogue.game_variants
-                    if every or any(takes(GAMES[k], game_type_game(v), "game variant") for k in keys if k in GAMES)]
-        if variants:
-            reach = any(game_type_game(v).key == "reach" for v in variants)
-            sections.append(("game variants" + (" (Reach's play on Reach's maps)" if reach else ""), variants))
-    return [(name, entries) for name, entries in sections if entries]
 
 
 class Screens:
@@ -556,72 +505,12 @@ class Screens:
     def _server_line(self, server: ServerConfig, row: Row) -> str:
         return f"plays {server.plays}  ·  {row['status']}"
 
-    def _map_groups(self, catalogue: Catalogue) -> list[tuple[str, int]]:
-        """Headings for catalogue.all_maps as it's ordered (stock maps, mod maps, map variants): a heading where the
-        game changes ("Halo: Reach's maps", from 0.10), then the mod maps and the map variants."""
-        groups: list[tuple[str, int]] = []
-        newer = getattr(catalogue, "shape", "0.9") == "0.10"
-        last = None
-        for number, entry in enumerate(catalogue.maps, 1):
-            if (key := _map_key(entry, catalogue)) != last:
-                groups.append((f"{GAMES[key].title}'s maps", number))
-                last = key
-        last = None
-        for number, entry in enumerate(catalogue.mod_maps, len(catalogue.maps) + 1):
-            if (key := _map_key(entry, catalogue)) != last:
-                groups.append(("other games' mods' maps" if key == OTHER else
-                               f"{GAMES[key].title}'s mod maps" if newer else "mod maps", number))
-                last = key
-        if catalogue.map_variants:
-            groups.append(("map variants (each plays on its own map)", len(catalogue.maps) + len(catalogue.mod_maps) + 1))
-        return groups
-
-    def _game_groups(self, catalogue: Catalogue) -> list[tuple[str, int]]:
-        groups = [("game types", 1)]
-        if catalogue.game_variants:
-            reach = any(game_type_game(v).key == "reach" for v in catalogue.game_variants)
-            groups.append(("game variants" + (" (Reach's play on Reach's maps)" if reach else ""),
-                           len(catalogue.game_types) + 1))
-        return groups
-
-    async def _pick_maps(self, catalogue: Catalogue, version: str | None = None, *, single: bool = False,
-                         halo3_types: bool = False) -> list[Entry] | None:
-        """Maps picked from what the server can play (map_sections). One game's maps (before 0.10): the one numbered
-        list, headed as ever. Several games' (0.10: 700 maps and more): which game's first, then its list; A takes
-        them all in one list, narrowed by words. None: cancelled."""
-        sections = map_sections(catalogue, version, halo3_types=halo3_types)
-        games = [section for section in sections if section[0] != "map variants"]
-        if len(games) <= 1:
-            entries, groups = flat(sections)
-            return await self._pick(entries, "maps", groups=groups, single=single)
-        options = [(str(n), name, f"{len(entries)} maps") for n, (name, entries, _) in enumerate(sections, 1)]
-        picked = await self.choose("Whose maps?", [*options, ("A", "all of them", "narrowed by words")],
-                                   back="Esc cancels")
-        if picked is None:
-            return None
-        entries, groups = flat(sections if picked == "A" else [sections[int(picked) - 1]])
-        return await self._pick(entries, "maps", groups=groups, single=single)
-
-    async def _pick_game_types(self, catalogue: Catalogue, maps: list[Entry], *,
-                          single: bool = False) -> list[Entry] | None:
-        """Game types or variants for the picked maps: only what they play (game_sections), headed by whose they
-        are. None: cancelled."""
-        entries: list[Entry] = []
-        groups: list[tuple[str, int]] = []
-        for name, own in game_sections(catalogue, maps):
-            groups.append((name, len(entries) + 1))
-            entries += own
-        return await self._pick(entries, "game types or variants", groups=groups, single=single)
-
     async def _row_version(self, settings: Settings, server: ServerConfig) -> str | None:
         """The program version a server runs, from its dashboard row (ManageScreens._program_version)."""
         row = next((r for r in self.controller.rows() if r["name"] == server.name), {})
         return await self._program_version(settings, server, row)
 
     # Opened from another group's screens (each defined by the group named) ------------------------------
-
-    async def _offer_odst_files(self, settings: Settings, game: Path) -> bool:
-        raise NotImplementedError("SetupScreens's")
 
     async def _playlists(self, settings: Settings, tool: Dedicated, server: ServerConfig, catalogue: Catalogue) -> None:
         raise NotImplementedError("SetupScreens's")
@@ -632,38 +521,11 @@ class Screens:
     async def _custom_games(self, settings: Any, tool: Any, server: Any) -> None:
         raise NotImplementedError("GameScreens's")
 
-    async def _play_custom_game(self, settings: Any, server: Any, info: Any) -> dict[str, Any] | None:
-        raise NotImplementedError("GameScreens's")
-
-    async def _save_playlist(self, tool: Dedicated, server: ServerConfig, playlist: Any) -> bool:
-        raise NotImplementedError("SetupScreens's")
-
-    async def _playable(self, tool: Dedicated, server: ServerConfig, path: Path) -> bool:
-        raise NotImplementedError("SetupScreens's")
-
-    async def _plays_checked(self, settings: Any, server: Any, values: dict[str, Any]) -> bool:
-        raise NotImplementedError("ManageScreens's")
-
     async def _program_version(self, settings: Any, server: Any, row: Row) -> str | None:
         raise NotImplementedError("ManageScreens's")
 
-    async def _edit_plays(self, settings: Any, server: Any, row: Row) -> None:
-        raise NotImplementedError("ManageScreens's")
-
-    async def _content_home(self, settings: Settings, server: ServerConfig, row: Row) -> None:
-        raise NotImplementedError("SetupScreens's")
-
-    async def _by_players(self, settings: Any, tool: Any, server: Any, row: Row) -> None:
-        raise NotImplementedError("ByPlayersScreens's")
-
-    async def _by_players_before_use(self, server: Any, reference: str | None) -> bool:
-        raise NotImplementedError("ByPlayersScreens's")
-
     async def _other_servers(self, settings: Settings, server: ServerConfig, what: str) -> list[ServerConfig]:
         raise NotImplementedError("SetupScreens's")
-
-    async def _edit_entry(self, server: Any, catalogue: Any, playlist: Any, index: int) -> bool:
-        raise NotImplementedError("GameScreens's")
 
     async def _bans(self, settings: Any, row: Row) -> None:
         raise NotImplementedError("ManageScreens's")

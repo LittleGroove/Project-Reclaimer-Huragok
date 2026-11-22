@@ -84,6 +84,7 @@ SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
     "server.repaired": cards.server_card("repaired", "server.repaired", text="text"),
     "server.workshop_update": cards.workshop_waiting,
     "byplayers.changed": cards.playlist_changed,
+    "warning.raised": cards.warning,
     "supervisor.commands_reloaded": lambda config, event: cards.audit("settings", say(config, "audit.commands"), config),
 }
 BACK_UP = {"server.ready", "server.adopted", "server.restarted", "server.recovered"}  # a server's problem is over

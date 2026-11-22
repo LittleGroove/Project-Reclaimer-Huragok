@@ -1,261 +1,82 @@
-"""Game options: the catalogue, saved custom games (presets), a playlist game's own rules and options, and the
-screens that change them without typing a name or a number from memory."""
+"""Saved custom games (presets) as Huragok reads them: listed, shown as they're written, checked by the server's own
+program as a copy, from the window and the command line; and the values D checks before writing a setting.
+Huragok no longer makes or edits custom games or game options (0.7.0)."""
 
 from __future__ import annotations
 
 import json
-import os
-import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from conftest import free_port
-from testkit import DATA
-from testkit.setup import FAKE, TEMPLATE_COMMAND, SetupController, StrictKeyboard, make_server_folder, setup_root
-from testkit.window import FakeTerminal
+from testkit.setup import FAKE, TEMPLATE_COMMAND, make_server_folder, setup_root, write_plays
 
-from huragok.content.catalogue import Catalogue, Entry
-from huragok.core.logs import RecentLog
 from huragok.core.settings import load
 from huragok.games import halo3_options as go
-from huragok.games.halo3 import Playlist, load_playlist
-from huragok.program.dedicated import Dedicated, tool_for
-from huragok.window.dashboard import Menu
-
-PROBES = DATA / "game-options-probe.txt"
+from huragok.program.dedicated import Dedicated
 
 
-def plain(terminal: FakeTerminal) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", "".join(terminal.output))
-
-
-def menu_on(controller: Any, keys: list[str]) -> tuple[Menu, FakeTerminal]:
-    terminal = FakeTerminal()
-    return Menu(controller, terminal, StrictKeyboard(keys), RecentLog()), terminal  # type: ignore[arg-type]
-
-
-# The catalogue ------------------------------------------------------------------------------------
-
-def test_the_catalogue_has_every_option_the_program_named() -> None:
-    assert len(go.SHARED_OPTIONS) == 25 and len(go.trait_options("player")) == 24
-    weapons = go.all_options("Slayer")["player.primary_weapon"]
-    assert weapons.label_of(0) == "Battle rifle" and weapons.value_of("battle RIFLE") == 0 and weapons.value_of("-3") == -3
-    with pytest.raises(ValueError):
-        weapons.value_of("Lightsaber")
-    minutes = go.all_options("Slayer")["rounds.minutes"]
-    assert minutes.value_of("12") == 12
-    with pytest.raises(ValueError):
-        minutes.value_of("61")
-    assert [k for k, _ in go.trait_sets("CaptureTheFlag")][-1] == "flag_carrier"
-    assert "primary_weapon" not in {o.key.split(".")[1] for o in go.trait_options("red_powerup")}  # no loadout there
-    titles = [title for title, _ in go.categories("KingOfTheHill")]
-    assert titles == ["King of the Hill rules", "Rounds & teams", "Respawn", "Powerup durations", "Map & equipment",
-                      "World"]
-    rules = {o.key for o in go.mode_rules("Slayer")}
-    assert "rules.kill_points" in rules and "mode.kill" not in rules and "mode.headshot" in rules  # no twin rows
-    assert go.mode_id("capture the flag") == "CaptureTheFlag" and go.mode_name("Vip") == "VIP"
-    assert go.describe("Slayer", {"map.weapons": 11, "player.ammo": 2, "bogus.key": 1}, {"score_to_win": 50}) == [
-        "Score to win (0 = none, -1 = unlimited): 50", "Weapon set: No weapons", "Ammunition: Infinite",
-        "bogus.key: 1 (not an option of Slayer)"]
-    # Every range the program gave is the catalogue's (the probe's output is test data: it must be there).
-    assert PROBES.is_file(), f"{PROBES} is missing: it holds what the program said when its options were probed"
-    text = PROBES.read_text(encoding="utf-8")
-    for option in go.SHARED_OPTIONS:
-        assert re.search(re.escape(option.key) + r"\s+Error: " + re.escape(option.label) +
-                         rf" must be {option.low}\.\.={option.high}", text), option.key
+def write_preset(content: Path, stem: str, data: dict[str, Any]) -> Path:
+    """A saved custom game as a host makes one (by hand, or MCC's imported): content/Game Modes/<stem>.json."""
+    path = content / "Game Modes" / f"{stem}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
 
 
 # Presets --------------------------------------------------------------------------------------------
 
-def test_a_preset_is_saved_whole_checked_and_never_written_over(tmp_path: Path) -> None:
+def test_a_preset_is_read_listed_and_checked_as_a_copy(tmp_path: Path) -> None:
     content = tmp_path / "content"
-    preset = go.new_preset("BR Team Slayer 75", "Slayer")
-    options = go.all_options("Slayer")
-    preset.set(options["player.primary_weapon"], "Battle rifle")
-    preset.set(options["map.weapons"], 9)
-    preset.set(go.RULES[0], 75)
-    preset.set(go.WORLD[0], "stamina")
-    path = preset.save(go.preset_path(content, preset.name))
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data == {"version": 1, "name": "BR Team Slayer 75", "mode": "Slayer", "rules": {"score_to_win": 75},
-                    "options": {"player.primary_weapon": 0, "map.weapons": 9}, "world": {"sprint": "stamina"}}
-    assert go.preset_path(content, preset.name).name == "br-team-slayer-75-2.json"  # the first stays
-    linked = tmp_path / "other-server-copy.json"
-    os.link(path, linked)  # a hard-linked content folder elsewhere
-    preset.set(options["map.weapons"], 11)
-    preset.save()
-    assert json.loads(linked.read_text(encoding="utf-8"))["options"]["map.weapons"] == 9  # its copy is untouched
+    path = write_preset(content, "br-team-slayer-75", {
+        "version": 1, "name": "BR Team Slayer 75", "mode": "Slayer", "rules": {"score_to_win": 75},
+        "options": {"player.character_set": "Halo 3", "map.weapons": 9,
+                    "respawn.seconds": {"points": [[2, 3], [16, 5]]}}, "world": {"sprint": "stamina"}})
+    text = path.read_text(encoding="utf-8")
     listed = go.list_presets(content)
     assert [(p.name, p.mode_label, p.relative) for p in listed] == [("BR Team Slayer 75", "Slayer",
                                                                      "Game Modes/br-team-slayer-75.json")]
-    copy = go.clone(go.load_preset(path), "BR copy")
-    assert copy.path is None and copy.options == {"player.primary_weapon": 0, "map.weapons": 11}
-    for name, error in (("", "needs a name"), ("Slayer", "game type's own name"), ("x" * 49, "48 at most")):
-        with pytest.raises(go.PresetError, match=error):
-            go.new_preset(name, "Slayer").save(tmp_path / "x.json")
-    bad = go.new_preset("Odd", "Slayer")
-    bad.options["mode.flag_type"] = 1
-    assert bad.problems() == ["mode.flag_type isn't an option of Slayer"]
+    preset = go.load_preset(path)
+    assert (preset.name, preset.mode, preset.scripted) == ("BR Team Slayer 75", "Slayer", False)
+    # What it changes, as the file writes it: no catalogue of Huragok's own to get out of date.
+    assert go.describe(preset.options, preset.rules, preset.world) == [
+        "rules.score_to_win: 75", "player.character_set: Halo 3", "map.weapons: 9",
+        'respawn.seconds: {"points": [[2, 3], [16, 5]]}', "world.sprint: stamina"]
+    assert go.mode_name("Vip") == "VIP" and go.mode_name("Mystery") == "Mystery"
     tool = Dedicated(FAKE, template=TEMPLATE_COMMAND)
-    assert tool.mode_check(preset.check_copy(tmp_path)).ok  # checked as a copy with an empty script
-    preset.options["player.speed"] = 99
-    result = tool.mode_check(preset.check_copy(tmp_path))
+    check = tmp_path / "check"
+    check.mkdir()
+    assert tool.mode_check(preset.check_copy(check)).ok  # checked as a copy with an empty script
+    preset.data["options"]["player.speed"] = 99
+    result = tool.mode_check(preset.check_copy(check))
     assert not result.ok and "Movement speed must be 0..=10" in result.text
+    assert path.read_text(encoding="utf-8") == text  # the host's file is never written
     with pytest.raises(go.PresetError):
         go.load_preset(tmp_path / "missing.json")
+    (content / "Game Modes" / "not-a-game.json").write_text('{"name": "a saved map"}', encoding="utf-8")
+    with pytest.raises(go.PresetError, match="no mode"):
+        go.load_preset(content / "Game Modes" / "not-a-game.json")
+    assert len(go.list_presets(content)) == 1  # a .json that isn't a custom game isn't listed
 
 
-# A playlist game's overrides ----------------------------------------------------------------------
+def test_only_the_read_parts_of_the_option_editor_are_left() -> None:
+    """The option editor and its catalogue went in 0.7.0; the labels the program renamed stay, for `check`'s
+    warnings, and version_tuple lives in core/text.py (still importable here)."""
+    from huragok.core.text import version_tuple
 
-def test_a_playlist_game_stores_numbers_and_drops_empty_blocks() -> None:
-    game: dict[str, Any] = {"map": "Valhalla", "game": "Slayer"}
-    options = go.all_options("Slayer")
-    go.entry_set(game, options["player.primary_weapon"], 0)
-    go.entry_set(game, options["rounds.minutes"], 12)
-    go.entry_set(game, go.RULES[0], 50)
-    go.entry_set(game, go.WORLD[0], "unlimited")
-    assert game == {"map": "Valhalla", "game": "Slayer", "rules": {"score_to_win": 50},
-                    "options": {"player.primary_weapon": 0, "rounds.minutes": 12},  # 0: Battle rifle
-                    "world": {"sprint": "unlimited"}}
-    weapon = options["player.primary_weapon"]
-    assert go.entry_get(game, weapon) == 0 and weapon.label_of(go.entry_get(game, weapon)) == "Battle rifle"
-    for option in (options["player.primary_weapon"], options["rounds.minutes"], go.RULES[0], go.WORLD[0]):
-        go.entry_set(game, option, None)
-    assert game == {"map": "Valhalla", "game": "Slayer"}
-    assert go.entry_mode({"game": "2V2 HARDCORE TS"}, {"2v2 hardcore ts": "Slayer"}) == "Slayer"
-    assert go.entry_mode({"game": "Capture the Flag"}) == "CaptureTheFlag" and go.entry_mode({"game": "?"}) is None
-
-
-# The screens -----------------------------------------------------------------------------------------
-
-CATALOGUE = Catalogue(
-    maps=[Entry("Guardian", "Guardian", "map"), Entry("Valhalla", "Valhalla", "map")],
-    game_types=[Entry("Slayer", "Slayer", "game type"), Entry("Oddball", "Oddball", "game type")],
-    game_variants=[Entry("2V2 HARDCORE TS", "2V2 HARDCORE TS", "game variant", base="Slayer")],
-    mod_maps=[Entry("HugeGrass", "workshop:2984061723/hugeass_remastered_mcc", "mod map"),
-              Entry("HugeGrass Rebalance", "workshop:3820687243/fixedHugeGrassTrapasRemix", "mod map")])
-
-
-def test_one_playlist_game_is_changed_from_numbered_lists(tmp_path: Path, run) -> None:
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    images = server.content_dir / "Images"
-    images.mkdir(parents=True, exist_ok=True)
-    (images / "vote.png").write_bytes(b"\x89PNG")
-    playlist = Playlist(tmp_path / "p.playlist.json", "P", 20, [{"map": "Guardian", "game": "Slayer"},
-                                                               {"map": "Valhalla", "game": "Oddball"},
-                                                               {"map": "Valhalla", "game": "2V2 HARDCORE TS"}])
-    keys = ["N", *"BR Starts", "ENTER",
-            "O", "5", "ENTER", "1", "ENTER", *"10", "ENTER", "ESC",  # Map & equipment -> Weapon set -> No power weapons
-            "7", "ENTER", "1", "ENTER", "6", "ENTER", "4", "ENTER", "ESC", "ESC",  # Traits -> player -> primary: BR
-            "1", "ENTER", "1", "ENTER", *"50", "ENTER", "ESC", "ESC",  # Slayer rules -> score to win 50
-            "I", "1", "ENTER",  # vote image
-            "C", "Y",  # anti-cheat off for this game
-            "W", "3", "ENTER",
-            "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    assert run(menu._edit_entry(server, CATALOGUE, playlist, 0))
-    no_power = go.all_options("Slayer")["map.weapons"].value_of("No power weapons")
-    assert playlist.games[0] == {"map": "Guardian", "game": "Slayer", "name": "BR Starts",
-                                 "options": {"map.weapons": no_power, "player.primary_weapon": 0},
-                                 "rules": {"score_to_win": 50}, "preview_image": "vote.png", "anti_cheat": False,
-                                 "weight": 3}
-    text = plain(terminal)
-    assert "Weapon set: No power weapons" in text and "Starting primary weapon: Battle rifle" in text
-    # A variant's game type comes from the catalogue: its Slayer options are offered.
-    keys = ["O", "1", "ENTER", "ESC", "ESC", "X", "Y", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu._edit_entry(server, CATALOGUE, playlist, 2))
-    assert "Slayer rules" in plain(terminal) and playlist.games[2] == {"map": "Valhalla", "game": "2V2 HARDCORE TS"}
-
-
-SMALL = Catalogue(maps=[Entry(name, name, "map") for name in ("Guardian", "Valhalla", "Narrows")],
-                  game_types=[Entry("Slayer", "Slayer", "game type"), Entry("Capture the Flag", "CTF", "game type")])
-
-
-async def small_catalogue(self: Any, tool: Any, settings: Any, server: Any) -> Catalogue:
-    return SMALL
-
-
-def test_custom_games_are_made_checked_and_played(tmp_path: Path, run, monkeypatch) -> None:
-    monkeypatch.setattr(Menu, "_catalogue", small_catalogue)
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    settings = load(settings_path)
-    server = settings.servers[0]
-    tool = tool_for(settings)
-    keys = ["N", "2", *"One Flag Rush", "ENTER",  # from Capture the Flag
-            "1", "ENTER", "1", "ENTER", *"3", "ENTER", "ESC", "ESC",  # its rules: score to win 3
-            "Y", "x",  # save: checked by the program, saved
-            "S", "1", "ENTER", "x",  # show what it changes
-            "P", "1", "ENTER", "2", "ENTER",  # play it, on Valhalla
-            "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu._custom_games(settings, tool, server))
-    text = plain(terminal)
-    assert "The server program checked it: valid." in text and "Score to win (0 = none, -1 = unlimited): 3" in text
-    path = server.content_dir / "Game Modes" / "one-flag-rush.json"
-    assert json.loads(path.read_text(encoding="utf-8"))["mode"] == "CaptureTheFlag"
-    from huragok.core.tomledit import read_toml
-
-    block = read_toml(server.config_path)["server"][0]
-    assert (block["map"], block["game"]) == ("Valhalla", "One Flag Rush")  # not `variant`, which plays on Guardian
-    assert "variant" not in block and "playlist" not in block and "plays One Flag Rush on Valhalla: once nobody is on" in text  # from a playlist: a new kind
-
-
-def test_a_custom_game_plays_on_one_map_or_on_three_to_vote_on(tmp_path: Path, run, monkeypatch) -> None:
-    """The server has no rotation without a vote, and a playlist needs 3 games: two maps are explained, three or more
-    become a playlist of that game, checked by the server program before it's saved and used."""
-    monkeypatch.setattr(Menu, "_catalogue", small_catalogue)
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    settings = load(settings_path)
-    server = settings.servers[0]
-    modes = server.content_dir / "Game Modes"
-    modes.mkdir(parents=True, exist_ok=True)
-    (modes / "br-slayer.json").write_text(json.dumps({"version": 1, "name": "BR Slayer", "mode": "Slayer",
-                                                      "rules": {}, "options": {}}), encoding="utf-8")
-    keys = ["P", "1", "ENTER",  # play BR Slayer
-            *"1,2", "ENTER",  # on two maps: can't be done
-            *"1-3", "ENTER",  # on three: a playlist to vote on
-            "Y",  # use it now
-            "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu._custom_games(settings, tool_for(settings), server))
-    text = plain(terminal)
-    assert "Two maps can't be played" in text
-    playlist = load_playlist(server.folder / "playlists" / "br-slayer.playlist.json")
-    assert [(g["map"], g["game"]) for g in playlist.games] == [("Guardian", "BR Slayer"), ("Valhalla", "BR Slayer"),
-                                                                ("Narrows", "BR Slayer")]
-    from huragok.core.tomledit import read_toml
-
-    block = read_toml(server.config_path)["server"][0]
-    assert block["playlist"] == "playlists/br-slayer.playlist.json" and "variant" not in block and "map" not in block
-
-
-def test_a_playlist_from_a_mods_maps(tmp_path: Path, run, monkeypatch) -> None:
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    settings = load(settings_path)
-    server = settings.servers[0]
-
-    async def no_check(self: Any, tool: Any, server: Any, playlist: Any, **options: Any) -> bool:
-        playlist.save()
-        return True
-
-    monkeypatch.setattr(Menu, "_save_playlist", no_check)
-    keys = ["ENTER", "ENTER",  # name (the first mod map's), vote seconds
-            "A", "ENTER", "A", "ENTER", "ENTER", "ENTER"]  # every mod map × every game type, keep all, no weights
-    menu, terminal = menu_on(controller, keys)
-    run(menu._build_playlist(settings, tool_for(settings), server, CATALOGUE, maps=CATALOGUE.mod_maps))
-    playlist = load_playlist(server.folder / "playlists" / "hugegrass.playlist.json")
-    assert {g["map"] for g in playlist.games} == {"workshop:2984061723/hugeass_remastered_mcc",
-                                                  "workshop:3820687243/fixedHugeGrassTrapasRemix"}
-    assert len(playlist.games) == 6  # 2 mod maps × (2 game types + 1 variant)
-    assert "workshop:<item>/<map>" in plain(terminal)
+    for gone in ("Option", "all_options", "categories", "trait_options", "new_preset", "preset_path", "clone",
+                 "choices_as_numbers", "entry_set", "entry_get", "entry_mode"):
+        assert not hasattr(go, gone), gone
+    assert not hasattr(go.Preset, "save") and not hasattr(go.Preset, "set")
+    assert go.version_tuple is version_tuple and version_tuple("v0.9.20-beta") == (0, 9, 20)
+    assert version_tuple("x") is None and version_tuple(None) is None
+    character_set = next(change for change in go.LABEL_CHANGES if change.option == "character_set")
+    assert character_set.taken("0.9.18") == "Vanilla characters" and character_set.taken("0.9.19") == "Halo 3"
+    assert character_set.taken(None) is None and character_set.applies_to("teams.red_character_set")
+    with pytest.raises(ModuleNotFoundError):
+        __import__("huragok.games.halo3_options_data")
 
 
 def test_custom_games_from_the_command_line(tmp_path: Path, capsys) -> None:
@@ -263,49 +84,28 @@ def test_custom_games_from_the_command_line(tmp_path: Path, capsys) -> None:
 
     settings_path = setup_root(tmp_path)
     server = load(settings_path).servers[0]
-    preset = go.new_preset("Snipers Only", "Slayer")
-    preset.set(go.all_options("Slayer")["map.weapons"], 7)
-    preset.save(go.preset_path(server.content_dir, preset.name))
+    path = write_preset(server.content_dir, "snipers-only", {"version": 1, "name": "Snipers Only", "mode": "Slayer",
+                                                             "rules": {}, "options": {"map.weapons": 7}})
     assert cli.main(["-c", str(settings_path), "variant"]) == 0
     assert cli.main(["-c", str(settings_path), "variant", "show", "snipers only"]) == 0
     assert cli.main(["-c", str(settings_path), "variant", "check", "Snipers Only"]) == 0
     text = capsys.readouterr().out
-    assert "Snipers Only" in text and "Weapon set: Sniper rifles" in text and "valid" in text
+    assert "Snipers Only" in text and "map.weapons: 7" in text and "valid" in text
     assert cli.main(["-c", str(settings_path), "variant", "show"]) == 2
     assert cli.main(["-c", str(settings_path), "variant", "show", "nothing"]) == 1
-    broken = json.loads(preset.path.read_text(encoding="utf-8"))
+    broken = json.loads(path.read_text(encoding="utf-8"))
     broken["options"]["player.speed"] = 99
-    preset.path.write_text(json.dumps(broken), encoding="utf-8")
+    path.write_text(json.dumps(broken), encoding="utf-8")
     assert cli.main(["-c", str(settings_path), "variant", "check", "Snipers Only"]) == 1
+    assert "Snipers Only: Error: Movement speed must be 0..=10" in capsys.readouterr().err  # the program's own words
+    path.unlink()
+    assert cli.main(["-c", str(settings_path), "variant"]) == 0
+    assert "custom games are made by hand (or imported from MCC" in " ".join(capsys.readouterr().out.split())
 
 
-# Labels that differ by program version, and values D checks before writing -------------------------------
-
-def test_every_choice_is_written_as_its_number() -> None:
-    """0.9.18 refuses "Halo 3" and 0.9.19 on refuse "Vanilla characters"; every version takes 1 (0.9.18 checked).
-    So every choice is its number, whatever its label (decision 2, 25 October); the window shows the label."""
-    options = go.all_options("Slayer")
-    game: dict[str, Any] = {"map": "Guardian", "game": "Slayer"}
-    go.entry_set(game, options["player.character_set"], "Halo 3")
-    go.entry_set(game, options["teams.red_character_set"], "vanilla characters")
-    go.entry_set(game, options["player.grenade_regeneration"], 3)
-    go.entry_set(game, options["player.primary_weapon"], "Battle rifle")
-    assert game["options"] == {"player.character_set": 1, "teams.red_character_set": 1,
-                               "player.grenade_regeneration": 3, "player.primary_weapon": 0}
-    go.entry_set(game, options["player.character_set"], "Random")
-    assert game["options"]["player.character_set"] == options["player.character_set"].value_of("Random")
-    # A playlist's labels (written by hand, or by an older Huragok) become numbers as Huragok saves it.
-    old = {"map": "Guardian", "game": "Slayer", "options": {"player.primary_weapon": "Battle rifle",
-                                                            "player.character_set": "Vanilla characters",
-                                                            "rounds.minutes": 12, "x.unknown": "Something"}}
-    assert go.choices_as_numbers(old) == 2
-    assert old["options"] == {"player.primary_weapon": 0, "player.character_set": 1, "rounds.minutes": 12,
-                              "x.unknown": "Something"}
-    assert go.describe("Slayer", {"player.character_set": 1}) == ["Character set: Halo 3"]
-
+# Values D checks before writing a setting -----------------------------------------------------------
 
 def test_d_refuses_values_the_program_would_refuse(tmp_path: Path) -> None:
-    from huragok.program import plays
     from huragok.program import settings as ls
     from huragok.core.tomledit import set_server_setting, set_top_key
 
@@ -322,7 +122,7 @@ def test_d_refuses_values_the_program_would_refuse(tmp_path: Path) -> None:
     set_server_setting(config, name, "min_players", 6)
     assert "can't be more than max_players (4)" in problem("max_players", "server", 4)
     assert problem("max_players", "server", 24) is None
-    plays.write_plays(config, name, {"campaign": {"mission": 3010, "difficulty": "normal"}})
+    write_plays(config, name, {"campaign": {"mission": 3010, "difficulty": "normal"}})
     assert "holds 16 players at most" in problem("max_players", "server", 24)
     assert "48 at most" in problem("host_name", "server", "x" * 49) and problem("host_name", "folder", "x" * 48) is None
     assert "http:// or https://" in problem("stats_server", "folder", "garbage")
@@ -362,26 +162,23 @@ def test_d_names_the_version_a_setting_needs(tmp_path: Path) -> None:
     assert plays.plays_problem({"campaign": {"mission": 3010, "modifiers": {"third_person": True}}}, "0.9.18") is None
     from huragok.games import halo3
 
-    assert set(halo3.MISSION_STARTS) == set(halo3.MISSIONS)  # D's rally point is bounded for every mission
+    assert set(halo3.MISSION_STARTS) == set(halo3.MISSIONS)
 
 
-def test_a_custom_game_a_server_plays_by_name_isnt_deleted(tmp_path: Path) -> None:
-    """`game = "BR Slayer"` on a map of its own counts as playing it, as `variant` and a playlist game do."""
-    from huragok.program.plays import write_plays
+def test_a_custom_game_a_server_plays_by_name_counts_as_played(tmp_path: Path) -> None:
+    """`game = "BR Slayer"` on a map of its own counts as playing it, as `variant` and a playlist game do: what the
+    custom games screen warns of before setting one aside."""
     from huragok.window.screens.games import servers_playing
 
     settings = load(setup_root(tmp_path))
     server = settings.servers[0]
-    modes = server.content_dir / "Game Modes"
-    modes.mkdir(parents=True, exist_ok=True)
-    (modes / "br-slayer.json").write_text(json.dumps({"version": 1, "name": "BR Slayer", "mode": "Slayer",
-                                                      "rules": {}, "options": {}}), encoding="utf-8")
+    write_preset(server.content_dir, "br-slayer", {"version": 1, "name": "BR Slayer", "mode": "Slayer", "rules": {},
+                                                   "options": {}})
     info = go.list_presets(server.content_dir)[0]
     assert servers_playing(settings, info) == []
     write_plays(server.config_path, server.name, {"map": "Valhalla", "game": "BR Slayer"})
     assert servers_playing(settings, info) == [server.name]
-    # By the reference the server's own content listing gives (its file without the extension), as
-    # custom_game_reference writes it: counted too, so it isn't deleted from under the server.
+    # By the reference the server's own content listing gives (its file without the extension): counted too.
     write_plays(server.config_path, server.name, {"map": "Valhalla", "game": "br-slayer"})
     assert servers_playing(settings, info) == [server.name]
 

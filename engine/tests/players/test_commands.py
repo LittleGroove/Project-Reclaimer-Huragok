@@ -1448,7 +1448,7 @@ def test_an_admin_restarts_the_server_with_the_usual_countdown(tmp_path: Path, r
 
             # gameover: once this game ends.
             await fake.chat(ADMIN, "Admin", "!restartserver gameover the map is broken")
-            await wait_for(lambda: _told(fake, ADMIN, "Restarting once this game ends, with a few seconds' notice"))
+            await wait_for(lambda: _told(fake, ADMIN, "Restarting once this game ends, however long it runs"))
             assert lifecycle.asked[4] == {"server": SERVER, "when": "after_game", "by": "Admin", "manual": True,
                                           "reason": "the map is broken (requested by Admin)"}
             await fake.chat(ADMIN, "Admin", "!restartserver GameOver")

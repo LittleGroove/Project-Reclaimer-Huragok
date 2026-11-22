@@ -2,10 +2,10 @@
 
 Setting a server up is in [setup.md](setup.md). This is what the window and the
 commands do with a server that's running: its status card, its console, the settings
-(Huragok's own and everything about each server) changed a step at a time, bans and
-admins, updates of the server program and of its Workshop mods, cleaning up, and a
-console for moderators who aren't at this PC. The Discord bot is **J**, with a guide of its
-own: [discord.md](discord.md).
+(Huragok's own changed a step at a time, each server's own shown with its warnings),
+bans and admins, updates of the server program and of its Workshop mods, cleaning up,
+the stats relay, and a console for moderators who aren't at this PC. The Discord bot
+is **J**, with a guide of its own: [discord.md](discord.md).
 
 ## A server's status card: V
 **V** picks a server and shows, on one screen, everything the Superintendent keeps an
@@ -15,14 +15,14 @@ eye on:
 | --- | --- |
 | Running | its state and uptime, RCON's reply time, how fresh its status file is, its process and the memory it and its game use; a job waiting for its next start |
 | Joining | the address players join at, listed or hidden, join password or open, players and the limit, ping limit, the welcome lines |
-| What it plays | its playlist (name, games, vote seconds) or game, and the game under way |
-| Program | its Project Reclaimer version, whether it updates itself (auto_update) or Huragok does, the newest release |
-| Mods | its Workshop items: installed version, Steam's newest, a new version waiting; how they're updated; the SteamCMD account; what they take on disk; mod sharing; character mods |
+| What it plays | what its own file names: a playlist (name, games, vote seconds), playlists by lobby size, or a game; the game under way |
+| Program | its Project Reclaimer version, whether it updates itself (auto_update) or is pinned to its version by its own file, the newest release, where its update stands |
+| Mods | its Workshop items: installed version, Steam's newest, an update downloading or waiting for a restart; whether Huragok restarts it for one, and how often the server looks; the SteamCMD account; what they take on disk; mod sharing; character mods |
 | Health | the watchdog's state and why, the starts, restarts and crashes of the last 24 hours with their reasons, failed starts, FAULTED and why |
-| Safety | anti-cheat, the VPN block and its lists, admins, bans (and a ban list still shared from before 0.5.0, until its next start) |
+| Safety | anti-cheat, the VPN block and its lists, admins, bans (and a ban list it reads from outside its folder, shared with any server reading it: `start.cmd repair` gives it its own) |
 | Settings | voice channels, text chat, votes, friendly fire, team changing, live reload |
 | Scheduled | autostart, the daily restart, a planned restart, Huragok at boot |
-| Problems and notes | its configuration errors, a failed settings reload, an expired SteamCMD sign-in, a mod update waiting |
+| Problems and notes | its configuration errors, a failed settings reload, an expired SteamCMD sign-in, a mod update waiting, and its warnings, the same as G's |
 
 From the card: **D** its settings, **G** what it plays, **R** restart it, **L** watch
 its console, each with the server already picked; **U** the updates screen and **C**
@@ -34,8 +34,9 @@ reason (`watchdog: degraded (slow in 3 of the last 5 minutes (longest frame 412
 ms))`, `watchdog: critical (4 players connected in 5 minutes and none got in)`),
 `2 restart(s)/crash(es) in 24 h`, `mod update waiting`, and in red (starting `!`)
 what needs you: a settings reload that failed, a SteamCMD sign-in that expired, a
-stop that couldn't end the server's process (`! couldn't stop it: …`), a program
-or Workshop update that keeps failing, until it's fixed.
+stop that couldn't end the server's process (`! couldn't stop it: …`), a mod
+update its map holds up (`! mod update waiting: …: its map is in use`) or that
+restarts didn't put in, until it's fixed.
 
 ## The console: A
 **A** picks a server and opens its console through Huragok's own RCON
@@ -79,13 +80,15 @@ server's lobby and queues a Halo 3 game as the next one. `status`, `players`,
 `kick`, `ban`, `nextmap` on its own and the rest work as usual.
 
 ## Settings: D
-**D** is every setting there is, changed a step at a time: nobody has to know a
-file's format. Each value is asked for on its own, with what's there now listed
+**D** changes Huragok's own settings a step at a time, so nobody has to know a
+file's format: each value is asked for on its own, with what's there now listed
 first (and choices numbered), every change is checked before it's written, and the
-file keeps its comments and layout. D lists Huragok's own files first, by letter,
-then the servers, by their number on the dashboard; Esc goes back a step, and from
-the list back to the dashboard. From a server's status card (V), D goes straight to
-that server.
+file keeps its comments and layout. A server's own `dedicated.toml` is shown, never
+changed: you edit it (**O** opens it), and D shows each setting with what it does
+and the warnings about it. D lists Huragok's own files first, by letter, then the
+servers, by their number on the dashboard; Esc goes back a step, and from the list
+back to the dashboard. From a server's status card (V), D goes straight to that
+server.
 
 | | | |
 | --- | --- | --- |
@@ -94,18 +97,19 @@ that server.
 | **A** | `automod.txt` | Vergil's word list |
 | **N** | `names.txt` | Vergil's banned names |
 | **I** | `intervalmessages.txt` | the interval messages every server says |
-| **1, 2…** | each server | its `dedicated.toml` in groups, Huragok's own settings for it, its playlists, custom games, bans, mods and its own interval messages |
+| **1, 2…** | each server | its `dedicated.toml` in groups (read-only), Huragok's own settings for it, the console's quick action, its bans and its own interval messages |
 
 ### How Huragok runs: S
-`settings.toml` in thirteen groups, each named for whose it is (SUPT, VRGL, HRGK) with
-its most telling values: which servers and who starts them, how the servers are run
-(the backend's own settings and Huragok's console connection), restarts, the
-watchdog, the keepalive, the event log; automod and the moderators' console (relay);
+`settings.toml` in fourteen groups, each named for whose it is (SUPT, VRGL, HRGK) with
+its most telling values: which servers and who starts them (and whether a renamed
+server is followed, `follow_renames`), how the servers are run (the backend's own
+settings and Huragok's console connection), restarts, the watchdog, the keepalive,
+the event log, the stats relay; automod and the moderators' console (relay);
 Huragok's updates, the server program's, Workshop updates, new servers and SteamCMD,
 and its folders and files. Each setting shows its value, `(default)` when the file
 doesn't set it, and what it does. On/off settings and choices (the watchdog's `watch`,
-`act`, `actnow`) are picked; roles (`exempt_roles`) and what new servers share are
-picked by number from the whole list; for a typed value, `-` puts the default back
+`act`, `actnow`) are picked; roles (`exempt_roles`) are picked by number from the
+whole list; for a typed value, `-` puts the default back
 (or takes out a line whose absence means something, such as `mcc_folder`), `none`
 empties a list, and Enter leaves it as it was.
 
@@ -122,8 +126,9 @@ starts, every part's own check included (`check` does the same): `Not changed
 repository' should look like owner/name`. A problem the file had already doesn't
 stop another change. Edits to `settings.toml` apply when Huragok starts again: close
 the window (Q; the servers keep running) and start it again. A server's own Huragok
-settings (autostart, its daily restart, how its Workshop updates install) are on that
-server's page instead, where they're in force at once.
+settings (autostart, its daily restart, priority, Vergil on it, whether it's restarted
+for mod updates) are on that server's page instead (**H**), where they're in force at
+once.
 
 The moderators' console (relay) group also lists **the moderators** (M): add one
 (name, password, role), change a role or a password, or take one out. Passwords are 8
@@ -137,9 +142,11 @@ lists the players Huragok has seen lately (from its records), numbered, so no pl
 ID has to be typed; a player ID can be typed too. One role each: adding a moderator
 who's a member takes them out of the members (as `!promote` does). A command is moved
 to a role by picking it, and switched off (nobody can use it) or on again; `!help`
-can't be switched off. The prefix and the cooldown are here too. Admins are each
-server's own: a server's settings (Safety and admins), or B while it runs. Vergil
-reads the file again within seconds.
+can't be switched off. The prefix and the cooldown are here too. Admins aren't
+here: they're in each server's `dedicated.toml` (`admins`, which you edit; D shows
+them under Safety and admins) or added with B while it runs, and with
+`[automod] across_servers` on, an admin on one server's list is an admin on every
+server. Vergil reads the file again within seconds.
 
 ### Vergil's word list: A
 `automod.txt`, one rule per line, shown as players meet it: its name, its words, and
@@ -191,144 +198,122 @@ The file is one message per line, how often, a bar, then the message:
   one (or one whose time or words changed) starts its clock then.
 - `check` lists every server's messages, and any line it leaves out with why.
 
-Each server folder gets its file as it's made (N); an update gave the servers you
-had one each. A server copied in without one simply has no messages of its own until
-I adds one (which writes the file). There are no in-game commands for them yet.
+A server's own file is Huragok's, not the server's, though it sits in the server's
+folder: being there shows which server it's for. A server without one (a new one, or
+one copied in) simply has no messages of its own until I adds one (which writes the
+file). There are no in-game commands for them yet.
 
 ### A server's settings
-A server's page shows its settings in groups, each with how many it holds and its
-most telling values, then the group's settings with their values, where each comes
-from (this server, `[defaults]`, the file, a table, settings.toml, or the program's
-own default) and what it does:
+A server's page shows its `dedicated.toml` **read-only**: you edit the file, Huragok
+shows and warns. Its settings come in groups, each with how many it holds, its most
+telling values and how many warnings are about it, then the group's settings with
+their values, where each comes from (this server, `[defaults]`, the file, a table, or
+the program's own default) and what it does; a setting the server's program is too
+old for isn't shown. **O** on any group opens the file in your editor.
 
 1. **Joining**: join password, hidden, max/min players, ping limit, load timeout,
    welcome lines, enabled
-2. **What it plays**: a playlist (picked from its playlists), one map and game type
-   (picked from what it can play; with a base map for a Forge map on a mod map), a
-   saved custom game, **campaign co-op** (the mission by name, rally point,
-   difficulty, custom characters, and the campaign modifiers: enemy health and damage,
-   and from Project Reclaimer 0.9.19 sprint, its speed and stamina), or **Halo 3:
-   ODST** (0.9.19): a campaign mission (from a numbered list, with where it starts,
-   the difficulty and the same modifiers) or Firefight (one of ten maps, one of ODST's
-   Firefight game types, the difficulty), picked from what `dedicated content odst`
-   lists for the server. An ODST server needs ODST's files in its game folder (about
-   3.5 GB; `dedicated init --from --maps odst`): when they're missing, D offers to
-   add them from MCC (hard links on the same drive take no space; ODST must be
-   installed in MCC: Steam, MCC, Properties, DLC). A campaign or ODST server holds
-   16 players at most and won't start with more, so D offers to bring `max_players`
-   down first. Switching kind takes the other kind's settings out; a playlist applies
-   from the next vote, a change of kind once nobody is on. Modifiers D doesn't ask
-   about (`skulls`, a number the program's guide doesn't explain yet) are kept as
-   you wrote them
+2. **What it plays**: what its file names (a playlist, `playlists = [...]` by lobby
+   size, one map and game type, a saved custom game, campaign co-op or Halo 3:
+   ODST), shown only; **G** has the rest
 3. **Gameplay**: friendly fire, team changing, the camera (0.9.20: `first_person`
    for everyone, the default, which also puts third-person character mods in first
    person; `player_choice`, each player switching with P; or `third_person` for
    everyone; multiplayer only), votes, trust player games
 4. **Voice and chat**: the voice channels, text chat, chat log
 5. **Safety and admins**: anti-cheat, the VPN block and its lists, admins for every
-   server in the folder and this server's own
+   server in the folder and this server's own (each named with who they are, where
+   Huragok knows: the file keeps the IDs alone)
 6. **Mods and the Workshop**: mod sharing and its upload limit, character mods,
    Workshop items, SteamCMD's program and account
-7. **Updates**: auto_update, the server's Workshop update checks, and how its new
-   Workshop versions are installed (Huragok's own)
-8. **Listing and network**: host names, port, public address, UPnP, stats server,
-   the discovery master (on, port, peers, origin)
+7. **Updates**: auto_update, the server's own Workshop update checks
+   (`update_check_minutes`)
+8. **Listing and network**: host names, port, public address, UPnP, stats server
+   (the relay's address while `[stats] relay` is on), the discovery master
 9. **Remote console**: its password and address, this server's own port and password
-10. **Folders and files**: game files, content, data, the ban list (each checked to be
-    there), live reload
-11. **Huragok's own**: autostart, its own daily restart time (settings.toml: a time,
-    emptied for no daily restart on this server, or `-` to go back to the
-    `[restarts]` one), its processor priority, and **Vergil on this server**:
-    `on`, `dry_run` (it only logs what it would do) or `off` (it leaves this
-    server's chat and names alone), applied at once; `-` goes back to `[automod]`'s.
-    Mutes already decided still follow players here, as `[automod] across_servers`
-    (D → S → Vergil) says. The top line shows each server's (`VRGL … automod (on:
-    Alpha; dry run: Bravo)`), and so does V (Safety → Vergil). See
-    [automod.md](automod.md#vergil-on-each-server)
+10. **Folders and files**: game files, content, data, the ban list, live reload
 
-A choice is picked from a numbered list (team changing: 1 balanced, 2 game_type,
-3 off), never typed. For a typed value, **Enter leaves it as it was**; emptying a
-value that has one asks first, and the console password can't be emptied here
-(Huragok needs the console). Passwords show only as "set (12 characters)", show as
-stars while you type them, and go into `logs/window.log` as `********`.
+Below the groups, **variables set where Huragok runs** that override the file: the
+program reads a `RECLAIMER_DEDICATED_<SETTING>` variable over its `dedicated.toml`,
+and so does Huragok, so each one is listed (`RECLAIMER_DEDICATED_MAX_PLAYERS = 12`)
+and named beside the setting it wins over. That's why a server isn't doing what its
+file says. Each server's process gets them as they are, as it would without
+Huragok. With docker the containers' environment is compose's, and none are listed.
 
-**D refuses a value the server program would refuse**, before anything is written:
-min players above max players, more than 16 players on a campaign or ODST server,
-a host name over 48 characters (or with control characters in it), a stats
-server, public address, master origin or console address in the wrong form, a
-port the discovery master or any server here uses (disabled and left-out ones
-too), a rally point past the mission's last. It also refuses **a setting the
-server's program is too old for**, judged by the version it runs (or else its
-program file's own `--version`): `camera needs Project Reclaimer 0.9.20 or newer
-(this server has 0.9.18)`. The camera needs 0.9.20; ODST, campaign sprint and
-skulls 0.9.19; `trust_player_games`, the customization settings, `no_vanilla_characters`
-and `auto_reload` 0.9.18. (Decision: refused rather than written with a warning,
-since a program that meets a setting it doesn't know won't start.)
+**H** is **Huragok's own for this server** (in `settings.toml`), and these are
+changed here, a step at a time, in force at once: autostart, its own daily restart
+time (a time, emptied for no daily restart on this server, or `-` to go back to the
+`[restarts]` one), its processor priority, whether it's restarted for mod updates
+(`workshop_updates`: `off` leaves it out of `[workshop_updates] restart`), and
+**Vergil on this server**: `on`, `dry_run` (it only logs what it would do) or `off`
+(it leaves this server's chat and names alone); `-` goes back to `[automod]`'s.
+Mutes already decided still follow players here, as `[automod] across_servers`
+(D → S → Vergil) says. The top line shows each server's (`VRGL … automod (on:
+Alpha; dry run: Bravo)`), and so does V (Safety → Vergil). See
+[automod.md](automod.md#vergil-on-each-server).
 
-A change is written in place (`dedicated.toml` keeps its comments; Huragok's own go
-into `settings.toml` and are in force at once). Every write is checked first: the
-change is made in memory and read back, and the file is replaced only if exactly
-that one change differs; otherwise it's left byte for byte as it was and the screen
-says `couldn't change … safely …: edit it by hand (O opens it)`. A setting written in a form
-the editor won't touch (a dotted key such as `rcon.password = …`, an inline table
-such as `rcon = { … }`) is refused the same way. Since Project Reclaimer 0.9.18 the
-server re-reads its file a couple of seconds later, so no restart is needed for most
-of them. The screen says, for each, when it applies:
+A change you make to the file is read by the server a couple of seconds after you
+save it (Project Reclaimer 0.9.18 and later, `auto_reload = true`), so no restart is
+needed for most settings. When each applies:
 
 | Applies | Settings |
 | --- | --- |
 | at once | join password, max/min players, max ping, load timeout, votes, voice (global, team, proximity; admins also switch these in game with `!toggleglobal`, `!toggleteam`, `!toggleproxy`, for a while or for good, and all voice off for 10 minutes with `!togglevoice`), text chat, welcome lines, mod sharing, host name, campaign's trust player games, the folder's admins |
 | from the next game | friendly fire, team changing, the camera (a campaign or ODST server restarts once empty for friendly fire) |
-| from the next vote | the playlist |
+| from the next vote | the playlist, playlists by lobby size |
 | the server restarts by itself once empty | hidden, port, anti-cheat, VPN block, chat log, character mods, enabled, stats server, UPnP, the console password and address, anything about a campaign or ODST server's game |
 | when `dedicated` restarts | auto_update, the Workshop update checks (`update_check_minutes`), SteamCMD's program and account, the VPN lists, public address, the discovery master, the game, content and data folders |
 
-For a setting that applies when `dedicated` restarts, D offers to restart the
-server: **after this game**, **when nobody's on**, **now** (with the usual
-countdown) or **later** (at its next restart).
-
-Welcome lines: one line, or several separated by `|` (up to 5). A setting the
-server sets in its own `[[server]]` block can be taken out again (`-`, or **D** on
-an on/off setting): the `[defaults]` value, or the program's own default, applies
-again. `admins` takes player IDs (64 hexadecimal characters, from the game's
-Settings > Online services > Your player ID).
+For a setting that applies when `dedicated` restarts, restart the server when it
+suits you (**R**, or `start.cmd restart --after-game "<server>"`).
 
 The dashboard's events show the server's answer: `settings reloaded: max_players
 16 → 12`, or `settings NOT reloaded, nothing changed` with what's wrong (which then
-stays in red on the server's line until a reload goes through). Three things change
-live over the console instead of the file, until a restart: `servername`, `password`
-(join) and `maxping`.
+stays in red on the server's line until a reload goes through, and is a Refused
+warning on G and D). A program that meets a setting it doesn't know won't start
+at all, and Huragok says why: when its program is older than the newest release,
+put the newest program in its folder by hand or take that line out (its own
+auto_update can't run before it has read its settings); when it's the newest
+already, the line is a mistake. Three things change live over the console instead
+of the file, until a restart: `servername`, `password` (join) and `maxping`.
 
-Below the groups, by letter, the rest of what the server has:
-- **P its playlists**: the same screen as G's (list, build, edit, use one);
-- **G its custom games**: game types with rules of their own, as on G;
-- **B bans, admins and the VPN block**: as B, for this server;
-- **M mods on or off**: every mod in its content folder, each switched off (kept on
-  disk but not used: `content/disabled-mods.json`) or on again; the server takes it
-  when it restarts, and D offers the restart.
+Below that, by letter, what else the page does:
+- **O** opens its `dedicated.toml` in your editor;
+- **Q** adds the console, shown on a server without an `[rcon]` password: a random
+  24-character `password` under `[rcon]`, and an `rcon_port` of its own only when
+  its game port's number is taken on this PC. It's shown line by line before it's
+  written, and written only on yes, with the file's version kept first (in
+  `records/settings/`). The server uses it from its next start;
+- **B** its bans, admins and the VPN block: as B, for this server;
+- **I** its own interval messages, with the ones for every server named above them;
+- **N** and **C**, below.
 
 Two things on D need the server stopped (X), and say so otherwise (a server
 waiting to be started again after a crash counts as running: "the Superintendent
-is about to restart it (backoff): stop it first (X)"):
-- **rename this server**: its name everywhere it's used: its `[[server]]` block, its
-  block in `settings.toml`, its data folder (logs, chat, status), Huragok's record of
-  it and its console log, and its folder in `SERVERS/` when that's named after it.
-  The folder is renamed first, and if any later step fails every step is put back
-  ("Every step was put back: it's still Alpha"). A new name that would give the
-  same file name as another server's ("LG Slayer" beside "LG-Slayer") is refused;
-- **its own content folder** (shown when it shares one): a copy of the shared
-  `content/` in its own folder, hard-linked on the same drive so no space is used,
-  and its `dedicated.toml` pointed at it. What Huragok writes into it later
-  (imports, Forge layouts, playlists, custom games, vote images) replaces the file
-  rather than writing through the link, so the shared copy never changes with it.
+is about to restart it (backoff): stop it first (X)", and so does another server
+running from the same folder). Each is done only when you ask:
+- **N rename this server**: its name everywhere it's used: its `[[server]]` block,
+  its block in `settings.toml`, its data folder (logs, chat, status), Huragok's
+  record of it and its console log, and its folder in `SERVERS/` when that's named
+  after it. The folder is renamed first, and if any later step fails every step is
+  put back ("Every step was put back: it's still Alpha"). A new name that would
+  give the same file name as another server's ("LG Slayer" beside "LG-Slayer") is
+  refused. A name you change by hand in the file is followed anyway
+  (`follow_renames`), but leaves the program's own data folder behind;
+- **C its own content folder** (shown when it shares one): a copy of the shared
+  content folder in its own folder, hard-linked on the same drive so no space is
+  used, and its `dedicated.toml` pointed at it. What Huragok writes into it later
+  (imports, Forge layouts, copies) replaces the file rather than writing through
+  the link, so the shared copy never changes with it.
 
 ## Open: O
 **O** opens Huragok's folder (the first choice), or one of its files in your editor
 (Notepad on Windows): `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`,
 `intervalmessages.txt`, or a server's: its folder first, then its `dedicated.toml`, its
-own `intervalmessages.txt`, playlists, ban list,
-`disabled-mods.json` and saved game types. For what D doesn't change, or a file to
-put right by hand (D says so when it can't read one).
+own `intervalmessages.txt`, playlists, ban list, `content/disabled-mods.json` when
+there is one, and its saved game types and `.rmeg` modes. That's how a server is
+changed: Huragok shows its files and warns, and you edit them (D says so too when it
+can't read one).
 
 ## Bans, admins and the VPN block: B
 **B** on a running server: the ban list (`bans`), `unban`, a ban of someone who
@@ -371,193 +356,181 @@ it shows the ban list from its folder (`dedicated bans`).
    itself at server restarts: **U**, `start.cmd update` or a newer release tries
    again. When GitHub can't be reached, U says so ("couldn't ask GitHub whether
    there's a newer Huragok: …").
-2. **The server program** (Project Reclaimer), from its releases. Players must be
-   on exactly the server's version, and releases have come out daily, so a server
-   left behind empties out. Each server's `dedicated.toml` decides how it keeps up
-   (D switches it; the dashboard header says `server program 0.9.18 · 2 of 3 update
-   themselves`, and `check` says it for each server):
+2. **The server program** (Project Reclaimer): each server's version, its
+   `auto_update`, the newest release, and the warnings about releases. Nothing is
+   installed here: **each server installs its own releases**, and Huragok never
+   downloads a program or puts one in place. Players must be on exactly the
+   server's version, so a server left behind empties out. Each server's own
+   `dedicated.toml` is the one switch (the dashboard header says `server program
+   0.10.8 · 2 of 3 update themselves`):
    - **`auto_update = true`: the server updates itself.** It looks at the releases
-     when it starts and every hour, checks the download against the release's
-     SHA-256 list, and restarts its game on the new version at once, mid-game; it's
-     back within seconds, and the process Huragok holds stays up through it. The log
-     says `PARDON OUR DUST! Project Reclaimer installed a new release by itself`, then
-     `now on Project Reclaimer <version>`. With `[server_updates] follow = true` (the
-     default) the other self-updating servers then restart after their game: they
-     look for releases as they start, so the whole fleet is on the new version
-     within a game rather than within the hour. A self-updating server needs a copy
-     of the program of its own, in a folder it can write to: `check` says when it
-     hasn't. New servers update themselves (`[setup] auto_update`).
+     as it starts and every hour, and installs a new one by itself. Its own updater
+     doesn't wait for the game to end: it stops the server at once, mid-game, and
+     it's back in its lobby within seconds (17 s on 0.10.7). So Huragok:
+     - **looks too, every 15 minutes** (`[server_updates] check_minutes`), and once
+       a release is out, **restarts each self-updating server after its game**
+       (at once when nobody is on), so it installs the release as it starts instead
+       of having its game cut at its own hourly look. During the game players read,
+       once, `[o_o] PARDON OUR DUST! Project Reclaimer <version> is out. This server
+       restarts for it after this game, so the update lands sooner. Update your game
+       to rejoin.`, then the usual after-game warning. The same happens to the other
+       self-updating servers when one of them updates itself first.
+       `[server_updates] follow = false` turns these restarts off: Huragok then never
+       restarts a server for a release;
+     - **tells players when the server's own updater is about to cut their game**: on
+       `[update] downloading Project Reclaimer <version>` (about 8 s before it stops)
+       they read `[-.-] PARDON OUR DUST! This server is updating to Project
+       Reclaimer <version> and restarts in a few seconds. Update your game to
+       rejoin.`, so they know it isn't a crash. The log says `PARDON OUR DUST!
+       Project Reclaimer installed a new release by itself`, with the game it
+       stopped and how far in, then `now on Project Reclaimer <version>`. The
+       watchdog doesn't count it as a crash;
+     - **moves it off its old program file**: after a self-update the program's
+       supervisor still runs from the old, locked `project-reclaimer.exe.old`,
+       which the next update might not be able to replace, so once nobody is on
+       Huragok restarts the server onto the new file and deletes the old one. A
+       server that doesn't empty for an hour is warned about (R restarts it when it
+       suits you);
+     - **warns** when a server should have updated and didn't: still on the old
+       version 70 minutes after the release (or at once when it says its own update
+       failed), with what its console said. A restart makes it look again as it
+       starts.
 
-     **Huragok makes sure it happened.** It looks at the releases hourly too, and
-     reads what each server's console says about its own updater. When a server
-     says `Automatic update failed; retrying in an hour: …` (or that its update feed
-     is off), or is still on an older version 70 minutes after the release came out
-     and after it had its look, Huragok installs the release for it instead: it
-     downloads and checks it once (`records/program-download/`), restarts the server
-     **after its game**, and puts the new program in place of that server's copy
-     while it's stopped (the old one goes to `records/previous-program/`). The log
-     says why (`[Alpha] its own update failed (…): Huragok installs Project Reclaimer
-     0.9.21 after its game`), the server's line and its card (V) say what's waiting.
-     If the server updates itself in the meantime, Huragok's restart is called off.
-     `[server_updates] fallback = false` only says so.
+     A server Huragok didn't start (found running) is restarted for a release only
+     through its own console's `restart`. On Docker the image is the update, so
+     Huragok only warns ("a new image is out") and restarts nothing.
+   - **`auto_update = false`: pinned on purpose.** The server stays on its version.
+     Huragok says so once, calmly, as a note on G and its card ("Pinned to Project
+     Reclaimer 0.9.23 by its own file"), and nothing more.
+   - **A program older than its `dedicated.toml`** can't start at all: it reads its
+     settings before it looks for releases, and stops at one it doesn't know. Huragok
+     asks the program its version (`--version`) and says what to do: put the newest
+     program in its folder by hand (the release page is named), or take that line
+     out; when it's the newest already, the line is a mistake.
 
-     A program older than its `dedicated.toml` can't start at all: it reads its
-     settings before it looks for releases, and stops at one it doesn't know
-     (0.9.15 at 0.9.20's `auto_reload`), so it can't update itself either. When a
-     start fails like that, Huragok asks the program its version (`--version`): if
-     it's older than the newest release, Huragok puts the newest in place before the
-     next try (`it won't start: Project Reclaimer 0.9.15 is older than its
-     dedicated.toml (it doesn't know `auto_reload`)…`); if it's the newest already,
-     the log says that line of the file is a mistake. With auto_update off it only
-     says what to do.
-
-     After a self-update the process Huragok holds still runs from the old file
-     (`project-reclaimer.exe.old`), which the next update might not be able to
-     replace, so Huragok restarts it on the new file and removes the old one: once
-     nobody is on, or after 30 minutes with the usual countdown warnings.
-   - **`auto_update = false`: Huragok tells you.** Every hour it looks at the
-     releases and compares with the version each running server reports (`server
-     program 0.9.18 (0.9.19 out: U)`). When you say so (**U**, or `start.cmd update
-     --program [--now]`), it downloads `project-reclaimer-dedicated-v<version>.exe`,
-     checks it against the release's `SHA256SUMS.txt`, puts it in place of those
-     servers' copies and the root's (the old ones go to `records/previous-program/`),
-     never over a copy that is that version or newer already (a pre-release
-     someone put in is left alone: its settings may need it), and restarts each
-     server whose copy it replaced **after its game** (players read `[o_o] CONSTRUCTION AHEAD! EXPECT
-     DELAYS! This server restarts after this game: updating to <version>.`), or now.
-     `[server_updates] install = "after_game"` does it by itself; `"now"` restarts
-     at once. U also reaches any self-updating server still behind, and asks the
-     program copy of every server with auto_update off for its `--version`, so a
-     stopped server's old program is offered too. A copy whose answer can't be read
-     is never replaced, and one that doesn't answer isn't counted as behind
-     (decision).
-   - **How a copy is replaced.** The new program is written beside the old as
-     `<file>.new`, then renamed into place, so a crash never leaves half a
-     program; when several copies are replaced and one can't be, the ones already
-     replaced are put back. The download is checked against its size as well as
-     its SHA-256. A release GitHub withdraws is dropped (its download, its planned
-     restarts) and never installed. When Huragok's own install for a stopped
-     server (the step-in above, or a program older than its file) can't replace
-     the file (an antivirus or Controlled Folder Access holding it: the log says
-     so), the server starts on its old program and Huragok tries again after 1
-     hour, 4 hours and 12 hours, each try one more restart after a game, then
-     stops and waits for you: the server's line says `! Project Reclaimer 0.9.21
-     didn't install (4 tries): U to try again` (decision).
-   - `auto_update` is the only switch. 0.2.1's `[process] disable_auto_update` does
-     nothing any more; `check` and the dashboard name it while it's still in
-     `settings.toml`.
-3. **Workshop mods**: every item's installed version and Steam's newest, and the
-   new versions that are waiting, installed after the game or now (see below).
-   Installing one here also tries again a version Huragok had stopped trying. Servers
-   that share a content folder are refused here: the server program installs the
-   new version for all of them once nobody's on.
+   `start.cmd update --program` shows the same from a terminal: the newest release
+   and where each server stands. Before 0.7.0 Huragok installed releases itself
+   (`[server_updates] install`, `fallback`, `update --program --now`): the update
+   takes those settings out of `settings.toml` (a value you'd set stays as a comment
+   saying where it went), and they do nothing.
+3. **Workshop mods**: every item's installed version and Steam's newest, what each
+   server is doing about it (downloading, waiting for a restart, installed), and the
+   warnings. When a downloaded update waits for a restart (its map is in use), **R**
+   restarts that server's game now to put it in: players are told, then dropped, and
+   join again (see below).
 4. **Clean up**: what updates and mods leave behind, each with its size, numbered to
-   pick from, in this order: program files an update set aside
+   pick from, in this order: program files a self-update set aside
    (`project-reclaimer.exe.old`) and content folders set aside when a server got its
-   own, in each folder; the older sets in `records/previous-program/` (the newest
-   stays); older Huragok versions in `records/previous-*` (the newest by version
-   number stays, 0.2.10 after 0.2.9, and so does the one the last update made); a
-   mod's old copy a Workshop update left (only when the live copy is whole: the old
-   one may otherwise be the only one left) or a partial new copy it set aside; and
-   SteamCMD's copies of mods no server lists any more. Chat logs and settings are
-   never offered. A file still in use is kept and says why.
+   own, in each folder; the older sets in `records/previous-program/` (program copies
+   Huragok replaced before 0.7.0; the newest stays); older Huragok versions in
+   `records/previous-*` (the newest by version number stays, 0.2.10 after 0.2.9, and
+   so does the one the last update made); a mod's old copy an update from before
+   0.7.0 left (only when the live copy is whole: the old one may otherwise be the only
+   one left) or a partial new copy it set aside; and SteamCMD's copies of mods no
+   server lists any more. Chat logs and settings are never offered. A file still in
+   use is kept and says why.
 
-## Workshop mods: new versions after the game
-The server program keeps the Workshop items it lists (`[workshop] items`) up to
-date by itself, but it installs a new version only once nobody is on a server that
-uses the mod. A busy server may never get there, and meanwhile players who already
-have the new version can't join it. With `[workshop_updates] install =
-"after_game"` (the default) the Superintendent does it at the end of a game:
+## Workshop mods: the servers update them, Huragok restarts
+Each server keeps the Workshop items its `dedicated.toml` lists (`[workshop] items`)
+up to date by itself: it looks 6 s after it starts and then every
+`update_check_minutes` (in its `[workshop]` table: 5 at least, 60 unless set, 0
+off), downloads a new version during a game, and installs it between games. A server
+whose game doesn't use the mod installs it at once, even with players on. Huragok
+writes nothing into the server's files for this (not `items`, not
+`update_check_minutes`) and runs no SteamCMD of its own. It reads each mod's version
+the way the program does (`reclaimer-installed.json`).
 
-1. Every `check_minutes` (5) it asks Steam's public Workshop details for each item
-   and compares them with the version each server installed. The server saying it
-   downloaded a new version counts too. The server's dashboard line shows `mod
-   update waiting: <mod> (<date>); installs after this game`.
-2. It plans a restart after the game. Players read `[^_^] YOUR TAX DOLLARS AT WORK!
-   A new version of <mod> is out: this server restarts after this game to put it in.`,
-   and get the short after-game warning once it ends. With nobody on it restarts at
-   once, and the log says so: `nobody is on, so it restarts now: installing a new
-   version of <mod>`. On Discord, the info channel gets `Mod update installed: <mod>
-   <old date> → <new date>` once it's in.
-3. With the server stopped (the dashboard says PREPARING), the old copy is moved
-   aside and `dedicated mods` fetches the new version: about a minute, much less
-   when the server already downloaded it during the game. Then the server starts.
-   If the fetch fails (an expired SteamCMD sign-in, Steam down), or brings back the
-   version it had, the old copy goes back, the server starts on it, and the new
-   version is tried again after a later game: at most 3 tries per version, each one
-   more restart after a game (decision). Then the log says `… didn't install after
-   3 tries …; Huragok stops trying that version until a newer one comes out. To try
-   again: U -> Workshop mods`, and the server's line says so too.
+**Except over a mod's map in use.** A server's game keeps a mod's map open from the
+first time it plays it, so on a server that plays the mod's map (every HugeGrass
+server, say) the install fails every 5 seconds, for good, with players on or not:
+`installing the update failed (cannot move … aside: Access is denied …)`. A restart
+of its game is all it takes: the program's supervisor keeps the download and puts it
+in in the second before the new game opens the map. So with `[workshop_updates]
+restart = true` (the default), that line sets Huragok off:
 
-PREPARING always ends in a start: each job before a start (this one, or a new
-program) has 20 minutes, then the server starts anyway; **X** while it's PREPARING
-calls the jobs off and leaves it stopped (what they hadn't finished waits for the
-next start). A restart planned after a game is dropped if the server restarts
-anyway first (the daily restart, a crash, a stop), so it never restarts twice; its
-job still runs at the next start.
-A job cut short by Huragok closing or crashing mid-fetch never leaves a server
-without its mod: the old copy goes back at once, or as Huragok next starts.
+- **Nobody on:** it restarts the server's game at once (the console's `restart`).
+  Back in its lobby within seconds, and not counted as a crash.
+- **Players on:** the line comes as the game ends, since the server only tries
+  between games. Players read `[-.-] PARDON OUR DUST! Restarting for a mod update:
+  the new version of <mod> goes in now. Join again in a minute.`, and about 3 s
+  later it's `restart now`. They're dropped and rejoin as they first joined: there's
+  no waiting room while a server restarts.
+- It waits for `updated to the version … between games`. If the install still
+  fails, it restarts once more, then only warns (`<mod>: 2 restart(s) didn't put the
+  new version in…`): something else may hold the map open. A stop and start doesn't
+  help (a cold start opens the map before the update goes in), so R on **U →
+  Workshop mods** restarts its game again once that's closed.
 
-Each server with Workshop items also gets `update_check_minutes = 5` in its
-`[workshop]` table (from its next restart), so it downloads new versions during the
-game. `"when_empty"` leaves it to the server's own way, `"off"` to you; one server
-can differ with `workshop_updates = "..."` in its `[[server]]` block in
-`settings.toml`. Servers that share one content folder are always left to the
-server's own way: it swaps the mod for all of them at once.
+`restart = false` leaves it to you: Huragok only warns that the update is waiting.
+One server can differ: `workshop_updates = "off"` in its `[[server]]` block in
+`settings.toml` (D → the server → H).
+
+**Servers sharing a content folder** (one folder with several servers, or folders
+whose `content` names the same path) can't install while any of them has the map
+open, only one of them downloads an update at a time, and restarting only one fails.
+Huragok handles them as one group:
+
+1. Nobody on any of them: their games are restarted at the same moment (one
+   install, all back within seconds).
+2. Otherwise: the ones with nobody on are stopped, so nobody joins them meanwhile;
+   each busy one is stopped as its game ends (its players read `Stopping for a mod
+   update: this server is back once the new version of <mod> is in. Join again in a
+   few minutes.`). When only one is left up and it's the one holding the download,
+   it's restarted instead, and the others start already up to date. Otherwise, once
+   the last is down, they're all started, and restarted again once one of them says
+   a new version was downloaded.
+
+With no limit on how long a game runs, the stopped ones stay off for as long as the
+busiest game runs (hours, for a Forge session): the window says which server's game
+holds the group up and for how long, so you can step in (end the game early with its
+console's `endgame`). One server in the group with `workshop_updates = "off"` holds
+the whole group: Huragok only warns, naming it. A server in the group that Huragok
+didn't start is never stopped: the group's update then goes in once nobody is on any
+of them, when they're restarted together.
+
+**Warnings** say the rest, on G, D, the card and in `huragok.log`: a mod with a new
+version on Steam that the server is still downloading (players who already have the
+new version can't join until the server has it too: their game says "this PC's copy
+is a different version from the host's"), an update waiting and why, a download kept
+beside the installed copy (every Workshop mod is kept twice per server folder) with
+its size, and a leftover `.workshop-*` folder (1 GB or so) from a server that was
+ended or crashed rather than stopped cleanly, to delete while no server on that
+content folder is updating. On Discord, the info channel gets `Mod update installed:
+<mod> <old date> → <new date>` once it's in.
 
 When SteamCMD's sign-in has expired, the server's line says so in red: press **I**
-to sign in again. A server whose SteamCMD can't fetch anything here (one copied in
-from another PC names a SteamCMD that isn't on this one, or an account with no saved
-sign-in here) isn't restarted for a new version at all: the update waits, its line
-says `it can't be fetched: … press I`, and players aren't told anything. Once I has
-set SteamCMD up, the next look at Steam plans it as usual.
+to sign in again. A server whose `[workshop] steamcmd` isn't on this PC (one copied
+in from another PC) can't fetch its items at all: that's a warning, and **I → L** or
+`start.cmd steam lines "<server>"` writes this PC's SteamCMD lines into it, shown
+first.
 
-## Workshop mods Huragok finds: taken over, fetched, layouts kept
-The server program only keeps up to date the items its `[workshop] items` list. A
-mod copied into `content/Mods` by hand (from MCC's Workshop folder, or downloaded on
-the side) works, but nothing ever updates it; neither does a Workshop item taken out
-of the list, whose folder stays in `content/Mods/Workshop` and which the server loads
-all the same. Huragok looks at every server's mods once a minute:
+## Mods Huragok finds: warned about
+The server program only keeps up to date the items its `[workshop] items` list.
+Huragok looks at every server's mods and warns, changing nothing:
 
 - **A hand copy that names a Workshop item** (its `ModInfo.json` does, as every
-  Workshop upload's does) is taken over, with `[workshop_updates] adopt = true` (the
-  default). While the server runs, the Workshop's own copy is fetched beside it (a
-  `.huragok-workshop-staging` folder next to the content folder). Then, after the
-  game (at once with nobody on, and while it's stopped right away), the hand copy
-  moves to `content set aside` next to the content folder (nothing is deleted), the
-  fetched copy takes its place in `content/Mods/Workshop/<item>`, the item is added
-  to `[workshop] items`, and the server starts on it. Players read `[^_^] YOUR TAX
-  DOLLARS AT WORK! This server restarts after this game to bring <mod> up to date.`
-  Playlists keep working: the server already named the hand copy's maps
-  `workshop:<item>/<map>`. From then on it gets new versions like any listed item.
-- **Left as they are**, each said once in the log: a mod switched off in
-  `disabled-mods.json`, one for another game, one Steam doesn't list publicly (an
-  author's own hidden upload), one whose maps aren't the item's (your own version of
-  a map that kept its ID: `its maps (…) aren't the item's: a mod of its own`,
-  remembered so it isn't fetched again until its `ModInfo.json` changes), any in a
-  content folder several servers share, and every one on a server whose Workshop
-  updates are `off`.
-- **The program's own copy that isn't listed** is listed again, with no restart:
-  `… is in its content folder (Mods/Workshop/<item>) but wasn't in [workshop] items:
-  the server loads it all the same, so it's listed now and kept up to date.` To stop
-  using a mod, remove it in **G → the server → Workshop and mods → R**: that also
-  switches its files off in `disabled-mods.json`, so the server stops loading it and
-  Huragok doesn't list it again. Adding it back (**A**) switches it on again.
-- **An item added to `[workshop] items`** (in the window, with `workshop add`, or in
-  the file) is fetched at once: a stopped server's with `dedicated mods`, so it's
-  ready as the server starts. A running server fetches its own (auto_reload); with
-  auto_reload off it's fetched beside it and put in place for its next start. A fetch
-  that fails is tried again 10 minutes later, 3 times at most; adding it again tries
-  again at once.
-- **Forge layouts**: with `[workshop_updates] layouts = true` (the default), the saved
-  Forge maps each mod ships (its `Project Reclaimer Layouts` folder) are copied into
-  `content/Maps/<mod>/` and follow the mod's new versions, before the server starts on
-  one. A layout you changed there is left as you made it (delete it to get the mod's
-  again); one you deleted stays deleted; one that was there before and differs (copied
-  with L from an older version) is replaced, the old one kept in `content set aside`.
+  Workshop upload's does) but isn't in `items`: nothing ever updates it. Add the item
+  to `items` and take the copy out: the server fetches and updates listed mods itself
+  (its own check does it too).
+- **The program's own copy of an item taken out of `items`** (it stays in
+  `content/Mods/Workshop/<item>`): the server still loads it and never updates it.
+  Add the item back, or move the folder out if it isn't wanted.
+- **Mods found only in this PC's own Steam Workshop folder**: Steam updates or
+  removes those on its own schedule; to keep one, list its item in `items`.
 
-`records/workshop-mods.json` remembers the layouts Huragok wrote, the mods it left
-as they are and why, and the last 50 it took over.
+An item you add to `items` is fetched by the server itself: a running server a couple
+of seconds after the file changes (auto_reload), a stopped one as it starts, or now
+with **G → 4 → I** (`start.cmd workshop -s "<server>" install`, which runs
+`dedicated mods`). A mod's own Forge layouts (its `Project Reclaimer Layouts`
+folder) aren't read by the server: **G → 4 → L** copies them into `content/Maps/<mod>/`
+when you ask.
+
+Before 0.7.0 Huragok took over hand copies, listed the program's own copies again,
+switched mods off in `disabled-mods.json` and swapped new versions in itself after
+the game (`[workshop_updates] install`, `adopt`, `layouts`, `check_minutes`). The
+update takes those settings out of `settings.toml` (a value you'd set stays as a
+comment), and adds `restart`: `false` where you had `install = "off"`. What Huragok
+had written into a server's files stays, listed once on the server (X dismisses it).
 
 ## Is each mod good to go?
 The server program says little about a mod, and only once a game or a start reaches
@@ -578,13 +551,33 @@ each, **good to go** or what's wrong:
   multiplayer maps in the game folder.
 - **note**: worth knowing, nothing to fix (one map file name in two mods).
 
-Where you see it: **G**, the server, **3** (Workshop items and mods) lists every mod
-with its verdict; `check` has a Mods section; and the log says each mod's verdict
-as Huragok starts, then again whenever it changes (it looks every 10 minutes and
-just after a Workshop item installs). While a server runs, what it says about mods
-it couldn't use (characters left out, a mod package it can't share, too many mod
-maps for one session, Forge objects left out…) is logged once a start with a `why:`
-line, and a Workshop download or install that fails says what to do.
+Where you see it: **G**, the server, **4** (Mods) lists every mod with its verdict;
+`check` has a Mods section; and the log says each mod's verdict as Huragok starts,
+then again whenever it changes (it looks every 10 minutes and just after a Workshop
+item installs). While a server runs, what it says about mods it couldn't use
+(characters left out, a mod package it can't share, too many mod maps for one
+session, Forge objects left out…) is logged once a start with a `why:` line, and a
+Workshop download or install that fails says what to do.
+
+## Stats and the relay switch
+Leaderboards, `/stats`, `!stats` and the kill feed come from Huragok's **stats
+relay** (not the moderators' console below). After each finished game a server
+reports it to Project Reclaimer's stats service (its `stats_server`). While
+`[stats] relay = true` (the default) and Huragok runs, each server's `stats_server`
+points at Huragok on this PC (from the server's next start), which passes every
+report on to the real service unchanged, passes the answer back the same way, and
+keeps a copy. Players' ranks are recorded as before. When Huragok stops, every
+server's `stats_server` goes back to what it was (`records/temp-stats-capture.json`
+keeps it), so a server restarted meanwhile reports straight to the service; Huragok
+points it at itself again as it starts. If the service ever turns down two reports
+in a row that came through Huragok, Huragok puts that server's `stats_server` back
+for good: players' ranks come first. A server set to report nowhere (`"off"`) isn't
+touched.
+
+With `relay = false`, every server's own `stats_server` goes back as it was at once,
+and Huragok never touches it again. Leaderboards and the kill feed then get nothing
+new, and every server says so (a note on G, D and its card). It's the only line of a
+server's `dedicated.toml` that Huragok changes by itself, and only while this is on.
 
 ## A console for moderators elsewhere: the relay
 Moderators who aren't at this PC normally use the official RCON client against

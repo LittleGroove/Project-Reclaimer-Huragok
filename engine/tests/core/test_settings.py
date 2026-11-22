@@ -84,12 +84,15 @@ def test_no_servers_yet_is_not_an_error(tmp_path: Path) -> None:
     assert settings.servers == [] and settings.servers_folder == (root / "SERVERS").resolve()
 
 
-def test_rcon_off_is_a_server_error_not_a_crash(tmp_path: Path) -> None:
+def test_no_console_is_a_warning_and_the_server_still_starts(tmp_path: Path) -> None:
+    """0.7.0, answer 7: a server with no [rcon] password is started and kept on (watched through its status.json),
+    and warned about, naming the line to add. It used to be an error that kept it from starting."""
     root = tmp_path / "reclaimer"
     write_server_folder(root / "SERVERS" / "Quiet", 39176, name="Quiet", rcon_password=None)
     settings = load(write_settings(root))
-    assert settings.servers[0].errors and "RCON is off" in settings.servers[0].errors[0]
-    assert settings.servers[0].rcon_endpoint() is None
+    server = settings.servers[0]
+    assert server.errors == [] and server.rcon_endpoint() is None
+    assert server.warnings == [("no-console", {})]
 
 
 def test_instance_json_wins(tmp_path: Path) -> None:
@@ -206,7 +209,7 @@ def _root(tmp_path: Path, body: str, servers: list[tuple[str, int]] | None = Non
                                        "slow_frames?)"),
     ('[[relay.user]]\nname = "Alice"\npassword = "a long passphrase"\npasswd = "x"',
      "[[relay.user]] passwd isn't a setting"),
-    ("[setup]\nshares = [\"game\"]", "(did you mean share?)"),
+    ("[setup]\nsteamcmds = \"\"", "(did you mean steamcmd?)"),
     # Like nothing here: most often a newer version's, left by an update that was put back (the simulation's
     # finding 6, 26 October), and said so.
     ("[updates]\nnightly_channel = true", "[updates] nightly_channel isn't a setting, so it does nothing in Huragok "
@@ -320,21 +323,54 @@ def test_timing_settings_have_a_least_value(tmp_path: Path, body: str, message: 
         load(_root(tmp_path, body))
 
 
+@pytest.mark.parametrize("body, minutes", [
+    ("", 15.0),  # 0.7.0: every 15 minutes (answer 27)
+    ("[server_updates]\ncheck_minutes = 30\n", 30.0),
+    ("[server_updates]\ncheck_hours = 2\n", 120.0),  # an older settings.toml: its hours, in minutes
+    ("[server_updates]\ncheck_hours = 2\ncheck_minutes = 20\n", 20.0),  # the new one wins
+    ("[server_updates]\ncheck_minutes = 1\n", 5.0),  # never more often than every 5 minutes
+])
+def test_how_often_huragok_looks_for_a_release(tmp_path: Path, body: str, minutes: float) -> None:
+    assert load(_root(tmp_path, body)).server_updates.check_minutes == minutes
+
+
+def test_the_retired_program_update_settings_are_read_and_ignored(tmp_path: Path) -> None:
+    """[server_updates] install and fallback did something until 0.7.0 (Huragok put releases in place): a host's
+    settings.toml that has them, whatever their value, still loads, and they aren't called mistakes."""
+    settings = load(_root(tmp_path, '[server_updates]\ninstall = "later"\nfallback = "maybe"\nfollow = false\n'))
+    assert settings.server_updates.follow is False and not hasattr(settings.server_updates, "install")
+    assert not hasattr(settings.server_updates, "fallback")
+    assert not any("install" in line or "fallback" in line for line in settings.retired)
+
+
 def test_values_older_versions_wrote_are_named(tmp_path: Path) -> None:
     settings = load(_root(tmp_path, '[watchdog]\nmode = "watch"\nslow_frames = "watch"\n'
-                                    '[setup]\nshare = ["game", "content", "bans"]\n'
                                     '[server_updates]\ncheck_hours = 6\n'
                                     '[updates]\nrepository = "LittleGroove/Project-Reclaimer-Server-Supervisor"\n'))
     notes = "\n".join(settings.notes)
     assert '[watchdog] mode = "watch" is what 0.1 and 0.2.0 wrote: the watchdog only logs' in notes
     assert "Since 0.2.1 the default is \"act\"" in notes
     assert '[watchdog] slow_frames = "watch" is 0.2.1\'s one switch' in notes
-    assert '[setup] share = ["game", "content", "bans"] is what 0.2.0 and 0.2.1 wrote' in notes
     assert "[server_updates] check_hours = 6 is what 0.2.0 and 0.2.1 wrote" in notes
+    assert "replace the line with check_minutes = 15" in notes
     assert "old name of Huragok's repository" in notes
     assert settings.retired == [] and settings.problems == []  # legal choices: notes, never problems
-    today = load(_root(tmp_path, '[watchdog]\nmode = "act"\n[setup]\nshare = ["game", "bans"]\n'))
+    today = load(_root(tmp_path, '[watchdog]\nmode = "act"\n'))
     assert today.notes == []
+
+
+def test_the_new_server_settings_0_7_0_retired_are_read_past_and_named(tmp_path: Path) -> None:
+    """[setup] share, packages_folder, auto_update and download_game_files do nothing since 0.7.0 (a new server is the
+    program's own `dedicated init`; game files are got when the host asks): a host's file with them, any value, even
+    one 0.6 refused, still loads, and `check` names each with what to do."""
+    settings = load(_root(tmp_path, '[setup]\nshare = ["maps"]\npackages_folder = "Mine"\nauto_update = "yes"\n'
+                                    'download_game_files = false\nmcc_folder = ""\n'))
+    assert settings.setup.mcc_folder == "" and settings.packages_folder == settings.home / "PACKAGES"
+    retired = "\n".join(settings.retired)
+    for key in ("share", "packages_folder", "auto_update", "download_game_files"):
+        assert f"settings.toml [setup] {key} does nothing any more" in retired
+    assert "isn't a setting" not in retired and settings.notes == [] and settings.problems == []
+    assert not hasattr(settings.setup, "share") and not hasattr(settings.setup, "download_game_files")
 
 
 def test_a_retired_setting_is_named_under_the_section_it_is_in(tmp_path: Path) -> None:

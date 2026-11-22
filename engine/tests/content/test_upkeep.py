@@ -1,5 +1,5 @@
-"""The upkeep screens: every setting in groups (D: what it plays, Huragok's own, renaming, a content folder of its
-own), the status card (V), and what the dashboard's line says about a server's health."""
+"""The upkeep screens: every setting in groups (D: what it plays, shown only; Huragok's own, renaming, a content
+folder of its own), the status card (V), and what the dashboard's line says about a server's health."""
 
 from __future__ import annotations
 
@@ -14,21 +14,18 @@ from conftest import free_port, staff, write_root
 from testkit import os_as
 from testkit.fleet import FakeBackend, FakeClient
 from testkit.screens import text_of
-from testkit.setup import ALPHA, SetupController, setup_root
+from testkit.setup import ALPHA, SetupController, setup_root, write_plays
 from testkit.upkeep import menu_on
 
-from huragok.content.catalogue import Catalogue, Entry
 from huragok.core.events import EventBus
 from huragok.core.settings import load
 from huragok.core.tomledit import read_toml, set_top_key
 from huragok.games import files as game_files
-from huragok.program import plays
 from huragok.program import settings as ls
 from huragok.servers.fleet import Fleet
 from huragok.servers.server import ServerRecord
 from huragok.servers.state import ServerState
 from huragok.window import statuscard
-from huragok.window.dashboard import Menu
 
 
 
@@ -45,7 +42,7 @@ def test_every_setting_has_a_group_a_default_or_a_reason(tmp_path: Path) -> None
     entries = {(s.key, s.scope): (v, w) for s, v, w in ls.catalogue(server.config_path, server.name, settings)}
     assert entries[("autostart", "huragok")] == (True, "default")
     assert entries[("daily_restart", "huragok")] == ("", "[restarts]")
-    assert entries[("workshop_updates", "huragok")] == ("after_game", "[workshop_updates]")
+    assert entries[("workshop_updates", "huragok")] == ("on", "[workshop_updates]")
     assert entries[("plays", "plays")][0] == server.plays and entries[("load_timeout", "server")] == (30, "default")
     assert entries[("rcon_port", "server")] == (server.game_port, "its game port")
     assert ls.summary(list(ls.catalogue(server.config_path, server.name, settings)), "joining").startswith("password")
@@ -63,10 +60,10 @@ def test_every_setting_has_a_group_a_default_or_a_reason(tmp_path: Path) -> None
     assert ls.check_path(ls.find("game"), server.folder, "game") is None
     assert ls.check_path(ls.find("bans"), server.folder, "bans.json") is None
     # A server plays one kind of thing: writing one takes the others out.
-    plays.write_plays(server.config_path, server.name, {"map": "Guardian", "game": "Slayer"})
+    write_plays(server.config_path, server.name, {"map": "Guardian", "game": "Slayer"})
     block = read_toml(server.config_path)["server"][0]
     assert block["map"] == "Guardian" and "playlist" not in block
-    plays.write_plays(server.config_path, server.name, {"campaign": {"mission": 3030, "difficulty": "heroic"}})
+    write_plays(server.config_path, server.name, {"campaign": {"mission": 3030, "difficulty": "heroic"}})
     block = read_toml(server.config_path)["server"][0]
     assert "map" not in block and "game" not in block and ls.plays_of(block) == "campaign Tsavo Highway (heroic)"
     with pytest.raises(ValueError):
@@ -75,77 +72,55 @@ def test_every_setting_has_a_group_a_default_or_a_reason(tmp_path: Path) -> None
 
 # D --------------------------------------------------------------------------------------------------
 
-def preset(content: Path, name: str = "BR Slayer") -> Path:
-    path = content / "Game Modes" / "br-slayer.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"version": 1, "name": name, "mode": "Slayer", "rules": {}, "options": {"map.weapons": 9}}),
-                    encoding="utf-8")
-    return path
+def test_what_a_server_plays_is_shown_in_d_and_set_by_hand(tmp_path: Path, run, monkeypatch) -> None:
+    """0.7.0: D's What it plays shows its value, read-only like every group of the server's own file: no question,
+    O opens the file to change it by hand, and nothing is written."""
+    from huragok.core import desktop
 
-
-def test_what_a_server_plays_is_picked_from_lists(tmp_path: Path, run, monkeypatch) -> None:
     settings_path = setup_root(tmp_path)
     controller = SetupController(settings_path)
     server = controller.settings.servers[0]
-    preset(server.content_dir)
-    small = Catalogue(maps=[Entry("Guardian", "Guardian", "map"), Entry("Valhalla", "Valhalla", "map")],
-                      game_types=[Entry("Slayer", "Slayer", "game type"), Entry("Oddball", "Oddball", "game type")])
-
-    async def catalogue(self: Any, tool: Any, settings: Any, server: Any) -> Catalogue:
-        return small
-
-    monkeypatch.setattr(Menu, "_catalogue", catalogue)
+    before = server.config_path.read_text(encoding="utf-8")
+    opened: list[Path] = []
+    monkeypatch.setattr(desktop, "open_path", lambda p: opened.append(p) or f"opened {p}")
     keys = ["1", "ENTER",  # Alpha
-            "2", "ENTER", "Y", "W",  # What it plays (its only setting)
-            "2", "2", "ENTER", "2", "ENTER", "x", "ESC",  # one map and game type: Valhalla, Oddball
-            "2", "ENTER", "Y", "W", "3", "1", "ENTER", "1", "ENTER", "x", "ESC",  # a saved custom game: BR Slayer, on Guardian
-            "2", "ENTER", "Y", "W", "4", "3", "ENTER", "1", "ENTER", "3", "N", "Y", *"200", "ENTER", "ENTER", "ENTER",
-            "ENTER", "N", "x", "ESC",  # campaign: Tsavo Highway, rally point 1, heroic, modifiers: health 200%, no sprint
-            "2", "ENTER", "Y", "W", "1", "1", "ENTER", "x", "ESC",  # back to a playlist
-            "ESC", "ESC"]
+            "2", "ENTER",  # What it plays (its only setting): shown, no question
+            "O", "ENTER", "x",  # O opens its dedicated.toml
+            "ESC", "ESC", "ESC"]  # back out of the group, the server's page and D's list
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
-    text = text_of(terminal)
-    assert "now plays Oddball on Valhalla" in text and "now plays BR Slayer on Guardian" in text
-    assert "now plays campaign Tsavo Highway (heroic)" in text and "now plays playlist slayer" in text
-    kind_change = "once nobody is on (the server restarts by itself when the kind of game changes)"
-    assert f"now plays Oddball on Valhalla: {kind_change}" in text  # it played a playlist
-    assert "now plays BR Slayer on Guardian: from the next game" in text  # one map and game again: the next game
-    assert "now plays campaign Tsavo Highway (heroic): once nobody is on" in text
-    assert f"now plays playlist slayer: {kind_change}" in text
-    block = read_toml(server.config_path)["server"][0]
-    assert block["playlist"] == "playlists/slayer.playlist.json" and not {"map", "game", "variant", "campaign"} & set(block)
-
-
-def test_campaign_values_are_kept(tmp_path: Path, run) -> None:
-    settings_path = setup_root(tmp_path)
-    controller = SetupController(settings_path)
-    server = controller.settings.servers[0]
-    keys = ["1", "ENTER", "2", "ENTER", "Y", "W", "4", "9", "ENTER", "0", "ENTER", "4", "Y", "N", "x", "ESC", "ESC", "ESC"]
-    menu, terminal = menu_on(controller, keys)
-    run(menu.screen_settings())
-    assert read_toml(server.config_path)["server"][0]["campaign"] == {"mission": 3120, "insertion": 0,
-                                                                       "difficulty": "legendary",
-                                                                       "custom_characters": True}
+    text = " ".join(text_of(terminal).split())
+    assert "playlist slayer" in text and "Change what it plays?" not in text and "Which setting?" not in text
+    assert "read-only · O opens dedicated.toml in your editor" in text
+    assert opened == [server.config_path]
+    assert server.config_path.read_text(encoding="utf-8") == before
 
 
 def test_choices_are_numbered_and_huragoks_own_go_through_the_window(tmp_path: Path, run) -> None:
+    """0.7.0: a group of the server's own file is shown, never changed; Huragok's own for the server (H) change a step
+    at a time, a choice from a numbered list, each through the supervisor, workshop_updates with them."""
     settings_path = setup_root(tmp_path)
     controller = SetupController(settings_path)
     server = controller.settings.servers[0]
+    before = server.config_path.read_text(encoding="utf-8")
     keys = ["1", "ENTER",
-            "3", "ENTER", "2", "ENTER", "3", "ESC",  # Gameplay -> team changing -> 3: off
-            *"11", "ENTER", "2", "ENTER", *"4:30", "ENTER", "1", "ENTER", "N", "ESC",  # Huragok's own
-            "7", "ENTER", "3", "ENTER", "2", "ESC",  # Updates -> workshop_updates -> 2: when_empty
-            "ESC", "ESC"]
+            "3", "ENTER", "ESC",  # Gameplay: shown, nothing to change
+            "H", "ENTER",  # Huragok's own
+            "2", "ENTER", *"4:30", "ENTER",  # daily_restart 04:30
+            "1", "ENTER", "N",  # autostart off
+            "3", "ENTER", "4",  # priority -> 4: normal
+            "5", "ENTER", "2",  # workshop_updates -> 2: off
+            "ESC", "ESC", "ESC"]
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
-    assert read_toml(server.config_path)["server"][0]["team_changing"] == "off"
+    assert server.config_path.read_text(encoding="utf-8") == before
     assert controller.calls == [("server_setting", ALPHA, {"key": "daily_restart", "value": "04:30"}),
                                 ("server_setting", ALPHA, {"key": "autostart", "value": False}),
-                                ("server_setting", ALPHA, {"key": "workshop_updates", "value": "when_empty"})]
+                                ("server_setting", ALPHA, {"key": "priority", "value": "normal"}),
+                                ("server_setting", ALPHA, {"key": "workshop_updates", "value": "off"})]
     text = text_of(terminal)
-    assert "Huragok's own" in text and "[1] balanced" in text and "Takes effect: at once: Huragok's own setting" in text
+    assert "team_changing" in text and "Huragok's own" in text and "[4] normal" in text
+    assert "Takes effect: at once: Huragok's own setting" in text
 
 
 def test_huragoks_own_settings_are_written_and_in_force(tmp_path: Path) -> None:
@@ -181,7 +156,7 @@ def test_a_stopped_server_can_be_renamed_and_given_its_own_content(tmp_path: Pat
     (root / "records" / "servers" / "alpha-server.json").write_text("{}", encoding="utf-8")
     controller = SetupController(settings_path)
     keys = ["1", "ENTER",
-            "O", "ENTER", "Y", "x",  # its own content folder
+            "C", "ENTER", "Y", "x",  # its own content folder
             "N", "ENTER", *"Gamma Server", "ENTER", "x", "ESC"]  # then a new name; back out of D's list
     menu, terminal = menu_on(controller, keys)
     run(menu.screen_settings())
@@ -213,8 +188,8 @@ def test_the_status_card_says_what_matters(tmp_path: Path) -> None:
     server.workshop_items = [3820687243]
     receipt = server.content_dir / "Mods" / "Workshop" / "3820687243"
     receipt.mkdir(parents=True)
-    (receipt / "reclaimer-workshop-version.json").write_text(json.dumps({"item": 3820687243, "updated": 1792148310}),
-                                                             encoding="utf-8")
+    (receipt / "reclaimer-installed.json").write_text(json.dumps({"item": 3820687243, "files": [], "version": {
+        "item": 3820687243, "manifest": 1, "updated": 1792148310}}), encoding="utf-8")  # the receipt the program reads
     row = {"status": "RUNNING  up 3h", "color": "green", "players": "2/16", "rcon_ms": 4, "status_age": 2,
            "pid": 1234, "version": "0.9.18", "health": "degraded", "health_reasons": ["slow for 6 of 10 min"],
            "history": [[time.time() - 600, "restart", "after game"], [time.time() - 300, "crash", "exited after 1m"]],
@@ -226,7 +201,8 @@ def test_the_status_card_says_what_matters(tmp_path: Path) -> None:
     assert "RCON 4 ms" in flat["Running"] and "610 MB in use" in flat["Running"]
     assert "203.0.113.4:49190" in flat["Joining"] and "2/16 players" in flat["Joining"]
     assert "playlist slayer" in flat["What it plays"] and "games" in flat["What it plays"]
-    assert "by Huragok (U)" in flat["Program"] and "Newest Project Reclaimer 0.9.19" in flat["Program"]
+    assert "pinned to this version by its own file (auto_update off)" in flat["Program"]  # Huragok installs nothing
+    assert "Newest Project Reclaimer 0.9.19" in flat["Program"]
     assert "installed 16 Oct 2026" in flat["Mods"] and "3.0 GB" in flat["Mods"]
     assert "slow for 6 of 10 min" in flat["Health"] and "CRASH: exited after 1m" in flat["Health"]
     assert "enforce" in flat["Safety"] and "Bans" in flat["Safety"]
@@ -277,7 +253,7 @@ def test_the_dashboard_line_says_why(tmp_path: Path) -> None:
     assert len(record.history) == 1 and record.recent()[0][1] == "crash"
 
 
-# Upkeep jobs: disk, firewall, the engine file, packages ----------------------------------------
+# Upkeep jobs: disk, firewall, the engine file ----------------------------------------
 
 def test_what_can_be_cleaned_up(tmp_path: Path, run) -> None:
     from huragok.content import upkeep
@@ -360,18 +336,6 @@ def test_check_offers_the_firewall_and_the_engine_file(tmp_path: Path, run, monk
     run(menu._after_check(controller.settings, server, text))
     assert opened and "Reclaimer games UDP 1" in opened[0][0]
     assert "don't match this Project Reclaimer" in text_of(terminal)
-
-
-def test_a_package_keeps_the_folders_defaults(tmp_path: Path) -> None:
-    from huragok.content.packages import save_package
-    from huragok.core.tomledit import set_table_key
-
-    settings_path = setup_root(tmp_path)
-    server = load(settings_path).servers[0]
-    set_table_key(server.config_path, "defaults", "max_ping", 150)
-    set_table_key(server.config_path, "defaults", "password", "secret")  # the host's own: not packed
-    package = save_package(server.folder, server.name, tmp_path / "PACKAGES" / "mine")
-    assert package.defaults["max_ping"] == 150 and "password" not in package.defaults
 
 
 def test_clean_up_keeps_the_newest_huragok_backup_by_version(tmp_path: Path) -> None:
@@ -502,8 +466,12 @@ def test_a_servers_own_content_has_its_own_mod_list(tmp_path: Path) -> None:
     import json
     from types import SimpleNamespace
 
-    from huragok.content.catalogue import disabled_mods, set_mod_disabled
+    from huragok.content.catalogue import disabled_mods
     from huragok.content.serverops import own_content
+    from huragok.core.files import write_atomic
+
+    def switch(content: Path, packages: list[str]) -> None:  # as an editor saving a new copy of the file does
+        write_atomic(content / "disabled-mods.json", json.dumps({"packages": packages}))
 
     shared = tmp_path / "content"
     (shared / "Mods" / "canyon").mkdir(parents=True)
@@ -515,9 +483,9 @@ def test_a_servers_own_content_has_its_own_mod_list(tmp_path: Path) -> None:
     config.write_text('content = "../../content"\n[[server]]\nname = "Alpha"\nport = 1\n', encoding="utf-8")
     server = SimpleNamespace(content_dir=shared, folder=folder, config_path=config, name="Alpha")
     own = own_content(SimpleNamespace(), server, lambda text: None)
-    set_mod_disabled(own, "Mods/canyon", True)
+    switch(own, ["Mods/other", "Mods/canyon"])
     assert disabled_mods(shared) == ["Mods/other"]  # every other server's, as it was
-    set_mod_disabled(shared, "Mods/other", False)
+    switch(shared, [])
     assert disabled_mods(own) == ["Mods/other", "Mods/canyon"]  # Alpha's, as it was
 
 

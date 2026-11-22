@@ -445,7 +445,7 @@ def test_a_second_window_waits_as_long_as_the_work_takes(tmp_path: Path, run, mo
     from huragok.window import controllers
     from huragok.window.controllers import RemoteController, remote_wait
 
-    assert remote_wait("update_program") >= 600 and remote_wait("update") >= 300 and remote_wait("check_workshop") >= 120
+    assert remote_wait("update_workshop") >= 600 and remote_wait("update") >= 300 and remote_wait("check_workshop") >= 120
     assert remote_wait("check_update") >= 60 and 20 <= remote_wait("rcon") <= 30 and remote_wait("start") >= 10
     settings = type("S", (), {"home": tmp_path, "records": tmp_path, "log_file": None, "backend": "process"})()
     remote = RemoteController(settings, lambda: 1)  # type: ignore[arg-type]
@@ -569,7 +569,7 @@ def test_a_second_window_stops_waiting_when_the_supervising_window_goes(tmp_path
 
         closing = asyncio.create_task(close_soon())
         started = time.monotonic()
-        answer = await remote.verb("update_program")  # a 900 s wait
+        answer = await remote.verb("update")  # a 600 s wait
         await closing
         return answer, time.monotonic() - started
 
@@ -579,7 +579,7 @@ def test_a_second_window_stops_waiting_when_the_supervising_window_goes(tmp_path
     running[0] = True
     monkeypatch.setattr(controllers, "PICKED_UP_WITHIN", 1.0)
     started = time.monotonic()
-    [(_, result)] = run(remote.verb("update_program"))  # running, but nobody takes it
+    [(_, result)] = run(remote.verb("update"))  # running, but nobody takes it
     assert time.monotonic() - started < 5 and "didn't take the request" in result.message
 
 

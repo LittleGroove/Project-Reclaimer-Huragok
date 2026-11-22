@@ -1,13 +1,17 @@
-"""The window's setup screens: N new server, G game content (what's there, playlists built from
-numbered lists or from a mod's maps, each playlist game's own rules and options, custom games,
-Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop account and every game's
-files: Halo 3's, the campaign's, ODST's, and from Project Reclaimer 0.10 Reach's, CE's and Halo 2's), and the
-list of each server's files that O opens.
+"""The window's setup screens: N new server (the program's own `dedicated init`, then its quick actions), G what a
+server plays (what it's set to and what it can play, its playlists: shown, ballot picks, history and put back, copied
+to another server; custom games, Workshop items, mods' Forge layouts, imports), C check, I SteamCMD (the Workshop
+account, a server's SteamCMD lines, every game's files: Halo 3's, the campaign's, ODST's, and from Project Reclaimer
+0.10 Reach's, CE's and Halo 2's, and repair), the quick actions (shown before they're written: mockup 5), and the list
+of each server's files that O opens.
 
-Everything the host picks from is listed first, numbered: maps, map variants, game types
-and variants, mods, packages, playlists. Nothing has to be typed from memory. The screens
-act on files and run the server program's own `dedicated` commands in a thread, so the
-dashboard's work goes on meanwhile; a second window (not supervising) can use them too.
+Huragok no longer makes playlists or changes what a server plays (0.7.0): the host does, by hand, in the server's own
+files. What G still writes, it writes only when the host asks (a copy, a version put back), after the server's own
+program has had its say, with the version it replaces kept first (core/versions.py).
+
+Everything the host picks from is listed first, numbered. The screens act on files and run the server program's own
+`dedicated` commands in a thread, so the dashboard's work goes on meanwhile; a second window (not supervising) can use
+them too.
 """
 
 from __future__ import annotations
@@ -18,37 +22,33 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ... import lore, steam
-from ...commandline.setup import parse_item_ids, set_workshop_items, workshop_items
+from ...commandline.setup import workshop_items
 from ...content import modcheck
 from ...content.catalogue import Catalogue, Entry, describe_games, parse_picks
-from ...content.workshopmods import layouts_by_hand, switch_workshop_copies
-from ...content.mccimport import content_root_of
-from ...content.newserver import (
-    NewServer, SetupError, add_odst_files, create_server, game_folders, next_free_port, odst_mcc, valid_name,
-)
-from ...content.packages import Package, PackageError, list_packages, save_package
+from ...content.workshopmods import layouts_by_hand
+from ...content.mccimport import content_root_of, copy_replacing
+from ...content import quickactions
+from ...content.newserver import Outcome, SetupError, add_odst_files, create_server, finish, odst_mcc, valid_name
+from ...content.quickactions import QuickAction, QuickActionError
 from ...core import desktop, versions
-from ...core.serverfolders import ServerConfig
+from ...core.serverfolders import ServerConfig, slugify
 from ...core.settings import Settings
 from ...core.storage import read_picks
-from ...core.text import slug
 from ...games import halo3_mapfile
 from ...games import files as game_files
 from ...games.files import has_odst_files
-from ...games.halo3 import Playlist, PlaylistError, games_range, load_playlist, new_playlist, playlist_files
+from ...games.halo3 import Playlist, PlaylistError, load_playlist, playlist_files
 from ...players.messages.intervals import own_file
 from ...program.dedicated import Dedicated, DedicatedError, tool_for
-from ...program.plays import applies_when, check_plays, write_plays
+from ...program.plays import PlaylistDraft, applies_when, check_plays
 from ...program.settings import path_setting
 from .. import statuscard
 from ..controllers import Row
-from .base import PAGE, Screens, fits, map_sections
+from .base import PAGE, Screens, map_sections
 
-PORTS = (1024, 65535)  # a new server's UDP game port
-PLAYERS = (1, 127)  # players at once
 CONSOLE_TAIL = 256 * 1024  # how much of the end of a console log is read for what it said lately
 BROWSE_KEYS = "123456789ABCDEFGHIJKLNOPQRSTUV"  # G's lists (M is the mods, W the Workshop items)
 MORE = {"mod maps": "mod maps (installed mods and Workshop items)",
@@ -89,7 +89,7 @@ class SetupScreens(Screens):
     def _mod_health(server: ServerConfig, settings: Settings) -> list[tuple[str, str]]:
         """Is each mod good to go (modcheck.py)? Lines with their colours; read in a thread (it opens the maps)."""
         from ...content.gamefiles import read_paths, server_version
-        from ...games.halo3_options import version_tuple
+        from ...core.text import version_tuple
 
         paths = read_paths(server.folder, settings.config_name)
         root = server.content_dir or content_root_of(server.folder, settings.config_name)
@@ -112,62 +112,18 @@ class SetupScreens(Screens):
 
     # N: a new server ---------------------------------------------------------------------------
 
-    async def _choose_package(self, settings: Settings) -> Package | None | str:
-        """A package from the numbered list with what each plays; None for no package, "cancel" to stop."""
-        packages = [p for p in list_packages(settings.packages_folder) if not p.name.endswith("(broken)")]
-        while True:
-            self.heading("Packages", note=f"in {settings.packages_folder}; a package is a playlist, settings and "
-                                           "content a new server starts with")
-            rows = [("no package", "Slayer on the five-map example rotation")]
-            rows += [(package.name, package.description or package.summary()) for package in packages]
-            block = self.listing(rows, keys=[str(n) for n in range(len(rows))], show=False)
-            for number in range(len(packages), 0, -1):  # backwards, so the inserts don't shift what's left
-                games = _package_games(packages[number - 1])
-                if games:
-                    block.insert(number + 1, [(f"        {len(games)} games: {describe_games(games)}", "gray")])
-            self.show(block)
-            answer = await self.prompt_line("  Package? (number; v<number> shows one in full; Enter for none)", "0",
-                                            panel=block)
-            if answer is None:
-                return "cancel"
-            answer = answer.strip().lower()
-            if answer.startswith("v") and answer[1:].isdecimal() and 1 <= int(answer[1:]) <= len(packages):
-                package = packages[int(answer[1:]) - 1]
-                self.heading(package.name, note=package.description)
-                for key, value in package.server.items():
-                    self.note(f"[server] {key} = {value}")
-                for path in package.playlists:
-                    try:
-                        playlist = load_playlist(path)
-                    except PlaylistError as error:
-                        self.note(str(error), "yellow")
-                        continue
-                    self.note(f"{path.name}: \"{playlist.name}\", vote {playlist.vote_seconds} s")
-                    await self._pages([f"  {n}. {label}" for n, label in enumerate(playlist.labels(), 1)])
-                if package.workshop_items:
-                    self.note(f"Workshop items: {package.workshop_items}")
-                continue
-            if answer in ("", "0"):
-                return None
-            if answer.isdecimal() and 1 <= int(answer) <= len(packages):
-                return packages[int(answer) - 1]
-            self.note("That's not one of the packages.", "yellow")
-
     async def screen_new(self) -> None:
-        self.title("NEW SERVER", "a new folder in SERVERS/, made with the server program's `dedicated init`, "
-                                 "from a package or the example rotation, then checked")
+        """N (mockup 6): a folder in SERVERS/ made with the program's own `dedicated init` and nothing more, then its
+        quick actions, each shown before it's written. Esc leaves the folder as it is. It's given its name (and so
+        picked up, and started once its ports are free) only once the host is done with it."""
+        self.title("NEW SERVER", "a folder in SERVERS/ made with the server program's own `dedicated init`, and "
+                                 "nothing more; then its quick actions, each shown before it's written")
         settings = self._settings()
         tool = await self._tool(settings)
         if tool is None:
             await self.wait_any_key(10)
             return
-        self.note(f"It shares the root's {', '.join(settings.setup.share) or 'nothing'} "
-                  "([setup] share in settings.toml), so no 5.5 GB copy is made.")
-        package = await self._choose_package(settings)
-        if package == "cancel":
-            return
-        assert package is None or isinstance(package, Package)
-        self.heading("The new server")
+        self.heading("New server")
         name = await self.prompt_line("  Server name (also its folder's name)")
         if not name:
             return
@@ -175,114 +131,195 @@ class SetupScreens(Screens):
             self.note(problem, "yellow")
             await self.wait_any_key(5)
             return
-        if any(s.name.lower() == name.lower() for s in settings.servers):
-            self.note(f"A server called {name} exists already.", "yellow")
-            await self.wait_any_key(5)
-            return
-        free = await asyncio.to_thread(next_free_port, settings)  # it tries each port: never on the loop
-        port_text = await self._number_line("  UDP game port (1024-65535)", str(free), PORTS, "a port")
-        if port_text is None:
-            return
-        hidden = await self.prompt_yes_no("  Hidden from the server browser?", False)
-        password = await self.prompt_line("  Join password (Enter for none)")
-        if password is None:
-            return
-        default_players = str((package.server.get("max_players") if package else None) or 16)
-        from ...content.gamefiles import program_version_of
-        from ...content.newserver import most_players
-
-        most = most_players(await asyncio.to_thread(program_version_of, tool))  # 128 from 0.10, 127 before
-        players_text = await self._number_line(f"  Players at once (1-{most})", default_players, (PLAYERS[0], most),
-                                               "a player count")
-        if players_text is None:
-            return
-        share = set(settings.setup.share)
-        mcc_folder = settings.setup.mcc_folder
-        needs_files = not game_folders(settings)
-        if needs_files and mcc_folder is None:
-            self.note("No server here has Halo 3's files yet, so they're copied from MCC (hard links on the same "
-                      "drive, 5.5 GB otherwise).")
-            answer = await self.prompt_line("  Your MCC folder (Enter for Steam's default)")
-            if answer is None:
-                return
-            mcc_folder = unquote(answer)
-        games = await self._pick_games(settings, tool, share, mcc_folder, package)
-        if games is None:
-            return
-        # The game folder to link Halo 3's files from (when `game` isn't shared) is create_server's to find
-        # (newserver.game_to_link: the root's, then the servers' own), as for the `new` command.
-        spec = NewServer(name=name, port=int(port_text), package=package, hidden=hidden, password=password,
-                         max_players=int(players_text) if players_text != default_players else None,
-                         share=share, mcc_folder=mcc_folder, games=games)
-        self.heading(name, note=f"UDP {port_text} · {package.summary() if package else 'the example rotation'}"
-                                f"{' · hidden' if hidden else ''}{' · join password' if password else ''}")
-        if not await self.prompt_yes_no("  Make it?", True):
-            return
         self.terminal.print()
         try:
-            outcome = await self.slow(create_server, settings, spec, tool, self._sayer())
+            outcome = await self.slow(create_server, settings, name, tool, self._sayer())
         except SetupError as error:
             self.note(f"Not made: {error}", "red")
             await self.wait_any_key(15)
             return
-        self.terminal.print()
-        self.note(f"Made {outcome.folder}" + (f". {lore.MOTTO}" if outcome.ready else ""),
-                  "green" if outcome.ready else "yellow")
-        self.note(f"RCON password written to its {settings.config_name}; join password "
-                  f"{'set' if password else 'none'}.")
-        if outcome.check is not None and not outcome.ready:
-            self._print_result(outcome.check, 30)
-        for note in outcome.notes:
-            self.note(note, "yellow")
-        self.controller.discover()
-        if outcome.ready and await self.prompt_yes_no("  Start it now?", True):
-            results = await self.controller.verb("start", outcome.name)
-            for _, result in results:
-                self.note(f"{outcome.name}: {result.message}", "green" if result.ok else "yellow")
-                if not result.ok:
-                    self.note("(it appears on the dashboard within 10 s; press S then)")
+        try:
+            await self._new_server_actions(settings, outcome)
+        finally:
+            try:
+                folder = finish(outcome)
+            except SetupError as error:
+                self.note(str(error), "yellow")
+            else:
+                self.controller.discover()
+                self.note(f"{folder} is ready: Huragok picks it up within seconds and starts it once its ports are "
+                          f"free on this PC. G shows what it still needs. {lore.MOTTO}", "green")
         await self.wait_any_key(10)
 
-    async def _pick_games(self, settings: Settings, tool: Dedicated, share: set[str], mcc_folder: str | None,
-                          package: Package | None) -> list[str] | None:
-        """Which other games' files the new server's game folder gets from MCC, beside Halo 3's (always): those MCC
-        has installed and the folder lacks, as far as this program plays them; every game MCC has, by default (not
-        the campaigns: they're for co-op). [] when there's nothing to offer; None when the host backs out."""
-        from ...content import gamefiles
-        from ...content.newserver import game_link_source, mcc_kinds
-
-        mcc = await asyncio.to_thread(steam.find_mcc, mcc_folder)  # Steam's records: in a thread
-        if mcc is None:
-            return []  # nothing to copy from (the package's games: create_server says so)
-        version = await asyncio.to_thread(gamefiles.program_version_of, tool)  # `--version`, once per file
-        game =settings.home / "game" if "game" in share else await asyncio.to_thread(game_link_source, settings)
-        wanted = package.file_kinds if package else []  # added anyway when MCC has them
-        offered = [kind for kind in await asyncio.to_thread(mcc_kinds, mcc, version)
-                   if kind not in wanted and not (game is not None and game_files.has(game, kind))]
-        if not offered:
-            return []
-        self.heading("Games", note=f"Halo 3's files always; these come from MCC at {mcc} too (hard links on the same "
-                                   "drive: no space used)")
-        rows = [(game_files.LABELS[kind], f"{game_files.HOLDS[kind]} ({gamefiles.gb(game_files.SIZES[kind])})")
-                for kind in offered]
-        self.listing(rows, keys=[str(n) for n in range(1, len(rows) + 1)])
-        default = [str(n) for n, kind in enumerate(offered, 1) if kind not in ("campaign", "reach-campaign")]
+    async def _new_server_actions(self, settings: Settings, outcome: Outcome) -> None:
+        """The quick actions after N (answer 33): one server only, free ports, the console, or all three in turn, each
+        shown before it's written, until the host is done (Esc)."""
+        written = False
         while True:
-            answer = await self.prompt_line("  Which? (numbers, e.g. 1,3; 0 for none)", ",".join(default) or "0")
-            if answer is None:
+            self.heading("New server", outcome.name)
+            await self._describe_new(settings, outcome)
+            self.terminal.print()
+            self.note("Quick actions (each shown before it's written; Esc leaves the folder "
+                      + ("as it is now)" if written else "exactly as init made it)"), "white")
+            choice = await self.choose("Which?", [
+                ("1", "One server only", f'keep "{outcome.name}", take out the other [[server]] blocks'),
+                ("2", "Free ports", "a free game port, and the master off or on a free port"),
+                ("3", "Add the console", "a random [rcon] password; it listens on its game port's number"),
+                ("A", "All three")], back="Esc done")
+            if choice is None:
+                return
+            for step in ("1", "2", "3") if choice == "A" else (choice,):
+                done = await self._new_quick_action(settings, outcome, step)
+                if done is None:  # Esc: the rest aren't asked
+                    break
+                written = written or done
+
+    async def _describe_new(self, settings: Settings, outcome: Outcome) -> None:
+        """What the new folder holds now (mockup 6): its servers and their ports, its master, and which are taken."""
+        from ...content.newserver import read_folder
+
+        servers, master = await asyncio.to_thread(read_folder, outcome.config)
+        taken = await asyncio.to_thread(quickactions.taken_ports, settings, outcome.config,
+                                        [port for _, port in servers if port] + ([master] if master else []))
+        made = str(Path(outcome.folder.parent.name) / outcome.folder.name)
+        self.note(f"Made {made} with the program's own `dedicated init`"
+                  + (f" (Project Reclaimer {outcome.version})." if outcome.version else "."), "white")
+        ports = [str(port) for _, port in servers if port]
+        count = {1: "one server", 2: "two servers", 3: "three servers"}.get(len(servers), f"{len(servers)} servers")
+        self.note(f"It holds {count}" + (f", on port{'s' if len(ports) > 1 else ''} {_listed(ports)}" if ports else "")
+                  + (f", with its master on {master}." if master else ", with its master off."), "white")
+        games = [(port, whose) for port, whose in taken if port != master]
+        if games:
+            whose = [w for _, w in games if w]
+            self.note(f"! {_listed([str(p) for p, _ in games])} {'is' if len(games) == 1 else 'are'} in use on this PC"
+                      + (f" ({', '.join(whose)})" if whose else "") + ": it won't start until that changes.", "yellow")
+        if any(port == master for port, _ in taken):
+            self.note(f"Its master's port {master} is in use too: the program lists its servers on the master already "
+                      "there.", "gray")
+
+    async def _new_quick_action(self, settings: Settings, outcome: Outcome, step: str) -> bool | None:
+        config, where, owner = outcome.config, outcome.shown, slugify(outcome.name)
+        if step == "1":
+            return await self.quick_action(settings, outcome.name, lambda: quickactions.one_server(
+                config, outcome.name, where=where, owner=owner))
+        if step == "2":
+            master = await self._ask_master(config)
+            if master is None:
                 return None
-            picks = [word for word in re.split(r"[,\s]+", answer.strip()) if word]
-            if picks == ["0"]:
-                return []
-            if picks and all(word.isdecimal() and 1 <= int(word) <= len(offered) for word in picks):
-                return [offered[int(word) - 1] for word in dict.fromkeys(picks)]
-            self.note(f"Numbers from 1 to {len(offered)}, separated by commas.", "yellow")
+            return await self.quick_action(settings, outcome.name, lambda: quickactions.free_ports(
+                settings, config, master=master, where=where, owner=owner))
+        return await self.quick_action(settings, outcome.name, lambda: quickactions.add_console(
+            settings, config, where=where, owner=owner))
+
+    async def _ask_master(self, config: Path) -> str | None:
+        """Free ports: the folder's master off, or on a free port ("off", "free"; None: Esc). Not asked when it's off."""
+        from ...content.newserver import read_folder
+
+        _, master = await asyncio.to_thread(read_folder, config)
+        if master is None:
+            return "off"
+        self.note(f"Its master (port {master}) lists this folder's servers for players on this PC's network; the "
+                  "project's public masters list them anyway, and one master per PC does it.")
+        answer = await self.prompt_key("  Its master: O off, F on a free port", ["O", "F"], "O")
+        return None if answer is None else "off" if answer == "O" else "free"
+
+    # Quick actions: shown before they're written (mockup 5) ------------------------------------
+
+    async def quick_action(self, settings: Settings, crumb: str, build: Callable[[], QuickAction]) -> bool | None:
+        """One quick action (content/quickactions.py) as mockup 5 draws it: what it writes, worked out on a copy of
+        the file, then yes or no; written (a version of the file kept first) only on yes. True: written; False: not
+        (no, nothing to write, or it couldn't be); None: Esc."""
+        try:
+            action = await asyncio.to_thread(build)  # it reads every server folder and this PC's ports
+        except QuickActionError as error:
+            self.heading(crumb, "Quick action")
+            self.note(f"Not offered: {error}", "yellow")
+            return False
+        self.heading(crumb, "Quick action", action.title)
+        for text, colour in action.preview():
+            self.note(text, colour)
+        if not action.needed:
+            return False
+        self.terminal.print()
+        answer = await self.prompt_key(f"  {action.ask} (y/N)", ["Y", "N"], "N")
+        if answer is None:
+            return None
+        if answer != "Y":
+            self.note("Nothing was written.")
+            return False
+        try:
+            await asyncio.to_thread(quickactions.write, settings, action)
+        except (QuickActionError, OSError) as error:
+            self.note(f"Not written: {error}", "yellow")
+            return False
+        self.note(f"Written in {action.where}; the version before it is kept in its history.", "green")
+        return True
+
+    async def screen_add_console(self, server: ServerConfig) -> bool | None:
+        """D → a server → Q → Add the console (mockup 5): the lines that give it its console, shown, and written when
+        the host says yes, a version of its dedicated.toml kept first. For the D screen to call; the same answers as
+        quick_action."""
+        settings = self._settings()
+        where = shown_path(settings, server.config_path)
+        return await self.quick_action(settings, server.name, lambda: quickactions.add_console(
+            settings, server.config_path, server.name, where=where))
+
+    async def _steamcmd_lines(self, settings: Settings) -> None:
+        """I → L: one server's [workshop] steamcmd and username (this PC's SteamCMD and the I key's account), shown
+        before they're written. Never every server at once (0.7.0)."""
+        picked = await self.select_servers("SteamCMD lines for", single=True)
+        server = self._server(settings, picked[0]) if picked else None
+        if server is None:
+            return
+        where = shown_path(settings, server.config_path)
+        await self.quick_action(settings, server.name, lambda: quickactions.steamcmd_lines(
+            settings, server.config_path, where=where))
+        await self.wait_any_key(10)
+
+    async def screen_repair(self) -> None:
+        """I → R: what a server's folder lacks (content/gamefiles.py's repairs: game files, a game folder pointed here,
+        a content folder or ban list of its own, SteamCMD lines, Reach's variants), listed first and put right when
+        the host says so, a version of its dedicated.toml kept before the first change."""
+        from ...content import gamefiles
+
+        settings = self._settings()
+        picked = await self.select_servers("Repair", single=True)
+        server = self._server(settings, picked[0]) if picked else None
+        if server is None:
+            return
+        self.heading(server.name, "Repair", note="what its folder lacks; nothing is changed until you say yes")
+        say = self._sayer("cyan")
+        plan = await asyncio.to_thread(gamefiles.repairs, settings, server, lambda: tool_for(settings, server), say)
+        if not plan:
+            self.note("Nothing to put right: its folder has what it needs, as far as Huragok can tell.", "green")
+            await self.wait_any_key(10)
+            return
+        for number, repair in enumerate(plan, 1):
+            self.note(f"{number}. {repair.text}" + ("" if repair.run else " (can't be done from here)"),
+                      "white" if repair.run else "yellow")
+        doable = [repair for repair in plan if repair.run is not None]
+        if not doable:
+            await self.wait_any_key(15)
+            return
+        if any(repair.writes for repair in doable):
+            self.note(f"A copy of its {settings.config_name} is kept first (D → a server → F puts it back).")
+        if not await self.prompt_yes_no("  Put these right?", False):
+            self.note("Nothing was changed.")
+            await self.wait_any_key(5)
+            return
+        done, failed = await self.slow(gamefiles.run_repairs, settings, server, doable, say)
+        for line in failed:
+            self.note(f"Not done: {line}", "yellow")
+        if done:
+            self.note("Done. A server that's running takes a changed path at its next start.", "green")
+        await self.controller.verb("game_files_retry")  # the servers waiting for files look again now
+        await self.wait_any_key(15)
 
     # G: what a server plays ------------------------------------------------------------------
 
     async def screen_content(self) -> None:
-        self.title("WHAT IT PLAYS", "what a server plays and how: what it's set to, what's on now and next, its "
-                                    "playlists and custom games, and what it can play (maps, variants, mods)")
+        self.title("WHAT IT PLAYS", "what a server plays, from its own files: what it's set to, what's on now and "
+                                    "next, its playlists and custom games, and what it can play (maps, variants, mods)")
         settings = self._settings()
         picked = await self.select_servers("Look at", single=True)
         if not picked:
@@ -292,8 +329,8 @@ class SetupScreens(Screens):
             await self._content_home(settings, server, picked[0])
 
     async def _content_home(self, settings: Settings, server: ServerConfig, row: Row) -> None:
-        """One server's home for what it plays (G, and D -> What it plays): what it's set to, what's on now and next
-        and what players pick, with everything that changes it."""
+        """One server's home for what it plays (G): what its own file sets, what's on now and next and what players
+        pick, and what it has and can play. Nothing here changes what it plays: the host sets that by hand."""
         tool = await self._tool(settings)
         if tool is None:
             await self.wait_any_key(10)
@@ -307,61 +344,78 @@ class SetupScreens(Screens):
             self.heading(server.name, "What it plays", note=self._server_line(server, fresh_row))
             # Off the event loop: it reads dedicated.toml, the playlist and the ballots kept in the database.
             card = await asyncio.to_thread(statuscard.build, settings, server, fresh_row, {})
-            plays = dict(card).get("What it plays", [])
-            for label, text, colour in plays:
-                self.terminal.print_parts([(f"  {label:<12}", "gray"), (text, colour or "white")])
+            for label, text, colour in dict(card).get("What it plays", []):
+                self.terminal.print_parts([(f"  {label:<14}", "gray"), (text, colour or "white")])
+            items = fresh_row.get("warning_items") or []
+            self._file_health(items)
             self.note(catalogue.counts())
-            choice = await self.choose("Which?", [
-                ("W", "What it plays: set it (a playlist, one map and game type, a custom game, campaign, ODST)"),
-                ("P", "Playlists by player count: a playlist for each range of players, picked as they come and go"),
-                ("1", "Browse: maps, variants, game types, mods"), ("2", "Playlists: list, build, edit, use, copy"),
-                ("3", "Workshop items and mods"), ("4", "Check it (dedicated check)"),
-                ("5", "Save it as a package"), ("6", "Open its folder"),
-                ("7", "Import variants from MCC or a folder"), ("8", "Reload the listing"),
-                ("9", "Custom games: game types with rules of their own")])
+            self.note(f"Playlists and custom games are made by hand now, and what it plays is set in its "
+                      f"{settings.config_name}: F opens its folder, E the file. (W, P, the builders and packages "
+                      "have gone; this note shows for one release.)", "yellow")
+            options = [("1", "Playlists", "show as the server reads them, ballot picks, history, copy, set aside"),
+                       ("2", "Game modes", "what each changes, copy, set aside (.json, .rmeg, .bin)"),
+                       ("3", "Maps and layouts", "what it can play: maps, saved maps, variants"),
+                       ("4", "Mods", "its Workshop items, the mods installed, why one would be skipped"),
+                       ("5", "Check it", "the server's own check, read-only"),
+                       ("6", "Import from MCC", "variants and saved maps, into its content folder"),
+                       ("F", "Open its folder"), ("E", f"Open {settings.config_name} in your editor")]
+            if items:
+                options.append(("X", "Dismiss a warning", "it comes back if its file changes"))
+            choice = await self.choose("Which?", options)
             if choice is None:
                 return
-            if choice == "W":
-                await self._edit_plays(settings, server, fresh_row)
-                settings = self._settings()
-                server = self._server(settings, fresh_row) or server
-                continue
-            if choice == "P":
-                await self._by_players(settings, tool, server, fresh_row)
-                continue
             if choice == "1":
-                await self._browse(server, catalogue)
-            elif choice == "2":
                 await self._playlists(settings, tool, server, catalogue)
+            elif choice == "2":
+                await self._custom_games(settings, tool, server)
             elif choice == "3":
-                await self._workshop(settings, tool, server, catalogue)
+                await self._browse(server, catalogue)
             elif choice == "4":
+                await self._workshop(settings, tool, server, catalogue)
+            elif choice == "5":
                 self.heading(server.name, "Check")
                 await self._dedicated(tool, server.folder, "check")
-            elif choice == "5":
-                self.heading(server.name, "Save as a package")
-                name = await self.prompt_line("  Package name", server.name)
-                if not name:
-                    continue
-                dest = settings.packages_folder / slug(name, "package")
-                try:
-                    package = save_package(server.folder, server.name, dest, config_name=settings.config_name,
-                                           name=name, description=f"Saved from {server.name}")
-                except PackageError as error:
-                    self.note(f"Not saved: {error}", "yellow")
-                    continue
-                self.note(f"Saved {package.folder}: {package.summary()}", "green")
             elif choice == "6":
-                self.note(desktop.open_path(server.folder))
-            elif choice == "7":
                 self.heading(server.name, "Import variants")
                 await self._import_content(settings, server)
-            elif choice == "9":
-                await self._custom_games(settings, tool, server)
-            if choice in ("7", "8", "9"):
+            elif choice == "F":
+                self.note(desktop.open_path(server.folder))
+            elif choice == "E":
+                self.note(desktop.open_path(server.config_path))
+            elif choice == "X":
+                await self._dismiss_warning(server, items)
+            if choice in ("2", "6"):
                 fresh = await self._catalogue(tool, settings, server)
                 if fresh is not None:
                     catalogue = fresh
+
+    def _file_health(self, items: list[dict[str, Any]]) -> None:
+        """G's file health (mockups-0.7.0.md 1): the server's warnings, refused first, each marked by its kind."""
+        from ...core.serverwarnings import KINDS, MARKS, WORDS
+
+        if not items:
+            self.terminal.print_parts([(f"  {'File health':<14}", "gray"), ("nothing to say", "green")])
+            return
+        counts = {kind: sum(1 for item in items if item.get("kind") == kind) for kind in KINDS}
+        words = {"refused": "refused", "seen": "seen", "check": "to check", "info": "for your information"}
+        summary = " · ".join(f"{counts[kind]} {words[kind]}" for kind in KINDS if counts[kind])
+        self.terminal.print_parts([(f"  {'File health':<14}", "gray"), (summary, "white")])
+        colours = {"refused": "red", "seen": "yellow", "check": "yellow", "info": "gray"}
+        for item in items:
+            kind = str(item.get("kind") or "info")
+            text = str(item.get("text") or "") + (f" {item['fix']}" if item.get("fix") else "")
+            self.terminal.print_parts([(f"   {MARKS.get(kind, 'i')} {WORDS.get(kind, 'Info'):<8} ", colours.get(kind, "gray")),
+                                       (text, "white")])
+
+    async def _dismiss_warning(self, server: ServerConfig, items: list[dict[str, Any]]) -> None:
+        """X: one of the server's warnings hidden until its file changes (for good, for one about no file)."""
+        self.heading(server.name, "What it plays", "Dismiss a warning")
+        panel = self.listing([(str(item.get("text") or ""),) for item in items], wrap=True)
+        answer = await self.prompt_line("  Which? (number; Esc goes back)", panel=panel)
+        if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(items):
+            return
+        for _, result in await self.controller.verb("dismiss_warning", server.name, id=items[int(answer) - 1]["id"]):
+            self.note(result.message, "green" if result.ok else "yellow")
 
     async def _browse(self, server: ServerConfig, catalogue: Catalogue) -> None:
         # Each game's maps and its mods' maps (0.10: Reach's, CE's, Halo 2's beside Halo 3's), as the pickers head
@@ -422,16 +476,17 @@ class SetupScreens(Screens):
             self.heading(server.name, "What it plays", "Playlists", note=f"{server.name} plays: {server.plays}")
             rows: list[tuple[str, ...]] = []
             games: list[str] = []
+            uses = _playlist_uses(server)  # how its own file names each (playlist =, or playlists by lobby size)
             for path in files:
                 try:
                     playlist = load_playlist(path)
-                    summary = f'"{playlist.name}" · {len(playlist.games)} games · vote {playlist.vote_seconds} s'
+                    summary = f'"{playlist.name}" · {len(playlist.games)} games · vote {playlist.vote}'
                     games.append(describe_games(playlist.games, 4))
                 except PlaylistError as error:
                     summary = f"(can't read it: {error})"
                     games.append("")
-                in_use = server.plays == f"playlist {path.name.removesuffix('.playlist.json')}"
-                rows.append((path.name.removesuffix(".playlist.json"), summary + ("   ◄ in use" if in_use else "")))
+                how = uses.get(_same(path))
+                rows.append((path.name.removesuffix(".playlist.json"), summary + (f"   ◄ in use ({how})" if how else "")))
             block = self.listing(rows, show=False)
             for n in range(len(rows) - 1, -1, -1):
                 if games[n]:
@@ -440,49 +495,29 @@ class SetupScreens(Screens):
                 self.terminal.print_parts(parts)
             if not files:
                 self.note("(no playlists in playlists/ yet)")
+            self.note(f"Playlists are made and changed by hand now (F opens one in your editor), and its "
+                      f"{settings.config_name} names the one it plays. (B, M, E and U have gone; this note shows for "
+                      "one release.)", "yellow")
             choice = await self.choose("Which?", [
-                ("B", "Build one from numbered lists"), ("M", "Build one from a mod's maps"), ("E", "Edit one"),
-                ("S", "Show one as the server sees it"), ("U", "Use one for this server"),
+                ("S", "Show one as the server sees it"),
                 ("H", "History: every version kept, and put one back"),
                 ("P", "Picks: what players picked on its ballots, and what never"),
                 ("C", "Copy one to other servers (each checked by its own program)"), ("F", "Open one in the editor")])
             if choice is None:
                 return
-            if choice == "B":
-                self.heading(server.name, "Playlists", "Build")
-                await self._build_playlist(settings, tool, server, catalogue)
-                continue
-            if choice == "M":
-                self.heading(server.name, "Playlists", "Build from a mod's maps")
-                if not catalogue.mod_maps:
-                    self.note("No mod maps installed: add Workshop items (G -> 3) or copy a mod into content/Mods.",
-                              "yellow")
-                    continue
-                await self._build_playlist(settings, tool, server, catalogue, maps=catalogue.mod_maps)
-                continue
             if not files:
-                self.note("Build one first.", "yellow")
+                self.note(f"There are none to pick: a playlist is made by hand in {server.folder / 'playlists'}.",
+                          "yellow")
                 continue
             answer = await self.prompt_line("  Which playlist? (number)")
             if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(files):
                 continue
             path = files[int(answer) - 1]
-            if choice == "E":
-                try:
-                    playlist = load_playlist(path)
-                except PlaylistError as error:
-                    self.note(str(error), "yellow")
-                    continue
-                await self._edit_playlist(tool, server, catalogue, playlist)
-            elif choice == "S":
+            if choice == "S":
                 self.heading(server.name, "Playlists", path.name)
                 await self._dedicated(tool, server.folder, "playlist", "show", f"playlists/{path.name}", timeout=60)
-            elif choice == "U":
-                if await self._playable(tool, server, path) and await self._by_players_before_use(
-                        server, f"playlists/{path.name}"):
-                    self._use_playlist(server, path)
             elif choice == "H":
-                await self._playlist_history(settings, tool, server, path)
+                await self._playlist_history(settings, server, path)
             elif choice == "P":
                 await self._playlist_picks(settings, server, catalogue, path)
             elif choice == "C":
@@ -506,47 +541,100 @@ class SetupScreens(Screens):
         return [others[n - 1] for n in picks]
 
     async def _copy_playlist(self, settings: Settings, server: ServerConfig, path: Path) -> None:
-        """A playlist copied to other servers, each copy checked by that server's own program (its version, its
-        content) before it's saved there: a server that lacks what it names is named, and keeps what it has. Each
-        copy goes in that server's playlist history, from this one. Copied, not used: G -> Playlists -> U uses it."""
+        """A playlist copied, exactly as it is, to the other servers the host picks. Each copy is checked first by that
+        server's own program (its version, its content); when it refuses, its own words are shown with what copying
+        anyway does, and the host is asked once. The version a copy replaces, and the copy, go in that server's
+        playlist history. Copied, not played: what a server plays is named in its own file."""
         try:
-            source = load_playlist(path)
-        except PlaylistError as error:
-            self.note(str(error), "yellow")
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            self.note(f"{path.name} can't be read: {error}", "yellow")
             return
         self.heading(server.name, "Playlists", path.name, "Copy")
         for target in await self._other_servers(settings, server, path.name):
-            copy = Playlist.from_data(target.folder / "playlists" / path.name, json.loads(json.dumps(source.data())))
-            copy.name = source.name
-            if copy.path.is_file():
-                try:
-                    if load_playlist(copy.path).data() == copy.data():
-                        self.note(f"{target.name}: has it already, the same.", "gray")
-                        continue
-                except PlaylistError:
-                    pass
-                playing = _plays_playlist(target, copy.path)
-                if not await self.prompt_yes_no(
-                        f"  {target.name} has a {path.name} of its own" + (", and plays it now" if playing else "")
-                        + ": replace it (its version is kept in its history)?"
-                        + (" It plays the copy from its next vote." if playing else ""), False):
-                    continue
+            dest = target.folder / "playlists" / path.name
             try:
-                tool = await asyncio.to_thread(tool_for, settings, target)  # may ask each copy its --version
-            except DedicatedError as error:
+                if dest.is_file() and dest.resolve() == path.resolve():
+                    self.note(f"{target.name}: shares this playlists folder, so it has {path.name} already.", "gray")
+                    continue
+                if dest.is_file() and dest.read_bytes() == path.read_bytes():
+                    self.note(f"{target.name}: has it already, the same.", "gray")
+                    continue
+            except OSError as error:
                 self.note(f"{target.name}: not copied: {error}", "yellow")
                 continue
-            version = await self._row_version(settings, target)
-            check = await asyncio.to_thread(check_plays, tool, target, {"playlist": copy.relative}, copy, version)
-            if not check.ok:
-                self.note(f"{target.name}: not copied: its server program won't play it:", "yellow")
-                self._show_problems(copy, check.problems)
+            playing = _plays_playlist(target, dest)
+            if dest.is_file() and not await self.prompt_yes_no(
+                    f"  {target.name} has a {path.name} of its own" + (", and plays it now" if playing else "")
+                    + ": replace it (its version is kept in its history)?", False):
                 continue
-            if self._write_playlist(target, copy, "copied", f"{server.name}'s {path.name}", version):
+            if playing:
+                after = (f"Copied anyway, it replaces the one {target.name} plays: the server refuses the change and "
+                         "keeps playing the old one, no other change to its file applies until it's put right, and "
+                         "stopped, it won't start.")
+            else:
+                after = (f"Copied anyway, it sits in {target.name}'s playlists folder unplayed (its file doesn't name "
+                         "it): nothing changes for its players, and it can't be played as it is.")
+            if not await self._checked_or_asked(settings, target, dest, text, after, f"Copy it to {target.name} anyway"):
+                continue
+            if self._write_kept(settings, target, dest, path, "copied", f"{server.name}'s {path.name}"):
                 self.note(f"{target.name}: copied to playlists/{path.name} " + (
-                    "(it plays it: from its next vote)" if _plays_playlist(target, copy.path)
-                    else "(not used yet: G -> Playlists -> U)"), "green")
+                    f"(it plays it: {applies_when('playlist', 'playlist')})" if playing
+                    else f"(not played: its {settings.config_name} names what it plays)"), "green")
         await self.wait_any_key(10)
+
+    async def _checked_or_asked(self, settings: Settings, target: ServerConfig, dest: Path, text: str, after: str,
+                                question: str) -> bool:
+        """Whether a playlist file the host chose may be written at `dest`, in `target`'s playlists folder: checked
+        first by that server's own program, as the file it would be (check_plays). Taken: yes. Refused: the program's
+        own words, what writing it anyway does (`after`), and the host asked once (`question`); never refused
+        outright. Not asked (no program): said so, and asked the same way."""
+        relative = f"playlists/{dest.name}"
+        try:
+            tool = await asyncio.to_thread(tool_for, settings, target)  # may ask each copy its --version
+        except DedicatedError as error:
+            self.note(f"{target.name}: its server program can't check it ({error}).", "yellow")
+            return await self.prompt_yes_no(f"  {question}?", False)
+        check = await asyncio.to_thread(check_plays, tool, target, {"playlist": relative}, PlaylistDraft(dest, text))
+        if check.ok:
+            if not check.asked:
+                self.note(f"{target.name}: not checked by its server program: {check.unasked}.", "yellow")
+            return True
+        self.note(f"{target.name}: its server program won't play it as it is:", "yellow")
+        self._show_problems(_labels_of(dest, text), check.problems)
+        self.note(after, "yellow")
+        return await self.prompt_yes_no(f"  {question}?", False)
+
+    def _show_problems(self, labels: list[str], problems: list[Any]) -> None:
+        """The program's own words, each beside the game it's about (`labels`: the playlist's games, numbered from 1)."""
+        for problem in problems:
+            if problem.game is not None and problem.game <= len(labels):
+                said = re.sub(rf"^Game {problem.game}:?\s*", "", problem.text)
+                self.note(f"  game {problem.game} ({labels[problem.game - 1]}): {said}", "yellow")
+            else:
+                self.note(f"  {problem.text}", "yellow")
+
+    def _write_kept(self, settings: Settings, server: ServerConfig, path: Path, source: Path, how: str,
+                    where_from: str) -> bool:
+        """`source` copied over a server's playlist `path`, exactly as it is, once the version it replaces is kept in
+        that server's playlist history (not kept: not written). The new version is kept too, with how it came."""
+        records = settings.records
+        try:
+            versions.keep_current(records, "playlists", server.slug, path)
+        except OSError as error:
+            self.note(f"{server.name}: not written: the version it would replace couldn't be kept in the history first "
+                      f"({error}).", "yellow")
+            return False
+        try:
+            copy_replacing(source, path)  # a new file swapped in: a hard-linked copy elsewhere keeps its own
+        except OSError as error:
+            self.note(f"{server.name}: not written: {error}", "yellow")
+            return False
+        try:
+            versions.keep(records, "playlists", server.slug, path, how, where_from)
+        except OSError as error:
+            self.note(f"{server.name}: written, but its version couldn't be kept in the history: {error}", "yellow")
+        return True
 
     async def _playlist_picks(self, settings: Settings, server: ServerConfig, catalogue: Catalogue, path: Path) -> None:
         """What players picked on a playlist's ballots, game by game, most picked first, from what Huragok kept of
@@ -586,9 +674,10 @@ class SetupScreens(Screens):
         await self._pages(lines)
         await self.wait_any_key(30)
 
-    async def _playlist_history(self, settings: Settings, tool: Dedicated, server: ServerConfig, path: Path) -> None:
+    async def _playlist_history(self, settings: Settings, server: ServerConfig, path: Path) -> None:
         """Every version of a playlist Huragok kept (core/versions.py), newest first: what each holds, how it was
-        made and where it came from; one is put back through the same check as any save."""
+        made and where it came from. One is put back, exactly as it was kept, when the host asks: checked first by
+        the server's own program, and asked once if it refuses (_checked_or_asked); the version it replaces is kept."""
         while True:
             kept = versions.versions(settings.records, "playlists", server.slug, path.name)
             self.heading(server.name, "Playlists", path.name, "History",
@@ -623,241 +712,23 @@ class SetupScreens(Screens):
                 self.heading(server.name, "Playlists", path.name, version.stamp)
                 await self._pages([f"[{n:>3}] {label}" for n, label in enumerate(playlist.labels(), 1)])
                 await self.wait_any_key(20)
-            elif await self._save_playlist(tool, server, playlist, how="put back",
-                                           source=f"the version of {version.stamp}"):
-                return
-
-    async def _playable(self, tool: Dedicated, server: ServerConfig, path: Path) -> bool:
-        """Whether the server program can play a playlist file as it is, as this server's (check_plays): what it
-        can't is named, and it isn't used (a playlist the server refuses holds up every other change to its file,
-        and its start)."""
-        version = await self._row_version(self._settings(), server)
-        check = await asyncio.to_thread(check_plays, tool, server, {"playlist": f"playlists/{path.name}"}, None,
-                                        version)
-        if check.ok:
-            if not check.asked:
-                self.note(f"Not checked by the server program: {check.unasked}.", "yellow")
-            return True
-        self.note(f"Not used: the server program won't play {path.name} as it is:", "yellow")
-        for problem in check.problems:
-            self.note(f"  {problem.text}", "yellow")
-        self.note("E edits it (each game, or take one out); then use it.", "yellow")
-        return False
-
-    def _use_playlist(self, server: ServerConfig, path: Path) -> None:
-        relative = f"playlists/{path.name}"
-        before = server.plays_kind
-        try:
-            write_plays(server.config_path, server.name, {"playlist": relative})  # its map, game, campaign… out
-        except OSError as error:
-            self.note(f"Not changed: {error}", "red")
-            return
-        server.plays, server.plays_kind = f"playlist {path.name.removesuffix('.playlist.json')}", "playlist"
-        self.note(f"{server.name} now plays {relative}: {applies_when(before, 'playlist')} (auto_reload); the "
-                  "dashboard's events say when it's applied.", "green")
-
-    async def _pick_pairs(self, catalogue: Catalogue, maps_from: list[Entry] | None = None, *,
-                          settings: Settings | None = None,
-                          server: ServerConfig | None = None) -> list[tuple[Entry, Entry]] | None:
-        """Maps, then the game types or variants they play; every pair a map plays becomes a game (0.10: Combat
-        Evolved's and Halo 2's maps their own game types only). The maps offered are the games the server's program
-        plays (its version; no server: every game)."""
-        self.note("Maps first:", "white")
-        if maps_from is not None:
-            maps = await self._pick(maps_from, "mod maps")
-        else:
-            version = None
-            if settings is not None and server is not None:
-                version = await self._row_version(settings, server)
-            maps = await self._pick_maps(catalogue, version)
-        if not maps:
-            self.note("No maps picked, so nothing was built.", "yellow")
-            return None
-        self.note("Then game types or variants; every map × game pair becomes a game:", "white")
-        games = await self._pick_game_types(catalogue, maps)
-        if not games:
-            self.note("No game types picked, so nothing was built.", "yellow")
-            return None
-        pairs = [(m, g) for m in maps for g in games if fits(m, g, catalogue)]
-        if not pairs:
-            self.note("None of those maps plays those game types, so nothing was built.", "yellow")
-            return None
-        self.note(f"{len(maps)} map(s) × {len(games)} game(s): {len(pairs)} entries (each map with what it "
-                  "plays):", "white")
-        await self._pages([f"[{n:>3}] {g.name} on {m.name}" for n, (m, g) in enumerate(pairs, 1)])
-        answer = await self.prompt_line("  Leave out which? (numbers; Enter keeps them all)")
-        if answer is None:
-            return None
-        out = parse_picks(answer, len(pairs)) or []
-        return [pair for n, pair in enumerate(pairs, 1) if n not in out]
-
-    async def _build_playlist(self, settings: Settings, tool: Dedicated, server: ServerConfig,
-                              catalogue: Catalogue, maps: list[Entry] | None = None) -> None:
-        fewest, most = games_range(await self._row_version(settings, server))
-        self.note("Pick maps, then game types; every pair becomes a game players can vote for. "
-                  f"{fewest} to {most} games; a map variant plays on its own map.")
-        if maps is not None:
-            self.note("Mod maps are written the way the server names them (workshop:<item>/<map>), so the right "
-                      "mod is found; a playlist takes up to 23 mod maps from 16 mods.")
-        name = await self.prompt_line("  Playlist name (shown in the lobby)", maps[0].name if maps else "")
-        if not name:
-            return
-        playlist = new_playlist(server.folder, name)
-        if playlist.path.exists() and not await self.prompt_yes_no(f"  {playlist.path.name} exists; replace it?", False):
-            return
-        vote = await self.prompt_line("  Seconds players have to vote (5-120)", "20")
-        if vote is None:
-            return
-        playlist.vote_seconds = int(vote) if vote.isdecimal() else 20
-        pairs = await self._pick_pairs(catalogue, maps, settings=settings, server=server)
-        if not pairs:
-            return
-        for map_entry, game_entry in pairs:
-            playlist.add(map_entry.reference, game_entry.reference)
-        await self._weights(playlist)
-        await self._save_playlist(tool, server, playlist, catalogue=catalogue)
-
-    async def _weights(self, playlist: Playlist) -> None:
-        answer = await self.prompt_line("  Weights, e.g. 1=3 4=2 (a game with weight 3 comes up three times as often; "
-                                        "Enter for none)")
-        for part in (answer or "").split():
-            if "=" in part:
-                number, weight = part.split("=", 1)
-                if number.isdecimal() and weight.isdecimal():
-                    try:
-                        playlist.set_weight(int(number), int(weight))
-                    except PlaylistError as error:
-                        self.note(f"{part}: {error}", "yellow")
-
-    async def _save_playlist(self, tool: Dedicated, server: ServerConfig, playlist: Playlist, *, how: str = "saved in G",
-                             source: str = "", catalogue: Catalogue | None = None, from_editor: bool = False) -> bool:
-        """Saved only once the server's own program can play it (program/plays.check_plays: the check its start
-        and its reload make), so a playlist it would refuse is never written. When it can't, each problem is shown
-        with the game it's about, and the fixes are offered there: take those games out and check again, or change
-        them in the editor. Leaving keeps the draft in the playlist's history, unsaved."""
-        version = await self._row_version(self._settings(), server)  # 0.10 takes 1-256 games, 0.9 3-128
-        while True:
-            self.note(f"Checking {playlist.relative} ({len(playlist.games)} games) with the server program before "
-                      "it's saved:", "cyan")
-            check = await asyncio.to_thread(check_plays, tool, server, {"playlist": playlist.relative}, playlist,
-                                            version)
-            if check.ok:
-                if not check.asked:
-                    self.note(f"The server program couldn't be asked ({check.unasked}); Huragok's own checks passed.",
-                              "yellow")
-                if not self._write_playlist(server, playlist, how, source, version):
-                    return False
-                if await self.prompt_yes_no(f"  Use it for {server.name} now?", True) and \
-                        await self._by_players_before_use(server, playlist.relative):
-                    self._use_playlist(server, playlist.path)
-                return True
-            self.terminal.print()
-            self.note("The server program won't play it as it is, so it isn't saved:", "yellow")
-            self._show_problems(playlist, check.problems)
-            games = sorted({p.game for p in check.problems if p.game is not None and p.game <= len(playlist.games)})
-            fixes: list[tuple[str, str]] = []
-            if games and len(playlist.games) - len(games) >= games_range(version)[0]:
-                fixes.append(("T", f"Take out game{'s' if len(games) > 1 else ''} {', '.join(map(str, games))}, "
-                                   "and check again"))
-            if from_editor:
-                fixes.append(("E", "Back to the editor to change it (nothing is saved yet)"))
-            elif catalogue is not None:
-                fixes.append(("E", "Change it now, in the editor (nothing is saved yet)"))
-            fixes.append(("L", "Leave it unsaved (the draft is kept in its history)"))
-            choice = await self.choose("Which?", fixes, default=fixes[0][0], back=None)
-            if choice == "T":
-                playlist.remove(games)
                 continue
-            if choice == "E" and from_editor:
-                return False
-            if choice == "E" and catalogue is not None:
-                await self._edit_playlist(tool, server, catalogue, playlist)
-                return False  # the editor saves through here again, or leaves it
-            self._keep_draft(server, playlist, check.problems[0].text)
-            return False
-
-    def _show_problems(self, playlist: Playlist, problems: list[Any]) -> None:
-        labels = playlist.labels()
-        for problem in problems:
-            if problem.game is not None and problem.game <= len(labels):
-                said = re.sub(rf"^Game {problem.game}:?\s*", "", problem.text)
-                self.note(f"  game {problem.game} ({labels[problem.game - 1]}): {said}", "yellow")
-            else:
-                self.note(f"  {problem.text}", "yellow")
-
-    def _keep_draft(self, server: ServerConfig, playlist: Playlist, why: str) -> None:
-        try:
-            kept = versions.keep_text(self._settings().records, "playlists", server.slug, playlist.path.name,
-                                      json.dumps(playlist.data(), indent=2, ensure_ascii=False) + "\n",
-                                      f"draft, not saved: {why[:120]}")
-        except OSError as error:
-            self.note(f"Not saved, and the draft couldn't be kept: {error}", "yellow")
-            return
-        self.note(f"Not saved: {playlist.relative} stays as it was"
-                  + ("; the draft is in its history (Playlists -> H)." if kept else "."), "yellow")
-
-    def _write_playlist(self, server: ServerConfig, playlist: Playlist, how: str = "saved in G", source: str = "",
-                        program_version: str | None = None) -> bool:
-        """Saved, with the version it replaces and the one it writes kept in the history. `program_version`: the
-        server's (how many games it takes)."""
-        records = self._settings().records
-        if playlist.path.is_file():
-            versions.seen(records, "playlists", server.slug, playlist.path)
-        try:
-            playlist.save(program_version)
-        except (PlaylistError, OSError) as error:
-            self.note(f"Not saved: {error}", "yellow")
-            return False
-        try:
-            versions.keep(records, "playlists", server.slug, playlist.path, how, source)
-        except OSError as error:
-            self.note(f"Saved, but its version couldn't be kept in the history: {error}", "yellow")
-        self.note(f"Saved {playlist.relative} ({len(playlist.games)} games).", "green")
-        return True
-
-    async def _edit_playlist(self, tool: Dedicated, server: ServerConfig, catalogue: Catalogue,
-                             playlist: Playlist) -> None:
-        changed = False
-        while True:
-            self.heading(server.name, "Playlists", playlist.relative,
-                         note=f'"{playlist.name}" · vote {playlist.vote_seconds} s · {len(playlist.games)} games'
-                              f"{' · changed, not saved yet' if changed else ''}")
-            await self._pages([f"[{n:>3}] {label}" for n, label in enumerate(playlist.labels(), 1)])
-            choice = await self.choose("Which?", [
-                ("A", "Add games (pick maps and game types)"), ("R", "Remove games"), ("W", "Weights"),
-                ("G", "Change one game: name, rules and options, vote image"), ("V", "Vote seconds"),
-                ("N", "Rename"), ("S", "Save and check")], back="Esc leaves it as it was")
-            if choice is None:
-                if changed:
-                    self.note("Changes dropped.")
+            playing = _plays_playlist(server, path)
+            after = (f"Put back anyway, {server.name} refuses the change and keeps playing the playlist as it is now; "
+                     "no other change to its file applies until it's put right, and stopped, it won't start."
+                     if playing else "Put back anyway, it can't be played as it is (its file doesn't name it now).")
+            try:
+                text = versions.read(version)
+            except OSError as error:
+                self.note(f"Can't read that version: {error}", "yellow")
+                continue
+            if not await self._checked_or_asked(settings, server, path, text, after, "Put it back anyway"):
+                continue
+            if self._write_kept(settings, server, path, version.copy, "put back", f"the version of {version.stamp}"):
+                self.note(f"Put back: {path.name} is the version of {version.stamp} again"
+                          + (f" (it plays it: {applies_when('playlist', 'playlist')})." if playing else "."), "green")
+                await self.wait_any_key(6)
                 return
-            if choice == "A":
-                pairs = await self._pick_pairs(catalogue, settings=self._settings(), server=server)
-                for map_entry, game_entry in pairs or []:
-                    changed |= playlist.add(map_entry.reference, game_entry.reference)
-            elif choice == "R":
-                answer = await self.prompt_line("  Remove which? (numbers)")
-                picks = parse_picks(answer or "", len(playlist.games)) or []
-                changed |= bool(playlist.remove(picks))
-            elif choice == "W":
-                await self._weights(playlist)
-                changed = True
-            elif choice == "G":
-                answer = await self.prompt_line("  Which game? (number)")
-                if answer and answer.strip().isdecimal() and 1 <= int(answer) <= len(playlist.games):
-                    changed |= await self._edit_entry(server, catalogue, playlist, int(answer) - 1)
-            elif choice == "V":
-                vote = await self.prompt_line("  Seconds players have to vote (5-120)", str(playlist.vote_seconds))
-                if vote and vote.isdecimal():
-                    playlist.vote_seconds, changed = int(vote), True
-            elif choice == "N":
-                name = await self.prompt_line("  Name shown in the lobby", playlist.name)
-                if name:
-                    playlist.name, changed = name, True
-            elif choice == "S":
-                if await self._save_playlist(tool, server, playlist, catalogue=catalogue, from_editor=True):
-                    return
-                changed = True
 
     # Workshop and mods -----------------------------------------------------------------------
 
@@ -873,6 +744,9 @@ class SetupScreens(Screens):
                 self.note(status.summary(), "green" if status.ready else "yellow")
             self.note(f"Items in {server.name}'s {settings.config_name}: {', '.join(str(i) for i in items) or 'none'}",
                       "white")
+            self.note(f"[workshop] items is yours to write (O opens {settings.config_name}): the server fetches the "
+                      "items it lists and keeps them up to date by itself, and Huragok restarts it when a mod's map in "
+                      "use holds an update up.")
             for verdict in await asyncio.to_thread(self._workshop_verdicts, server, settings):
                 self.note(f"  {verdict}", "yellow" if "skipped" in verdict or "Error" in verdict else "gray")
             mods = catalogue.mods
@@ -882,39 +756,11 @@ class SetupScreens(Screens):
             for text, colour in await asyncio.to_thread(self._mod_health, server, settings):
                 self.note(text, colour)
             choice = await self.choose("Which?", [
-                ("A", "Add items (IDs or Workshop addresses)"), ("R", "Remove items (their files switched off)"),
-                ("I", "Fetch them now"), ("L", "Install a mod's Forge layouts into Maps"
-                                               + (" (done by itself)" if settings.workshop_updates.layouts else "")),
+                ("I", "Fetch them now"), ("L", "Install a mod's Forge layouts into Maps (only when you ask)"),
                 ("S", "SteamCMD setup (install, sign in)"), ("M", "Mod maps the server lists")])
             if choice is None:
                 return
-            if choice in ("A", "R"):
-                answer = await self.prompt_line("  Item IDs (or addresses), separated by spaces")
-                ids = parse_item_ids(answer.split()) if answer else []
-                if not ids:
-                    continue
-                new = [i for i in items if i not in ids] if choice == "R" else items + [i for i in ids if i not in items]
-                set_workshop_items(server, new)
-                catalogue.workshop_items = new
-                self.note(f"items = {new}", "green")
-                for line in switch_workshop_copies(server, ids, off=choice == "R", config_name=settings.config_name,
-                                                   servers=list(settings.servers)):
-                    self.note(line, "cyan")
-                if choice == "A" and not status.ready:
-                    self.note("SteamCMD isn't set up with a signed-in account, so nothing can download yet: [S] first.",
-                              "yellow")
-                elif choice == "A" and running:
-                    self.note("The running server fetches them itself now (auto_reload) and says so below; a big item "
-                              "takes a while.", "cyan")
-                    await self._follow_console(server, settings)
-                elif choice == "A":
-                    results = await self.controller.verb("workshop_look", server.name)
-                    ok = all(result.ok for _, result in results)
-                    self.note("The server is stopped: Huragok fetches them now, so they're ready as it starts (the "
-                              "log below says when they're in)." if ok else
-                              "The server is stopped: it fetches them as it starts ([I] fetches them now).",
-                              "cyan" if ok else "white")
-            elif choice == "I":
+            if choice == "I":
                 if not status.ready:
                     self.note("SteamCMD isn't set up with a signed-in account; [S] sets it up first (an anonymous "
                               "sign-in can't fetch MCC's items).", "yellow")
@@ -941,9 +787,9 @@ class SetupScreens(Screens):
                 root = content_root_of(server.folder, settings.config_name)
                 copied = await asyncio.to_thread(layouts_by_hand, settings, root, with_layouts[int(answer) - 1])
                 self.note(f"Copied {len(copied)} layout(s) into {root / 'Maps'}: the server lists them as saved maps "
-                          "(set base_map to the mod map in a playlist if it asks)"
-                          + (". The mod's new versions bring theirs by themselves ([workshop_updates] layouts)."
-                             if settings.workshop_updates.layouts else "."), "green")
+                          "(set base_map to the mod map in a playlist if it asks). The server doesn't read a mod's own "
+                          "layouts otherwise: after the mod's next version, L brings its new ones (a layout you "
+                          "changed there is left as it is).", "green")
                 fresh = await self._catalogue(tool, settings, server)
                 if fresh is not None:
                     catalogue.map_variants = fresh.map_variants
@@ -982,13 +828,19 @@ class SetupScreens(Screens):
                 "halo2": ("Add Halo 2's files", "its multiplayer maps (from MCC)"),
             }
             kinds = game_files.kinds_for(version)  # Reach, CE and Halo 2 only on a program that plays them (0.10)
-            options = [("1", "SteamCMD and the Steam account", "find or install it, sign in once, tell every server")]
+            options = [("1", "SteamCMD and the Steam account", "find or install it, sign in once")]
             options += [(str(n), *rows_for[kind]) for n, kind in enumerate(kinds, 2)]
+            options += [("L", "SteamCMD lines for a server", "its [workshop] steamcmd and username, shown first"),
+                        ("R", "Repair a server's folder", "what it lacks (game files, paths), shown first")]
             choice = await self.choose("Which?", options)
             if choice is None:
                 return
             if choice == "1":
                 await self._steam_account()
+            elif choice == "L":
+                await self._steamcmd_lines(settings)
+            elif choice == "R":
+                await self.screen_repair()
             else:
                 await self._game_files(kinds[int(choice) - 2])
 
@@ -1053,18 +905,20 @@ class SetupScreens(Screens):
                                          note="checking the sign-in again (keys pressed meanwhile are ignored)…")
             if not ok:
                 self.note("Still not signed in; the account stays in settings.toml, try I again later.", "yellow")
-        written = steam.configure(settings, executable, username)
-        self.note(f"Written: [workshop] steamcmd and username into {len(written)} server folder(s), and [setup] into "
-                  "settings.toml.", "green")
-        self.note("A server's [workshop] takes effect when its `dedicated` restarts (R); `dedicated mods` "
-                  "(G -> 3 -> I) installs items right away.")
+        steam.configure(settings, executable, username)
+        self.note("Written: [setup] steamcmd and steam_username in settings.toml.", "green")
         if ok:
-            self.note(f"{username} is signed in: the servers can download Workshop items.", "green")
+            self.note(f"{username} is signed in: Huragok can download game files with it.", "green")
+        self.note("A server's own [workshop] steamcmd and username are written only when you ask, one server at a "
+                  "time, shown first (L on the SteamCMD screen).")
         if await self.prompt_yes_no("  Put SteamCMD's folder on your PATH, for other tools?", False):
             # In a thread: Windows tells every open window about the change and waits on the ones that hang.
             self.note(await asyncio.to_thread(steam.add_to_path, executable.parent))
-        if ok:  # servers waiting for SteamCMD (to download their game files) look again now
+        if ok:  # what failed for want of SteamCMD (I's last ask for a game's files) is looked at again now
             await self.controller.verb("game_files_retry")
+        if await self.prompt_yes_no("  Write the SteamCMD lines into a server's dedicated.toml now?", False):
+            await self._steamcmd_lines(self._settings())
+            return
         await self.wait_any_key(10)
 
     async def _game_files(self, kind: str) -> None:
@@ -1302,10 +1156,27 @@ class SetupScreens(Screens):
                           "bans, VPN allowances, console-added admins; applies within seconds", bans))
         if (content / "disabled-mods.json").is_file():
             found.append(("content/disabled-mods.json", "mods kept but not used; restart", content / "disabled-mods.json"))
-        modes = content / "Game Modes"
-        for path in sorted(modes.glob("*.json"))[:12] if modes.is_dir() else []:
-            found.append((f"Game Modes/{path.name}", "a saved game type; picked up live", path))
+        from ...games.gamemodes import list_game_modes
+
+        # Its game modes an editor opens: .json game types and .rmeg scripted modes (MCC's .bin variants aren't text)
+        for mode in [m for m in list_game_modes(content) if m.kind != "bin" and not m.bundled][:12]:
+            what = "a scripted game mode (its header names it); picked up live" if mode.kind == "rmeg" else \
+                "a saved game type; picked up live"
+            found.append((mode.relative, what, mode.path))
         return found
+
+
+def shown_path(settings: Settings, path: Path) -> str:
+    """A file as the host finds it from Huragok's folder, SERVERS/LG Test 2/dedicated.toml in this system's own
+    spelling (the whole path when it's elsewhere)."""
+    try:
+        return str(path.resolve().relative_to(settings.home.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _listed(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1] if words else ""
 
 
 def unquote(text: str) -> str:
@@ -1345,24 +1216,43 @@ def _read_key(config: Path, key: str) -> Any:
         return None
 
 
-def _package_games(package: Package) -> list[dict[str, Any]]:
-    games: list[dict[str, Any]] = []
-    for path in package.playlists:
-        try:
-            games.extend(load_playlist(path).games)
-        except PlaylistError:
-            continue
-    return games
+def _labels_of(path: Path, text: str) -> list[str]:
+    """A playlist's games in words, numbered from 1 by their place ([] when its text isn't a playlist Huragok reads)."""
+    try:
+        return Playlist.from_data(path, json.loads(text)).labels()
+    except (ValueError, PlaylistError):
+        return []
+
+
+def _same(path: Path) -> str:
+    """A path as one file, to compare (case, `..`, links)."""
+    import os
+
+    try:
+        return os.path.normcase(str(path.resolve()))
+    except OSError:
+        return os.path.normcase(str(path))
+
+
+def _playlist_uses(server: ServerConfig) -> dict[str, str]:
+    """Each playlist file the server's own file names (its block's, else [defaults]'), as _same has it: how it names
+    it ("playlist =", or "playlists, 1-8" for one of 0.10.1's playlists by lobby size)."""
+    from ...core.tomledit import read_toml
+    from ...games.plays import playlist_refs, plays_block
+
+    try:
+        data = read_toml(server.config_path)
+    except (OSError, ValueError):
+        return {}
+    blocks = data.get("server", []) if isinstance(data.get("server"), list) else []
+    block = next((b for b in blocks if isinstance(b, dict) and str(b.get("name", "")).lower() == server.name.lower()),
+                 {})
+    defaults = data.get("defaults") if isinstance(data.get("defaults"), dict) else None
+    return {_same(ref.path(server.folder)): "playlist =" if ref.how == "playlist" else
+            f"playlists, {ref.players}" if ref.players else "playlists"
+            for ref in playlist_refs(plays_block(block, defaults))}
 
 
 def _plays_playlist(server: ServerConfig, path: Path) -> bool:
-    """Whether the server's own [[server]] block plays this playlist file now (`playlist =`)."""
-    from ...core.tomledit import server_blocks
-
-    try:
-        block = next((b for b in server_blocks(server.config_path)
-                      if str(b.get("name", "")).lower() == server.name.lower()), {})
-        playlist = block.get("playlist")
-        return isinstance(playlist, str) and (server.folder / playlist).resolve() == path.resolve()
-    except (OSError, ValueError):
-        return False
+    """Whether the server's own file plays this playlist file now: `playlist =`, or one of `playlists = [...]`."""
+    return _same(path) in _playlist_uses(server)

@@ -29,9 +29,9 @@ def test_the_first_start_writes_the_files_and_stops(tmp_path: Path, capsys) -> N
     write_server_folder(root / "SERVERS" / "Second", second, name="Second", exe=True)
     assert cli.main(["-c", str(root / "settings.toml"), "start"]) == common.SET_UP
     assert {p.name for p in root.iterdir()} == {"settings.toml", "commands.toml", "discord.toml", "automod.txt",
-                                              "names.txt", "intervalmessages.txt", "SERVERS", "PACKAGES", "records"}
+                                              "names.txt", "intervalmessages.txt", "SERVERS", "records"}
     assert [p.name for p in (root / "records").iterdir()] == ["files.json"]  # the word list's steps done: it's this version's
-    assert (root / "PACKAGES" / "team-slayer" / "playlists" / "team-slayer.playlist.json").is_file()
+    # No PACKAGES/ since 0.7.0: a new server is the program's own `dedicated init`
     out = capsys.readouterr().out
     assert "Put your player ID under [faculty]" in out and "start again" in out and "2 server folder(s) found" in out
     settings = load(root / "settings.toml")  # works as written
@@ -927,20 +927,21 @@ def test_typed_text_is_read_in_the_consoles_code_page(monkeypatch) -> None:
         assert console.decode("café".encode("utf-8")) == "café"
 
 
-def test_check_names_playlists_by_player_count_and_what_it_warns_of(tmp_path: Path, capsys) -> None:
-    from huragok.games import byplayers as bp
-
+def test_check_tells_a_host_with_playlists_by_player_count_what_to_paste(tmp_path: Path, capsys) -> None:
+    """Huragok's switcher is gone (0.7.0): its old file is left where it is, and `check` warns, with the server's own
+    `playlists = [...]` lines; a warning, not a problem."""
     path = _checkable(tmp_path / "reclaimer")
     server = load(path).servers[0]
-    (server.folder / "playlists").mkdir(exist_ok=True)
-    (server.folder / "playlists" / "small.playlist.json").write_text(
-        json.dumps({"name": "Small", "games": [{"map": "Guardian", "game": "Slayer"}] * 3}), encoding="utf-8")
-    bp.save(server.folder, bp.Setup(server.name, True, "", 30, [bp.Step("playlists/small.playlist.json", 200),
-                                                                  bp.Step("playlists/gone.playlist.json")]))
+    old = (f'[[server]]\nname = "{server.name}"\non = true\n[[server.step]]\nplaylist = "playlists/small.playlist.json"\n'
+           'up_to = 10\n[[server.step]]\nplaylist = "playlists/big.playlist.json"\n')
+    (server.folder / "playlists-by-players.toml").write_text(old, encoding="utf-8")
     assert cli.main(["-c", str(path), "check"]) == 0  # warnings, not problems
-    out = capsys.readouterr().out
-    assert "on · 2 playlists (G -> P)" in out
-    assert "playlist 2 (gone) never plays while max_players is" in out and "playlist 2 (gone) can't be played" in out
+    out = " ".join(capsys.readouterr().out.split())
+    assert "warning: Huragok no longer switches playlists by player count (0.7.0; it was on for this server)" in out
+    assert 'playlists = [ { file = "playlists/small.playlist.json", players = "1-10" }, { file = ' \
+           '"playlists/big.playlist.json", players = "11+" }, ]' in out
+    assert "(G -> P)" not in out and "by players" not in out
+    assert (server.folder / "playlists-by-players.toml").read_text(encoding="utf-8") == old
 
 
 def test_the_start_loop_goes_on_when_its_lock_cant_be_written(loop, monkeypatch) -> None:

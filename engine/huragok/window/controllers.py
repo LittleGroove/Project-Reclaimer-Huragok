@@ -140,7 +140,7 @@ class LocalController:
                 listener(event)
 
         # state.named: a 0.10 player's name, which comes a few seconds after their join.
-        stops = [self.supervisor.bus.subscribe(pattern, mine) for pattern in ("rcon.*", "byplayers.*", "state.named")]
+        stops = [self.supervisor.bus.subscribe(pattern, mine) for pattern in ("rcon.*", "state.named")]
         return lambda: [stop() for stop in stops] and None
 
     def rows(self) -> list[Row]:
@@ -336,7 +336,7 @@ class RemoteController:
 
 
 # How long a second window waits for the supervising window's answer, by request: longer than the work takes.
-REMOTE_WAITS = {"update": 600.0, "update_program": 900.0, "update_workshop": 600.0, "check_update": 180.0,
+REMOTE_WAITS = {"update": 600.0, "update_workshop": 600.0, "check_update": 180.0,
                 "check_program_update": 180.0, "check_workshop": 300.0, "rcon": 30.0, "say": 30.0,
                 "game_files": 60.0, "game_files_retry": 30.0, "banall": 60.0}
 

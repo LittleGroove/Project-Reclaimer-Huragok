@@ -18,6 +18,13 @@ def slug(name: str, empty: str = "") -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or empty
 
 
+def version_tuple(text: str | None) -> tuple[int, ...] | None:
+    """'0.9.19' or 'v0.9.20-beta' -> (0, 9, 19); None when it isn't a version. For comparing Project Reclaimer
+    versions (core/web.py's parse_version orders Huragok's own releases, and raises)."""
+    match = re.match(r"v?(\d+(?:\.\d+)*)", str(text or "").strip())
+    return tuple(int(n) for n in match.group(1).split(".")) if match else None
+
+
 def seconds_of(time: str) -> int:
     number, unit = TIME.fullmatch(time).groups()  # type: ignore[union-attr]
     return int(number) * UNITS[unit][1]

@@ -54,6 +54,17 @@ FACULTY = ["commands.toml: [owner] is [faculty] now, everyone in it kept", "sett
 AUTOMOD_ORDER = "automod.txt: Huragok's notes as this version writes them, the mutes first (words | mutes | kicks | ban | name)"
 
 
+# [setup] settings 0.7.0 retired (a new server is the program's own `dedicated init`): hosts' files still have them
+# until the 0.7.0 update step takes them out with a note, so `check` names them meanwhile.
+SETUP_RETIRED_0_7_0 = ("share", "packages_folder", "auto_update", "download_game_files")
+
+
+def still_retired(retired: list[str]) -> list[str]:
+    """What a host's file has that does nothing, but for the [setup] settings 0.7.0 retired."""
+    return [line for line in retired
+            if not any(line.startswith(f"settings.toml [setup] {key} does nothing") for key in SETUP_RETIRED_0_7_0)]
+
+
 def new_command_lines() -> list[str]:
     from huragok.core.commandsfile import TITLES
 
@@ -89,10 +100,10 @@ def test_this_version_reads_0_4_0s_files_as_they_are(tmp_path: Path) -> None:
     settings_path = host(tmp_path)
     settings = load(settings_path)  # before anything is brought up to date: nothing in them is wrong or unknown
     # Retired keys and unknown ones alike: none but 0.6.0's restarts_per_hour, which the update takes out
-    assert [line for line in settings.retired if "restarts_per_hour" not in line] == [] and len(settings.retired) == 1
+    retired = still_retired(settings.retired)
+    assert [line for line in retired if "restarts_per_hour" not in line] == [] and len(retired) == 1
     # Only a key renamed since, still read under its old name until the start renames it (0.4.2):
     assert len(settings.notes) == 1 and "install_on_server_restart = false is auto_update's name" in settings.notes[0]
-    assert settings.setup.download_game_files is True  # a setting 0.4.0 never had takes its default
     load_permissions(settings_path.parent / "commands.toml")
 
 
@@ -131,27 +142,52 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "since 0.6.0",
         "settings.toml: [watchdog] memory = \"watch\": it only warns unless you turn it on (\"act\"), and counts growth "
         "past memory_mb once a run has settled (new in 0.6.0)",
+        "settings.toml: [workshop_updates] restart = true added: a server is restarted to put in a mod update its map "
+        "in use holds up (new in 0.7.0)",
+        "settings.toml: [server_updates] check_hours = 1 is check_minutes = 15 now",
+        "settings.toml: [server_updates] install taken out: each server installs its own releases (its auto_update); "
+        "Huragok never does (0.7.0)",
+        "settings.toml: [server_updates] fallback taken out: Huragok no longer installs releases: a server left behind "
+        "is warned about (0.7.0)",
+        "settings.toml: [workshop_updates] install taken out: Huragok only restarts a server for a mod update "
+        "([workshop_updates] restart) (0.7.0)",
+        "settings.toml: [workshop_updates] check_minutes taken out: each server's own [workshop] update_check_minutes "
+        "decides; Huragok no longer writes it (0.7.0)",
+        "settings.toml: [workshop_updates] adopt taken out: a mod copied in by hand is warned about: list it in "
+        "[workshop] items (0.7.0)",
+        "settings.toml: [workshop_updates] layouts taken out: a mod's own layouts are copied into content/Maps when you "
+        "ask (G → 4 → L) (0.7.0)",
+        "settings.toml: [setup] share taken out: each server uses the game and content folders its own dedicated.toml "
+        "names; Huragok no longer shares folders between servers (0.7.0)",
+        "settings.toml: [setup] packages_folder taken out: packages are gone: a new server is the program's own init "
+        "(0.7.0)",
+        "settings.toml: [setup] auto_update taken out: a new server is the program's own init; each server's own "
+        "auto_update decides (0.7.0)",
+        "settings.toml: [setup] download_game_files taken out: game files are fetched only when you ask (I, or "
+        "start.cmd repair) (0.7.0)",
+        "settings.toml: [stats] relay = true added: Huragok's stats relay, now with a switch (new in 0.7.0)",
+        "settings.toml: follow_renames = true added: a server renamed in its dedicated.toml stays the same server (new "
+        "in 0.7.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
-        "PACKAGES/every-halo: a new starter package",  # 0.6.2's, for Project Reclaimer 0.10
-        AUTOMOD_ORDER, *FACULTY, *new_command_lines()]
+        AUTOMOD_ORDER, *FACULTY, *new_command_lines()]  # no starter packages since 0.7.0
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
     template = TEMPLATE.read_text(encoding="utf-8")
     added = ([f"# {c}" for c in migrate.NAME_MATCH_COMMENT] + ['name_match = "anywhere"']
              + [f"# {c}" for c in migrate.ACROSS_COMMENT] + ["across_servers = true"]
              + [f"# {c}" for c in migrate.KICK_LIMIT_COMMENT] + ['moderators_kick_at_most = "1d"']
-             + [f"# {c}" for c in migrate.ADOPT_COMMENT] + ["adopt = true"]
-             + [f"# {c}" for c in migrate.LAYOUTS_COMMENT] + ["layouts = true"]
              + migrate.UPDATES_COMMENT_0_4_2 + [f"# {c}" for c in migrate.AUTO_UPDATE_COMMENT] + ["auto_update = false"]
              + [f"# {c}" for c in migrate.BETA_COMMENT] + ["beta = false"]
-             + [c for c in migrate.SHARE_COMMENT_0_5_0 if c not in migrate.SHARE_COMMENT_0_4_0] + ['share = ["game"]']
-             + migrate.STEAMCMD_COMMENT_0_4_1 + [f"# {c}" for c in migrate.DOWNLOAD_GAME_FILES_COMMENT]
-             + ["download_game_files = true"] + [f"# {c}" for c in migrate.PRIORITY_COMMENT] + ['priority = "high"'])
+             + [f"# {c}" for c in migrate.PRIORITY_COMMENT] + ['priority = "high"'])
+    # [setup] share, download_game_files and their notes are 0.7.0's retired settings: not in the template now
     for line in added:
         assert line in template.splitlines()  # the same words a new host's file has
+    # 0.6.0's adopt and layouts, which 0.7.0 retired: the 0.7.0 hands-off step took them out and added restart
+    assert "\nadopt = true\n" not in text and "\nlayouts = true\n" not in text and "\nrestart = true\n" in text
     setup = text[text.index("\n[setup]\n"):]
-    assert setup.index("steam_username") < setup.index("download_game_files") < setup.index("auto_update = true")
+    setup = setup[:setup.index("\n[", 1)]
+    assert "download_game_files" not in setup and "\nauto_update" not in setup and "\nshare" not in setup  # 0.7.0
     process = text[text.index("\n[process]\n"):text.index("\n[docker]\n")]
     assert process.rstrip().endswith("\nstop_servers_on_exit = false\n" + "\n".join(
         f"# {c}" for c in migrate.PRIORITY_COMMENT) + '\npriority = "high"')  # where a new host's file has it
@@ -174,7 +210,7 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     assert record["version"] == __version__ and "0.4.1/download-game-files" in record["steps"]
     assert up_to_date(settings_path) == [] and settings_path.read_text(encoding="utf-8") == text  # done once
     settings = load(settings_path)
-    assert settings.retired == [] and settings.notes == []
+    assert still_retired(settings.retired) == [] and settings.notes == []
 
 
 def test_a_host_who_had_huragok_install_itself_keeps_it(tmp_path: Path) -> None:
@@ -190,7 +226,7 @@ def test_a_host_who_had_huragok_install_itself_keeps_it(tmp_path: Path) -> None:
     assert "\nauto_update = true\n" in after and "# install_on_server_restart = true" in after
     assert "# Renamed auto_update in 0.4.2" in after
     fresh = load(settings_path)
-    assert fresh.updates.auto_update and fresh.notes == [] and fresh.retired == []
+    assert fresh.updates.auto_update and fresh.notes == [] and still_retired(fresh.retired) == []
     # The host set auto_update themselves, beside the old line: theirs stays, the old line still goes.
     settings_path = host(tmp_path / "both")
     text = settings_path.read_text(encoding="utf-8").replace("install_on_server_restart = false",
@@ -233,7 +269,7 @@ def test_a_file_from_before_0_4_0_loses_what_does_nothing(tmp_path: Path) -> Non
     after = settings_path.read_text(encoding="utf-8")
     assert "# disable_auto_update = true  # the old default" in after and "# Not read since 0.4.0" in after
     fresh = load(settings_path)
-    assert fresh.retired == [] and fresh.notes == [] and fresh.updates.repository == migrate.NEW_REPOSITORY
+    assert still_retired(fresh.retired) == [] and fresh.notes == [] and fresh.updates.repository == migrate.NEW_REPOSITORY
 
 
 def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> None:
@@ -251,20 +287,24 @@ def test_the_hosts_own_choices_are_left_as_they_made_them(tmp_path: Path) -> Non
     # Their commented-out keys and their comment are theirs (share losing "bans" is every host's: a ban list of its own
     # for every server isn't a choice).
     assert not any(part in line for line in changed for part in ("[setup]", "[process]", "[automod]")
-                   if "share" not in line)
+                   if "share" not in line and "(0.7.0)" not in line)  # 0.7.0 retires [setup]'s for every host
     after = settings_path.read_text(encoding="utf-8")
-    steamcmd = "\n".join(["# My SteamCMD notes (the window's I key sets this up: finds or installs",
-                          *migrate.STEAMCMD_COMMENT_0_4_1[1:], "# steamcmd = "])
+    template = TEMPLATE.read_text(encoding="utf-8").splitlines()
+    first = template.index("# SteamCMD, for Workshop items and Halo 3's files (the window's I key sets this up:")
+    note = template[first + 1:template.index("# steamcmd = 'C:\\steamcmd\\steamcmd.exe'", first)]
+    steamcmd = "\n".join(["# My SteamCMD notes (the window's I key sets this up: finds or installs", *note,
+                          "# steamcmd = "])
     assert steamcmd in after  # their wording in place of the line it rewords; the rest brought up to date
     assert migrate.STEAMCMD_COMMENT_0_4_1[0] not in after
-    for comment, line in ((migrate.DOWNLOAD_GAME_FILES_COMMENT, "# download_game_files = false"),
-                          (migrate.PRIORITY_COMMENT, '# priority = "normal"'),
+    # download_game_files does nothing since 0.7.0: their commented-out line stays, with no note of Huragok's above it
+    assert 'steam_username = ""\n# download_game_files = false\n' in after
+    for comment, line in ((migrate.PRIORITY_COMMENT, '# priority = "normal"'),
                           (migrate.NAME_MATCH_COMMENT, '# name_match = "words"'),
                           (migrate.ACROSS_COMMENT, "# across_servers = false")):
         assert "\n".join([*(f"# {c}" for c in comment), line]) in after  # what it is, above their choice
     assert "name_match" not in read_toml(settings_path)["automod"]  # the default, anywhere, applies
     assert "across_servers" not in read_toml(settings_path)["automod"]
-    assert load(settings_path).setup.download_game_files is True
+    assert "download_game_files" not in read_toml(settings_path)["setup"]  # their comment stays one
     assert "priority" not in read_toml(settings_path)["process"]  # the default, High, applies
     # The same for [updates]: their own line in Huragok's note stays, after it; their commented-out auto_update and
     # beta stay commented out, each with its note.
@@ -324,23 +364,16 @@ def test_new_commands_are_listed_under_their_default_role(tmp_path: Path) -> Non
     assert up_to_date(settings_path) == [] and commands.read_text(encoding="utf-8") == off
 
 
-def test_a_new_starter_package_arrives_once_and_a_removed_one_stays_removed(tmp_path: Path, monkeypatch) -> None:
+def test_no_starter_package_arrives_since_0_7_0(tmp_path: Path) -> None:
+    """Packages are gone in 0.7.0: the step that added new starter packages to PACKAGES/ does nothing, and a host's
+    PACKAGES/ is left exactly as it is, the starters they took out and any they made."""
     settings_path = host(tmp_path)
     packages = settings_path.parent / "PACKAGES"
     shutil.rmtree(packages / "infection")  # the host took it out
-    assert up_to_date(settings_path)[-1:] != ["PACKAGES/infection: a new starter package"]
-    assert not (packages / "infection").exists()
-    # A release that brings a starter 0.4.0 didn't have:
-    monkeypatch.setattr(migrate, "STARTERS_0_4_0", tuple(n for n in migrate.STARTERS_0_4_0 if n != "team-slayer"))
-    shutil.rmtree(packages / "team-slayer")
-    record = settings_path.parent / "records" / "files.json"
-    data = json.loads(record.read_text(encoding="utf-8"))
-    data["starters"].remove("team-slayer")
-    record.write_text(json.dumps(data), encoding="utf-8")
-    assert "PACKAGES/team-slayer: a new starter package" in up_to_date(settings_path)
-    assert (packages / "team-slayer" / "package.toml").is_file()
-    shutil.rmtree(packages / "team-slayer")  # taken out again: never put back
-    assert up_to_date(settings_path) == [] and not (packages / "team-slayer").exists()
+    before = sorted(p.relative_to(packages).as_posix() for p in packages.rglob("*"))
+    assert not any("starter package" in line for line in up_to_date(settings_path))
+    assert sorted(p.relative_to(packages).as_posix() for p in packages.rglob("*")) == before
+    assert migrate.new_starters(migrate.context_for(settings_path, settings_path.parent / "records", packages)) == []
 
 
 def test_huragok_brings_the_files_up_to_date_as_it_starts(tmp_path: Path, monkeypatch) -> None:
@@ -348,7 +381,7 @@ def test_huragok_brings_the_files_up_to_date_as_it_starts(tmp_path: Path, monkey
     args = cli.build_parser().parse_args(["-c", str(settings_path), "start"])
     settings = load(settings_path)
     fresh = run_module.bring_files_up_to_date(args, settings)
-    assert fresh is not settings and "download_game_files" in read_toml(settings_path)["setup"]
+    assert fresh is not settings and "restart" in read_toml(settings_path)["workshop_updates"]  # brought up to date
 
     def broken(*args: object) -> list[str]:
         raise RuntimeError("a bug in a step")
@@ -708,7 +741,7 @@ def test_a_restart_budget_of_the_hosts_own_becomes_a_comment(tmp_path: Path) -> 
     text = settings_path.read_text(encoding="utf-8")
     assert "\n# restarts_per_hour = 10\n" in text and "# Not read since 0.6.0: automatic restarts" in text
     assert migrate.RESTART_BUDGET_OLD_NOTE not in text
-    assert load(settings_path).retired == []
+    assert still_retired(load(settings_path).retired) == []
 
 
 def test_the_top_rank_is_faculty_in_every_file(tmp_path: Path) -> None:

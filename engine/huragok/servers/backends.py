@@ -580,8 +580,9 @@ class ProcessBackend(Backend):
         console_path.touch()
         tail = FileTail(console_path, from_start=False)
         tail.read_lines()  # start reading at today's end of the file
-        env = server_environment(RECLAIMER_DEDICATED_ONLY=server.name)  # content, items…: its dedicated.toml says
-        env.pop("RECLAIMER_DEDICATED_AUTO_UPDATE", None)  # the server's own auto_update (dedicated.toml) decides
+        # Huragok's environment as it is (0.7.0: a RECLAIMER_DEDICATED_ variable set here is the host's, and wins over
+        # the file for the program as it would without Huragok), and the one server this process runs
+        env = server_environment(RECLAIMER_DEDICATED_ONLY=server.name)
         stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         try:
             with console_path.open("ab") as output:

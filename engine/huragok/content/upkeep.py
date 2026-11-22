@@ -103,9 +103,10 @@ def _huragok_backups(settings: Settings) -> list[Path]:
 
 
 def _workshop_copies(settings: Settings) -> list[Leftover]:
-    """Old copies in each .huragok-workshop-previous/: only those whose item is still in the live folder (one
-    whose item is missing may be the only copy left: Huragok puts it back), never one a job is using."""
-    from ..updates.workshop import ASIDE, ASIDE_NAME, MARKER, RECEIPT, kept_by_markers
+    """Old copies in each .huragok-workshop-previous/, which Huragok 0.6 left when it swapped mod copies itself: only
+    those whose item is still in the live folder (one whose item is missing may be the only copy left), never one an
+    unfinished swap's marker names."""
+    from ..updates.workshop import ASIDE, ASIDE_NAME, MARKER, is_installed, kept_by_markers
 
     found: list[Leftover] = []
     roots: dict[Path, list] = {}
@@ -122,8 +123,7 @@ def _workshop_copies(settings: Settings) -> list[Leftover]:
             match = ASIDE_NAME.search(old.name)
             if match and not match.group("failed"):
                 owners = [s for s in servers if old.name.startswith(f"{s.slug}-")] or servers
-                if not any((s.content_dir / "Mods" / "Workshop" / match.group("item") / RECEIPT).is_file()
-                           for s in owners):
+                if not any(is_installed(s.content_dir / "Mods" / "Workshop" / match.group("item")) for s in owners):
                     continue  # no whole copy in the live folder: this may be the only one
             why = "a partial new copy a Workshop update set aside" if match and match.group("failed") else \
                 "a mod's old copy a Workshop update left"

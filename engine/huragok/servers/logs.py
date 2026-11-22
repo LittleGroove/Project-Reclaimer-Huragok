@@ -65,6 +65,38 @@ TAGGED: list[tuple[str, str, re.Pattern[str]]] = [
     ("stats", "log.stats_reporting", re.compile(r"^reporting to (?P<url>\S+?) as (?P<key>\S+?)\.?$")),
 ]
 
+# A game the server couldn't play (0.10.6-0.10.9), as the program's own text has it (the 0.10.8 and 0.10.9 files read
+# as bytes, 22 November 2026: the same in both; no server here has said one yet). The supervisor's lines, on its
+# console, name the server in quotes and end "See <its log>.": (what, pattern after `[server] "<name>": `).
+#   retry          the map failed to load: the game is started again (0.10.8: up to three times in a row)
+#   skipped        then skipped for a while (0.10.8's notes: 30 minutes; never drawn or on a ballot meanwhile)
+#   unplayable     its content can't be made (too big for memory…): skipped from now on
+#   none_playable  no game of its playlist can be played: the server stopped
+#   outside        a game the console chose, outside the playlist, couldn't be played: nothing skipped
+GAME_SKIPS: list[tuple[str, str]] = [
+    ("retry", r"the map of its game (?P<game>.+?) failed to load \((?P<reason>.*)\), (?P<times>\d+) of (?P<of>\d+) "
+              r"times in a row: starting it again in (?P<wait>\d+) s\."),
+    ("skipped", r"the map of its game (?P<game>.+?) failed to load (?P<times>\d+) times in a row \((?P<reason>.*)\): "
+                r"starting the next game; it is skipped for (?P<skip>.+?)\."),
+    ("unplayable", r"its game (?P<game>.+?) cannot be played \((?P<reason>.*)\): starting the next game; it is "
+                   r"skipped from now on\."),
+    ("none_playable", r"no game of its playlist can be played \(the last: (?P<game>.*)\): stopped\."),
+    ("outside", r"a game that is not in the playlist, (?P<game>.+?), could not be played \((?P<reason>.*)\): no game "
+                r"is skipped for it; starting the playlist's next game\."),
+]
+SEE = r"(?: See .*)?$"
+# The game's own lines in server.log, after "[server] " (the same program text): (what, pattern).
+#   skip_ended   a skipped game's 30 minutes ran out: it's drawn again
+#   load_failed  the game process's side of a failed load: the server starts again
+#   no_results   0.10.6: a game that ended with no results, twice with players in it, is passed over
+GAME_LINES: list[tuple[str, re.Pattern[str]]] = [
+    ("skip_ended", re.compile(r"^(?P<game>.+?) is skipped no more: its skip for failed loads ran out\.?$")),
+    ("load_failed", re.compile(r"^(?P<game>.+?) could not be loaded \((?P<reason>.*)\): the server starts again\.?$")),
+    ("no_results", re.compile(r"^(?P<game>.+?) ended with no results (?P<times>\d+) times in a row with players in "
+                              r"it: the playlist goes on without it\.?$")),
+    *((what, re.compile(rf'^"(?P<server>[^"]+)": {pattern}{SEE}')) for what, pattern in GAME_SKIPS),
+]
+
 # Lines that carry someone's own words: a console command echoed ("RCON 127.0.0.1:60106: say …", or "… as
 # Alice: …"), a refused join with the ban's reason, a kick or ban with its reason. They're looked at first, so
 # what someone typed can never pass for one of the server's own lines (a `say Host roster lost 99 of 99 …`
@@ -200,6 +232,10 @@ CONSOLE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("server.workshop", re.compile(CLOCK + r"\[workshop\] (?P<item>\d+): (?P<text>.+?)\.?$")),
 ]
 
+# The console's lines about a game it couldn't play (GAME_SKIPS), as server.game_skip events with `what`.
+CONSOLE_SKIPS: list[tuple[str, re.Pattern[str]]] = [
+    (what, re.compile(CLOCK + rf'\[server\] "(?P<server>[^"]+)": {pattern}{SEE}')) for what, pattern in GAME_SKIPS]
+
 CRASH_KINDS = [
     ("hang", "stopped responding"),
     ("hang", "stopped answering"),  # 0.10
@@ -215,7 +251,7 @@ CRASH_KINDS = [
 # Groups that are text even when they're all digits: a player called "007" is not the number 7.
 TEXT_GROUPS = {"clock", "id", "name", "caller", "by", "text", "reason", "server", "address", "command", "details",
                "path", "version", "how", "unit", "playlist", "picked", "kind", "mode", "handle", "game", "choices",
-               "url", "key"}  # names: "1.10" stays "1.10"
+               "url", "key", "skip", "what"}  # names: "1.10" stays "1.10"
 
 
 def _clean(groups: dict[str, Any]) -> dict[str, Any]:
@@ -259,6 +295,10 @@ def parse_log_line(line: str) -> tuple[str, dict[str, Any]] | None:
         for of, name, pattern in TAGGED:
             if of == tag and (match := pattern.match(line)):
                 return _event(name, _clean(match.groupdict()), clock)
+        if tag == "server":
+            for what, pattern in GAME_LINES:  # a game it couldn't play (B13)
+                if match := pattern.match(line):
+                    return _event("log.game_skip", {**_clean(match.groupdict()), "what": what}, clock)
     # 0.9's words, which 0.10 writes with a small first letter after its tag ("[server] playlist selected: …")
     text = line[:1].upper() + line[1:] if tag else line
     for name, pattern in ECHOES:
@@ -281,6 +321,9 @@ def parse_log_line(line: str) -> tuple[str, dict[str, Any]] | None:
 
 def parse_console_line(line: str) -> tuple[str, dict[str, Any]] | None:
     """A line from `dedicated`'s console -> (event name, data incl. 'server' when named)."""
+    for what, pattern in CONSOLE_SKIPS:  # a game it couldn't play (B13)
+        if match := pattern.match(line.strip()):
+            return "server.game_skip", {**_clean(match.groupdict()), "what": what}
     for name, pattern in CONSOLE_PATTERNS:
         if match := pattern.match(line.strip()):
             data = _clean(match.groupdict())

@@ -422,13 +422,19 @@ class ProgramLifecycle:
         self.flags: dict[tuple[str, str], str] = {}
         self.planned: dict[str, Any] = {}
         self.cancelled: list[str] = []
+        self.told: dict[str, str] = {}  # server -> what players read while it waits for the game to end
+        self.console: set[str] = set()  # servers whose restart may go through their own console (started elsewhere)
 
     def is_up(self, name: str) -> bool:
         return name in self.up
 
     async def restart(self, server: str, *, when: str, reason: str, by: str | None = None,
-                      countdown: float | None = None) -> Any:
+                      countdown: float | None = None, tell: str = "", console: bool = False) -> Any:
         self.restarts.append((server, when, reason))
+        if tell:
+            self.told[server] = tell
+        if console:
+            self.console.add(server)
         self.planned[server] = self._plan(when=when, reason=reason)
         return self.planned[server]
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -14,7 +15,7 @@ from ..core.events import Event, EventBus
 from ..core.text import one_line
 from ..games import halo3_mapfile
 from ..games.bungie import GAMES
-from ..games.halo3_options import version_tuple
+from ..core.text import version_tuple
 from ..program.releases import program_of, program_version, readable
 from . import modcheck
 from .gamefiles import read_paths
@@ -26,6 +27,7 @@ log = logging.getLogger(__name__)
 
 MOD_CHECK_SECONDS = 600.0  # the servers' mods are looked at again this often (mods copied in by hand)
 MOD_SETTLE_SECONDS = 5.0  # after a Workshop install, before its mods are looked at
+RETRY_QUIET = 3600.0  # a server's failing install of one item, said every 5 s, is logged once in this long
 
 # What a server's mod and content lines (servers/logs.py MOD_LINES) mean, and what to do: said once a start under each.
 MOD_ADVICE = {
@@ -48,7 +50,7 @@ MOD_ADVICE = {
 
 # Workshop lines from the console that say a fetch or install failed: (words in the line, what to do).
 WORKSHOP_TROUBLE = [
-    ("is incomplete", "files are missing from the installed copy: fetch it again (G → the server → 3 "
+    ("is incomplete", "files are missing from the installed copy: fetch it again (G → the server → 4 "
                       "Workshop items and mods → I)"),
     ("without an installation receipt", "a folder copied in by hand is in its place: move "
                                         "content/Mods/Workshop/<item> aside, then fetch it"),
@@ -68,6 +70,8 @@ WORKSHOP_TROUBLE = [
     ("timed out", "Steam or SteamCMD didn't answer: it's tried again later"),
     ("steamcmd stopped", "SteamCMD stopped part way: it's tried again later; its log is in data/workshop-cache"),
     ("did not download", "SteamCMD didn't download it: it's tried again later; its log is in data/workshop-cache"),
+    ("aside", "the mod's map is in use, so the downloaded version can't go in until the server restarts: Huragok "
+              "restarts it ([workshop_updates] restart), or only warns with that off"),
     ("update failed", "the new version didn't install; the installed copy stays"),
     ("update check failed", "Steam couldn't be asked about new versions: it's tried again later"),
     ("cannot put the new version in place", "the new version couldn't replace the old (a file in use?): it's tried "
@@ -108,6 +112,7 @@ class ModWatch:
         self._reports: dict[str, tuple[Any, ...]] = {}  # per mod folder, its report as last logged
         self._changed: asyncio.Event | None = None  # set on a Workshop install: the mods are looked at again
         self._versions: dict[str, str] = {}  # per server, its program's version as last looked at
+        self._retries: dict[tuple[str, str], float] = {}  # (server, item): when its failing install was last logged
         bus.subscribe("server.workshop", self._note_workshop)
         bus.subscribe("server.map_skipped", self._note_workshop)
         bus.subscribe("log.mod_problem", self._note_mod_problem)
@@ -125,6 +130,14 @@ class ModWatch:
             return
         text = str(event.get("text") or "")
         lower = text.lower()
+        if lower.startswith("installing the update failed"):
+            # Said again every 5 s while the map in use holds the update up (S1): logged once an hour, and
+            # updates/workshop.py's warning says what's happening and what's done about it
+            key, now = (event.server or "", str(event.get("item"))), time.monotonic()
+            if now - self._retries.get(key, float("-inf")) < RETRY_QUIET:
+                log.debug("[%s] Workshop %s: %s", event.server, event.get("item"), one_line(text))
+                return
+            self._retries[key] = now
         advice = workshop_advice(text, self._versions.get(event.server or ""))
         failed = advice is not None or lower.startswith(("error", "failed", "could not", "cannot")) \
             or "update failed" in lower  # 0.10: "update failed: …", "installing the update failed (…); trying again"

@@ -1,5 +1,5 @@
-"""The first start: settings.toml (the layout and the backend it finds), commands.toml, automod.txt, names.txt,
-intervalmessages.txt and the starter packages, each written once and never replaced; and `init`."""
+"""The first start: settings.toml (the layout and the backend it finds), commands.toml, automod.txt, names.txt and
+intervalmessages.txt, each written once and never replaced; and `init`."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import os
 from importlib import resources
 from pathlib import Path
 
-from ..content.packages import PACKAGES_FOLDER
 from ..core.serverfolders import SERVERS_FOLDER, find_server_folders
 from ..core.settings import COMMANDS_FILE, SETTINGS_FILE, load
 from ..core.tables import ConfigError
@@ -128,14 +127,6 @@ def write_files(home: Path, server_folder: str | None = None, backend: str | Non
     if write_template(home / MESSAGES_FILE):
         written.append(f"{MESSAGES_FILE}  interval messages every server says (a Discord link, the rules), none "
                        "yet; each server folder gets one of its own")
-    packages = home / PACKAGES_FOLDER
-    if not packages.exists():
-        from ..content.packages import install_starters
-
-        packages.mkdir(parents=True, exist_ok=True)
-        starters = install_starters(packages)
-        written.append(f"{PACKAGES_FOLDER + '/':<15} {len(starters)} starter packages for new servers "
-                       "(N in the window, or `new`)")
     return written
 
 

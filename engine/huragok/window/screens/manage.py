@@ -1,8 +1,9 @@
 """The window's screens for managing a running server: A the console (with the server's events as
 they happen, and your name on what you do), D settings: Huragok's own files (files.py) above every
-server, and each server in groups (what it plays, the settings of its dedicated.toml, Huragok's own
-for it; its playlists, custom games, bans and mods; renaming it, a content folder of its own),
-B bans, admins and the VPN block, U updates (Huragok's, the server program's, Workshop mods).
+server, and each server in groups (the settings of its dedicated.toml, Huragok's own for it, and what
+it plays, shown only: that's set by hand now; its bans and interval messages (playlists, custom games and mods are G's); renaming it,
+a content folder of its own), B bans, admins and the VPN block, U updates (Huragok's, the server
+program's, Workshop mods).
 """
 
 from __future__ import annotations
@@ -12,15 +13,14 @@ import logging
 import time
 from typing import Any, Callable
 
+from ...core import desktop
 from ...core.events import Event
 from ...core.tags import NO_NAME, shown_name, tag
 from ...core.text import is_player_id
-from ...program.plays import applies_when, check_plays, plays_problem, write_plays
 from ...program.settings import (
     APPLIES, FOLDER_SETTINGS, GROUPS, SERVER_SETTINGS, can_reset, catalogue, check_path, check_value, display, offered,
     parse, reset, summary, write,
 )
-from ...games.bungie import GAMES
 from ...players.targets import QUOTES, is_team, is_time, plain
 from ...rcon import masked as mask_console_line
 from ..controllers import Row
@@ -109,12 +109,6 @@ def describe_event(event: Event, known: Known | None = None) -> str | None:
         return f"{clock} anti-cheat {data.get('action', '')}: {who} ({data.get('detail', '')})"
     if name in ("connected", "disconnected"):
         return f"{clock} (console {name})"
-    if name == "byplayers.changed":
-        players = data.get("players", "?")
-        return (f"{clock} {players} player{'' if players == 1 else 's'} on: plays {data.get('name', '')} "
-                f"({data.get('range', '')}) from the next vote")
-    if name == "byplayers.refused":
-        return f"{clock} ! not switched to {data.get('playlist', '')}: {data.get('why', '')}"
     return None
 
 
@@ -239,8 +233,8 @@ class ManageScreens(Screens):
             panel = self.listing([(what, name, about) for _, what, name, about in files],
                                  keys=[key for key, *_ in files], wrap=True)
             rows = self.controller.rows()
-            self.heading("Servers", note="each one's dedicated.toml in groups, its playlists, custom games, bans and "
-                                         "mods")
+            self.heading("Servers", note="each one's dedicated.toml, read-only, Huragok's own settings for it, its bans and "
+                                         "interval messages")
             if rows:
                 panel += self.server_rows(rows)
             else:
@@ -260,8 +254,10 @@ class ManageScreens(Screens):
             await self._server_settings(settings, row)
 
     async def _server_settings(self, settings: Any, row: Row) -> None:
-        """One server's page: its dedicated.toml in groups and Huragok's own for it, then what else it has (its
-        playlists, custom games, bans, mods), renaming it and a content folder of its own."""
+        """One server's page (0.7.0, plans/server-files-audit/mockups-0.7.0.md 3): its dedicated.toml in groups,
+        read-only (the host edits it; Huragok shows and warns), each group with the warnings about it, the environment's
+        overrides, Huragok's own settings for it (H: editable, they're Huragok's), then opening the file, the quick
+        actions, bans, interval messages and renaming it."""
         server = self._server(settings, row)
         if server is None:
             return
@@ -273,43 +269,103 @@ class ManageScreens(Screens):
                 self.note(f"Can't read {server.config_path}: {error}", "red")
                 await self.wait_any_key(8)
                 return
-            self.heading(server.name, "Settings", note=f"{server.config_path} · Huragok's own in {settings.path.name}")
-            counts = {key: sum(1 for s, _, _ in entries if s.group == key) for key, _, _ in GROUPS}
-            rows = [(title, f"{counts[key]}", summary(entries, key) or what) for key, title, what in GROUPS]
             row = next((r for r in self.controller.rows() if r["name"] == row["name"]), row)  # its phase now
+            self.heading(server.name, "Settings",
+                         note=f"{server.config_path} · read-only: you edit it, Huragok shows and warns")
+            items = row.get("warning_items") or []
+            own = [group for group in GROUPS if group[0] != "huragok"]
+            counts = {key: sum(1 for s, _, _ in entries if s.group == key) for key, _, _ in GROUPS}
+            warned = {key: sum(1 for item in items if warning_group(item) == key) for key, _, _ in GROUPS}
+            rows = [(title, f"{counts[key]}", (summary(entries, key) or what)
+                     + (f" · {warned[key]} warning{'s' if warned[key] != 1 else ''}" if warned[key] else ""))
+                    for key, title, what in own]
             stopped = row.get("phase") in ("idle", "faulted", "offline")  # backoff: about to be restarted
             mates = self._folder_mates_running(settings, server)
             first = "stop it first (X)" if not stopped else f"stop {', '.join(mates)} first: in its folder" if mates else ""
             stopped = stopped and not mates
-            extra = [(key, what, count, about) for key, what, count, about in self.server_page_extras(settings, server)]
-            extra.append(("N", "rename this server", "", first or "its name everywhere: block, data, records, folder"))
+            extra = [("H", "Huragok's own for this server", "", (summary(entries, "huragok") or
+                      "autostart, the daily restart, priority, Vergil") + f" ({settings.path.name}, editable)"),
+                     ("O", f"open {server.config_path.name}", "", "in your editor: what's set here is yours to change")]
+            if not server.rcon_password:
+                extra.append(("Q", "add the console", "", "the [rcon] password it needs, shown before it's written"))
+            extra += [(key, what, count, about) for key, what, count, about in self.server_page_extras(settings, server)
+                      if key in ("B", "I")]
+            kept = dedicated_history(settings, server.config_path)
+            if kept:
+                extra.append(("F", "history", str(len(kept)), f"versions of {server.config_path.name} kept before and "
+                                                              "after each quick action: put one back"))
+            extra.append(("N", "rename this server", "", first or "its name everywhere, when you ask: block, data, "
+                                                                  "records, folder"))
             if self._shared_content(settings, server):
-                extra.append(("O", "its own content folder", "", first or "stop sharing the root's content/ (no copy "
+                extra.append(("C", "its own content folder", "", first or "stop sharing the root's content/ (no copy "
                               "on the same drive)"))
             keys = [str(n) for n in range(1, len(rows) + 1)] + [key for key, *_ in extra]
             panel = self.listing(rows + [(what, count, about) for _, what, count, about in extra], keys=keys)
-            answer = await self.prompt_line("  Which group? (number, or a letter; Esc goes back)", panel=panel)
+            if lines := environment_lines(server, settings):
+                self.note("Set where Huragok runs, and read by the program over the file: " + "; ".join(lines), "yellow")
+            if loose := [item for item in items if warning_group(item) is None]:
+                self.note(f"{len(loose)} more warning{'s' if len(loose) != 1 else ''} about this server: G shows them "
+                          "all.", "yellow")
+            answer = await self.prompt_line("  Which? (a group's number, or a letter; Esc goes back)", panel=panel)
             if not answer:
                 return
             answer = answer.strip().upper()
             letters = [key for key, *_ in extra]
-            if answer == "N":
+            if answer == "H":
+                await self._settings_group(settings, server, row, next(g for g in GROUPS if g[0] == "huragok"))
+            elif answer == "O":
+                self.note(desktop.open_path(server.config_path))
+            elif answer == "Q" and "Q" in letters:
+                await self._quick_actions(settings, server, row)
+            elif answer == "F" and "F" in letters:
+                await self._put_back_dedicated(settings, server)
+            elif answer == "N":
                 if await self._rename(settings, server, stopped):
                     return
                 continue
-            if answer == "O" and "O" in letters:
+            elif answer == "C" and "C" in letters:
                 await self._own_content(settings, server, stopped)
-                settings = self._settings()
-                server = self._server(settings, row) or server
-                continue
-            if answer in letters:
+            elif answer in letters:
                 await self._server_page_extra(settings, server, row, answer)
-                settings = self._settings()
-                server = self._server(settings, row) or server
+            elif answer.isdecimal() and 1 <= int(answer) <= len(own):
+                await self._settings_group(settings, server, row, own[int(answer) - 1])
+            else:
                 continue
-            if not answer.isdecimal() or not 1 <= int(answer) <= len(GROUPS):
-                continue
-            await self._settings_group(settings, server, row, GROUPS[int(answer) - 1])
+            settings = self._settings()
+            server = self._server(settings, row) or server
+
+    async def _put_back_dedicated(self, settings: Any, server: Any) -> None:
+        """D -> F: a version of the server's dedicated.toml kept around a quick action, put back as it was (the file as
+        it is now kept first, so that can be put back too). The server reads it at its next start."""
+        from ...content.quickactions import HISTORY, owner_of
+        from ...core import versions
+        from ...core.files import write_atomic
+
+        kept = dedicated_history(settings, server.config_path)
+        self.heading(server.name, "Settings", "History", note=f"{server.config_path.name}, newest first")
+        panel = self.listing([(version.stamp, version.how) for version in kept])
+        answer = await self.prompt_line("  Put back which? (number; Esc goes back)", panel=panel)
+        if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(kept):
+            return
+        version = kept[int(answer) - 1]
+        if not await self.prompt_yes_no(f"  Put back the version of {version.stamp} ({version.how})? The file as it is "
+                                        "now is kept first", False):
+            return
+        try:
+            versions.keep_current(settings.records, HISTORY, owner_of(server.config_path), server.config_path)
+            write_atomic(server.config_path, versions.read(version))
+            versions.keep(settings.records, HISTORY, owner_of(server.config_path), server.config_path,
+                          f"put back: the version of {version.stamp}")
+        except OSError as error:
+            self.note(f"Not put back: {error}", "yellow")
+            return
+        self.note(f"Put back. {server.name} reads it at its next start.", "green")
+
+    async def _quick_actions(self, settings: Any, server: Any, row: Row) -> None:
+        """D -> Q: the console for a server without one (content/quickactions.py), shown before it's written."""
+        add_console = getattr(self, "screen_add_console", None)
+        if add_console is not None:
+            await add_console(server)
 
     def _setting_text(self, setting: Any, value: Any, known: Known | None = None) -> str:
         """A setting's value as the screens show it; a list of player IDs (admins, vote_kick_immune) with who each is,
@@ -321,19 +377,33 @@ class ManageScreens(Screens):
         return display(setting, value)
 
     async def _settings_group(self, settings: Any, server: Any, row: Row, group: tuple[str, str, str]) -> None:
+        """One group of settings. A server's own (its dedicated.toml) are shown, never changed (0.7.0): each with what
+        it does and, beside it, a variable that overrides it. Huragok's own for the server (settings.toml) change a step
+        at a time, as before."""
         key, title, what = group
         version = await self._program_version(settings, server, row)
         while True:
             entries = [(s, v, w) for s, v, w in catalogue(server.config_path, server.name, settings)
                        if s.group == key and offered(s, version)]
-            self.heading(server.name, "Settings", title, note=what)
+            editable = key == "huragok"
+            self.heading(server.name, "Settings", title, note=what if editable else
+                         f"read-only · O opens {server.config_path.name} in your editor")
             rows = []
             known = self._known()
+            overrides = {} if editable else override_texts(settings)
             for setting, value, where in entries:
                 origin = "" if where in ("this server", "the file", f"[{setting.scope}]", "settings.toml") else \
                     f"({where})"
-                rows.append((setting.name, self._setting_text(setting, value, known), origin, setting.help))
+                about = setting.help + (f"  ! {overrides[setting.key]}" if setting.key in overrides else "")
+                rows.append((setting.name, self._setting_text(setting, value, known), origin, about))
             panel = self.listing(rows, wrap=True)
+            if not editable:
+                answer = await self.prompt_line("  O opens the file; Esc goes back", panel=panel)
+                if answer and answer.strip().upper() == "O":
+                    self.note(desktop.open_path(server.config_path))
+                    await self.wait_any_key(4)
+                    continue
+                return
             if len(entries) == 1:
                 answer = "1" if await self.prompt_yes_no(f"  Change {entries[0][0].name}?", True) else ""
             else:
@@ -341,10 +411,7 @@ class ManageScreens(Screens):
             if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(entries):
                 return
             setting, value, where = entries[int(answer) - 1]
-            if setting.kind == "plays":  # area 3 has one home: G's (what it's set to, now, next, and its changes)
-                await self._content_home(settings, server, row)
-            else:
-                await self._edit_setting(settings, server, row, setting, value, where)
+            await self._edit_setting(settings, server, row, setting, value, where)
             settings = self._settings()
             server = self._server(settings, row) or server
             if len(entries) == 1:
@@ -440,24 +507,7 @@ class ManageScreens(Screens):
         else:
             self.note(f"{setting.key} = {self._setting_text(setting, new)} written for {setting.where}. Takes effect: "
                       f"{APPLIES[setting.applies]}. The dashboard's events show the server's answer.", "green")
-        if setting.key == "max_players":
-            self._by_players_reach(server)
         await self._offer_restart(row, server.name, setting)
-
-    def _by_players_reach(self, server: Any) -> None:
-        """A new max_players can leave a playlist by player count out of reach: said here, as G -> P says it."""
-        from ...games.byplayers import ByPlayersError, setup_of, unreachable_text
-        from ...program.settings import effective
-        from ...core.tomledit import read_toml
-
-        try:
-            setup = setup_of(server.folder, server.name)
-            data = read_toml(server.config_path)
-        except (ByPlayersError, OSError, ValueError):
-            return
-        if setup is not None:
-            for warning in unreachable_text(setup, effective(data, "max_players", server.name)):
-                self.note(f"! Playlists by player count: {warning} (G -> P)", "yellow")
 
     async def _offer_restart(self, row: Row, name: str, setting: Any) -> None:
         """A setting `dedicated` only reads as it starts: restart it at a good moment, or leave it for later."""
@@ -475,7 +525,7 @@ class ManageScreens(Screens):
                                                                             "N": "now"}[when],
                                                      reason=f"{setting.key} changed"))
 
-    # What it plays ---------------------------------------------------------------------------
+    # The program a server runs ---------------------------------------------------------------
 
     async def _program_version(self, settings: Any, server: Any, row: Row) -> str | None:
         """The Project Reclaimer version a server runs: what it said while running, else its program file's own
@@ -489,324 +539,6 @@ class ManageScreens(Screens):
             return None
         version = await asyncio.to_thread(program_version, settings, program)
         return version if readable(version) else None
-
-    async def _edit_plays(self, settings: Any, server: Any, row: Row) -> None:
-        from ...games.bungie import NEW_GAMES, SINCE
-
-        self.heading(server.name, "Settings", "What it plays", note=f"now: {server.plays}")
-        version = await self._program_version(settings, server, row)
-        if version and all(GAMES[key].plays_on(version) for key in NEW_GAMES):
-            self.note(f"Project Reclaimer {SINCE} plays Reach's, Combat Evolved's and Halo 2's maps too (2, or in a "
-                      "playlist). Their campaigns and Reach's Firefight: not yet (the program has no setting for "
-                      "them).")
-        choice = await self.choose("Play what?", [
-            ("1", "A playlist", "players vote on a rotation of 3 or more games; from the next vote"),
-            ("2", "One map and game type", "the same game every time"),
-            ("3", "A saved custom game", "a game type with its own rules, on one map, or on three or more to vote on"),
-            ("4", "Campaign co-op", "a Halo 3 mission for up to 16 players"),
-            ("5", "Halo 3: ODST", "a campaign mission or Firefight, on ODST's own engine, for up to 16 players")])
-        if choice is None:
-            return
-        values: dict[str, Any] | None = None
-        if choice == "1":
-            from ...games.halo3 import load_playlist, playlist_files
-
-            files = playlist_files(server.folder)
-            if not files:
-                self.note("No playlists in its playlists/ yet: G -> Playlists builds one.", "yellow")
-                await self.wait_any_key(5)
-                return
-            rows = []
-            for path in files:
-                try:
-                    playlist = load_playlist(path)
-                    rows.append((path.name.removesuffix(".playlist.json"), f'"{playlist.name}" · '
-                                                                           f"{len(playlist.games)} games"))
-                except Exception as error:  # noqa: BLE001 - PlaylistError: listed, not picked
-                    rows.append((path.name, f"(can't read it: {error})"))
-            panel = self.listing(rows)
-            answer = await self.prompt_line("  Which playlist? (number)", panel=panel)
-            if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(files):
-                return
-            tool = await self._tool(settings)
-            if tool is None or not await self._playable(tool, server, files[int(answer) - 1]):
-                await self.wait_any_key(8)
-                return
-            values = {"playlist": f"playlists/{files[int(answer) - 1].name}"}
-        elif choice == "2":
-            tool = await self._tool(settings)
-            catalogue_ = await self._catalogue(tool, settings, server) if tool else None
-            if catalogue_ is None:
-                await self.wait_any_key(6)
-                return
-            maps = await self._pick_maps(catalogue_, version, single=True)
-            if not maps:
-                return
-            games = await self._pick_game_types(catalogue_, maps, single=True)  # only what that map plays
-            if not games:
-                return
-            values = {"map": maps[0].reference, "game": games[0].reference}
-            if maps[0].kind == "map variant" and catalogue_.mod_maps and await self.prompt_yes_no(
-                    "  Was this map variant made on a mod map? (base_map: needed when a mod shares its map's number)",
-                    False):
-                base = await self._pick(catalogue_.mod_maps, "mod maps", single=True)
-                if base:
-                    values["base_map"] = base[0].reference
-        elif choice == "3":
-            from ...games.halo3_options import list_presets
-
-            presets = list_presets(server.content_dir) if server.content_dir else []
-            if not presets:
-                self.note("No saved custom games (.json) in its content/Game Modes yet: G -> Game variants makes "
-                          "one.", "yellow")
-                await self.wait_any_key(5)
-                return
-            panel = self.listing([(p.name, p.mode_label, p.relative) for p in presets])
-            answer = await self.prompt_line("  Which custom game? (number)", panel=panel)
-            if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(presets):
-                return
-            values = await self._play_custom_game(settings, server, presets[int(answer) - 1])
-            if values is None:  # nothing picked, or a playlist (saved and offered for use by itself)
-                return
-        elif choice == "4":
-            values = await self._campaign_values(server)
-            if values is None:
-                return
-        else:
-            values = await self._odst_values(settings, server)
-            if values is None:
-                return
-        if problem := plays_problem(values, await self._program_version(settings, server, row)):
-            self.note(f"Not changed: {problem}.", "yellow")
-            await self.wait_any_key(4)
-            return
-        if "campaign" in values or "odst" in values:
-            lower = await self._co_op_players(server)
-            if lower is None:
-                return
-            if lower:  # checked with the rest and written with it, never before (audit 2026-11, 7.4)
-                from ...games.plays import CO_OP_MAX_PLAYERS
-
-                values = {**values, "max_players": CO_OP_MAX_PLAYERS}
-        if "playlist" not in values and not await self._plays_checked(settings, server, values):
-            return  # (a playlist picked was checked as it was picked)
-        if not await self._by_players_before_use(server, values.get("playlist")):
-            return
-        before = server.plays_kind
-        try:
-            write_plays(server.config_path, server.name, values)
-        except OSError as error:
-            self.note(f"Couldn't write {server.config_path.name}: {error}", "red")
-            await self.wait_any_key(5)
-            return
-        from ...games.plays import plays_kind, plays_of
-
-        server.plays, server.plays_kind = plays_of(values), plays_kind(values)
-        self.note(f"{server.name} now plays {server.plays}: {applies_when(before, server.plays_kind)}. The dashboard's "
-                  "events show the server's answer.", "green")
-        await self.wait_any_key(6)
-
-    async def _plays_checked(self, settings: Any, server: Any, values: dict[str, Any]) -> bool:
-        """Whether the server's own program would play `values` (check_plays): what it wouldn't is named, and
-        nothing is written."""
-        tool = await self._tool(settings)
-        if tool is None:
-            await self.wait_any_key(6)
-            return False
-        check = await asyncio.to_thread(check_plays, tool, server, values)
-        if check.ok:
-            if not check.asked:
-                self.note(f"Not checked by the server program: {check.unasked}.", "yellow")
-            return True
-        self.note("Not changed: the server program won't play it:", "yellow")
-        for problem in check.problems:
-            self.note(f"  {problem.text}", "yellow")
-        await self.wait_any_key(10)
-        return False
-
-    def _playing_now(self, server: Any, key: str) -> dict[str, Any]:
-        """The server's own `campaign`/`odst` setup as its file has it ({} when it plays something else)."""
-        from ...core.tomledit import read_toml
-
-        try:
-            block = next((b for b in read_toml(server.config_path).get("server", [])
-                          if str(b.get("name", "")).lower() == server.name.lower()), {})
-        except (OSError, ValueError):
-            return {}
-        return block[key] if isinstance(block.get(key), dict) else {}
-
-    async def _co_op_players(self, server: Any) -> bool | None:
-        """A campaign or ODST server holds 16 players at most, and a higher max_players stops its start: offer to
-        bring this server's down with the switch. True: lower it (written with what it plays, once that's checked and
-        sure: written first, a refused switch or an Esc after it still left 16); False: nothing to lower; None: the
-        host would rather not switch."""
-        from ...games.plays import CO_OP_MAX_PLAYERS
-        from ...program.settings import current, find
-        from ...core.tomledit import read_toml
-
-        setting = find("max_players", "server")
-        try:
-            value, where = current(read_toml(server.config_path), setting, server.name)
-        except (OSError, ValueError):
-            return True
-        if not isinstance(value, int) or value <= CO_OP_MAX_PLAYERS:
-            return True
-        self.note(f"max_players is {value} ({where}): a campaign or ODST server takes {CO_OP_MAX_PLAYERS} at most and "
-                  "won't start with more.", "yellow")
-        if not await self.prompt_yes_no(f"  Set this server's max_players to {CO_OP_MAX_PLAYERS} with it?", True):
-            self.note("Nothing changed.", "yellow")
-            await self.wait_any_key(4)
-            return None
-        return True
-
-    async def _modifier_values(self, existing: dict[str, Any]) -> dict[str, Any] | None:
-        """Campaign modifiers, a Halo 3 or ODST campaign server's: enemy health and damage, and (0.9.19) sprint.
-        What this doesn't ask about, such as skulls written by hand, is kept. None: cancelled."""
-        modifiers = dict(existing)
-        if not await self.prompt_yes_no("  Change the campaign modifiers (enemy health and damage, sprint)?", False):
-            return modifiers
-        numbers = (("health_percent", "Enemy health %", 25, 1000, 25),
-                   ("damage_percent", "Enemy damage %", 25, 1000, 25),
-                   ("health_per_player_percent", "Extra enemy health % per player", 0, 100, 5),
-                   ("damage_per_player_percent", "Extra enemy damage % per player", 0, 100, 5))
-        for key, label, low, high, step in numbers:
-            if not await self._modifier_number(modifiers, key, label, low, high, step):
-                return None
-        if await self.prompt_yes_no("  Sprint: every player can sprint (hold Sprint while running forward)?",
-                                    bool(modifiers.get("sprint"))):
-            modifiers["sprint"] = True
-            if not await self._modifier_number(modifiers, "sprint_speed_percent", "Sprint speed %", 110, 200, 10):
-                return None
-            if not await self._modifier_number(modifiers, "sprint_stamina_seconds", "Seconds a full meter sprints for",
-                                               1, 30, 1):
-                return None
-        else:
-            for key in ("sprint", "sprint_speed_percent", "sprint_stamina_seconds"):
-                modifiers.pop(key, None)
-        return modifiers
-
-    async def _modifier_number(self, modifiers: dict[str, Any], key: str, label: str, low: int, high: int,
-                               step: int) -> bool:
-        """One number into modifiers, checked; Enter leaves it, - takes it out. False: cancelled."""
-        now = f"; now {modifiers[key]}, - takes it out" if key in modifiers else ""
-        steps = f" in steps of {step}" if step > 1 else ""
-        text = await self.prompt_line(f"  {label} ({low}-{high}{steps}; Enter leaves it{now})")
-        if text is None:
-            return False
-        text = text.strip()
-        if text == "-":
-            modifiers.pop(key, None)
-        elif text.isdecimal() and low <= int(text) <= high and (int(text) - low) % step == 0:
-            modifiers[key] = int(text)
-        elif text:
-            self.note(f"{text!r} isn't {low}-{high}{steps}; left as it was.", "yellow")
-        return True
-
-    async def _odst_values(self, settings: Any, server: Any) -> dict[str, Any] | None:
-        """Halo 3: ODST (0.9.19): a campaign mission or Firefight, picked from what the program lists for this
-        server's game folder, which needs ODST's files first (offered from this PC's MCC)."""
-        from ...games import odst
-        from ...games.halo3 import DIFFICULTIES
-        from ...core.tomledit import read_toml
-        from ...program.settings import path_setting
-
-        try:
-            data = read_toml(server.config_path)
-        except (OSError, ValueError):
-            data = {}
-        if not await self._offer_odst_files(settings, path_setting(server.folder, data, "game")):
-            await self.wait_any_key(8)
-            return None
-        tool = await self._tool(settings)
-        catalogue_ = await self._catalogue(tool, settings, server) if tool else None
-        listing = catalogue_.odst if catalogue_ is not None and not catalogue_.odst.empty else odst.builtin()
-        old = self._playing_now(server, "odst")
-        if old:
-            self.note(f"Now: {odst.describe(old)}")
-        kind = await self.choose("Which Halo 3: ODST?", [
-            ("1", "A campaign mission", "Alpha-Nine's night in New Mombasa; everyone moves on to the next mission "
-                                        "together"),
-            ("2", "Firefight", "wave after wave on one of ODST's ten Firefight maps")],
-            default="2" if odst.is_firefight(old) else "1")
-        if kind is None:
-            return None
-        setup: dict[str, Any] = {}
-        if kind == "1":
-            picked = await self._pick(listing.missions, "missions", single=True)
-            if not picked:
-                return None
-            mission = picked[0]
-            setup["mission"], setup["insertion"] = mission.mission, 0
-            if mission.insertion:
-                rows = [("the mission's start",)] + [(f"start {n}",) for n in range(1, mission.insertion + 1)]
-                panel = self.listing(rows, keys=[str(n) for n in range(mission.insertion + 1)])
-                answer = await self.prompt_line(f"  Where does {mission.title} start? (0-{mission.insertion})", "0",
-                                                panel=panel)
-                if answer is None or not answer.strip().isdecimal() or int(answer) > mission.insertion:
-                    return None
-                setup["insertion"] = int(answer)
-        else:
-            setup["mode"] = "firefight"
-            maps = await self._pick(listing.maps, "Firefight maps", single=True)
-            if not maps:
-                return None
-            setup["mission"], setup["insertion"] = maps[0].mission, maps[0].insertion
-            types = await self._pick(listing.types, "Firefight game types", single=True)
-            if not types:
-                return None
-            setup["variant"] = types[0].variant
-        picked_difficulty = await self.choose("Difficulty?", [(str(n), d) for n, d in enumerate(DIFFICULTIES, 1)],
-                                              default="2")
-        if picked_difficulty is None:
-            return None
-        setup["difficulty"] = DIFFICULTIES[int(picked_difficulty) - 1]
-        if kind == "1":
-            modifiers = await self._modifier_values(old.get("modifiers") or {})
-            if modifiers is None:
-                return None
-            if modifiers:
-                setup["modifiers"] = modifiers
-        # What this screen doesn't ask about stays as it was (0.9.21's story_characters and Firefight options, and
-        # anything newer): kept while it stays a campaign mission or Firefight; a change of kind can't take them.
-        asked = {"mode", "mission", "insertion", "variant", "difficulty", "modifiers"}
-        rest = {key: value for key, value in old.items() if key not in asked}
-        if rest and odst.is_firefight(old) == (kind == "2"):
-            setup.update(rest)
-        elif rest:
-            self.note(f"Left out, as they were for {'Firefight' if odst.is_firefight(old) else 'a campaign mission'}: "
-                      f"{', '.join(sorted(rest))}.", "yellow")
-        return {"odst": setup}
-
-    async def _campaign_values(self, server: Any) -> dict[str, Any] | None:
-        from ...games.halo3 import DIFFICULTIES, MISSION_STARTS, MISSIONS
-
-        missions = list(MISSIONS.items())
-        self.note("Its game folder needs the campaign missions (dedicated init --from --maps campaign).")
-        panel = self.listing([(title, str(number)) for number, title in missions])
-        answer = await self.prompt_line("  Which mission? (number)", panel=panel)
-        if not answer or not answer.strip().isdecimal() or not 1 <= int(answer) <= len(missions):
-            return None
-        mission = missions[int(answer) - 1][0]
-        high = MISSION_STARTS.get(mission, 0)
-        insertion = await self.prompt_line(f"  Start at rally point (0 is the mission's start; 0-{high})", "0")
-        if insertion is None or not insertion.strip().isdecimal() or int(insertion) > high:
-            return None
-        picked = await self.choose("Difficulty?", [(str(n), d) for n, d in enumerate(DIFFICULTIES, 1)], default="2")
-        if picked is None:
-            return None
-        campaign: dict[str, Any] = {"mission": mission, "insertion": int(insertion),
-                                    "difficulty": DIFFICULTIES[int(picked) - 1]}
-        if await self.prompt_yes_no("  Players as their own characters (custom characters)?", False):
-            campaign["custom_characters"] = True
-        old = self._playing_now(server, "campaign")
-        if old.get("customization"):  # character mods, set by hand: kept
-            campaign["customization"] = old["customization"]
-        modifiers = await self._modifier_values(old.get("modifiers") or {})
-        if modifiers is None:
-            return None
-        if modifiers:
-            campaign["modifiers"] = modifiers
-        return {"campaign": campaign}
 
     # Renaming, and a content folder of its own -----------------------------------------------
 
@@ -968,9 +700,9 @@ class ManageScreens(Screens):
         self.title("UPDATES")
         choice = await self.choose("Which?", [
             ("1", "Huragok", "its GitHub releases; the servers keep running while it updates"),
-            ("2", "The server program", "Project Reclaimer releases: servers with auto_update on install them "
-                                        "themselves (Huragok steps in when one doesn't); the others get them "
-                                        "from here, after their game"),
+            ("2", "The server program", "Project Reclaimer releases: each server installs its own (auto_update in "
+                                        "its dedicated.toml); here, each server's version, the newest release and "
+                                        "the warnings"),
             ("3", "Workshop mods", "new versions of the servers' Workshop items: installed when a game ends"),
             ("4", "Clean up", "what updates and mods leave behind: old program copies, old mod copies…")])
         if choice is None:
@@ -1030,47 +762,88 @@ class ManageScreens(Screens):
         await self.wait_any_key(8)
 
     async def _update_program(self) -> None:
-        self.heading("The server program")
+        """A look, nothing more: each server installs its own releases (0.7.0)."""
+        self.heading("The server program", note="each server installs its own releases: auto_update in its "
+                                                "dedicated.toml")
         self.note("Asking GitHub for the newest Project Reclaimer release...", "cyan")
         results = await self.controller.verb("check_program_update")
         self.show_results(results)
         for _, result in results:
             for line in result.text.splitlines():
-                self.terminal.print(f"    {line}", "gray")
-        if not any(r.ok and r.text for _, r in results):
-            await self.wait_any_key(10)
-            return
-        self.note("Players must be on the server's exact version: once a server is updated, players update their "
-                  "game and come back.")
-        when = await self.choose("Install it and restart each running server when?",
-                                 [("A", "After its game"), ("N", "Now (mid-game)")], default="A",
-                                 back="Esc leaves it")
-        if when is None:
-            return
-        self.note("Downloading and checking it...", "cyan")
-        self.show_results(await self.controller.verb("update_program", when="after_game" if when == "A" else "now"))
-        await self.wait_any_key(15)
+                self.terminal.print(f"    {line}", "yellow" if line.startswith("  ") else "gray")
+        self.note("Huragok installs nothing: a server with auto_update on installs a release as it starts, and Huragok "
+                  "restarts it after its game once a release is out ([server_updates] follow). One with auto_update "
+                  "off stays on its version. Players must be on the server's exact version to join.")
+        await self.wait_any_key(30)
 
 
     async def _update_workshop(self) -> None:
-        self.heading("Workshop mods")
+        self.heading("Workshop mods", note="the servers download and install their own mod updates; Huragok restarts "
+                                           "one whose map in use holds an update up ([workshop_updates] restart)")
         self.note("Asking Steam for each item's newest version...", "cyan")
         results = await self.controller.verb("check_workshop")
         self.show_results(results)
         for _, result in results:
             for line in result.text.splitlines():
                 self.terminal.print(f"    {line}", "white" if not line.startswith(" ") else "gray")
-        if not any(r.ok and "waiting" in r.message for _, r in results):
+        if not any(r.ok and "waiting for a restart" in r.message for _, r in results):
             await self.wait_any_key(15)
             return
-        when = await self.choose("Install the new versions when?", [
-            ("A", "After the game", "each server stops once its game ends, swaps the mod in (about a minute) and "
-                                    "starts again"),
-            ("N", "Now", "players get the usual countdown")], default="A", back="Esc leaves it to the setting")
-        if when is None:
+        if await self.choose("A downloaded update waits for a restart (its map is in use). Put it in now?", [
+                ("R", "Restart its game now", "players are told, then dropped, and join again; the server installs "
+                                              "the update as its game starts")],
+                default="R", back="Esc leaves it waiting") is None:
             return
-        self.show_results(await self.controller.verb("update_workshop", when="after_game" if when == "A" else "now"))
+        self.show_results(await self.controller.verb("update_workshop"))
         await self.wait_any_key(10)
 
 
 __all__ = ["ManageScreens", "describe_event", "FOLDER_SETTINGS", "SERVER_SETTINGS"]
+
+
+# 0.7.0's read-only D (mockups-0.7.0.md 3): which group each warning is about, and the environment's overrides --------
+
+WARNING_GROUPS = {"no-console": "rcon", "stats-relay-off": "network", "environment": "files"}
+
+
+def warning_group(item: dict[str, Any]) -> str | None:
+    """The settings group a warning (a dashboard row's warning_items entry) is about; None: about the server as a whole."""
+    rule, area = str(item.get("rule") or ""), str(item.get("area") or "")
+    if rule in WARNING_GROUPS:
+        return WARNING_GROUPS[rule]
+    if area == "plays":
+        return "plays"
+    if area == "updates":
+        return "mods" if rule.startswith("mod-") else "updates"
+    return None
+
+
+def override_texts(settings: Any) -> dict[str, str]:
+    """{setting key: "<VARIABLE> = <value> wins over the file"} for each RECLAIMER_DEDICATED_ variable set where
+    Huragok runs (none with docker: the containers' environment is compose's)."""
+    from ...core.serverenv import PREFIX, READ, overrides
+    from ...core.serverfolders import server_environment_of
+
+    environment = server_environment_of(settings.backend)
+    if environment is None:
+        return {}
+    found: dict[str, str] = {}
+    for full, value in overrides(environment).items():
+        variable = full[len(PREFIX):]
+        key = READ[variable][1] if variable in READ else variable.lower()
+        found[key] = f"{full} = {value} is set where Huragok runs, and wins over the file"
+    return found
+
+
+def environment_lines(server: Any, settings: Any) -> list[str]:
+    return [text.split(" is set where")[0] for text in override_texts(settings).values()]
+
+
+def dedicated_history(settings: Any, path: Any) -> list[Any]:
+    """The versions of a server folder's dedicated.toml kept around quick actions (content/quickactions.py)."""
+    from ...content.quickactions import history
+
+    try:
+        return history(settings, path)
+    except OSError:
+        return []

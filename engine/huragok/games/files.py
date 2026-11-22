@@ -288,14 +288,16 @@ def playlist_kinds(path: Path) -> list[str]:
 
 def needed_by(block: dict[str, Any], folder: Path | None = None, version: str | None = None) -> list[str]:
     """The kinds of game files a [[server]] block needs for what it plays: Halo 3's always, first, then each other
-    game its `map`, `odst`, `campaign` or playlist names (the playlist file read from `folder`, the server's). On
-    program `version` (None: unknown) only what it can play: a 0.9 program plays no Reach map, so none is needed."""
-    from .plays import plays_kind
+    game its `map`, `odst`, `campaign` or playlists name (`playlist`, or every file of 0.10.1's `playlists = [...]`,
+    read from `folder`, the server's). On program `version` (None: unknown) only what it can play: a 0.9 program
+    plays no Reach map, so none is needed."""
+    from .plays import playlist_refs, plays_kind
 
     kind = plays_kind(block)
     found = needed(kind, version)
-    if kind == "playlist" and folder is not None and isinstance(block.get("playlist"), str):
-        found += playlist_kinds(folder / block["playlist"])
+    if kind in ("playlist", "playlists") and folder is not None:
+        for ref in playlist_refs(block):
+            found += playlist_kinds(ref.path(folder))
     elif kind in ("map", "variant"):
         found += _map_kinds(block)
     elif kind == "reach":  # 0.10's undocumented `reach = { … }` (`--maps reach-campaign`: "for a Reach co-op server")

@@ -54,6 +54,10 @@ dry_run = false
 database = "records/huragok.sqlite3"
 log_file = "logs/huragok.log"
 
+# A server renamed in its own dedicated.toml stays the same server: its settings
+# here, its records, stats and history follow the new name. false: it starts afresh.
+follow_renames = true
+
 
 # ── THE SUPERINTENDENT ── keeps every server running ─────────────────────────────
 # Players read its warnings with the public notices it posted on New Mombasa's
@@ -155,6 +159,14 @@ act = true                           # restart it (not with backend attach); fal
 enabled = false
 folder = "logs/events"
 
+[stats]
+# Huragok stands between each server and the stats service: every report is passed on
+# unchanged and a copy kept for the leaderboards and the kill feed. It points each
+# server's stats_server at itself while it runs, and puts the original back when it
+# stops. false: every original goes back at once, Huragok never touches stats_server,
+# and leaderboards get nothing new.
+relay = true
+
 
 # ── VERGIL ── watches over the players ───────────────────────────────────────────
 # Dr. Endesha wrote Vergil to watch over his daughter; here it watches over your
@@ -244,108 +256,51 @@ repository = "LittleGroove/Project-Reclaimer-Huragok"
 [server_updates]
 # New releases of the server program (Project Reclaimer itself). Players must be on
 # exactly the server's version, so a server left behind empties out. Each server's
-# auto_update, in its dedicated.toml, is the one switch (D in the window):
-#   auto_update = true   the server installs each release itself: it looks when it
-#                        starts and hourly, checks the download against the release's
-#                        SHA-256 list, and restarts its game at once, mid-game (back in
-#                        seconds). Huragok makes sure it did (see fallback).
-#   auto_update = false  Huragok tells you: it says so in the window, and when asked
-#                        puts the checked program in place of those servers' copies
-#                        (the old ones kept in records/previous-program/), each
-#                        restarting after its game.
+# auto_update, in its dedicated.toml, is the one switch: true, the server installs each
+# release itself (it looks as it starts and hourly). Huragok never installs a release;
+# it looks too, and warns about a server left behind.
 check = true
-# How often Huragok looks at GitHub: hourly, as the servers' own updaters do.
-check_hours = 1
-# For servers with auto_update off. "ask": only say so (press U, or start.cmd update
-# --program); "after_game": install by itself and restart each server after its game;
-# "now": install and restart at once.
-install = "ask"
+# How often Huragok looks at GitHub, in minutes (5 at least).
+check_minutes = 15
 repository = "ProjectReclaimer/project-reclaimer-releases"
-# When one server has updated itself, restart the other servers that update
-# themselves after their game: they look for releases as they start, so every
-# server is on the new version within a game instead of within the hour.
+# Once a release is out, restart each server with auto_update on after its game (at
+# once when nobody's on), telling its players first: it installs the release as it
+# starts, so its own hourly look doesn't cut a game. false: never restart for one.
 follow = true
-# When a server with auto_update on didn't update itself (its console says the update
-# failed, or it is still on an older version 70 minutes after the release came out),
-# Huragok downloads and checks the release itself and puts it in place while the
-# server is stopped after its game. false: only say so.
-fallback = true
 
 [workshop_updates]
-# New versions of the Workshop mods the servers list ([workshop] items in each
-# dedicated.toml). The server program updates them by itself only once nobody is on a
-# server using the mod, which a busy server may never reach; meanwhile players who
-# already have the new version can't join. How new versions are installed:
-#   "after_game"  when the game ends, the Superintendent stops the server, swaps the
-#                 new version in (with SteamCMD, about a minute) and starts it again.
-#                 If the fetch fails, the old version is put back. Servers sharing one
-#                 content folder are left to the program's own way.
-#   "when_empty"  the server's own way: it installs once nobody is on.
-#   "off"         by hand.
-# One server can differ: workshop_updates = "off" in its [[server]] block below.
-install = "after_game"
-# Minutes between looks at Steam for new versions (5 at least; 0 leaves each server's
-# own setting alone and Huragok doesn't look). Also written into each server's
-# [workshop] update_check_minutes, so it downloads the new version during the game.
-check_minutes = 5
-# Mods copied into a server's content folder by hand that name a Workshop item (their
-# ModInfo.json does) are never updated by the server program. true: Huragok fetches
-# the Workshop's own copy while the server runs, then after a game (at once when nobody
-# is on) puts it in the hand copy's place, keeps the hand copy in "content set aside"
-# beside the content folder and lists the item in [workshop] items. A copy the program
-# installed that isn't listed any more is listed again: the server loads it all the same.
-adopt = true
-# The Forge layouts each mod ships ("Project Reclaimer Layouts") copied into
-# content/Maps/<mod> and kept in step with its new versions. A layout changed there by
-# hand is left as it is.
-layouts = true
+# The servers download and install their own Workshop mod updates ([workshop] items in
+# each dedicated.toml), but not over a mod's map they have open. Restart a server to put
+# in a mod update it has downloaded but can't install while its map is in use. Nobody
+# on: at once. People on: when the game ends (they're told first). false: Huragok only
+# warns. One server can differ: workshop_updates = "off" in its [[server]] block below.
+restart = true
 
 [setup]
 # New servers: the window's N key, or start.cmd new "<name>" (Linux: ./start.sh new).
-# Each new server is made with the server program's own `dedicated init`, a package
-# from PACKAGES/ (its playlists, game types, maps and Workshop items), a free port and
-# an RCON password of its own, then checked with `dedicated check`.
+# A new server is a folder in SERVERS/ made with the server program's own
+# `dedicated init`, and nothing more: no shared folders, no password, nothing
+# else written. Its quick actions (one server only, free ports, the console) are
+# offered next, each shown before it's written.
 #
-# What new servers take from this folder instead of carrying their own copy:
-#   game     the games' files, once, at game/ (Halo 3's 5.5 GB, and each other game's
-#            the servers play beside it): linked from a server that has them, or
-#            copied from MCC with dedicated init
-#   content  one content/ folder (maps, game types, mods, images) for every server. Left
-#            out by default: each server keeps its own, so its Workshop mods can be
-#            updated after its own games and its custom games stay its own (D gives a
-#            server that shares one its own copy: hard links, no space used)
-# Every server keeps a ban list of its own (bans.json in its folder): a /ban in game
-# is that server's. Huragok keeps its own list of the bans it gives (! commands,
-# Vergil) and the admins it makes, and puts them on every server's.
-share = ["game"]
-# Your MCC folder, for copying the games' files: Halo 3's when no server has them yet,
-# and ODST's, Reach's, Combat Evolved's and Halo 2's for the servers that play them
-# (Reach's, CE's and Halo 2's come from MCC alone for now). Empty means Steam's
-# default folder; leave the line out to link from an existing server.
+# Your MCC folder, where I and `repair` copy the games' files from when you ask:
+# Halo 3's, and ODST's, Reach's, Combat Evolved's and Halo 2's for the servers that
+# play them (Reach's, CE's and Halo 2's come from MCC alone for now). Empty means
+# Steam's default folder; leave the line out to find it from Steam's own records.
 # mcc_folder = 'D:\SteamLibrary\steamapps\common\Halo The Master Chief Collection'
-# Where the packages are.
-packages_folder = 'PACKAGES'
 # The server program used for what isn't one server's (making new server folders,
 # checking custom games). Empty: the newest copy among the root's and the server
 # folders' (by its --version). A command for one server runs that server's own copy.
 program = ''
 # SteamCMD, for Workshop items and Halo 3's files (the window's I key sets this up:
-# finds or installs it, signs the account in once, writes [workshop] into every
-# server folder, and gets Halo 3's files). Empty: looked for in steamcmd/ here,
-# C:\steamcmd, PATH. The account must own MCC; an anonymous sign-in can't fetch
-# MCC's Workshop items or files. Never a password here.
+# finds or installs it, signs the account in once, and gets Halo 3's files; the
+# [workshop] lines in a server's own dedicated.toml are written only when you ask,
+# one server at a time). Empty: looked for in steamcmd/ here, C:\steamcmd, PATH. The
+# account must own MCC; an anonymous sign-in can't fetch MCC's Workshop items or
+# files. Never a password here.
 # steamcmd = 'C:\steamcmd\steamcmd.exe'
 steamcmd = ''
 steam_username = ""
-# A server that's missing Halo 3's files (one copied in without the game/ it shared,
-# say) gets them by itself: copied from MCC when it's on this PC, otherwise downloaded
-# with SteamCMD (about 9.3 GB for multiplayer, 5.8 GB kept). false: nothing is
-# downloaded without you; the server waits, and I gets them.
-download_game_files = true
-# New servers install new Project Reclaimer releases themselves (auto_update = true in
-# their dedicated.toml, with a copy of the program of their own). false: Huragok
-# installs them (U).
-auto_update = true
 
 # How each backend runs the servers ---------------------------------------------
 
@@ -404,7 +359,7 @@ command_timeout = 10
 # min_uptime_seconds = 1800       # instead of [restarts] min_uptime_seconds
 # service = "server-1"            # its docker compose service
 # data = "data/reclaimer-slayer"  # its data folder (from its server folder), when not found by itself
-# workshop_updates = "off"        # instead of [workshop_updates] install
+# workshop_updates = "off"        # instead of [workshop_updates] restart
 # priority = "realtime"           # instead of [process] priority
 # rcon_host = "127.0.0.1"
 # rcon_port = 49176

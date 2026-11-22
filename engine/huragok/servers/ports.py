@@ -36,6 +36,15 @@ def listening_ports() -> frozenset[int] | None:
         return None
 
 
+def bound_udp_ports() -> frozenset[int] | None:
+    """The UDP ports something on this machine has bound: a game port taken by a server Huragok doesn't run, which
+    has no console listening on TCP to give it away (0.7.0: ports checked against everything on the PC)."""
+    try:
+        return frozenset(c.laddr.port for c in psutil.net_connections("udp") if c.laddr)
+    except (psutil.Error, OSError):
+        return None
+
+
 def _connects(host: str, port: int, timeout: float) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -74,6 +83,7 @@ class PortWatch:
 
     def __init__(self) -> None:
         self._ports: frozenset[int] | None = None
+        self._udp: frozenset[int] | None = None
         self._looked = float("-inf")
         self._probed: dict[tuple[str, int], tuple[float, bool]] = {}  # (host, port) -> (when, answer)
         self._probing: set[tuple[str, int]] = set()
@@ -83,9 +93,7 @@ class PortWatch:
         if not port:
             return False
         now = time.monotonic()
-        if now - self._looked >= self.LOOK_EVERY:
-            self._looked = now
-            self._ports = listening_ports()
+        self._look(now)
         if self._ports is not None:
             return port in self._ports  # the process backend's servers run here, whatever address they listen on
         key = (host, port)
@@ -94,6 +102,19 @@ class PortWatch:
             self._probing.add(key)
             background(self._probe(key), f"looking at port {key[1]}", log)
         return None if known is None else known[1]
+
+    def _look(self, now: float) -> None:
+        if now - self._looked >= self.LOOK_EVERY:
+            self._looked = now
+            self._ports = listening_ports()
+            self._udp = bound_udp_ports()
+
+    def game_port_in_use(self, server: ServerConfig) -> bool | None:
+        """Something on this PC has bound the server's game port (UDP). None: the system won't say."""
+        if not server.game_port:
+            return False
+        self._look(time.monotonic())
+        return None if self._udp is None else server.game_port in self._udp
 
     async def _probe(self, key: tuple[str, int]) -> None:
         try:

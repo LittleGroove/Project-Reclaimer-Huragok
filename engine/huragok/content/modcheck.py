@@ -471,9 +471,7 @@ def game_of_map_file(path: Path) -> Game | None:
 
 
 def _uploaded(folder: Path) -> int | None:
-    data = _json(folder / halo3_mapfile.RECEIPT)
-    updated = data.get("updated") if isinstance(data, dict) else None
-    return updated if isinstance(updated, int) and not isinstance(updated, bool) else None
+    return halo3_mapfile.installed_updated(folder)
 
 
 def _disabled(content_root: Path) -> list[str]:

@@ -273,7 +273,7 @@ def _start(command: list[str], folder: Path, output: Any, *, group: bool = False
     """The program, its output (and errors) into `output`, a file: on 0.10 a command whose output is a pipe never
     ends, and one whose input is a pipe waits for a line, so its input is nothing. group: in a process group of its
     own, for end_tree's gentle stop."""
-    env = server_environment(RECLAIMER_DEDICATED_AUTO_UPDATE="false")  # content, items…: its dedicated.toml says
+    env = server_environment(RECLAIMER_DEDICATED_AUTO_UPDATE="false")  # a look with the tool never installs a release
     options: dict[str, Any] = {}
     if group and os.name == "nt":
         options["creationflags"] = CREATE_NEW_PROCESS_GROUP
@@ -603,20 +603,12 @@ class Dedicated:
     def playlist_show(self, folder: Path, file: str) -> ToolResult:
         return self.run_sync(folder, "playlist", "show", file, config=self.config_name)
 
-    def playlist_new(self, folder: Path, name: str, maps: list[str], games: list[str], *,
-                     vote_seconds: int | None = None, replace: bool = False) -> ToolResult:
-        words = ["playlist", "new", name, "--maps", ",".join(maps), "--games", ",".join(games)]
-        if vote_seconds:
-            words.extend(["--vote-seconds", str(vote_seconds)])
-        if replace:
-            words.append("--replace")
-        return self.run_sync(folder, *words, config=self.config_name)
-
     def mods(self, folder: Path, *, stop: threading.Event | None = None) -> ToolResult:
         return self.run_sync(folder, "mods", timeout=SLOW, config=self.config_name, stop=stop)
 
     def mode_check(self, path: Path) -> ToolResult:
-        """The program's own check of a saved custom game (one with a script; gameoptions adds an empty one)."""
+        """The program's own check of a saved custom game (one with a script: a plain one is checked as a copy with an
+        empty script added, halo3_options.Preset.check_copy)."""
         return self.run_sync(path.parent, "mode-check", str(path), program=True)
 
     def reload(self, folder: Path) -> ToolResult:

@@ -1,5 +1,6 @@
-"""Workshop mods kept up to date: noticed (Steam's details, the server's console), planned after the game,
-swapped in while the server is stopped, and put back when the fetch fails."""
+"""Workshop mod updates the 0.7.0 way: the server downloads and installs them itself; Huragok restarts a server whose
+map in use holds one up (nobody on: `restart`; people on: a `say`, then `restart now`), confirms it, and warns. Servers
+sharing a content folder are restarted together, or taken through the shutdown pattern (plan-0.7.0.md 4.4, S1b)."""
 
 from __future__ import annotations
 
@@ -7,407 +8,499 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+import pytest
 
 from conftest import free_port
 from testkit.setup import make_server_folder
-from testkit.workshop import ALPHA, ITEM, NEW, OLD, FakeLifecycle, service_for, workshop_root
+from testkit.workshop import ALPHA, DOWNLOADED, DOWNLOADING, HELD, ITEM, LOCKED, NEW, OLD, UPDATED, Clock, \
+    FakeLifecycle, said, service_for, workshop_root
 
-from huragok.core.events import EventBus
 from huragok.core.settings import load
-from huragok.core.tomledit import read_toml, set_table_key
-from huragok.program.dedicated import tool_for
+from huragok.core.tomledit import set_table_key, set_top_key
 from huragok.steam import SteamItem
-from huragok.updates.workshop import WorkshopUpdateService, installed_version, is_newer
+from huragok.updates import workshop
+from huragok.updates.workshop import RECEIPT, installed_version, is_newer, staged_copies
 
 
-def test_comparing_versions() -> None:
+@pytest.fixture(autouse=True)
+def quick(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No 3 s between telling the players and the restart, a shared update that looks every 10 ms, and a short look
+    for stale copies once it's in."""
+    monkeypatch.setattr(workshop, "SAY_SECONDS", 0.0)
+    monkeypatch.setattr(workshop, "SHARED_TICK", 0.01)
+    monkeypatch.setattr(workshop, "AFTER_SECONDS", 0.05)
+
+
+def line(service: Any, text: str, server: str = ALPHA, item: int = ITEM) -> None:
+    service.bus.emit("server.workshop", server, item=str(item), text=text)
+
+
+async def settle(times: int = 5) -> None:
+    for _ in range(times):
+        await asyncio.sleep(0.01)
+
+
+async def until(check: Callable[[], bool], seconds: float = 3.0) -> None:
+    for _ in range(int(seconds / 0.01)):
+        if check():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("never happened")
+
+
+# Reading the version the way the program does (answer 17) -----------------------------------------------------------
+
+def test_the_version_is_read_from_the_programs_own_receipt(tmp_path: Path) -> None:
+    settings_path, folder = workshop_root(tmp_path)
+    content = load(settings_path).server(ALPHA).content_dir
+    copy = content / "Mods" / "Workshop" / str(ITEM)
+    assert installed_version(content, ITEM) == {"item": ITEM, "manifest": OLD * 7, "updated": OLD}
+    # The older receipt, which the program never reads, changed alone changes nothing (S1)
+    (copy / "reclaimer-workshop-version.json").write_text(json.dumps({"item": ITEM, "manifest": 1, "updated": 1}))
+    assert installed_version(content, ITEM)["updated"] == OLD
+    receipt = json.loads((copy / RECEIPT).read_text(encoding="utf-8"))
+    receipt["version"]["updated"] = 1740000000
+    (copy / RECEIPT).write_text(json.dumps(receipt))
+    assert installed_version(content, ITEM)["updated"] == 1740000000
+    (copy / RECEIPT).write_text("{}")
+    assert installed_version(content, ITEM) is None  # no version: not the program's install
+
+
+def test_a_new_version_needs_both_a_new_manifest_and_a_newer_time() -> None:
     assert is_newer({"updated": OLD, "manifest": 1}, SteamItem(ITEM, "x", NEW, "2"))
-    assert not is_newer({"updated": NEW, "manifest": 2}, SteamItem(ITEM, "x", NEW, "2"))
     assert not is_newer({"updated": OLD, "manifest": 2}, SteamItem(ITEM, "x", NEW, "2"))  # the same files
+    assert not is_newer({"updated": NEW, "manifest": 1}, SteamItem(ITEM, "x", NEW, "2"))  # not newer
+    assert not is_newer({"updated": NEW + 9, "manifest": 1}, SteamItem(ITEM, "x", NEW, "2"))
     assert not is_newer({"updated": OLD}, SteamItem(ITEM, "x", None))
+    assert is_newer({"updated": OLD, "manifest": 1933178121822970917}, SteamItem(ITEM, "x", NEW, "1933178121822970918"))
+    assert not is_newer({"updated": OLD, "manifest": 1933178121822970917}, SteamItem(ITEM, "x", NEW, "1933178121822970917"))
 
 
-def test_a_new_version_is_planned_after_the_game_and_swapped_in(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder = workshop_root(tmp_path)
+# One server ---------------------------------------------------------------------------------------------------------
+
+def test_nobody_on_the_failed_install_sets_off_a_restart_and_updated_confirms_it(tmp_path: Path, run, caplog) -> None:
+    settings_path, _ = workshop_root(tmp_path)
     lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass Rebalance", NEW, "n")})
-    server = service.settings.server(ALPHA)
-    assert installed_version(server.content_dir, ITEM)["updated"] == OLD
+    service = service_for(settings_path, lifecycle)
+    heard: list[Any] = []
+    service.bus.subscribe("server.workshop_updated", heard.append)
 
     async def scenario() -> None:
-        waiting = await service.check(quiet=False)
-        await asyncio.sleep(0)
-        assert [w.item for w in waiting[ALPHA]] == [ITEM]
-        assert lifecycle.restarts == [(ALPHA, "after_game", "installing a new version of HugeGrass Rebalance")]
-        assert [j.key for j in lifecycle.jobs[ALPHA]] == ["workshop"]
-        assert "mod update waiting: HugeGrass Rebalance" in lifecycle.flags[ALPHA]["workshop"]
-        await service.check()  # asked again: no second plan for the same version
-        assert len(lifecycle.restarts) == 1
-        # Steam serves the new version now; the job runs with the server stopped.
-        (folder / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
-        said = await lifecycle.jobs[ALPHA][0].run()
-        assert said.startswith("Workshop updated: HugeGrass Rebalance") and "18 Oct 2026" in said
-        assert installed_version(server.content_dir, ITEM)["updated"] == NEW
-        assert not list((server.content_dir.parent / ".huragok-workshop-previous").iterdir())  # the old copy gone
-        assert not service.waiting and "workshop" not in lifecycle.flags.get(ALPHA, {})
+        line(service, DOWNLOADING)
+        line(service, DOWNLOADED)
+        await settle()
+        assert lifecycle.sent == []  # downloaded alone: a server whose game doesn't use the mod installs it itself
+        assert "mod-update-downloading" in said(service) and "mod-update-players" in said(service)
+        line(service, HELD)
+        await settle()
+        assert lifecycle.to(ALPHA) == ["restart"]  # nobody on: RCON restart, no say
+        assert "downloaded, waiting for a restart: the map is in use" in said(service)["mod-update-waiting"]
+        assert "at once (nobody is on)" in said(service)["mod-update-waiting"]
+        line(service, HELD)  # said again before the restart took: not another restart
+        await settle()
+        assert lifecycle.to(ALPHA) == ["restart"]
+        line(service, UPDATED)
+        await settle()
+        assert said(service) == {} and not service.pending
 
     with caplog.at_level(logging.INFO):
         run(scenario())
-    assert "a new version of HugeGrass Rebalance (18 Oct 2026) is out (installed: 16 Oct 2026)" in caplog.text
+    assert heard and heard[-1].get("items") == [ITEM]
+    assert heard[-1].get("names")[0].endswith(" 16 Oct 2026 -> 18 Oct 2026")  # Discord's card names both
+    assert "restarted its game (restart) to put it in" in caplog.text and "the restart put the new version" in caplog.text
 
 
-def test_a_failed_fetch_keeps_the_old_version(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder = workshop_root(tmp_path)
+def test_people_on_are_told_then_the_restart_drops_them(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
     lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass Rebalance", NEW, "n")})
-    server = service.settings.server(ALPHA)
-    (folder / "fake_steam_down").write_text("", encoding="utf-8")  # SteamCMD's sign-in has expired
+    lifecycle.counts[ALPHA] = 2
+    service = service_for(settings_path, lifecycle)
+    service.titles[ITEM] = "HugeGrass SPR"
 
     async def scenario() -> None:
-        await service.check()
-        lifecycle.jobs.clear()  # the manager takes the jobs as it runs them
-        said = await service.install(server)
-        assert said == "Workshop not updated; the old version(s) kept"
-        assert installed_version(server.content_dir, ITEM)["updated"] == OLD  # back where it was
-        assert not lifecycle.jobs.get(ALPHA)  # never added again during this start: the server starts on the old one
-        assert "press I" in lifecycle.flags[ALPHA]["steamcmd"]
-        assert "tried again after a later game" in lifecycle.flags[ALPHA]["workshop"]
-        assert service.waiting[ALPHA][ITEM]  # still waiting, for a later try
+        lifecycle.playing.add(ALPHA)
+        line(service, HELD)  # mid-game (it never is: the server only tries between games): left to the game's end
+        await settle()
+        assert lifecycle.sent == []
+        lifecycle.playing.discard(ALPHA)  # the game ended: its next try fails again
+        line(service, HELD)
+        await settle()
 
+    run(scenario())
+    assert lifecycle.to(ALPHA) == ["say [-.-] PARDON OUR DUST! Restarting for a mod update: the new version of "
+                                   "HugeGrass SPR goes in now. Join again in a minute.", "restart now"]
+    assert "now its game has ended (players are told first)" in said(service)["mod-update-waiting"]
+
+
+def test_a_restart_that_didnt_take_is_tried_once_more_then_warned_about(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle, clock = FakeLifecycle(), Clock()
+    service = service_for(settings_path, lifecycle, clock=clock)
+
+    async def scenario() -> None:
+        line(service, HELD)
+        await settle()
+        assert lifecycle.to(ALPHA) == ["restart"]
+        clock.now += 1
+        line(service, HELD)  # in flight as the restart went: not counted
+        await settle()
+        service.bus.emit("server.started", ALPHA, pid=4242)  # its new game worker
+        line(service, HELD)  # still failing after the new worker started: the restart didn't take
+        await settle()
+        assert lifecycle.to(ALPHA) == ["restart", "restart"]
+        clock.now += workshop.FENCE_SECONDS  # no new worker seen, but long enough
+        line(service, HELD)
+        await settle()
+        line(service, HELD)
+
+    run(scenario())
+    assert lifecycle.to(ALPHA) == ["restart", "restart"]  # twice, then only a warning
+    warning = said(service)["mod-update-stuck"]
+    assert "2 restart(s) didn't put the new version in" in warning and "Access is denied" in warning
+    assert "mod-update-waiting" not in said(service)
+    assert service.warnings.of(ALPHA)[0].rule.discord  # the host must act: the staff channel hears it
+    assert "STUCK" in "\n".join(service.item_lines(service.settings.server(ALPHA)))
+
+
+def test_with_restart_off_it_only_warns_and_the_window_can_put_it_in(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    text = settings_path.read_text(encoding="utf-8")
+    settings_path.write_text(text + "\n[workshop_updates]\nrestart = false\n", encoding="utf-8")
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle)
+
+    async def scenario() -> None:
+        line(service, HELD)
+        await settle()
+        assert lifecycle.sent == []
+        assert "[workshop_updates] restart = false" in said(service)["mod-update-held"]
+        assert "It stays waiting" in said(service)["mod-update-held"]
+        assert service.held() == [ALPHA]
+        ok, message = service.restart_now(ALPHA)  # U -> Workshop mods: a person asked
+        await settle()
+        assert ok and message == "restarting it to put Workshop item 3820687243 in"
+
+    run(scenario())
+    assert lifecycle.to(ALPHA) == ["restart"]
+    assert service.restart_now("Ghost") == (False, "no server called Ghost")
+
+
+def test_a_servers_own_off_leaves_it_out(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    text = settings_path.read_text(encoding="utf-8")
+    settings_path.write_text(text + f'\n[[server]]\nname = "{ALPHA}"\nworkshop_updates = "off"\n', encoding="utf-8")
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle)
+
+    async def scenario() -> None:
+        line(service, HELD)
+        await settle()
+
+    run(scenario())
+    assert lifecycle.sent == []
+    assert "its own workshop_updates = \"off\" in settings.toml" in said(service)["mod-update-held"]
+
+
+def test_the_lock_line_and_other_lines_set_nothing_off(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle)
+
+    async def scenario() -> None:
+        line(service, LOCKED)  # another server on the folder installing it this moment
+        line(service, "installing the update failed (no space left on the disk); trying again")  # not the map
+        line(service, "installed")
+        await settle()
+
+    run(scenario())
+    assert lifecycle.sent == [] and not service.pending
+
+
+def test_a_second_update_from_the_console_is_restarted_for_too(tmp_path: Path, run) -> None:
+    """Each update its own episode: the first one's restart count never holds the next up (audit 2026-11, 8.7)."""
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle)
+
+    async def scenario() -> None:
+        for _ in range(3):
+            line(service, HELD)
+            await settle()
+            line(service, UPDATED)
+            await settle()
+
+    run(scenario())
+    assert lifecycle.to(ALPHA) == ["restart", "restart", "restart"]
+
+
+def test_a_downloading_line_warns_and_the_staff_channel_hears_it_once(tmp_path: Path, run) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass SPR", NEW, "n")})
+    heard: list[Any] = []
+    service.bus.subscribe("server.workshop_update", heard.append)
+
+    async def scenario() -> None:
+        await service.check()  # Huragok's own look sees it first
+        line(service, DOWNLOADING)
+        line(service, DOWNLOADING)
+
+    run(scenario())
+    assert [e.get("title") for e in heard] == ["HugeGrass SPR"]
+    assert said(service)["mod-update-downloading"] == (
+        "Info: HugeGrass SPR has a new version on Steam (18 Oct 2026); this server has the old one (16 Oct 2026). "
+        "Nothing to do: the server downloads it by itself (its [workshop] update_check_minutes says how often it "
+        "looks) and puts it in between games.")
+    assert "this PC's copy is a different version from the host's" in said(service)["mod-update-players"]
+    assert service.waiting_lists() == {ALPHA: [ITEM]}
+    assert "NEW VERSION ON STEAM (18 Oct 2026)" in "\n".join(service.report())
+
+
+def test_steams_details_settle_it_once_the_new_version_is_in(tmp_path: Path, run) -> None:
+    settings_path, folder = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass SPR", NEW, "n")})
+    content = service.settings.server(ALPHA).content_dir
+
+    async def scenario() -> None:
+        assert await service.check(quiet=False) == {ALPHA: [ITEM]}
+        receipt = content / "Mods" / "Workshop" / str(ITEM) / RECEIPT  # the server put it in by itself
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["version"] = {"item": ITEM, "manifest": "n", "updated": NEW}
+        receipt.write_text(json.dumps(data))
+        assert await service.check() == {}
+
+    run(scenario())
+    assert said(service) == {}
+
+
+def test_steam_down_is_said_and_nothing_changes(tmp_path: Path, run, caplog) -> None:
+    from huragok.core.web import UpdateError
+
+    settings_path, _ = workshop_root(tmp_path)
+    service = service_for(settings_path, FakeLifecycle())
+
+    def down(items: list[int]) -> dict[int, SteamItem]:
+        raise UpdateError("couldn't reach Steam: timed out")
+
+    service.fetch = down
     with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert "SteamCMD can't sign in" in caplog.text and "tried again after a later game" in caplog.text
+        assert run(service.check(quiet=False)) == {}
+    assert service.last_error == "couldn't reach Steam: timed out" and "Couldn't look for new Workshop versions" in caplog.text
+    assert "Last look at Steam failed: couldn't reach Steam: timed out" in service.report()
 
 
-def test_what_the_server_says_about_its_items(tmp_path: Path, run) -> None:
-    settings_path, folder = workshop_root(tmp_path)
-    lifecycle = FakeLifecycle(phase="idle")
-    service = service_for(settings_path, lifecycle, {})
+def test_a_failed_steamcmd_sign_in_is_flagged(tmp_path: Path, run, caplog) -> None:
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle()
+    service = service_for(settings_path, lifecycle)
+    with caplog.at_level(logging.ERROR):
+        line(service, "signing in as host failed: sign in to SteamCMD again")
+    assert "press I" in lifecycle.flags[ALPHA]["steamcmd"] and "SteamCMD can't sign in" in caplog.text
+    line(service, "ready (version of 18 Oct 2026)")
+    assert "steamcmd" not in lifecycle.flags[ALPHA]
+
+
+# A server Huragok didn't start (answer 30) -------------------------------------------------------------------------
+
+def test_a_server_huragok_didnt_start_is_restarted_over_its_console(tmp_path: Path, run, monkeypatch) -> None:
+    from huragok.servers import server as manager_module
+
+    settings_path, _ = workshop_root(tmp_path)
+    lifecycle = FakeLifecycle("external")
+    service = service_for(settings_path, lifecycle)
+    content = service.settings.server(ALPHA).content_dir
+    monkeypatch.setattr(manager_module, "supervisor_running", lambda server, ours=None: 31092)
+    waiting = content / f".workshop-{ITEM}-31092-1"
+    waiting.mkdir()
+    (content / f".workshop-{ITEM}-999-1").mkdir()  # another program's (a dead server's): not this one's
+    assert sorted((c.item, c.pid) for c in staged_copies(content)) == [(ITEM, 999), (ITEM, 31092)]
 
     async def scenario() -> None:
-        service.bus.emit("server.workshop", ALPHA, item=str(ITEM),
-                         text="update downloaded; it installs once Alpha Server has no players")
-        await asyncio.sleep(0)
-        assert service.waiting[ALPHA][ITEM].downloaded and lifecycle.jobs[ALPHA]
-        assert lifecycle.restarts == []  # stopped: it installs as it starts
-        assert "installs as it starts" in lifecycle.flags[ALPHA]["workshop"]
-        service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="updated")  # it emptied and did it itself
-        assert not service.waiting and not lifecycle.jobs[ALPHA]
-        service.bus.emit("server.workshop", ALPHA, item=str(ITEM),
-                         text="signing in as host failed: sign in to SteamCMD again")
-        assert "press I" in lifecycle.flags[ALPHA]["steamcmd"]
-        service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="ready (version of 18 Oct 2026)")
-        assert "steamcmd" not in lifecycle.flags[ALPHA]
+        lifecycle.playing.add(ALPHA)
+        service.act_external(service.look_external())  # waiting during a game: as it should
+        service.act_external(service.look_external())
+        assert lifecycle.sent == []
+        lifecycle.playing.discard(ALPHA)
+        service.act_external(service.look_external())  # between games, once: it may be going in this second
+        assert lifecycle.sent == []
+        service.act_external(service.look_external())  # still there: the map holds it up
+        await settle()
+        assert lifecycle.to(ALPHA) == ["restart"]  # only ever over its console
+        waiting.rmdir()  # it went in as its game restarted
+        service.act_external(service.look_external())
 
     run(scenario())
+    assert "quit" not in lifecycle.to(ALPHA) and said(service) == {}
 
 
-def test_shared_content_and_off_are_left_alone(tmp_path: Path, run) -> None:
-    settings_path, folder = workshop_root(tmp_path)
-    second = tmp_path / "reclaimer" / "SERVERS" / "Beta"
-    make_server_folder(second, "Beta", free_port())
-    set_table_key(second / "dedicated.toml", "rcon", "password", "secretsecret")
-    from huragok.core.tomledit import set_top_key
+# Servers sharing a content folder (answer 15) ----------------------------------------------------------------------
 
-    set_top_key(second / "dedicated.toml", "content", f"../{ALPHA}/content")  # Alpha's content, items and all
-    set_table_key(second / "dedicated.toml", "workshop", "items", [ITEM], before="master")
+def shared_root(tmp_path: Path, names: tuple[str, ...] = ("Beta", "Gamma")) -> Path:
+    """Alpha with the item installed, and servers in folders of their own whose content is Alpha's."""
+    settings_path, _ = workshop_root(tmp_path)
+    for name in names:
+        folder = tmp_path / "reclaimer" / "SERVERS" / name
+        make_server_folder(folder, name, free_port())
+        set_top_key(folder / "dedicated.toml", "content", f"../{ALPHA}/content")
+        set_table_key(folder / "dedicated.toml", "workshop", "items", [ITEM], before="master")
+    return settings_path
+
+
+def test_sharing_servers_all_empty_are_restarted_together(tmp_path: Path, run) -> None:
     lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-    assert service.shared_with(service.settings.server(ALPHA)) == ["Beta"]
+    service = service_for(shared_root(tmp_path), lifecycle)
 
     async def scenario() -> None:
-        await service.check()
-        assert lifecycle.restarts == [] and not lifecycle.jobs  # the program swaps a shared item for both at once
-        assert "content shared with Beta" in lifecycle.flags[ALPHA]["workshop"]
+        line(service, HELD, "Beta")  # the one holding the download
+        await until(lambda: len(lifecycle.sent) == 3)
+        line(service, UPDATED, "Beta")
+        await until(lambda: not service.shared)
 
     run(scenario())
-    off = load(settings_path)
-    off.workshop_updates.install = "off"
-    service = WorkshopUpdateService(off, EventBus(), FakeLifecycle(), fetch=lambda items: {})  # type: ignore[arg-type]
-    assert run(service.check()) == {}  # nothing even asked
+    assert sorted(lifecycle.sent) == [(ALPHA, "restart"), ("Beta", "restart"), ("Gamma", "restart")]
+    for name in (ALPHA, "Beta", "Gamma"):
+        assert said(service, name) == {}
 
 
-def test_the_servers_look_as_often_as_huragok(tmp_path: Path) -> None:
-    settings_path, folder = workshop_root(tmp_path)
-    service = service_for(settings_path, FakeLifecycle(), {})
-    assert service.write_check_minutes() == [ALPHA]
-    data = read_toml(folder / "dedicated.toml")
-    assert data["workshop"]["update_check_minutes"] == 5 and data["workshop"]["items"] == [ITEM]
-    assert service.write_check_minutes() == []  # once
-    report = "\n".join(service.report())
-    assert f"{ITEM}" in report and "installed 16 Oct 2026" in report and "after the game" in report
-
-
-# A fetch that fails, brings back the same version, or is cut short ---------------------------------
-
-def test_a_failed_fetch_never_keeps_the_server_from_starting(tmp_path: Path, run) -> None:
-    """The real manager: the job runs once, the old copy goes back and the server starts on it."""
-    import time
-
-    from testkit.fleet import FakeBackend, FakeClient
-
-    from huragok.servers.fleet import Fleet, Lifecycle
-    from huragok.servers.state import ServerState
-
-    settings_path, folder = workshop_root(tmp_path)
-    settings = load(settings_path)
-    bus = EventBus()
-    state = ServerState(ALPHA)
-    backend = FakeBackend(settings, bus, {ALPHA: state})
-    fleet = Fleet(settings, backend, bus)
-    manager = fleet.add(settings.servers[0], FakeClient(state), state)  # type: ignore[arg-type]
-    manager.record.wanted = "running"
-    service = WorkshopUpdateService(settings, bus, Lifecycle(fleet), tool=lambda: tool_for(settings),
-                                    fetch=lambda items: {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-    runs: list[str] = []
-    real_install = service.install
-
-    async def counted(server: Any) -> str:
-        said = await real_install(server)
-        runs.append(said)
-        return said
-
-    service.install = counted  # type: ignore[method-assign]
-    (folder / "fake_steam_down").write_text("", encoding="utf-8")  # SteamCMD's sign-in has expired
+def test_the_shutdown_pattern_waits_for_the_new_download_before_its_last_restart(tmp_path: Path, run) -> None:
+    """S1b (d): players on Alpha and Beta, Gamma empty, Gamma holding the download: Gamma stopped (its download thrown
+    away), Alpha and Beta stopped as their games end, all started, and restarted together only once one of them
+    has downloaded it again (change 2)."""
+    lifecycle = FakeLifecycle()
+    lifecycle.counts.update({ALPHA: 3, "Beta": 1})
+    lifecycle.playing.update({ALPHA, "Beta"})
+    service = service_for(shared_root(tmp_path), lifecycle)
+    service.titles[ITEM] = "Albatross Battle"
 
     async def scenario() -> None:
-        await service.check()  # the server is stopped: "installs as it starts"
-        assert [j.key for j in manager.jobs] == ["workshop"]
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline and not backend.starts:
-            manager.tick(time.time())
-            await asyncio.sleep(0.05)
+        line(service, HELD, "Gamma")
+        await until(lambda: lifecycle.to("Gamma") == ["quit"])  # 1. the empty one stopped
+        await until(lambda: "mod-update-group" in said(service, ALPHA))
+        warning = said(service, ALPHA)["mod-update-group"]  # answer 38: which game holds it up, and for how long
+        assert "waits for this server's game to end" in warning and "(Gamma)" in warning and "so far" in warning
+        assert service.warnings.of(ALPHA)[0].rule.discord
+        assert "waiting for Alpha Server, Beta's game" in lifecycle.flags["Gamma"]["workshop"]
+        lifecycle.playing.discard("Beta")  # 2. Beta's game ends: told, then stopped
+        await until(lambda: lifecycle.to("Beta")[-1:] == ["quit"])
+        assert lifecycle.to("Beta")[0].startswith("say [-.-] PARDON OUR DUST! Stopping for a mod update: this server "
+                                                  "is back once the new version of Albatross Battle is in.")
+        assert lifecycle.to(ALPHA) == []
+        lifecycle.playing.discard(ALPHA)  # the last game ends
+        await until(lambda: [what for _, what in lifecycle.sent].count("start") == 3)  # 4. all started
+        assert said(service, ALPHA) == {}  # nothing holds it up now
+        lifecycle.counts.update({ALPHA: 1, "Beta": 0})  # one of Alpha's players rejoined
+        await settle(10)
+        assert not [what for _, what in lifecycle.sent if what.startswith("restart")]  # not as soon as they're up
+        line(service, DOWNLOADED, ALPHA)  # 5. the download is in
+        await until(lambda: ("Gamma", "restart") in lifecycle.sent)
+        line(service, UPDATED, ALPHA)
+        await until(lambda: not service.shared)
 
     run(scenario())
-    assert backend.starts == [ALPHA] and runs == ["Workshop not updated; the old version(s) kept"]
-    assert installed_version(settings.servers[0].content_dir, ITEM)["updated"] == OLD
-    assert service.waiting[ALPHA][ITEM] and not manager.jobs  # still waiting, for a later game
+    assert lifecycle.to(ALPHA)[-2:] == ["say [-.-] PARDON OUR DUST! Restarting for a mod update: the new version of "
+                                        "Albatross Battle goes in now. Join again in a minute.", "restart now"]
+    assert lifecycle.to("Beta")[-2:] == ["start", "restart"] and lifecycle.to("Gamma") == ["quit", "start", "restart"]
 
 
-def test_a_version_that_keeps_failing_is_tried_three_times_then_left(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder = workshop_root(tmp_path)
+def test_the_last_one_up_holding_the_download_is_restarted_instead_of_stopped(tmp_path: Path, run) -> None:
+    """S1b (k), change 1: one download, one drop."""
     lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-    server = service.settings.server(ALPHA)
-    (folder / "fake_steam_down").write_text("", encoding="utf-8")
+    lifecycle.counts["Beta"] = 2
+    lifecycle.playing.add("Beta")
+    service = service_for(shared_root(tmp_path), lifecycle)
 
     async def scenario() -> None:
-        for attempt in range(3):  # each look at Steam plans one more try after a game
-            await service.check()
-            await asyncio.sleep(0)
-            assert [j.key for j in lifecycle.jobs.get(ALPHA, [])] == ["workshop"], attempt
-            job, lifecycle.jobs[ALPHA] = lifecycle.jobs[ALPHA][0], []
-            assert await job.run() == "Workshop not updated; the old version(s) kept"
-        assert len(lifecycle.restarts) == 3
-        await service.check()
-        await asyncio.sleep(0)
-        assert not lifecycle.jobs.get(ALPHA) and len(lifecycle.restarts) == 3  # stopped trying that version
-        assert "didn't install (3 tries): U -> Workshop mods to try again" in lifecycle.flags[ALPHA]["workshop"]
-        assert "didn't install in 3 tries; installing it here tries again" in "\n".join(service.item_lines(server))
-        # A person asks (U -> Workshop mods): tried again, and this time Steam answers.
-        (folder / "fake_steam_down").unlink()
-        (folder / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
-        ok, _ = await service.install_now(ALPHA, "after_game")
-        assert ok and (await lifecycle.jobs[ALPHA][0].run()).startswith("Workshop updated: HugeGrass")
-        assert not service.failures
-
-    with caplog.at_level(logging.INFO):
-        run(scenario())
-    assert caplog.text.count("tried again after a later game") == 2
-    assert "HugeGrass didn't install after 3 tries" in caplog.text and "To try again: U -> Workshop mods" in caplog.text
-
-
-def test_a_fetch_that_brought_back_the_same_version_isnt_an_update(tmp_path: Path, run, caplog) -> None:
-    settings_path, folder = workshop_root(tmp_path)  # installed 16 Oct; the fake SteamCMD still serves 16 Oct
-    lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-    server = service.settings.server(ALPHA)
-
-    async def scenario() -> str:
-        await service.check()
-        await asyncio.sleep(0)
-        return await lifecycle.jobs[ALPHA][0].run()
-
-    with caplog.at_level(logging.INFO):
-        said = run(scenario())
-    assert said == "Workshop not updated; the old version(s) kept"
-    assert installed_version(server.content_dir, ITEM)["updated"] == OLD
-    assert service.waiting[ALPHA][ITEM] and service.failures[(ALPHA, ITEM)] == (NEW, 1) and not service.done
-    assert "the fetch brought back the version it had: HugeGrass (16 Oct 2026)" in caplog.text
-
-
-class SlowTool:
-    """`dedicated mods` that starts a new copy, then takes its time; stop ends it."""
-
-    def __init__(self, live: Path) -> None:
-        self.live = live
-        self.started = False
-        self.stopped = False
-
-    def mods(self, folder: Path, *, stop: Any = None) -> Any:
-        import time
-
-        from huragok.program.dedicated import ToolResult
-
-        (self.live / "maps").mkdir(parents=True, exist_ok=True)  # half a new copy, no receipt yet
-        self.started = True
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if stop is not None and stop.is_set():
-                self.stopped = True
-                return ToolResult(False, 130, "mods was stopped before it finished")
-            time.sleep(0.02)
-        return ToolResult(False, 2, "Error: too slow")
-
-
-def test_a_job_cut_short_puts_the_old_copy_back(tmp_path: Path, run) -> None:
-    import pytest
-    from conftest import wait_for
-
-    settings_path, folder = workshop_root(tmp_path)
-    lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
-    server = service.settings.server(ALPHA)
-    live = server.content_dir / "Mods" / "Workshop" / str(ITEM)
-    tool = SlowTool(live)
-    service.tool = lambda: tool  # type: ignore[assignment,return-value]
-
-    async def scenario() -> None:
-        await service.check()
-        job = asyncio.ensure_future(lifecycle.jobs[ALPHA][0].run())
-        await wait_for(lambda: tool.started)
-        job.cancel()  # what asyncio.run does to the manager's job when Huragok closes or relaunches
-        with pytest.raises(asyncio.CancelledError):
-            await job
+        line(service, HELD, "Beta")
+        await until(lambda: lifecycle.to(ALPHA) == ["quit"] and lifecycle.to("Gamma") == ["quit"])
+        assert lifecycle.to("Beta") == []
+        lifecycle.playing.discard("Beta")  # its game ends
+        await until(lambda: lifecycle.to("Beta")[-1:] == ["restart now"])
+        assert lifecycle.to(ALPHA) == ["quit"]  # not started before it's in
+        line(service, UPDATED, "Beta")
+        await until(lambda: lifecycle.to(ALPHA) == ["quit", "start"] and lifecycle.to("Gamma") == ["quit", "start"])
 
     run(scenario())
-    assert tool.stopped  # `dedicated mods` was ended, not left running
-    assert installed_version(server.content_dir, ITEM)["updated"] == OLD  # the server starts with its mod
-    aside = server.content_dir.parent / ".huragok-workshop-previous"
-    assert not list(aside.glob("*.moving.json")) and [p.name for p in aside.iterdir()][0].endswith("-failed")
+    assert lifecycle.to("Beta")[0].startswith("say [-.-] PARDON OUR DUST! Restarting for a mod update")
+    assert "quit" not in lifecycle.to("Beta")
 
 
-def test_a_job_cut_short_by_a_crash_is_put_right_at_the_next_start(tmp_path: Path) -> None:
-    import os
-
-    from huragok.content import upkeep
-
-    settings_path, folder = workshop_root(tmp_path)
-    settings = load(settings_path)
-    server = settings.server(ALPHA)
-    live = server.content_dir / "Mods" / "Workshop" / str(ITEM)
-    aside_root = server.content_dir.parent / ".huragok-workshop-previous"
-    aside = aside_root / f"{server.slug}-{ITEM}-20261018-120000"
-    aside_root.mkdir()
-    marker = aside_root / f"{server.slug}-20261018-120000.moving.json"
-    marker.write_text(json.dumps({"server": ALPHA, "moves": [[str(live), str(aside)]]}), encoding="utf-8")
-    os.replace(live, aside)
-    (live / "maps").mkdir(parents=True)  # the fetch got this far when Huragok went down: no receipt
-    assert not [l for l in upkeep.cleanable(settings) if l.path == aside]  # the only good copy: never offered
-    marker.unlink()
-    assert not [l for l in upkeep.cleanable(settings) if l.path == aside]  # its item isn't whole in the live folder
-    marker.write_text(json.dumps({"server": ALPHA, "moves": [[str(live), str(aside)]]}), encoding="utf-8")
-    service_for(settings_path, FakeLifecycle(), {})  # Huragok starts again
-    assert installed_version(server.content_dir, ITEM)["updated"] == OLD and not marker.exists()
-    offered = [l.path.name for l in upkeep.cleanable(settings) if ".huragok-workshop-previous" in l.label]
-    assert offered == [f"{aside.name}-failed"]  # the half-fetched copy; the old one is back in place
-    (aside_root / f"{server.slug}-{ITEM}-20261017-120000").mkdir()  # an old copy whose item is installed
-    assert len([l for l in upkeep.cleanable(settings) if ".huragok-workshop-previous" in l.label]) == 2
-
-
-def test_shared_content_is_never_installed_from_here(tmp_path: Path, run) -> None:
-    from huragok.core.tomledit import set_top_key
-
-    settings_path, folder = workshop_root(tmp_path)
-    second = tmp_path / "reclaimer" / "SERVERS" / "Beta"
-    make_server_folder(second, "Beta", free_port())
-    set_table_key(second / "dedicated.toml", "rcon", "password", "secretsecret")
-    set_top_key(second / "dedicated.toml", "content", f"../{ALPHA}/content")  # Beta uses Alpha's content
-    set_table_key(second / "dedicated.toml", "workshop", "items", [ITEM], before="master")
+def test_one_off_server_holds_the_group_and_is_named(tmp_path: Path, run) -> None:
+    settings_path = shared_root(tmp_path)
+    text = settings_path.read_text(encoding="utf-8")
+    settings_path.write_text(text + '\n[[server]]\nname = "Gamma"\nworkshop_updates = "off"\n', encoding="utf-8")
     lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")})
+    service = service_for(settings_path, lifecycle)
 
     async def scenario() -> None:
-        await service.check()
-        assert "Beta" in service.waiting_lists() and service.installable() == []
-        ok, message = await service.install_now("Beta", "after_game")
-        assert not ok and message.startswith("its content folder is shared with Alpha Server")
-        assert lifecycle.restarts == [] and not lifecycle.jobs
-        said = await service.install(service.settings.server("Beta"))
-        assert said == "left to the server program: its content folder is shared with Alpha Server"
+        line(service, HELD, "Beta")
+        await settle()
 
     run(scenario())
-    assert installed_version(service.settings.server(ALPHA).content_dir, ITEM)["updated"] == OLD  # untouched
-    # U -> Workshop mods: not offered for install, and says why.
+    assert lifecycle.sent == [] and not service.shared
+    warning = said(service, "Beta")["mod-update-held-shared"]
+    assert "Gamma has workshop_updates = \"off\"" in warning and "It stays waiting" in warning
+
+
+def test_a_server_huragok_didnt_start_gets_a_warning_instead_of_the_pattern(tmp_path: Path, run) -> None:
+    lifecycle = FakeLifecycle()
+    lifecycle.phases["Gamma"] = "external"
+    lifecycle.counts[ALPHA] = 1
+    service = service_for(shared_root(tmp_path), lifecycle)
+
+    async def scenario() -> None:
+        line(service, HELD, "Beta")
+        await settle()
+        assert lifecycle.sent == [] and not service.shared
+        assert "Gamma wasn't started by Huragok" in said(service, "Beta")["mod-update-external"]
+        lifecycle.counts[ALPHA] = 0  # nobody on any of them now: restarted together, Gamma over its console too
+        line(service, HELD, "Beta")
+        await until(lambda: len(lifecycle.sent) == 3)
+
+    run(scenario())
+    assert sorted(lifecycle.sent) == [(ALPHA, "restart"), ("Beta", "restart"), ("Gamma", "restart")]
+    assert "mod-update-external" not in said(service, "Beta")
+
+
+def test_a_server_still_retrying_a_stale_copy_is_stopped_and_started_again(tmp_path: Path, run, monkeypatch) -> None:
+    """S1b (f): two downloads; after the update one keeps trying to install its own, now stale, copy."""
+    monkeypatch.setattr(workshop, "AFTER_SECONDS", 30.0)
+    lifecycle, clock = FakeLifecycle(), Clock()
+    service = service_for(shared_root(tmp_path, ("Beta",)), lifecycle, clock=clock)
+
+    async def scenario() -> None:
+        line(service, HELD, "Beta")
+        await until(lambda: len(lifecycle.sent) == 2)
+        clock.now += 5
+        line(service, UPDATED, "Beta")
+        await until(lambda: service.shared and next(iter(service.shared.values())).step == "after")
+        clock.now += 5
+        line(service, LOCKED, ALPHA)  # the loser: first the lock, then its stale copy
+        line(service, HELD, ALPHA)
+        await until(lambda: lifecycle.to(ALPHA)[-2:] == ["quit", "start"])
+        clock.now += workshop.AFTER_SECONDS
+        await until(lambda: not service.shared)
+
+    run(scenario())
+    assert lifecycle.to("Beta") == ["restart"]
+
+
+# U -> Workshop mods, through Huragok ------------------------------------------------------------------------------
+
+def test_the_window_asks_huragok_what_waits_and_to_put_it_in(tmp_path: Path, run) -> None:
     from huragok.huragok import Huragok
 
+    settings_path, _ = workshop_root(tmp_path)
     supervisor = Huragok(load(settings_path))
     supervisor.workshop_updates.fetch = lambda items: {ITEM: SteamItem(ITEM, "HugeGrass", NEW, "n")}
     try:
         result = run(supervisor.request("check_workshop", {}))
-        assert result.ok and "waiting" not in result.message  # the window asks "install when?" only on "waiting"
-        assert result.message == ("nothing for Huragok to install; Alpha Server, Beta share their content folder, so "
-                                  "the server program installs theirs once nobody's on")
-        assert run(supervisor.request("update_workshop", {})).message == "no new Workshop version is waiting"
+        assert result.ok and result.message == f"new versions not in yet on {ALPHA}"
+        assert "waiting for a restart" not in result.message  # nothing for the window to offer
+        assert f"{ITEM} HugeGrass" in result.text and "NEW VERSION ON STEAM" in result.text
+        assert run(supervisor.request("update_workshop", {})).message == \
+            "no downloaded Workshop update is waiting for a restart"
     finally:
         supervisor.storage.close()
-
-
-def test_players_are_told_which_mod_and_discord_hears_it_by_name(tmp_path: Path, run) -> None:
-    settings_path, folder = workshop_root(tmp_path)
-    lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {ITEM: SteamItem(ITEM, "HugeGrass Rebalance", NEW, "n")})
-    heard: list[Any] = []
-    service.bus.subscribe("server.workshop_update", heard.append)
-    service.bus.subscribe("server.workshop_updated", heard.append)
-    layouts: list[str] = []
-    service.after_install = lambda server: layouts.append(server.name)
-
-    async def scenario() -> str:
-        await service.check()
-        await asyncio.sleep(0)
-        (folder / "fake-steam.json").write_text(json.dumps({str(ITEM): NEW}), encoding="utf-8")
-        return await lifecycle.jobs[ALPHA][0].run()
-
-    run(scenario())
-    assert lifecycle.told == ["[^_^] YOUR TAX DOLLARS AT WORK! A new version of HugeGrass Rebalance is out: this "
-                              "server restarts after this game to put it in."]
-    waiting, updated = [e for e in heard if e.name == "server.workshop_update"], \
-        [e for e in heard if e.name == "server.workshop_updated"]
-    assert waiting[0].get("title") == "HugeGrass Rebalance"
-    assert updated[0].get("names") == ["HugeGrass Rebalance 16 Oct 2026 -> 18 Oct 2026"]
-    assert updated[0].get("items") == [ITEM]
-    assert layouts == [ALPHA]  # the mod's Forge layouts, before the server starts
-    # The server installing it itself (nobody on) reaches Discord too.
-    lifecycle.state = "idle"
-    service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="update downloaded; it installs once nobody's on")
-    service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="updated")
-    assert heard[-1].name == "server.workshop_updated"
-    assert heard[-1].get("names") == ["HugeGrass Rebalance, installed by the server itself once nobody was on"]
-
-
-def test_a_second_update_the_console_reports_is_restarted_for_too(tmp_path: Path, run) -> None:
-    """The first console-reported update's mark was never cleared, so the next "update downloaded" wasn't fresh: no
-    restart was planned, and the host's Hidden uploads (which Steam's check never sees) waited until the server
-    emptied (audit 2026-11, 8.7)."""
-    import json as json_module
-
-    from testkit.workshop import ALPHA, ITEM, NEW, FakeLifecycle, service_for, workshop_root
-
-    settings_path, folder = workshop_root(tmp_path)
-    lifecycle = FakeLifecycle()
-    service = service_for(settings_path, lifecycle, {})
-
-    async def scenario() -> None:
-        import asyncio
-
-        for newest in (NEW, NEW + 86400):  # days apart, each only from the console
-            (folder / "fake-steam.json").write_text(json_module.dumps({str(ITEM): newest}), encoding="utf-8")
-            service.bus.emit("server.workshop", ALPHA, item=str(ITEM), text="update downloaded; it installs once nobody's on")
-            await asyncio.sleep(0.05)
-            for job in lifecycle.jobs.pop(ALPHA, []):  # after the game, the server stopped
-                await job.run()
-
-    run(scenario())
-    assert len(lifecycle.restarts) == 2
