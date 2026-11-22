@@ -22,6 +22,7 @@ from .. import __version__, lore
 from ..core import desktop
 from ..core.logs import RecentLog
 from ..lore import HURAGOK, SUPERINTENDENT, VERGIL
+from ..players.targets import ago
 from .controllers import Controller, Row
 from .screens.base import WIDE
 from .screens.byplayers import ByPlayersScreens
@@ -31,6 +32,7 @@ from .screens.games import GameScreens
 from .screens.manage import ManageScreens
 from .screens.setup import SetupScreens
 from .tui import Interruptions, Keyboard, Terminal, cells, cut, event_colour, pad
+from .whoswho import Found, on_server
 
 
 log = logging.getLogger(__name__)
@@ -117,9 +119,15 @@ def render(view: dict[str, Any], width: int, height: int) -> list[tuple[str, str
     tags = "  ".join(f"{p.tag} {p.name}" for p in lore.PERSONAS)
     lines.append((f"  RECENT EVENTS  ·  {tags}  ·  {view.get('log_name', 'logs/huragok.log')} has them all", "gray"))
     room = max(4, height - len(lines) - 2)
+    names = players_on(view.get("rows", []))  # coloured by Huragok's own words, never a player's name
     for level, text in view.get("events", [])[-room:]:
-        lines.append((f"  {text}", event_colour(level, text)))
+        lines.append((f"  {text}", event_colour(level, text, names)))
     return lines
+
+
+def players_on(rows: list[Row]) -> list[str]:
+    """The names of everyone on the servers, as the rows list them."""
+    return [player.name for row in rows for player in on_server(row) or []]
 
 
 # Controllers ------------------------------------------------------------------------------------
@@ -240,12 +248,19 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
         window's own bookkeeping, `window: G opened`, which stays in the log)."""
         if self.recent is None:
             return
+        if not on:
+            self.recent.echo = None
+            return
+        try:  # here, on the loop: a log line can come from any thread
+            names = players_on(self.controller.rows())
+        except Exception:  # noqa: BLE001 - colours only: a screen must open whatever the rows are
+            names = []
 
         def echo(level: int, text: str) -> None:
             if " window: " not in text:
-                self.held.push(f"  {text}", event_colour(level, text))
+                self.held.push(f"  {text}", event_colour(level, text, names))
 
-        self.recent.echo = echo if on else None
+        self.recent.echo = echo
 
     # The window log: a plain copy of every screen, what was asked, what was answered, what was shown -------
 
@@ -364,9 +379,16 @@ class Menu(SetupScreens, ManageScreens, GameScreens, FileScreens, DiscordScreens
             any_up = True
             count = str(row.get("players", "")).split("/")[0] or "?"
             self.heading(row["name"], note=f"{count} online" + (f" · {row['game']}" if row.get("game") else ""))
-            names = [n.strip() for n in str(row.get("names", "")).split(",") if n.strip()]
-            self.listing([(name,) for name in names], colours=["cyan"] * len(names))
-            if not names:
+            players = on_server(row)
+            if players is None:  # records/live.json from before 0.7.0: names alone, joined
+                lines = [(n.strip(), "") for n in str(row.get("names", "")).split(",") if n.strip()]
+            else:  # each as their tag, #number to type at A
+                now = time.time()
+                lines = [(Found.live(p).tag(row["name"]), ", ".join(
+                    [*([p.team.lower()] if p.team else []), *([f"on {ago(now - p.joined)}"] if p.joined else []),
+                     *(["admin"] if p.admin else []), *(["muted"] if p.muted else [])])) for p in players]
+            self.listing(lines, index=False, colours=["cyan"] * len(lines), widest=70)
+            if not lines:
                 self.note("(nobody right now)")
         if not any_up:
             self.note("No server is running.", "yellow")

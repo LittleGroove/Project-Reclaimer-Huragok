@@ -76,11 +76,12 @@ def test_in_game_it_opens_a_card_for_staff_and_thanks_them(tmp_path: Path, run: 
             await rcon.chat(BRAVO, "Bravo", "!report Alice camping the spawn")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             post = posts_in(fake, REPORTS)[0]
-            assert f"**Bravo** (their first report) reported **Alice** on {SERVER}: camping the spawn" in description(post)
+            # Both by their tag (core/tags.py): the server is where each is, the reported player's too (the identity audit, 12)
+            assert f"**Bravo** `dddddddd` [{SERVER}] (their first report) reported **Alice** `cccccccc` [{SERVER}]: camping the spawn" in description(post)
             assert "come and fight me" in str(post["embeds"][0]["fields"])
             assert list(buttons_of(post)) == ["Mute", "Kick", "Ban", "Strike", "Warn", "Whois", "Discuss", "Dismiss"]
             await wait_for(lambda: tells_to(rcon, BRAVO), timeout=10)
-            assert "the staff have it" in tells_to(rcon, BRAVO)[-1]
+            assert "the staff have your report of Alice cccccccc" in " ".join(tells_to(rcon, BRAVO))  # who it found: game chat wraps it
 
     run(scenario())
 
@@ -93,7 +94,7 @@ def test_staff_can_be_reported_too(tmp_path: Path, run: Any, fake: FakeDiscord) 
             await on(huragok, rcon, ALICE_ON, FACULTY_ON)
             await rcon.chat(ALICE, "Alice", "!report Faculty abusing their powers")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            assert "reported **Faculty**" in description(posts_in(fake, REPORTS)[0])
+            assert "reported **Faculty** `aaaaaaaa`" in description(posts_in(fake, REPORTS)[0])
 
     run(scenario())
 
@@ -179,7 +180,7 @@ def test_another_persons_report_is_added_to_the_card(tmp_path: Path, run: Any, f
             await rcon.chat(FACULTY, "Faculty", "!report Alice cheating")
             await wait_for(lambda: fake.edits, timeout=15)
             assert len(posts_in(fake, REPORTS)) == 1
-            assert f"**Faculty** (their first report) reported **Alice** on {SERVER}: cheating" in fake.edits[-1]["embeds"][0]["description"]
+            assert f"**Faculty** `aaaaaaaa` [{SERVER}] (their first report) reported **Alice** `cccccccc` [{SERVER}]: cheating" in fake.edits[-1]["embeds"][0]["description"]
 
     run(scenario())
 
@@ -227,9 +228,9 @@ def test_enough_people_ping_staff_once(tmp_path: Path, run: Any, fake: FakeDisco
             await rcon.chat(FACULTY, "Faculty", "!report Alice")
             await wait_for(lambda: lines_in(fake, REPORTS), timeout=15)
             ping = lines_in(fake, REPORTS)[0]
-            assert f"<@&{PING_ROLE}>" in ping["content"] and "2 different people have reported **Alice**" in ping["content"]
+            assert f"<@&{PING_ROLE}>" in ping["content"] and "2 different people have reported **Alice** `cccccccc`" in ping["content"]
             await rcon.chat(MOD, "Mod", "!report Alice")
-            await wait_for(lambda: any("the staff have it" in said for said in tells_to(rcon, MOD)), timeout=10)
+            await wait_for(lambda: any("the staff have your report" in said for said in tells_to(rcon, MOD)), timeout=10)
             assert len(lines_in(fake, REPORTS)) == 1
 
     run(scenario())
@@ -284,7 +285,7 @@ def test_their_record_shows_on_their_next_report(tmp_path: Path, run: Any, fake:
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             await rcon.chat(BRAVO, "Bravo", "!report Faculty")
             await wait_for(lambda: len(posts_in(fake, REPORTS)) == 2, timeout=15)
-            assert "**Bravo** (1 report, 0 acted on) reported **Faculty**" in description(posts_in(fake, REPORTS)[1])
+            assert f"**Bravo** `dddddddd` [{SERVER}] (1 report, 0 acted on) reported **Faculty** `aaaaaaaa`" in description(posts_in(fake, REPORTS)[1])
 
     run(scenario())
 
@@ -316,9 +317,9 @@ def test_slash_report_for_someone_picked(tmp_path: Path, run: Any, fake: FakeDis
             await up(huragok)
             await on(huragok, rcon, ALICE_ON)
             _, token = fake.command("report", user=OTHER, player=ALICE, why="camping")
-            assert "the staff have it" in await said_back(fake, token)
+            assert "the staff have your report of Alice `cccccccc`" in await said_back(fake, token)  # who it found
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            assert f"reported **Alice** on {SERVER}: camping" in description(posts_in(fake, REPORTS)[0])
+            assert f"reported **Alice** `cccccccc` [{SERVER}]: camping" in description(posts_in(fake, REPORTS)[0])
             assert fake.followups[-1].get("flags") == 64  # seen by them alone
 
     run(scenario())
@@ -335,7 +336,7 @@ def test_a_name_typed_in_full_is_found_even_if_theyve_left(tmp_path: Path, run: 
             _, token = fake.command("report", user=OTHER, player="alice")
             await said_back(fake, token)
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
-            assert "reported **Alice**" in description(posts_in(fake, REPORTS)[0])
+            assert "reported **Alice** `cccccccc`" in description(posts_in(fake, REPORTS)[0])
 
     run(scenario())
 
@@ -366,7 +367,7 @@ def test_what_it_offers_is_only_whos_on_now(tmp_path: Path, run: Any, fake: Fake
             _, token = fake.typing_command("report", "player", "", user=OTHER)
             await wait_for(lambda: any(c.get("token") == token for c in fake.callbacks), timeout=10)
             offered = next(c for c in fake.callbacks if c.get("token") == token)["data"]["choices"]
-            assert [choice["name"] for choice in offered] == ["Alice"]
+            assert [choice["name"] for choice in offered] == [f"Alice cccccccc [{SERVER}]"]  # by their tag: two of a name on two servers were two lines alike
 
     run(scenario())
 
@@ -397,7 +398,7 @@ def test_a_right_click_reports_a_message(tmp_path: Path, run: Any, fake: FakeDis
             _, token = fake.right_click("Report message", target, user=OTHER)
             await form_of(fake, token)
             _, sent = fake.fill_in(token, {"channel": STAFF, "id": target["id"]}, {"Why": "threats"}, user=OTHER)
-            assert "the staff have it" in await answer_text(fake, sent)
+            assert "the staff have your report." in await answer_text(fake, sent)
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             post = posts_in(fake, REPORTS)[0]
             assert "reported a message by" in description(post) and "threats" in description(post) and "come and fight me" in str(post["embeds"][0]["fields"])

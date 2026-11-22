@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -38,8 +39,16 @@ async def choices(fake: FakeDiscord, command: str, typed: str = "", option: str 
     return next(c for c in fake.callbacks if c.get("token") == token)["data"]["choices"]
 
 
+def name_in(label: str) -> str:
+    """The name in a choice: its tag (core/tags.py) read from the right, what's left of it after the ID's start, the
+    #number and the server."""
+    head = label.partition(" · ")[0]
+    found = re.match(r"(.*) [0-9a-f]{8}(?: \([#@]\d+\))?(?: \[[^\]]*\])?$", head)
+    return found[1] if found else head
+
+
 async def names_offered(fake: FakeDiscord, command: str, typed: str = "") -> list[str]:
-    return [c["name"].partition(" · ")[0] for c in await choices(fake, command, typed)]
+    return [name_in(c["name"]) for c in await choices(fake, command, typed)]
 
 
 async def seen(huragok: Any, rcon: Any) -> None:
@@ -147,18 +156,20 @@ def test_votes_and_ranks_too(tmp_path: Path, run: Any, fake: FakeDiscord) -> Non
     run(scenario())
 
 
-def test_two_of_a_name_are_told_apart_and_one_isnt_shown_an_id(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_every_choice_is_the_players_tag_so_two_of_a_name_are_told_apart(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """Always the tag, not only when a name repeats among those shown (the host's call, 21 November 2026): a lone
+    "Player" in the list can be one of thirty that aren't."""
     async def scenario() -> None:
         bot_file(tmp_path)
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok, fake)
             await seen(huragok, rcon)
-            assert ALICE[:8] not in (await choices(fake, "whois", "Alice"))[0]["name"]
+            assert (await choices(fake, "whois", "Alice"))[0]["name"].startswith(f"Alice {ALICE[:8]}")
             await rcon.join(5, "Alice", BRAVO)
             await wait_for(lambda: huragok.storage.player(BRAVO).last_name == "Alice", timeout=10)
             await rcon.leave(5)
             offered = await choices(fake, "whois", "Alice")
-            assert len(offered) == 2 and {ALICE[:8], BRAVO[:8]} == {c["name"].rpartition(" · ")[2] for c in offered}
+            assert len(offered) == 2 and {ALICE[:8], BRAVO[:8]} == {c["name"].partition(" · ")[0].split(" ")[1] for c in offered}
 
     run(scenario())
 
@@ -175,7 +186,7 @@ def test_someone_found_by_an_old_name_reads_under_the_one_they_use_now(tmp_path:
             await wait_for(lambda: huragok.storage.player(ALICE).last_name == "Alicia", timeout=10)
             await rcon.leave(2)
             offered = (await choices(fake, "whois", "Alice"))[0]
-            assert offered["name"].startswith("Alicia (was Alice)") and offered["value"] == ALICE
+            assert offered["name"].startswith(f"Alicia {ALICE[:8]} · was Alice") and offered["value"] == ALICE
 
     run(scenario())
 
@@ -213,7 +224,7 @@ def test_a_whole_id_lifts_and_is_answered_for_in_the_list(tmp_path: Path, run: A
             await ran(fake, "unban", player=ALICE)
             await wait_for(lambda: not part.tickets.standing(ALICE)["banned"], timeout=10)
             nobody = (await choices(fake, "whois", "9" * 64))[0]
-            assert nobody["name"] == "That player ID"
+            assert nobody["name"] == "That player ID 99999999"
 
     run(scenario())
 
@@ -239,7 +250,7 @@ def test_a_card_uses_the_name_they_were_last_seen_under(tmp_path: Path, run: Any
             await ran(fake, "ban", player=ALICE, reason="cheating")
             await wait_for(lambda: posts_in(fake, LOGS), timeout=15)
             shown = str(posts_in(fake, LOGS)[0]["embeds"])
-            assert "Alicia" in shown and ALICE[:8] not in shown
+            assert f"**Alicia** `{ALICE[:8]}`" in shown and ALICE not in shown  # the name they go by, the start of their ID: never all of it
 
     run(scenario())
 

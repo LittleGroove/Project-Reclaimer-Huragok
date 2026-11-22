@@ -210,11 +210,11 @@ SETTINGS: list[HostSetting] = [
       "digits: DasHitler, not dashitler)", "automod", choices=("anywhere", "words"), default="anywhere"),
     H("automod", "moderators_kick_at_most", "str", "the longest kick with a time (!kick Bravo 7d) a moderator can give, as a long kick is a ban in "
       "all but name; admins and faculty have no limit. A time like 12h, 1d or 7d", "automod", default="1d"),
-    H("automod", "across_servers", "bool", "Huragok's moderation (! commands, Vergil) reaches every server: a mute "
-      "follows the player to any server, a kick keeps them off every server until its time is up, a ban reaches "
-      "servers with a ban list of their own. The game's own /kick and /ban, and votes, stay on their server (they're "
-      "only written on the player's record); false: Huragok's stay on theirs too. Each server's own Vergil (on, dry "
-      "run, off) is on its page", "automod", default=True),
+    H("automod", "across_servers", "bool", "moderation is every server's: a mute, kick or ban follows the player to "
+      "every server for its time, and a rank on one server is a rank on all of them, whoever gave it (! commands, "
+      "Vergil, Discord, the console, the game's own /kick and /ban). Only a vote's kick and the server's own stay on "
+      "their server. false: each server's moderation and ranks are its own. Each server's own Vergil (what it catches "
+      "by itself: on, dry run, off) is on its page", "automod", default=True),
     H("automod", "cooldown_seconds", "float", "lines this close together count as one strike", "automod",
       default=10, low=0, high=3600),
     H("automod", "split_seconds", "float", "a word split over lines this close together is caught", "automod",

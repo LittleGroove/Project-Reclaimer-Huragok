@@ -29,11 +29,12 @@ from ...core import desktop
 from ...core import hostsettings as hs
 from ...core.commandsfile import (
     COMMAND_ROLES, LISTED, ROLES, TITLES, PermissionsError, add_player, all_commands, load_permissions, make_commands_toml,
-    player_notes, rank_plural, rank_word, remove_player, set_command_off, set_command_role, set_top,
+    note_name, player_notes, rank_plural, rank_word, remove_player, set_command_off, set_command_role, set_top,
 )
 from ...core.settings import COMMANDS_FILE
 from ...core.storage import recent_players
-from ...core.text import TIME
+from ...core.tags import named_then, shown_name
+from ...core.text import STORED_ID, TIME
 from ...lore import TAGS
 from ...players.automod.automod import name_rules, same_name
 from ...players.automod.matcher import NAME_MATCHES, Matcher, normalise
@@ -48,9 +49,10 @@ from ...players.messages.intervals import (
 from ...players.messages.intervals import FILE as MESSAGES_FILE
 from ...players.roles import a_role
 from ..controllers import Row
+from ..whoswho import Known, find
 from .base import Screens
 
-FILES = ("S", "C", "A", "N", "I")  # D's letters for Huragok's own files
+FILES =("S", "C", "A", "N", "I")  # D's letters for Huragok's own files
 EVERY_TIMES = ("5m", "10m", "15m", "30m", "45m", "1h", "2h")  # D -> I's times to pick from (T types another)
 ROLE_TEXT = {"faculty": "you, and whoever claims the Discord bot: everything", "moderator": "what they can do is exactly what the commands give them",
              "member": "regulars, friends, clan: no vote can kick them"}
@@ -400,11 +402,20 @@ class FileScreens(Screens):
         while True:
             members = sorted(load_permissions(path).members.get(role, set()))
             notes = player_notes(path)
+            known = Known(self.controller.rows, settings.database)
             self.heading("Huragok", "Roles and commands", rank_plural(role).capitalize(), note=ROLE_TEXT[role])
-            rows = [(*_who_and_how(notes.get(pid, ""), pid), f"{pid[:16]}…") for pid in members]
-            panel = self.listing([(who, player_id, how) for who, how, player_id in rows]
-                                 + [("add a faculty member" if role == "faculty" else f"add {a_role(role)}", "", "")],
-                                 keys=[str(n) for n in range(1, len(members) + 1)] + ["A"])
+            # Who each is from Huragok's records (the name they go by now), not the note beside them in commands.toml,
+            # which has the name they had when the line was written: that one's said after, when it's another.
+            known.names(members)
+            rows, tags = [], []
+            for pid in members:
+                record = known.record(pid)
+                then, how = note_name(notes.get(pid, ""), record.names if record is not None else ())
+                now = known.name(pid, then)
+                tags.append(known.tag(pid, now))
+                rows.append((tags[-1], how + (f" (as {named_then(then, now)})" if named_then(then, now) else "")))
+            panel = self.listing(rows + [("add a faculty member" if role == "faculty" else f"add {a_role(role)}", "")],
+                                 keys=[str(n) for n in range(1, len(members) + 1)] + ["A"], widest=60)
             answer = await self.prompt_line("  Which? (a number takes them out, A adds one; Esc goes back)",
                                             panel=panel)
             if not answer:
@@ -414,8 +425,7 @@ class FileScreens(Screens):
                 if answer == "A":
                     await self._add_role_player(settings, path, role)
                 elif answer.isdecimal() and 1 <= int(answer) <= len(members):
-                    player_id = members[int(answer) - 1]
-                    who = _who_and_how(notes.get(player_id, ""), player_id)[0]
+                    player_id, who = members[int(answer) - 1], tags[int(answer) - 1]
                     if await self.prompt_yes_no(f"  Take {who} out of the {rank_plural(role)}?", False):
                         remove_player(path, role, player_id)
                         self.note(f"{who} isn't {a_role(role)} any more.", "green")
@@ -426,29 +436,38 @@ class FileScreens(Screens):
     async def _add_role_player(self, settings: Any, path: Path, role: str) -> None:
         seen = recent_players(settings.database)
         listed = load_permissions(path).members
+        known = Known(self.controller.rows, settings.database)
         if seen:
-            self.note("Players seen lately (from Huragok's records), or type a player ID:")
+            self.note("Players seen lately (from Huragok's records), or type a name, a player ID or its first 8 "
+                      "characters:")
             now = time.time()
-            rows = [(name, player_id[:16] + "…", _ago(now - when) + next(
+            rows = [(known.tag(player_id, name), _ago(now - when) + next(
                 (f" · {other} now" for other in LISTED if player_id in listed.get(other, set())), ""))
                     for player_id, name, when in seen]
-            panel = self.listing(rows)
+            panel = self.listing(rows, widest=60)
         else:
             self.note("No players in Huragok's records yet: type the player's ID (64 letters and digits; players "
                       "find theirs in game under Settings > Online services).")
             panel = []
-        answer = await self.prompt_line("  Who? (a number, or a player ID; Esc goes back)", panel=panel)
+        answer = await self.prompt_line("  Who? (a number, a name, or a player ID; Esc goes back)", panel=panel)
         if not answer:
             return
         answer = answer.strip()
         if answer.isdecimal() and 1 <= int(answer) <= len(seen):
             player_id, name, _ = seen[int(answer) - 1]
-        else:
-            player_id, name = answer, ""
-        who = name or player_id[:8]
-        note = f"{name}: added as {role} in Huragok's window on {time.strftime('%Y-%m-%d')}" if name else \
-            f"added as {role} in Huragok's window on {time.strftime('%Y-%m-%d')}"
-        moved = add_player(path, role, player_id, note)
+        elif STORED_ID.fullmatch(answer.lower()):
+            player_id, name = answer, known.name(answer)
+        else:  # a name or an ID's start, found as the game finds a player; a name several have: which one
+            found = await self.pick_player(find(known, None, answer))
+            if found is None:
+                return
+            player_id, name = found.id, found.name
+        who = known.tag(player_id, name)
+        by = shown_name(self.by_name) or "the host in Huragok's window"
+        # As players/commands/roles.py writes it, the name as it is (the window reads it back), on one line: a
+        # control character would make the file one Huragok can't read (tomllib refuses them in comments).
+        note = f"added as {role} by {by} on {time.strftime('%Y-%m-%d')}"
+        moved = add_player(path, role, player_id, f"{shown_name(name)}: {note}" if shown_name(name) else note)
         self.note(f"{who} is {a_role(role)} now"
                   + (f" (no longer {', '.join(moved)}: one role each)" if moved else "") + ".", "green")
 
@@ -1030,15 +1049,6 @@ class _Change:
 
     def __init__(self, key: str, applies: str) -> None:
         self.key, self.applies = key, applies
-
-
-def _who_and_how(note: str, player_id: str) -> tuple[str, str]:
-    """A listed player's note, "Bravo: promoted by Alice on 2026-10-18", as (who, how); their ID's start when the
-    note doesn't say who."""
-    who, colon, how = note.partition(":")
-    if colon and who.strip():
-        return who.strip(), how.strip()
-    return player_id[:8], note.strip()
 
 
 def _ago(seconds: float) -> str:

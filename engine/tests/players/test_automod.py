@@ -533,13 +533,13 @@ def test_the_ladder_in_a_game(tmp_path: Path, run) -> None:
             assert len(bans[3]["args"]) == 2  # no time: for good
             assert all(b["args"][0] == BRAVO and b["by"] == "Vergil" for b in bans)
             assert bans[0]["args"][2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 1 of 3): kicked for "
-                                          "1 hour. Next time: kicked for 1 day.")
+                                          "1 hour on every server. Next time: kicked for 1 day.")
             # Read once: the server tells them the ban's reason as they're removed, so Vergil sends no tell of it too.
             assert not [t for t in tells_to(fake, BRAVO) if "That isn't allowed here" in t]
             # Everyone reads why (the server's own line says only what was done), the word never repeated either.
             assert [c["args"][0] for c in fake.named("say")][:2] == [
-                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 1 of 3).",
-                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo (slurs, strike 2 of 3)."]
+                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo dddddddd (#4) [LG Test Server] (slurs, strike 1 of 3).",
+                "[^_^] YOUR TAX DOLLARS AT WORK! Vergil caught Bravo dddddddd (#4) [LG Test Server] (slurs, strike 2 of 3)."]
             assert "banned for good" in bans[3]["args"][1] and "Next time" not in bans[3]["args"][1]
             assert "badword" not in " ".join(str(c) for c in fake.commands)  # the word is never repeated
             ledger = sup.storage.actions_for(BRAVO)
@@ -549,7 +549,7 @@ def test_the_ladder_in_a_game(tmp_path: Path, run) -> None:
                 await fake.chat(ALICE, "Alice", "KICKWORD")
             await wait_for(lambda: len(fake.named("kick")) == 3)
             assert all(len(k["args"]) == 2 for k in fake.named("kick"))
-            assert fake.named("kick")[0]["args"][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here (strike 1): kicked.")
+            assert fake.named("kick")[0]["args"][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here (strike 1): kicked on every server.")
 
     run(scenario())
 
@@ -564,7 +564,7 @@ def test_mutes_follow_the_ladder_and_last_through_a_rejoin(tmp_path: Path, run) 
                 await wait_for(lambda: len(mutes_of(fake, BRAVO)) == n + 1)
             mutes = mutes_of(fake, BRAVO)
             assert [m[1] for m in mutes] == ["1d", "3d", "3d"]  # the last time repeats; never a kick or a ban
-            assert mutes[0][2] == ("[o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day. "
+            assert mutes[0][2] == ("[o_O] KEEP IT CLEAN! That isn't allowed here (rude, strike 1): muted for 1 day on every server. "
                                    "Next time: muted for 3 days. Your ! commands won't work while you're muted.")
             assert not removals(fake) and fake.named("mute")[0]["by"] == "Vergil"
             assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "mute 3d", "mute 3d"]
@@ -586,11 +586,9 @@ def test_mutes_follow_the_ladder_and_last_through_a_rejoin(tmp_path: Path, run) 
             await fake.event("unmute", name="Bravo", id=BRAVO, by="time")
             await vergil_has_caught_up(fake)
             assert part.active_mute(BRAVO)
-            # The game's own /unmute (when it has one) is that server's: Vergil's mute stays for every server.
+            # Someone's unmute, the game's own (when it has one) as much as an !unmute through the console, lifts it on
+            # every server (the host's call, 21 November 2026: up to then the game's own was that server's).
             await fake.event("unmute", name="Bravo", id=BRAVO, by="Mod")
-            await vergil_has_caught_up(fake)
-            assert part.active_mute(BRAVO)
-            await fake.event("unmute", name="Bravo", id=BRAVO, by="Mod (RCON)")  # an !unmute: through the console
             await wait_for(lambda: not part.active_mute(BRAVO))
             await fake.join(4, "Bravo", BRAVO)
             await vergil_has_caught_up(fake)
@@ -619,7 +617,7 @@ def test_a_strike_while_away_mutes_them_when_they_join(tmp_path: Path, run) -> N
             await fake.chat(FACULTY, "Faculty", f"!pardonplayer {ZED}")
             await wait_for(lambda: fake.named("unmute"))
             assert fake.named("unmute")[0]["args"] == [ZED]
-            await wait_for(lambda: any("1 strike cleared (rude); unmuted" in t for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any("strikes: 1 (rude); unmuted" in t for t in tells_to(fake, FACULTY)))
             await fake.join(6, "Zed", ZED)
             await vergil_has_caught_up(fake)
             assert len(mutes_of(fake, ZED)) == 1
@@ -766,7 +764,7 @@ def test_strike_finds_a_name_with_spaces(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!pardonplayer nate higgers")  # !pardonplayer finds them the same way
             await wait_for(lambda: any("!pardonplayer is for admins and up" in t for t in tells_to(fake, MOD)))
             await fake.chat(FACULTY, "Faculty", "!pardonplayer nate higgers slurs sorry")
-            await wait_for(lambda: any(t.startswith("Pardoned Nate Higgers: 1 strike cleared (slurs)")
+            await wait_for(lambda: any(t.startswith("Nate Higgers ") and ": cleared their strikes: 1 (slurs)" in t
                                        for t in tells_to(fake, FACULTY)))
 
     run(scenario())
@@ -788,7 +786,7 @@ def test_banname_bans_a_players_name_or_a_name_itself(tmp_path: Path, run) -> No
             await fake.join(6, "xX Edgelord Xx", ZED)  # whoever joins with it is kicked
             await wait_for(lambda: any(c["args"][0] == ZED for c in fake.named("kick")))
             await fake.chat(ADMIN, "Admin", "!banname admin")  # the name of someone of their own role: no
-            await wait_for(lambda: any("Admin is an admin; you can't ban their name." in t
+            await wait_for(lambda: any(t.startswith("Admin eeeeeeee") and "is an admin; you can't ban their name." in t
                                        for t in tells_to(fake, ADMIN)))
             await fake.chat(ADMIN, "Admin", "!banname")
             await wait_for(lambda: any("Use: !banname <#number | name>. Banned names:" in t
@@ -988,9 +986,9 @@ def test_rules_bannames_and_changebanword_from_the_game(tmp_path: Path, run) -> 
             await answered(fake, FACULTY, "slurs (line 2): badword 1st: kicked for 1 hour 2nd: kicked for 1 day 3rd: "
                                         "kicked for 7 days 4th: banned for good")
             await fake.chat(MOD, "Mod", "!bannames")
-            await answered(fake, MOD, "@1 xX Bad Xx @2 Edgelord !unbanname @number takes one off.")
+            await answered(fake, MOD, "xX Bad Xx (@1) Edgelord (@2) !unbanname @number takes one off.")
             await fake.chat(ADMIN, "Admin", "!bannames edge")
-            await answered(fake, ADMIN, "@1 Edgelord")
+            await answered(fake, ADMIN, "Edgelord (@1)")
             await fake.chat(ADMIN, "Admin", "!unbanname @1")
             await answered(fake, ADMIN, "Edgelord can be used again.")
             assert "Edgelord" not in (tmp_path / "names.txt").read_text(encoding="utf-8")
@@ -1067,7 +1065,8 @@ def test_strike_strikes_and_pardonplayer(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!strike alice rude")
             mute = await wait_for(lambda: mutes_of(fake, ALICE))
             assert mute[0][:2] == [ALICE, "1d"] and mute[0][2].startswith("[o_O] KEEP IT CLEAN! Mod gave you a strike (rude, strike 1)")
-            await wait_for(lambda: any("Alice: rude strike 1, muted for 1 day (done)" in t for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any("Alice cccccccc (#3) [LG Test Server]: rude strike 1, muted for 1 day (done)" in t
+                                       for t in tells_to(fake, MOD)))
 
             await fake.chat(BRAVO, "Bravo", "!strikes")
             await wait_for(lambda: any("strike 2 of 3" in t for t in tells_to(fake, BRAVO)))
@@ -1079,7 +1078,7 @@ def test_strike_strikes_and_pardonplayer(tmp_path: Path, run) -> None:
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo all false positive")
             await wait_for(lambda: fake.named("unban"))
             assert fake.named("unban")[0]["args"] == [BRAVO] and not fake.named("unmute")
-            await wait_for(lambda: any("2 strikes cleared" in t for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any("strikes: 2 (" in t for t in tells_to(fake, FACULTY)))
             await fake.chat(BRAVO, "Bravo", "badword")  # starts over at the first chance
             await wait_for(lambda: len(fake.named("ban")) == 3)
             assert fake.named("ban")[2]["args"][1] == "1h"
@@ -1102,12 +1101,13 @@ def test_dry_run_counts_without_acting(tmp_path: Path, run) -> None:
             assert [s["action"] for s in strikes] == ["kick 1h", "kick 1d", "mute 1d"] and all(s["dry_run"] for s in strikes)
             await fake.join(6, "BadWord", ZED)
             await wait_for(lambda: any(e.name == "automod.name" for e in seen))
-            await fake.chat(MOD, "Mod", "!strike bravo name")  # the list is still written; nobody is kicked
-            await wait_for(lambda: any("dry run: nobody is kicked for it yet" in t for t in tells_to(fake, MOD)))
+            await fake.chat(MOD, "Mod", "!strike bravo name")  # the staff's: Vergil's dry run is only what it catches itself
+            await wait_for(lambda: any("they're kicked, and will be every time they join with it" in t for t in tells_to(fake, MOD)))
             assert "\nBravo\n" in (tmp_path / "names.txt").read_text(encoding="utf-8")
             await sup.runners["automod"].part.check_names()
-            assert not fake.named("ban") and not fake.named("kick") and not fake.named("mute")
-            assert not fake.named("pardon") and not tells_to(fake, BRAVO)  # not even told they were removed
+            assert not fake.named("ban") and not fake.named("mute")  # Vergil's own catches: logged, not acted on
+            assert [k["args"][0] for k in fake.named("kick")] == [BRAVO]  # the staff's name ban, and nothing of Vergil's
+            assert [k["args"][0] for k in fake.named("pardon")] == [BRAVO] and not tells_to(fake, BRAVO)
 
     run(scenario())
 
@@ -1319,12 +1319,12 @@ def test_who_a_strike_is_for(tmp_path: Path, run) -> None:
             await fake.chat(MOD, "Mod", "!strike cafe rude")  # an ID's start that short picks nobody
             await wait_for(lambda: any("Nobody called 'cafe' is on or has been seen" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike cafe1111 rude")  # eight characters or more: theirs
-            await wait_for(lambda: any(t.startswith("Cafe Faculty: rude strike 1, muted for 1 day (not on now")
-                                       for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Cafe Faculty cafe1111")
+                                       and ": rude strike 1, muted for 1 day (not on now" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike bob rude")  # Bob left and Bobby is on: Bob's name, seen, wins
-            await wait_for(lambda: any(t.startswith("Bob: rude strike 1") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Bob ") and ": rude strike 1" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike bobb rude")  # just the start of Bobby's name: asked, not acted on
-            await wait_for(lambda: any("Nobody here is called 'bobb'. Did you mean Bobby (#6)? Use #6." in t
+            await wait_for(lambda: any("Nobody here is called 'bobb'. Did you mean this? Use #6:" in t
                                        for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!strike #9 rude")
             await wait_for(lambda: any("Nobody is #9 on this server now" in t for t in tells_to(fake, MOD)))
@@ -1332,9 +1332,9 @@ def test_who_a_strike_is_for(tmp_path: Path, run) -> None:
             assert not mutes_of(fake, bobby)
 
             await fake.chat(MOD, "Mod", "!strikes bobb")  # looking, too, takes the whole name
-            await wait_for(lambda: any("Did you mean Bobby (#6)?" in t for t in tells_to(fake, MOD)[-1:]))
+            await wait_for(lambda: any("Did you mean this? Use #6:" in t for t in tells_to(fake, MOD)[-2:]))
             await fake.chat(MOD, "Mod", "!strikes bob")
-            await wait_for(lambda: any(t.startswith("Bob: rude: strike 1") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Bob ") and ": rude: strike 1" in t for t in tells_to(fake, MOD)))
 
     run(scenario())
 
@@ -1369,7 +1369,7 @@ def test_a_strike_lands_on_the_server_they_are_on(tmp_path: Path, run) -> None:
                                            for t in tells_to(fake, MOD)))
                 assert part.active_strikes(ZED, part.by_name["rule3"]) == 2
                 assert [c[0] for c in other.sent] == ["kick", "say"]  # Zed's server reads why, by the name Zed has
-                assert other.sent[1][1] == ("[^_^] YOUR TAX DOLLARS AT WORK! Mod caught Zed (strike 1).",)
+                assert other.sent[1][1] == ("[^_^] YOUR TAX DOLLARS AT WORK! Mod caught Zed 99999999 (#2) [Other] (strike 1).",)
                 assert not fake.named("kick")
             finally:
                 sup.superintendent.states.pop("Other", None)
@@ -1510,7 +1510,8 @@ def test_a_mute_for_someone_who_left_waits_for_them_and_nobody_else(tmp_path: Pa
             part = sup.runners["automod"].part
             sup.storage.record_join(gone, "Nate", None)
             await fake.chat(MOD, "Mod", "!mute nate 1d mic spam")
-            await answered(fake, MOD, "Nate isn't on now: muted as they next join, on any server, for 1 day from now.")
+            await answered(fake, MOD, f"Nate {gone[:8]} (@1) isn't on now: muted on every server as they next join, for 1 day "
+                                      "from now.")
             await wait_for(lambda: part.active_mute(gone) is not None)
             assert part.active_mute(gone)["rule"] == "!mute by Mod: mic spam" and not mutes_of(fake, gone)
             assert sup.storage.actions_for(gone)[0]["kind"] == "mute"  # in the ledger, as any mute
@@ -1519,13 +1520,13 @@ def test_a_mute_for_someone_who_left_waits_for_them_and_nobody_else(tmp_path: Pa
             await wait_for(lambda: mutes_of(fake, gone))
             assert int(mutes_of(fake, gone)[0][1][:-1]) > 86000 and not mutes_of(fake, namesake)
 
-            # A mute sent through the console another way (the relay: the server names who "Bob (RCON)") goes on the
-            # list as a !mute does. One from in game ("Admin", no RCON) is that server's alone: not kept.
+            # A mute given another way (the relay: the server names who "Bob (RCON)"; the game's own, "Admin") goes on
+            # the list as a !mute does, so it follows them to every server.
             await fake.event("mute", name="Bravo", id=BRAVO, by="Admin", reason="x", expires=int(time.time()) + 3600)
             await fake.event("mute", name="Alice", id=ALICE, by="Bob (RCON)", reason="spam",
                              expires=int(time.time()) + 3600)
-            await wait_for(lambda: part.active_mute(ALICE) is not None)
-            assert part.active_mute(ALICE)["rule"] == "!mute by Bob: spam" and part.active_mute(BRAVO) is None
+            await wait_for(lambda: part.active_mute(ALICE) is not None and part.active_mute(BRAVO) is not None)
+            assert part.active_mute(ALICE)["rule"] == "!mute by Bob: spam" and part.active_mute(BRAVO)["rule"] == "!mute by Admin: x"
             assert 3500 < part.active_mute(ALICE)["expires"] - time.time() <= 3600
             await fake.event("mute", name="Bravo", id=BRAVO, by="Vergil (RCON)", reason="x", expires=0)  # Vergil's own
             # Huragok's !mute, then the server announcing the same mute: kept once.
@@ -1533,7 +1534,8 @@ def test_a_mute_for_someone_who_left_waits_for_them_and_nobody_else(tmp_path: Pa
             await wait_for(lambda: part.active_mute(BRAVO) is not None)
             await fake.event("mute", name="Bravo", id=BRAVO, by="Mod (RCON)", reason="", expires=int(time.time()) + 1800)
             await vergil_has_caught_up(fake)
-            assert len(sup.storage.query("SELECT * FROM automod_mutes WHERE player_id = ?", (BRAVO,))) == 1
+            kept = sup.storage.query("SELECT * FROM automod_mutes WHERE player_id = ? AND lifted IS NULL", (BRAVO,))
+            assert len(kept) == 1 and kept[0]["by"] == "Mod"  # the game's own (Admin's) before it: replaced
 
     run(scenario())
 
@@ -1594,7 +1596,7 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
             await fake.chat(ADMIN, "Admin", "!pardonplayer alice")
             await wait_for(lambda: fake.named("unban"))
             assert fake.named("unban")[0]["args"] == [ALICE]
-            await wait_for(lambda: any("1 strike cleared (slurs); ban lifted." in t for t in tells_to(fake, ADMIN)))
+            await wait_for(lambda: any("strikes: 1 (slurs); ban lifted." in t for t in tells_to(fake, ADMIN)))
 
             # Someone else's ban alone: kept, and said so.
             add_strike(part, ZED, when=time.time() - 7 * 86400)
@@ -1614,7 +1616,8 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
             assert len(fake.named("unban")) == 1
 
             # The second audit: what Vergil did on another server is lifted there, wherever this is typed (from
-            # there, Huragok's list lifts it on every server); a server that's stopped is said to be.
+            # there, Huragok's list lifts it on every server); on a server that's stopped, from one that's up, as
+            # every ban is every server's (the scope audit, B8: it said the stopped server isn't connected).
             from testkit.commands import OtherServer
             other = OtherServer()
             sup.superintendent.clients["Other"] = other  # type: ignore[assignment]
@@ -1627,8 +1630,8 @@ def test_pardonplayer_lifts_only_the_bans_automod_gave(tmp_path: Path, run) -> N
                 assert other.named("pardon") == [(ALICE,)] and not fake.named("pardon")
                 add_strike(part, ZED, server="Stopped")
                 await fake.chat(ADMIN, "Admin", f"!pardonplayer {ZED}")
-                await wait_for(lambda: "ban not lifted: Stopped isn't connected, so its ban list can't be read; "
-                                       "!unban <their player ID> there lifts it" in told(fake, ADMIN))
+                await wait_for(lambda: "strikes: 1 (slurs)" in told(fake, ADMIN))
+                assert "isn't connected" not in told(fake, ADMIN)
             finally:
                 for name in ("Other", "Stopped"):
                     sup.superintendent.states.pop(name, None)
@@ -1652,7 +1655,7 @@ def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Pat
             second = fake.named("ban")[0]["args"]
             assert second[:2] == [BRAVO, "2h"]
             assert second[2] == ("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2): kicked for 2 hours, "
-                                 "then muted for 1 day. Next time: kicked for 2 hours.")
+                                 "then muted for 1 day on every server. Next time: kicked for 2 hours.")
             # The strike's event comes after its kick is sent: waited for.
             await wait_for(lambda: [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d",
                                                                                                 "kick 2h + mute 1d"])
@@ -1679,7 +1682,7 @@ def test_a_kick_with_a_mute_removes_them_then_mutes_them_once_back(tmp_path: Pat
             await fake.leave(3)
             await wait_for(lambda: all(p.id != ALICE for p in sup.superintendent.states[SERVER].players.values()))
             await fake.chat(ADMIN, "Admin", "!pardonplayer alice")
-            await wait_for(lambda: "1 strike cleared (rude); ban lifted, unmuted." in told(fake, ADMIN))
+            await wait_for(lambda: "strikes: 1 (rude); ban lifted, unmuted." in told(fake, ADMIN))
             assert fake.named("unban")[0]["args"] == [ALICE] and fake.named("unmute")[-1]["args"] == [ALICE]
             assert not part.active_mute(ALICE) and all(e["id"] != ALICE for e in fake.ban_list)
 
@@ -1700,7 +1703,7 @@ def test_a_plain_kick_with_a_mute_kicks_them_then_mutes_them_once_back(tmp_path:
             await fake.chat(BRAVO, "Bravo", "badword")  # 2nd: kicked, then muted 3 days
             kick = await wait_for(lambda: [k["args"] for k in fake.named("kick") if k["args"][0] == BRAVO])
             assert kick[0][1].startswith("[>_<] CRIME DOESN'T PAY! That isn't allowed here (slurs, strike 2 of 2): "
-                                         "kicked, then muted for 3 days. Next time: kicked, then muted for good.")
+                                         "kicked, then muted for 3 days on every server. Next time: kicked, then muted for good.")
             assert [e["action"] for e in seen if e.name == "automod.strike"] == ["mute 1d", "kick + mute 3d"]
             assert not fake.named("ban") and len(mutes_of(fake, BRAVO)) == 1  # the mute waits for them
             row = part.active_mute(BRAVO)
@@ -1716,7 +1719,7 @@ def test_a_plain_kick_with_a_mute_kicks_them_then_mutes_them_once_back(tmp_path:
             await fake.leave(4)
             await wait_for(lambda: all(p.id != BRAVO for p in sup.superintendent.states[SERVER].players.values()))
             await fake.chat(MOD, "Mod", "!strike Bravo slurs")
-            await wait_for(lambda: "Bravo: slurs strike 3, kicked, then muted for good (not on now: muted when they "
+            await wait_for(lambda: ": slurs strike 3, kicked, then muted for good (not on now: muted when they "
                                    "next join)." in told(fake, MOD))
             assert part.active_mute(BRAVO)["expires"] is None
 

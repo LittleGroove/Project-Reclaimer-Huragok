@@ -28,7 +28,7 @@ from huragok.servers.state import Player, ServerState
 from huragok.superintendent import Superintendent
 
 KEY = "0a1b2c3d" + "0" * 52 + "9e8f"  # a network key: 0.10's player ID
-SHORT = "`0a1b2c3d…`"
+SHORT = "(no name yet) `0a1b2c3d` [Alpha]"  # a 0.10 player not named yet (core/tags.py)
 LOGS = "4009"
 
 
@@ -48,6 +48,10 @@ class Part:
         self.staff: list[tuple[str, str]] = []
         self.banned: list[str] = []
         self.players: list[Any] = [object()]
+        self.across_servers = True  # [automod] across_servers, on by default
+
+    def across(self) -> bool:
+        return self.across_servers
 
     def name_now(self, server: str, player_id: str, *, or_last: bool = False) -> str:
         return self.live.get((server, player_id.lower()), "") or (self.last.get(player_id.lower(), "") if or_last else "")
@@ -110,7 +114,7 @@ def test_a_nameless_join_is_carded_once_its_name_comes_and_only_once(tmp_path: P
     feeds.handle(joined())
     assert part.posts == [] and ("Alpha", KEY) in feeds.unnamed  # nothing with no name in it
     feeds.handle(named())
-    assert said(part) == ["Alpha · **Bravo** joined for the first time", "Alpha · **Bravo** is new here, with only 1 on"]
+    assert said(part) == ["Alpha · **Bravo** `0a1b2c3d` [Alpha] joined for the first time", "Alpha · **Bravo** `0a1b2c3d` [Alpha] is new here, with only 1 on"]
     assert SHORT not in str(part.posts) and not feeds.unnamed
     feeds.handle(named())  # said again (another refresh): posted already
     assert len(part.posts) == 2
@@ -120,7 +124,7 @@ def test_a_name_the_live_picture_has_already_goes_at_once(tmp_path: Path) -> Non
     feeds, part = feeds_for(tmp_path)
     part.live[("Alpha", KEY)] = "Bravo"  # `players` named them before the part got to the join
     feeds.handle(joined())
-    assert said(part)[0] == "Alpha · **Bravo** joined for the first time" and not feeds.unnamed
+    assert said(part)[0] == "Alpha · **Bravo** `0a1b2c3d` [Alpha] joined for the first time" and not feeds.unnamed
     feeds.handle(named())  # nothing waited for it
     assert len(part.posts) == 2
 
@@ -132,30 +136,33 @@ def test_a_staff_lookalike_is_caught_by_the_name_that_came_later(tmp_path: Path)
     feeds.handle(joined())
     assert part.posts == []
     feeds.handle(named("Moderat0r"))
-    assert said(part) == ["**Moderat0r** has a name like Moderator's, who is staff"]
+    assert said(part) == ["**Moderat0r** `0a1b2c3d` [Alpha] has a name like a member of staff's: Moderator `bbbbbbbb`"]
 
 
 def test_09s_join_with_its_name_is_as_it_was(tmp_path: Path) -> None:
     feeds, part = feeds_for(tmp_path)
     feeds.handle(joined("Bravo"))
-    assert said(part)[0] == "Alpha · **Bravo** joined for the first time" and not feeds.unnamed
+    assert said(part)[0] == "Alpha · **Bravo** `0a1b2c3d` [Alpha] joined for the first time" and not feeds.unnamed
 
 
 def test_gone_before_the_name_came_their_join_goes_then_by_what_is_known(tmp_path: Path) -> None:
     feeds, part = feeds_for(tmp_path)
     part.banned = ["Elsewhere"]
+    # A ban on another server is a watch card only with [automod] across_servers off: with it on, every ban is every
+    # server's, and Huragok puts it on this one as they join. Off here, so the watch has a card to name them on.
+    part.across_servers = False
     # The leave names them: their join's cards first, by that name, and no "new here" for someone gone.
     feeds.handle(joined())
     feeds.handle(Event("rcon.leave", "Alpha", {"number": 2, "name": "Bravo", "id": KEY}))
-    assert said(part) == ["Alpha · **Bravo** joined for the first time", "**Bravo** joined, and is banned on Elsewhere",
-                          "Alpha · **Bravo** left"]
+    assert said(part) == ["Alpha · **Bravo** `0a1b2c3d` [Alpha] joined for the first time", "**Bravo** `0a1b2c3d` [Alpha] joined, and is banned on Elsewhere",
+                          "Alpha · **Bravo** `0a1b2c3d` [Alpha] left"]
     # It doesn't, but they've been here before: the name they were last seen under.
     part.posts.clear()
     part.last[KEY] = "Charlie"
     feeds.handle(joined())
     feeds.handle(Event("rcon.leave", "Alpha", {"number": 2, "name": "", "id": KEY}))
-    assert said(part) == ["Alpha · **Charlie** joined for the first time", "**Charlie** joined, and is banned on Elsewhere",
-                          "Alpha · **Charlie** left"]
+    assert said(part) == ["Alpha · **Charlie** `0a1b2c3d` [Alpha] joined for the first time", "**Charlie** `0a1b2c3d` [Alpha] joined, and is banned on Elsewhere",
+                          "Alpha · **Charlie** `0a1b2c3d` [Alpha] left"]
     # Nobody knows them: their short ID, as any card does.
     part.posts.clear()
     part.last.clear()
@@ -163,6 +170,13 @@ def test_gone_before_the_name_came_their_join_goes_then_by_what_is_known(tmp_pat
     feeds.handle(Event("rcon.leave", "Alpha", {"number": 2, "name": "", "id": KEY}))
     assert said(part) == [f"Alpha · {SHORT} joined for the first time", f"{SHORT} joined, and is banned on Elsewhere",
                           f"Alpha · {SHORT} left"]
+    assert not feeds.unnamed
+    # With across_servers on (the default), no "banned elsewhere" card: their join's cards still go by the leave's name.
+    part.posts.clear()
+    part.across_servers = True
+    feeds.handle(joined())
+    feeds.handle(Event("rcon.leave", "Alpha", {"number": 2, "name": "Bravo", "id": KEY}))
+    assert said(part) == ["Alpha · **Bravo** `0a1b2c3d` [Alpha] joined for the first time", "Alpha · **Bravo** `0a1b2c3d` [Alpha] left"]
     assert not feeds.unnamed
 
 
@@ -186,7 +200,7 @@ def test_a_refusal_or_leave_with_no_name_goes_by_the_last_one(tmp_path: Path) ->
     part.last[KEY] = "Charlie"
     feeds.handle(Event("rcon.refused", "Alpha", {"id": KEY, "name": "", "reason": "banned"}))
     feeds.handle(Event("rcon.leave", "Alpha", {"number": 3, "name": "", "id": KEY}))
-    assert said(part) == ["Alpha · **Charlie** was turned away: banned", "Alpha · **Charlie** left"]
+    assert said(part) == ["Alpha · **Charlie** `0a1b2c3d` was turned away: banned", "Alpha · **Charlie** `0a1b2c3d` [Alpha] left"]
 
 
 def test_the_part_hears_state_named() -> None:
@@ -276,8 +290,8 @@ def test_a_010_join_is_carded_by_the_name_proved_after_it(tmp_path: Path, run: A
             assert SHORT not in everything_said(fake)
             rcon.players[-1]["name"] = "Moderat0r"
             huragok.bus.emit("log.identified", SERVER, handle="0x0123456789abcdef", name="Moderat0r")
-            await wait_for(lambda: "**Moderat0r** has a name like Moderator's" in everything_said(fake), timeout=15)
-            await wait_for(lambda: "**Moderat0r** is new here" in everything_said(fake), timeout=15)
+            await wait_for(lambda: f"**Moderat0r** `0a1b2c3d` [{SERVER}] has a name like a member of staff's: Moderator `bbbbbbbb`" in everything_said(fake), timeout=15)
+            await wait_for(lambda: f"**Moderat0r** `0a1b2c3d` [{SERVER}] is new here" in everything_said(fake), timeout=15)
             await asyncio.sleep(0.2)
             assert SHORT not in everything_said(fake) and not part.feeds.unnamed
 

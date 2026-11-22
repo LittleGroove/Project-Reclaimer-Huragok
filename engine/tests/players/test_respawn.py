@@ -49,7 +49,7 @@ def test_a_player_respawns_themselves_by_a_move_away_and_back(tmp_path: Path, ru
             await answered(fake, 1, "Alice was moved to Blue team.")
             await answered(fake, 2, "Alice was moved to Red team.")
             # Their own words aren't said to everyone: a [Server] line in Huragok's voice, past the word list (audit 5.11)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice respawned on Red team." in says(fake))
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice cccccccc (#3) [LG Test Server] respawned on Red team." in " ".join(says(fake)))
             assert moves(fake) == [[ALICE, "blue"], [ALICE, "red"]]
             assert fake.named("team")[0]["by"] == "Alice"
 
@@ -62,7 +62,7 @@ def test_a_player_respawns_themselves_by_a_move_away_and_back(tmp_path: Path, ru
             await fake.chat(BRAVO, "Bravo", "!respawn Alice")
             await answered(fake, 3)
             await answered(fake, 4)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Blue team." in says(fake))
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo dddddddd (#4) [LG Test Server] respawned on Blue team." in " ".join(says(fake)))
             assert moves(fake)[2:] == [[BRAVO, "red"], [BRAVO, "blue"]]
 
     run(scenario())
@@ -76,16 +76,16 @@ def test_an_admin_respawns_someone_else_but_not_their_own_rank(tmp_path: Path, r
             await fake.chat(ADMIN, "Admin", "!respawn Bravo under the map")
             await answered(fake, 1)
             await answered(fake, 2)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Admin respawned Bravo on Blue team: under the "
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Admin respawned Bravo dddddddd (#4) [LG Test Server] on Blue team: under the "
                            "map." in says(fake))
             assert moves(fake) == [[BRAVO, "red"], [BRAVO, "blue"]]
 
             await fake.chat(ADMIN, "Admin", "!respawn Faculty")
-            await wait_for(lambda: told(fake, ADMIN, "Faculty is faculty; you can't do that to them."))
+            await wait_for(lambda: told(fake, ADMIN, "is faculty; you can't do that to them."))
             await fake.chat(ADMIN, "Admin", "!respawn")  # their own, again at once: an admin isn't held
             await answered(fake, 3)
             await answered(fake, 4)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Admin respawned on Blue team." in says(fake))
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Admin eeeeeeee (#5) [LG Test Server] respawned on Blue team." in " ".join(says(fake)))
             await fake.chat(FACULTY, "Faculty", "!respawn Admin")  # faculty may
             await wait_for(lambda: len(moves(fake)) == 5)
 
@@ -125,7 +125,7 @@ def test_what_the_server_refuses_and_when_theres_no_round_or_no_teams(tmp_path: 
 
             # No answer at all: each move is taken as done after a moment.
             await fake.chat(BRAVO, "Bravo", "!respawn")
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo respawned on Blue team." in says(fake),
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Bravo dddddddd (#4) [LG Test Server] respawned on Blue team." in " ".join(says(fake)),
                            timeout=10)
             assert moves(fake)[3:] == [[BRAVO, "red"], [BRAVO, "blue"]]
 
@@ -142,7 +142,7 @@ def test_the_team_they_go_back_to_is_the_one_the_server_has_now(tmp_path: Path, 
             await fake.chat(ALICE, "Alice", "!respawn")
             await answered(fake, 1)
             await answered(fake, 2)
-            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice respawned on Blue team." in says(fake))
+            await wait_for(lambda: "[o_o] DETOUR! PROCEED WITH CAUTION! Alice cccccccc (#3) [LG Test Server] respawned on Blue team." in " ".join(says(fake)))
             assert moves(fake) == [[ALICE, "red"], [ALICE, "blue"]]
 
     run(scenario())

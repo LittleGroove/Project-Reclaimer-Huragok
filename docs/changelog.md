@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased (0.7.0)
+**Moderation is every server's, whoever gives it, and everything says so.** After a strike from Discord named one server when it was the player's, the scope audit of 20 November 2026 (plans/scope-audit-2026-11-20) found Huragok naming the server a command ran on where it should say how far the action reaches, and a few places where that server decided things it shouldn't. The host's calls, 21 November 2026:
+- **One switch: `[automod] across_servers`.** On, a mute, kick, ban, unban, letting back, and making or unmaking an admin reach every server, whoever gave them: Huragok's `!` commands, Vergil, Discord, the console, the relay, the window, and now the game's own `/kick`, `/ban` and scoreboard too. Off, each server's moderation is its own. Only a vote's kick and the server's own stay on one server, always, as do a server's own settings and commands (`!togglevoice`, `!team`, `!respawn`, restarts).
+- **The update turns it on** where a host had it off, once. Turn it off again to keep each server's own.
+- **A ban on one server's own list becomes every server's** at the next look (every 10 minutes, and as each server connects): `/ban`s from before. An unban lifts every ban on them on every server, a server's own `/ban` too. Letting someone back from a kick with a time still never lifts a ban for good.
+- **A rank on one server is a rank on every server**, in game and in Discord: an admin on one server's list is an admin everywhere, and a Discord role `[ranks]` scopes to some servers counts on all of them. An admin's own `/ban` or `/kick` of a fellow admin or faculty stays on its server, as `!ban` refuses it.
+- **`!mute`, `!unmute` and `!kick` act wherever the player is**: on another server they're sent there; on none, a mute waits for them and a kick needs a time (`!kick Bravo 30m`).
+- **A staff strike counts and acts whatever Vergil is on that server.** A server's own Vergil setting (on, dry run, off) is about what Vergil catches by itself. Before, a strike from Discord took the setting of whichever server it ran on, and could be refused or never mute.
+- **Players read how far:** "Kicked off every server for 1 hour", "muted for 7 days on every server", "spam (every server)".
+- **Discord says how far.** A card's footer reads "Every server · case 415" for what reaches every server, "SPR | Minigames only" for what stays on one, and nothing for a strike or clearing strikes, which are the player's. The audit line, the question before a command ("Send `/ban …` to **every server**?") and `/case` say the same. A staff strike right after a person's act on the same player joins that card, as one incident.
+- **One word for each thing:** a removal with a time is a kick, everywhere; lifting a kick is letting back, and clearing strikes is clearing strikes ("pardon" is only the commands' names); a strike's punishment is in words, "strike 1 of 2".
+- **Fixed on the way:**
+  - `!pardon` let a moderator lift an admin's kick with a time.
+  - A strike's mute on someone who wasn't on had no record, so Discord's ticket offered Mute, not Unmute, and an appeal saw nothing standing.
+  - A card's "Their record" counted the card's own kick and never counted strikes.
+  - An offline strike whose step was a plain kick read "Didn't work".
+  - `!unban` on a server that didn't hold the ban left it on every other.
+  - The "joined, and is banned on another server" card and its Ban everywhere button are gone: with across_servers on, every ban is every server's.
+
+**One way to write a player, everywhere.** Players who share a name were hard to tell apart: one message showed a name, the next only an ID, and the `#4` or `@2` you typed was gone by the time the action was confirmed. The player identity audit of 21 November 2026 (plans/player-identity-audit) found about 700 places that name a player, in some 13 different ways. The host's calls, the same day:
+- **Every player reads the same:** `Nate Higgers 1a2b3c4d (#4) [HugeGrass]`. That's the name they go by now, the first 8 characters of their player ID, the `#number` or `@number` that picks them, and the server they're on. Read it from the right: the server in brackets, the number in round brackets, then 8 hex characters, and what's left is the name. A card or a log line leaves the number out (nobody types into those); huragok.log has the whole ID, so one search finds a player in the log, the ban lists and commands.toml.
+- **What you typed is what it says back.** `!mute #4 30m spam` answers "Nate Higgers 1a2b3c4d (#4) [HugeGrass] is muted on every server for 30 minutes." The ledger keeps how each player was picked (`#4`, `@2`) and the server they were on, and Discord's cards show it.
+- **@numbers stick.** Someone keeps their `@number` for ten minutes in every list and reply that names them, and a new list never renumbers anyone. Before, `!mutes` after `!bans` gave `@2` to someone else, and `!kick @2` acted on whoever the last list had.
+- **Everyone a reply names comes with something to type:** their `#number` on your server, else an `@number` of yours. `!whois`, `!roles`, `!said`, `!strikes`, the requests, refusals and confirmations all do it.
+- **The ID's first 8 characters work everywhere**, in game and in the window: `!kick 1a2b3c4d`, `!unban 1a2b3c4d`. Hints say that instead of telling you to retype a name several players share.
+- **`!players <server>` and `!players all`** list another server's players, or everyone's, each with an `@number` to act on them from where you are.
+- **"Could be" answers list one player a line**, each with what tells them apart.
+- **Players see the start of an ID too**, as the game's own vote list already shows it. The whole ID is still only for admins.
+- **Something done under an older name says so:** "banned 2d ago as Alpha by Alice".
+- **`#` only means a player.** A probationary moderator's request is "request 3" (`!confirm 3` still works); in Discord, notes are "Note 3" and tickets "Ticket 12".
+- **Long [Server] lines wrap** at 120 characters, as private replies always did.
+- **Discord writes players the same way:** **Nate Higgers** `1a2b3c4d` [HugeGrass] on every card, line, answer, choice and form title. Every player choice shows the ID's start, not only when a name repeats; the ticket's **Now** line and the player box add their `#number`. A card from a pick by number says "picked as #4". "Send `!kick #4 spam` to every server?" says who `#4` is. Staff are named one way: their name in the Discord, with their linked player's tag.
+- **Discord asks when a name fits several players:** `/appeal` (it took the first with something to appeal) and `/stats` (it folded every "Player" into one and showed whoever had the most games). `/report` lists each player with their server, and its thanks says who was reported. An in-game `!report`'s card names the reported player's server, not the reporter's.
+- **The window writes players the same way**, and finds them the way the game does: the console (A), the bans and admins (B) and the roles screen (D → C) take a `#number`, a name or an ID's start, and a name several players share gives a numbered list to pick from instead of going to the server as typed. The console echo names everyone with their ID and `#number`, says who a `kick #3` you typed was, and shows a Project Reclaimer 0.10 join before the name comes ("(no name yet)") and when it does. The P list has one player a line (a name with a comma in it was two). The roles screen names people from Huragok's records, not the note beside them; `check`, the dedicated.toml admins list and the Discord faculty list name each ID. A player named "FAILED" no longer turns the window's lines yellow.
+- **Fixed on the way:**
+  - Unbanning or letting back by an address, or a name on no list, answered "They is unbanned on every server", and its dry run "would unban None".
+  - `!novote`, `!allowvote` and `!promote` on someone on another server said they weren't on, and nobody there was told.
+  - `!banname` with two players of the name on banned the text without the rank check.
+
 ## 0.6.4
 **The watchdog's `no_joins` counts only players really trying to get in.** On 7 Nov 2026 it restarted our test server three times in 16 minutes as "nobody can join" (22:53, 22:57 and 23:09). Each time, a game was going on and players were getting in.
 

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from ..core.commandsfile import ROLES
 from ..servers import leaderboards
 from ..servers.state import Player
-from . import features, rest
+from . import cards, features, rest
 from .config import RANK_KEYS
 from .outbox import CHAT
 from .workers import to_thread
@@ -303,7 +303,7 @@ async def put_roles_right(part: DiscordPart) -> int:
                 return asked
             _change(part, member_id, role, give, why[role] if give or member_id in links else "only Huragok gives this role")
             if not give and why.get(role) == "their rank in Huragok":
-                taken.setdefault(role, []).append(str(member.get("nick") or user.get("global_name") or user.get("username") or member_id))
+                taken.setdefault(role, []).append(part.member_shown(member_id, rest.display_name(user, member) or member_id))  # the one way: their name here, their player if linked
             asked += 1
     if asked:
         log.info("Huragok's roles: %d change%s asked for", asked, "" if asked == 1 else "s")
@@ -333,8 +333,8 @@ def _say_taken(part: DiscordPart, taken: dict[str, list[str]]) -> None:
     for role, names in taken.items():
         found = part.facts.find_role(role) if part.facts is not None else None
         named = ", ".join(names[:MOST_NAMED]) + (f" and {len(names) - MOST_NAMED} more" if len(names) > MOST_NAMED else "")
-        part.audit("link", f"Huragok took @{found['name'] if found else role} off {named}: their rank in Huragok isn't that"
-                           " (not linked, or not that rank). A rank role comes with linking and the rank: !promote or /promote")
+        part.audit("link", cards.Shown(f"Huragok took @{cards.clean(found['name'] if found else role)} off {named}: their rank in Huragok isn't that"
+                                       " (not linked, or not that rank). A rank role comes with linking and the rank: !promote or /promote"))
 
 
 __all__ = ["RankRole", "all_members", "changes_waiting", "counted_roles", "due_key", "faculty_members", "put_roles_right",

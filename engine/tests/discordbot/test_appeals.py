@@ -85,7 +85,7 @@ def test_its_a_card_with_the_case_and_their_answers(tmp_path: Path, run: Any, fa
             await banned(huragok, rcon, fake)
             post = await appeal(fake)
             text = str(post["embeds"][0])
-            assert "appeals the ban on **Alice**" in text and "I got carried away" in text and "It won't happen again" in text
+            assert "appeals the ban on **Alice** `cccccccc`" in text and "I got carried away" in text and "It won't happen again" in text
             assert "by Faculty" in text and "slurs in voice" in text and "get out of my spawn" in text
             assert list(buttons_of(post)) == ["Lift it", "Shorten it", "Deny", "Whois", "Discuss", "Close"]
 
@@ -273,7 +273,7 @@ def test_only_what_the_setting_says_can_be_appealed(tmp_path: Path, run: Any, fa
             set_switch(path, ("appeals",), "for", ["ban", "mute"])
             await part.reload(force=True)
             post = await appeal(fake)
-            assert "appeals the mute on **Alice**" in post["embeds"][0]["description"]
+            assert "appeals the mute on **Alice** `cccccccc`" in post["embeds"][0]["description"]
             # The faculty muted her in game: lifting takes their rank (the host's call, 2 Nov 2026), so it's the faculty's
             fake.press(buttons_of(post)["Lift it"], post, user=FACULTY_USER)
             await wait_for(lambda: rcon.named("unmute"), timeout=15)
@@ -288,7 +288,7 @@ def test_the_code_from_their_ban_finds_them_without_a_name(tmp_path: Path, run: 
             part = await up(huragok)
             await banned(huragok, rcon, fake)
             post = await appeal(fake, part.appeals.code_of(ALICE).lower())
-            assert "appeals the ban on **Alice**" in post["embeds"][0]["description"]
+            assert "appeals the ban on **Alice** `cccccccc`" in post["embeds"][0]["description"]
 
     run(scenario())
 

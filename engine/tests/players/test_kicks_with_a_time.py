@@ -42,11 +42,11 @@ def test_a_kick_with_a_time_is_the_servers_timed_ban_with_the_reason_saying_so(t
             await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
             await rcon.chat(FACULTY, "Faculty", "!kick Alice 7d team killing")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
-            assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked for 7 days: team killing"]
+            assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked off every server for 7 days: team killing"]
             assert rcon.named("kick") == []
             row = rows_of(huragok, "ban")[0]
             assert row["duration"] == "7d" and row["reason"] == "team killing"  # the record has the reason alone
-            await wait_for(lambda: any("is kicked for 7 days" in line for line in tells_to(rcon, FACULTY)), timeout=10)
+            await wait_for(lambda: any("is kicked off every server for 7 days" in line for line in tells_to(rcon, FACULTY)), timeout=10)
 
     run(scenario())
 
@@ -119,7 +119,7 @@ def test_a_kick_with_a_time_leaves_their_role(tmp_path: Path, run: Any) -> None:
             await on(huragok, rcon, (1, "Faculty", FACULTY), (2, "Mod", MOD))
             await rcon.chat(FACULTY, "Faculty", "!kick Mod 1d spam")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
-            await wait_for(lambda: any("is kicked for 1 day" in line for line in tells_to(rcon, FACULTY)), timeout=10)
+            await wait_for(lambda: any("is kicked off every server for 1 day" in line for line in tells_to(rcon, FACULTY)), timeout=10)
             await asyncio.sleep(0.3)  # time for the server's announcement of it to have been heard
             assert MOD in huragok.settings.permissions.members["moderator"]
             assert not any("role goes with" in line for line in tells_to(rcon, FACULTY))
@@ -136,7 +136,7 @@ def test_a_kick_for_good_is_a_ban_and_takes_a_bans_rank(tmp_path: Path, run: Any
             assert rcon.named("ban") == [] and rcon.named("kick") == []
             await rcon.chat(FACULTY, "Faculty", "!kick Alice perm cheating")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
-            assert rcon.named("ban")[0]["args"] == [ALICE, "cheating"] and rcon.named("kick") == []
+            assert rcon.named("ban")[0]["args"] == [ALICE, "cheating (every server)"] and rcon.named("kick") == []
             assert rows_of(huragok, "ban")[0]["duration"] is None
 
     run(scenario())
@@ -151,7 +151,7 @@ def test_a_moderators_kick_has_a_limit(tmp_path: Path, run: Any, length: str, al
             if allowed:
                 await wait_for(lambda: rcon.named("ban"), timeout=10)
             else:
-                await wait_for(lambda: any("at most here" in line for line in tells_to(rcon, MOD)), timeout=10)
+                await wait_for(lambda: any("at most: an admin can make it longer" in line for line in tells_to(rcon, MOD)), timeout=10)
                 assert rcon.named("ban") == []
 
     run(scenario())
@@ -172,7 +172,7 @@ def test_a_limit_it_cant_read_is_still_a_limit(tmp_path: Path, run: Any) -> None
         async with running(tmp_path, '[automod]\nenabled = true\nmoderators_kick_at_most = "a while"\n') as (huragok, rcon, _):
             await on(huragok, rcon, (2, "Mod", MOD), (3, "Alice", ALICE))
             await rcon.chat(MOD, "Mod", "!kick Alice 7d spam")
-            await wait_for(lambda: any("1 day at most here" in line for line in tells_to(rcon, MOD)), timeout=10)
+            await wait_for(lambda: any("1 day at most:" in line for line in tells_to(rcon, MOD)), timeout=10)
             assert rcon.named("ban") == []
 
     run(scenario())
@@ -194,7 +194,7 @@ def test_a_kick_without_a_time_is_the_servers_own(tmp_path: Path, run: Any) -> N
             await on(huragok, rcon, (1, "Faculty", FACULTY), (3, "Alice", ALICE))
             await rcon.chat(FACULTY, "Faculty", "!kick Alice spam")
             await wait_for(lambda: rcon.named("kick"), timeout=10)
-            assert rcon.named("kick")[0]["args"][-1] == "spam" and rcon.named("ban") == []
+            assert rcon.named("kick")[0]["args"][-1] == "spam (every server)" and rcon.named("ban") == []
 
     run(scenario())
 
@@ -279,17 +279,17 @@ def test_a_moderators_pardon_of_a_kick_never_lifts_an_admins_ban_beneath_it(tmp_
             await rcon.chat(MOD, "Mod", f"!strike {BRAVO} slurs voice")
             await wait_for(lambda: len(rcon.named("ban")) == 2)
             await rcon.chat(MOD, "Mod", f"!pardon {BRAVO}")
-            await wait_for(lambda: any("Not pardoned" in line for line in tells_to(rcon, MOD)))
+            await wait_for(lambda: any("Not let back" in line for line in tells_to(rcon, MOD)))
             assert rcon.named("unban") == []
-            assert any(entry["reason"] == "cheating" for entry in rcon.ban_list)
+            assert any(entry["reason"] == "cheating (every server)" for entry in rcon.ban_list)  # what they read says how far
 
     run(scenario())
 
 
 def test_an_unban_passed_on_leaves_the_other_servers_own_ban(tmp_path: Path, run: Any) -> None:
-    """The server's unban lifts every ban on an ID: passed on to a server where its own admin had /banned them, the
-    pardon of a kick given here lifted that ban too, against the host's rule that a server's own ban stays (audit
-    2026-11, 5.2)."""
+    """The server's unban lifts every ban on an ID: passed on to a server where its own admin had banned them for good,
+    letting them back from a kick given here lifted that ban too (audit 2026-11, 5.2). An unban lifts every ban on every
+    server since 0.7.0, but letting someone back from a kick never lifts a ban for good."""
     import time as clock
 
     from conftest import BRAVO

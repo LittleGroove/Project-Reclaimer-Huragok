@@ -36,8 +36,8 @@ def test_a_player_whose_votes_are_away_has_each_vote_cancelled_until_given_back(
             await on_and_ready(sup, fake)
 
             await fake.chat(MOD, "Mod", "!novote Bravo 10m spamming votes")
-            await wait_for(lambda: "[-_-] OBEY POSTED LIMITS! Mod took Bravo's votes away for 10 minutes: spamming "
-                                   "votes. Any vote they call is cancelled." in says(fake))
+            await wait_for(lambda: "[-_-] OBEY POSTED LIMITS! Mod took away the votes of Bravo dddddddd (#4) [LG Test Server] for 10 minutes: "
+                                   "spamming votes. Any vote they call is cancelled." in " ".join(says(fake)))  # 120 a line
             row = rows(sup)[0]
             assert (row["target"], row["name"], row["by"], row["reason"], row["server"], row["length"]) == \
                 (BRAVO, "Bravo", "Mod", "spamming votes", SERVER, "10 minutes")
@@ -45,10 +45,10 @@ def test_a_player_whose_votes_are_away_has_each_vote_cancelled_until_given_back(
 
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             assert (await wait_for(lambda: fake.named("cancelvote")))[0]["by"] == "Vergil"
-            await wait_for(lambda: told(fake, BRAVO, "[-_-] OBEY POSTED LIMITS! Your vote was cancelled: Mod took your "
-                                                     "votes away for another 9 minutes"))
+            await wait_for(lambda: "[-_-] OBEY POSTED LIMITS! Your vote was cancelled: Mod took your votes away for "
+                                   "another 9 minutes" in " ".join(tells_to(fake, BRAVO)))  # in pieces of 120 characters
             # Each line of a reply is a tell of its own, and the log line comes beside them: waited for, not read at once.
-            await wait_for(lambda: told(fake, BRAVO, "(spamming votes). You can still vote on other players' votes."))
+            await wait_for(lambda: "(spamming votes). You can still vote on other players' votes." in " ".join(tells_to(fake, BRAVO)))
             await wait_for(lambda: "cancelled Bravo's vote to end the game: their votes are away for another"
                            in caplog.text)
 
@@ -64,20 +64,20 @@ def test_a_player_whose_votes_are_away_has_each_vote_cancelled_until_given_back(
 
             # The list, and giving them back by its @number.
             await fake.chat(MOD, "Mod", "!novotes")
-            await wait_for(lambda: told(fake, MOD, "@1 #4 Bravo ("))
+            await wait_for(lambda: told(fake, MOD, "Bravo dddddddd (@1) [LG Test Server]: votes away"))
             await wait_for(lambda: told(fake, MOD, "votes away for another 9 minutes, by Mod 0s ago: spamming votes"))
             await wait_for(lambda: told(fake, MOD, "!allowvote @number gives one their votes back."))
             await fake.chat(MOD, "Mod", "!allowvote @1")
-            await wait_for(lambda: told(fake, MOD, "Bravo can call votes again."))
+            await wait_for(lambda: told(fake, MOD, " can call votes again."))
             await wait_for(lambda: told(fake, BRAVO, "[^_^] GOOD CITIZENS DO THEIR PART! Mod gave your votes back: you "
                                                      "can call votes again."))
             assert rows(sup)[0]["lifted_by"] == "Mod"
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             await fake.chat(MOD, "Mod", "!allowvote Bravo")  # handled after the vote: nothing to give back
-            await wait_for(lambda: told(fake, MOD, "Bravo can call votes already."))
+            await wait_for(lambda: told(fake, MOD, "Bravo dddddddd (#4) [LG Test Server] can call votes already."))
             assert cancels(fake) == 3
             await fake.chat(MOD, "Mod", "!novotes")
-            await wait_for(lambda: told(fake, MOD, "Everyone here can call votes"))
+            await wait_for(lambda: told(fake, MOD, "Everyone can call votes"))
 
     run(scenario())
 
@@ -88,11 +88,11 @@ def test_no_time_is_until_given_back_and_a_new_time_replaces_the_old(tmp_path: P
             await on_and_ready(sup, fake)
 
             await fake.chat(MOD, "Mod", "!novote Bravo")
-            await wait_for(lambda: "[-_-] OBEY POSTED LIMITS! Mod took Bravo's votes away until a moderator gives "
-                                   "them back. Any vote they call is cancelled." in says(fake))
+            await wait_for(lambda: "[-_-] OBEY POSTED LIMITS! Mod took away the votes of Bravo dddddddd (#4) [LG Test Server] until a moderator "
+                                   "gives them back. Any vote they call is cancelled." in " ".join(says(fake)))
             assert rows(sup)[0]["until"] is None
             await fake.chat(MOD, "Mod", "!novote Bravo 2h")
-            await wait_for(lambda: told(fake, MOD, "Bravo's votes were already away (until a moderator gives them "
+            await wait_for(lambda: told(fake, MOD, "Their votes were already away (until a moderator gives them "
                                                    "back); now for 2 hours."))
             first, second = rows(sup)
             assert first["lifted"] and second["until"] and second["lifted"] is None
@@ -103,7 +103,7 @@ def test_no_time_is_until_given_back_and_a_new_time_replaces_the_old(tmp_path: P
             sup.storage.execute("UPDATE commands_no_votes SET until = ?", (time.time() - 1,))
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             await fake.chat(MOD, "Mod", "!allowvote Bravo")
-            await wait_for(lambda: told(fake, MOD, "Bravo can call votes already."))
+            await wait_for(lambda: told(fake, MOD, "Bravo dddddddd (#4) [LG Test Server] can call votes already."))
             assert cancels(fake) == 0
 
     run(scenario())
@@ -114,9 +114,9 @@ def test_nobody_takes_the_votes_of_their_own_role_or_above_and_bad_times_are_ref
         async with running(tmp_path, prepare=lambda f: f.admins_configured.append(ADMIN)) as (sup, fake, _):
             await on_and_ready(sup, fake)
             await fake.chat(MOD, "Mod", "!novote Faculty 10m")
-            await wait_for(lambda: told(fake, MOD, "Faculty is faculty; you can't do that to them."))
+            await wait_for(lambda: told(fake, MOD, "Faculty aaaaaaaa (#1) [LG Test Server] is faculty; you can't do that to them."))
             await fake.chat(MOD, "Mod", "!novote Admin")
-            await wait_for(lambda: told(fake, MOD, "Admin is an admin; you can't do that to them."))
+            await wait_for(lambda: told(fake, MOD, "[LG Test Server] is an admin; you can't do that to them."))
             await fake.chat(ALICE, "Alice", "!novote Bravo")
             await wait_for(lambda: told(fake, ALICE, "!novote is for moderators and up"))
             await fake.chat(MOD, "Mod", "!novote Bravo 0m")
@@ -136,7 +136,7 @@ def test_someone_who_left_has_it_when_they_rejoin_and_a_shared_name_keeps_their_
             await fake.leave(4)  # Bravo
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 4)
             await fake.chat(MOD, "Mod", "!novote Bravo 1h")
-            await wait_for(lambda: told(fake, MOD, "Bravo isn't on now: any vote they call once they're back is "
+            await wait_for(lambda: told(fake, MOD, "isn't on now: any vote they call once they're back is "
                                                    "cancelled, for 1 hour from now."))
             assert not [line for line in says(fake) if "OBEY POSTED LIMITS" in line]
 
@@ -150,7 +150,7 @@ def test_someone_who_left_has_it_when_they_rejoin_and_a_shared_name_keeps_their_
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 6)
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             await fake.chat(MOD, "Mod", "!allowvote " + BRAVO)  # handled after the vote
-            await wait_for(lambda: told(fake, MOD, "Bravo can call votes again."))
+            await wait_for(lambda: told(fake, MOD, " can call votes again."))
             assert cancels(fake) == 1
 
     run(scenario())
@@ -164,7 +164,7 @@ def test_a_dry_run_only_says_what_it_would_cancel(tmp_path: Path, run, caplog) -
             await on_and_ready(sup, fake)
             await fake.chat(MOD, "Mod", "!novote Bravo 10m")
             await wait_for(lambda: told(fake, MOD, "Dry run: their votes are only logged, not cancelled. Players would "
-                                                   "read: [-_-] OBEY POSTED LIMITS! Mod took Bravo's"))  # wrapped there
+                                                   "read: [-_-] OBEY POSTED LIMITS! Mod took away the"))  # wrapped there
             assert rows(sup) and not [line for line in says(fake) if "OBEY POSTED LIMITS" in line]
             await fake.event("vote", state="called", subject="end the game", caller="Bravo")
             await wait_for(lambda: "Dry run: would cancel Bravo's vote to end the game (their votes are away)"

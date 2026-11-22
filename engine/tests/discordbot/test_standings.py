@@ -99,7 +99,7 @@ def test_stats_and_the_board_in_discord(tmp_path: Path, run: Any, fake: FakeDisc
             games(huragok.storage)
             _, token = fake.command("stats", user=OTHER, player="alpha")
             record = embed_of(await answered(fake, token))
-            assert record["title"] == "Service record · Alpha" and "6 games · 6 won, 0 lost (100%)" in record["description"]
+            assert record["title"] == "Service record · Alpha cccccccc" and "6 games · 6 won, 0 lost (100%)" in record["description"]
             assert {"Best multi-kill", "Most kills with", "Favourite victim"} <= {field["name"] for field in record["fields"]}
             _, token = fake.command("leaderboard", user=OTHER, stat="kills")
             text = embed_of(await answered(fake, token))["description"]
@@ -111,12 +111,12 @@ def test_stats_and_the_board_in_discord(tmp_path: Path, run: Any, fake: FakeDisc
             here = part.links.of_member(OTHER)["member_name"]
             assert embed_of(await answered(fake, token))["description"].startswith(f"**1.** {here} · 72")  # claimed
             _, token = fake.command("stats", user=OTHER)  # their own, once linked
-            assert embed_of(await answered(fake, token))["title"] == f"Service record · {here}"
+            assert embed_of(await answered(fake, token))["title"] == f"Service record · {here} cccccccc"
             part.links.show(OTHER, "hidden")  # not a choice: the boards don't discriminate (the host's call, 3 November 2026)
             _, token = fake.command("leaderboard", user="9911", stat="kills")
             assert embed_of(await answered(fake, token))["description"].startswith(f"**1.** {here} · 72")  # their spot, earned
             _, token = fake.command("stats", user="9911", player="Alpha")
-            assert embed_of(await answered(fake, token))["title"] == f"Service record · {here}"
+            assert embed_of(await answered(fake, token))["title"] == f"Service record · {here} cccccccc"
 
     run(scenario())
 

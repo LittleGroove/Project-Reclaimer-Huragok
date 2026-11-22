@@ -146,7 +146,7 @@ def test_a_strike_is_one_card_with_everything_to_act_on(tmp_path: Path, run: Any
         async with running(tmp_path) as (huragok, rcon, _):
             part = await up(huragok)
             post = await strike(huragok, rcon, fake)
-            assert list(buttons_of(post)) == ["Mute", "Kick", "Ban", "Whois", "Add note", "Pardon strike", "Discuss", "Acknowledge"]
+            assert list(buttons_of(post)) == ["Mute", "Kick", "Ban", "Whois", "Add note", "Clear strikes", "Discuss", "Acknowledge"]
             assert post["embeds"][0]["color"] == colour(path, "gold")  # the strike's own: nobody has touched it
             assert "ticket 1" in post["embeds"][0]["footer"]["text"]
             # Vergil's mute, the action behind the strike, is on that card: it makes none of its own.
@@ -277,7 +277,7 @@ def test_nothing_locks_mute_undo_kick_undo_ban_undo_on_one_card(tmp_path: Path, 
 
             await fill(fake, "Ban", post, {"Why (they'll read this)": "enough"})
             await wait_for(lambda: len(fake.original_edits) == 5, timeout=10)
-            assert list(buttons_of(edited(fake))) == ["Unban", "Whois", "Add note", "Pardon strike", "Discuss", "Acknowledge"]
+            assert list(buttons_of(edited(fake))) == ["Unban", "Whois", "Add note", "Clear strikes", "Discuss", "Acknowledge"]
 
             fake.press(buttons_of(edited(fake))["Unban"], post)
             await wait_for(lambda: len(fake.original_edits) == 6, timeout=10)
@@ -286,7 +286,7 @@ def test_nothing_locks_mute_undo_kick_undo_ban_undo_on_one_card(tmp_path: Path, 
             # One card all along, with all of it written on it, in order.
             assert len(posts_in(fake, STAFF)) == 1 and posts_in(fake, LOGS) == []
             story = edited(fake)["embeds"][0]["description"]
-            assert story.index("muted") < story.index("unmuted") < story.index("kicked") < story.index(" let ") < story.index("banned") < story.index("unbanned **Alice**")
+            assert story.index("muted") < story.index("unmuted") < story.index("kicked") < story.index(" let ") < story.index("banned") < story.index("unbanned **Alice** `cccccccc`")
 
     run(scenario())
 
@@ -338,7 +338,7 @@ def test_the_file_says_which_buttons_there_are(tmp_path: Path, run: Any, fake: F
         bot_file(tmp_path, change=('buttons = ["mute", "kick", "ban", "whois", "note"]', 'buttons = ["said", "ban"]'))
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
-            assert list(buttons_of(await strike(huragok, rcon, fake))) == ["Said", "Ban", "Pardon strike", "Discuss", "Acknowledge"]
+            assert list(buttons_of(await strike(huragok, rcon, fake))) == ["Said", "Ban", "Clear strikes", "Discuss", "Acknowledge"]
 
     run(scenario())
 
@@ -358,7 +358,7 @@ def test_acknowledging_files_it_with_huragok_and_it_stays_usable(tmp_path: Path,
             filed = posts_in(fake, HURAGOK_LOGS)[0]
             assert filed["embeds"][0]["color"] == colour(path, "green")
             assert "acknowledged this" in filed["embeds"][0]["description"]
-            assert list(buttons_of(filed)) == ["Mute", "Kick", "Ban", "Whois", "Add note", "Pardon strike", "Discuss"]
+            assert list(buttons_of(filed)) == ["Mute", "Kick", "Ban", "Whois", "Add note", "Clear strikes", "Discuss"]
 
     run(scenario())
 
@@ -466,10 +466,11 @@ def test_saying_who_a_call_is_about_gives_it_the_buttons(tmp_path: Path, run: An
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             post = posts_in(fake, REPORTS)[0]
             menu = next(item for row in post["components"] for item in row["components"] if item["type"] == 3)
-            assert {option["label"].split(" · ")[0] for option in menu["options"]} == {"Alice", "Bravo"} and all("#" in option["label"] for option in menu["options"])
+            # Each by their tag, with their #number there: "Alice cccccccc (#3) [LG Test Server]"
+            assert {option["label"] for option in menu["options"]} == {f"Alice cccccccc (#3) [{SERVER}]", f"Bravo dddddddd (#4) [{SERVER}]"}
             fake.choose(menu["custom_id"], post, [BRAVO])
             await wait_for(lambda: fake.original_edits, timeout=10)
-            assert "Mute" in buttons_of(edited(fake)) and "says this is about **Bravo**" in edited(fake)["embeds"][0]["description"]
+            assert "Mute" in buttons_of(edited(fake)) and f"says this is about **Bravo** `dddddddd` [{SERVER}]" in edited(fake)["embeds"][0]["description"]  # who was picked, not a bare name
             assert row_of(huragok)["player_id"] == BRAVO
 
     run(scenario())
@@ -768,7 +769,7 @@ def test_a_request_is_a_ticket_with_confirm_and_deny(tmp_path: Path, run: Any, f
             await up(huragok)
             post = await asked(huragok, rcon, fake)
             assert list(buttons_of(post)) == ["Confirm", "Deny", "Whois", "Add note", "Discuss"]
-            assert "(on probation) asks, #1: !kick Alice spam" in post["embeds"][0]["description"]
+            assert "(on probation) asks, request 1: !kick Alice cccccccc spam" in post["embeds"][0]["description"]  # "request 1": a # is a player's number (H6)
             assert rcon.named("kick") == []  # nothing happens until someone says so
 
     run(scenario())
@@ -784,7 +785,7 @@ def test_confirming_does_it_says_so_and_closes_it_to_logs(tmp_path: Path, run: A
             await wait_for(lambda: rcon.named("kick"), timeout=15)  # the card says so: nothing more's said to them
             await wait_for(lambda: posts_in(fake, LOGS) and not posts_in(fake, REPORTS), timeout=15)
             closed = next(card for card in posts_in(fake, LOGS) if "(on probation) asks" in card["embeds"][0]["description"])
-            assert closed["embeds"][0]["color"] == colour(path, "green") and "confirmed it: !kick Alice spam" in closed["embeds"][0]["description"]
+            assert closed["embeds"][0]["color"] == colour(path, "green") and "confirmed it: !kick Alice cccccccc spam" in closed["embeds"][0]["description"]
             assert "Confirm" not in buttons_of(closed)
             assert len(posts_in(fake, LOGS)) == 1  # the kick it did is that card's, not one of its own
 
@@ -816,7 +817,7 @@ def test_deciding_in_game_closes_the_card_too(tmp_path: Path, run: Any, fake: Fa
             await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 2, timeout=10)
             await rcon.chat(MOD, "Mod", "!deny 1 no")
             await wait_for(lambda: not posts_in(fake, REPORTS), timeout=15)
-            assert "Mod denied it: no" in posts_in(fake, LOGS)[0]["embeds"][0]["description"]
+            assert "Mod `bbbbbbbb` [LG Test Server] denied it: no" in posts_in(fake, LOGS)[0]["embeds"][0]["description"]
 
     run(scenario())
 
@@ -974,7 +975,7 @@ def test_a_ban_is_for_good_and_asks_only_why(tmp_path: Path, run: Any, fake: Fak
             assert [label["label"] for label in (await form_of(fake, token))["components"]] == ["Why (they'll read this)"]
             fake.fill_in(token, post, {"Why (they'll read this)": "slurs in voice"})
             await wait_for(lambda: rcon.named("ban"), timeout=10)
-            assert rcon.named("ban")[0]["args"] == [ALICE, "slurs in voice"]
+            assert rcon.named("ban")[0]["args"] == [ALICE, "slurs in voice (every server)"]  # no time: for good, and what they read says it reaches every server
 
     run(scenario())
 
@@ -987,8 +988,8 @@ def test_a_kick_with_a_time_is_on_the_card_as_a_kick(tmp_path: Path, run: Any, f
             post = await strike(huragok, rcon, fake)
             await fill(fake, "Kick", post, {"How long": "7d", "Why (they'll read this)": "team killing"})
             await wait_for(lambda: fake.original_edits, timeout=10)
-            assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked for 7 days: team killing"]
-            assert f"user{FACULTY_USER} kicked **Alice** for 7 days (team killing)" in edited(fake)["embeds"][0]["description"]
+            assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked off every server for 7 days: team killing"]
+            assert f"user{FACULTY_USER} kicked **Alice** `cccccccc`" in edited(fake)["embeds"][0]["description"] and "for 7 days (team killing)" in edited(fake)["embeds"][0]["description"]
             assert "Let back" in buttons_of(edited(fake))
 
     run(scenario())
@@ -1016,7 +1017,7 @@ def test_a_moderators_kick_from_a_card_keeps_to_the_limit(tmp_path: Path, run: A
             await up(huragok)
             post = await strike(huragok, rcon, fake)
             sent = await fill(fake, "Kick", post, {"How long": "7d"}, user=OTHER, roles=(MOD_ROLE,))
-            assert "at most here" in await said_back(fake, sent)
+            assert "A moderator's kick lasts 1 day at most: an admin can make it longer." in await said_back(fake, sent)  # on every server alike, so no "here"
             assert rcon.named("ban") == []
 
     run(scenario())
@@ -1033,7 +1034,7 @@ def test_discuss_makes_one_thread_and_touches_the_card(tmp_path: Path, run: Any,
             post = await strike(huragok, rcon, fake)
             _, token = fake.press(buttons_of(post)["Discuss"], post)
             assert await said_back(fake, token) == f"<#{post['id']}>"
-            assert "ticket 1: Alice" == fake.threads[post["id"]]
+            assert f"ticket 1: Alice cccccccc [{SERVER}]" == fake.threads[post["id"]]  # who, by their tag
             assert row_of(huragok)["state"] == "active"
             _, token = fake.press(buttons_of(post)["Discuss"], post)  # someone else, a moment later: the same thread
             assert await said_back(fake, token) == f"<#{post['id']}>"

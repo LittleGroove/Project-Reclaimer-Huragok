@@ -219,12 +219,15 @@ aren't counted twice).
 puts the mute on the list for their player ID, and it starts as they next join (the
 day counts from now). Someone else who takes the name meanwhile isn't muted: when
 several players have used the name, the moderator picks the one with an `@number`
-(see [commands.md](commands.md#using-commands)). Someone on another server is that
-server's to mute.
+(see [commands.md](commands.md#using-commands)). Someone on another server is muted
+there, and `!unmute` reaches them there too.
 
 **Across servers** (`across_servers`, on by default): a mute on the list follows the
-player to any server they join. With it off, a mute is put back only on the server
-it was given on, and a strike's kick, mute or ban lands only there.
+player to any server they join, whoever gave it: a `!mute`, Vergil's, Discord's, the
+relay's, the console's, an admin's own in game. With it off, each server's moderation is
+its own: a mute is put back only on the server it was given on, a strike's kick, mute or
+ban lands only there, and `!mute` and `!unmute` act only on players on the server
+they're typed on.
 
 `!mutes` (moderators) lists everyone muted now, numbered: `!unmute @2` lifts that one.
 
@@ -365,7 +368,7 @@ The two lists come whole, however long: as many messages as it takes, never a fi
 ## What players read
 The reason they see, without ever repeating the word:
 
-> [o_O] KEEP IT CLEAN! That isn't allowed here (slurs, strike 2 of 3): muted for 1 day. Next time: muted for 7 days.
+> [o_O] KEEP IT CLEAN! That isn't allowed here (slurs, strike 2 of 3): muted for 1 day on every server. Next time: muted for 7 days.
 
 It opens with the Superintendent's face and one of its own phrases, and both harden with
 what Vergil does: `[o_O] KEEP IT CLEAN!` for a mute, `[>_<] CRIME DOESN'T PAY!` for a
@@ -378,9 +381,10 @@ says what was done, "Bravo was muted by Vergil"):
 Not for a name kick, a dry run, or someone who isn't on; `messages = { public = "" }`
 turns it off.
 
-`strike 2 of 3` counts toward the ban; a line with no ban says `strike 2`.
+`strike 2 of 3` counts toward the ban; a line with no ban says `strike 2`. "On every
+server" is how far the step reaches (`across_servers`, below); with that off, it isn't said.
 
-**A kick with a time** reads `kicked for 1 hour`. It's a timed ban underneath, because
+**A kick with a time** reads `kicked for 1 hour on every server`. It's a timed ban underneath, because
 the server's own kick times are fixed, so the server's announcement says "banned by
 Vergil" (the `name` setting below) and its line at the door says "You are banned from
 this server for another 58 minutes"; the reason says what for. Everywhere Huragok says it
@@ -412,10 +416,17 @@ Huragok's own → `automod`), applied at once:
 | --- | --- |
 | `on` | Acts on the word list in chat and in names: strikes, kicks, mutes, bans |
 | `dry_run` | Watches and logs what it would do, sends nothing; its strikes there are kept apart and never count where it's on |
-| `off` | Leaves that server's chat and names alone; `!strike` answers that Vergil is off there |
+| `off` | Leaves that server's chat and names alone |
+
+The setting is only about what Vergil catches by itself. A strike the staff give
+(`!strike`, `/strike` and the Strike button in Discord) counts and acts whatever Vergil
+is on the server it's given from or the player is on, and so does `!strike <player>
+name` or `!banname` kicking the player named; only Huragok's own
+`dry_run`, at the top of `settings.toml`, holds them back. `!strikes` counts real
+strikes, not a dry run's.
 
 A server without its own follows `[automod] dry_run`. Either way, mutes already
-decided (a moderator's, an admin's, a strike's where Vergil is on) are put back on
+decided (a moderator's, an admin's, a strike's that wasn't a dry run) are put back on
 it as `across_servers` says, and the moderators' commands work as everywhere. The
 window's top line shows each server's (`VRGL … automod (on: Alpha; dry run: Bravo)`),
 and so does the status card (V → Safety → Vergil).
@@ -425,7 +436,7 @@ and so does the status card (V → Safety → Vergil).
 | --- | --- | --- |
 | `!strikes` | everyone | Your own strikes, what happens next, and how long a mute has left |
 | `!strikes <player>` | moderator | Someone else's |
-| `!strike <player> <rule> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban. Only Huragok and admins ban: a moderator's strike whose next step is the ban goes to the admins as a request (`!requests`, `!confirm`, `!deny`), and nothing happens until one confirms it. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
+| `!strike <player> <list> [note]` | moderator | A strike on the line with that name, for something automod can't see, like a slur in **voice**: its next mute, kick or ban, on every server. Only Huragok and admins ban: a moderator's strike whose next step is the ban goes to the admins as a request (`!requests`, `!confirm`, `!deny`), and nothing happens until one confirms it. See [A ladder only staff climb](#a-ladder-only-staff-climb) |
 | `!strike <player> name [note]` | moderator | Bans their name: adds it to `names.txt` and kicks them. No strike, no ban |
 | `!banword <words> \| [mutes] \| [kicks] \| [ban] \| [name]` | admin | Adds a line to `automod.txt`, or `!banword <words> \| <line>` adds words to a line: see above |
 | `!unbanword <words> [\| line]` | admin | Takes words off `automod.txt` (a line left with no words goes too); `!unbanword \| <line>` takes off the whole line |
@@ -444,9 +455,9 @@ start of a name alone picks nobody: `!strike bobb slurs` answers "Nobody here is
 called 'bobb'. Did you mean Bobby (#4)? Use #4." rather than striking Bobby, who may
 not be the one meant. See [commands.md](commands.md#using-commands) for naming
 players. A strike's kick, mute or ban lands on the
-server the player is on now, wherever the moderator typed it; a kick for someone on
-no server kicks nobody (the strike still counts, and the reply says so), and a mute
-starts as they next join.
+server the player is on now, wherever the moderator typed it, and reaches every server
+from there (`across_servers`); a plain kick for someone on no server kicks nobody (the
+strike still counts, and the reply says so), and a mute starts as they next join.
 
 `!pardonplayer` lifts only what automod did. It looks at the server's ban list and
 lifts a ban only when Vergil gave it (the list names the same one acting as the
@@ -457,7 +468,7 @@ too; it doesn't touch automod's strikes. At moderator rank it lifts what a moder
 have given (`moderators_kick_at_most`, below), and a longer one takes an admin. From a
 probationary moderator, it's a request.
 
-From Discord, **Pardon strike** on a strike's card does what `!pardonplayer` does, for that
+From Discord, **Clear strikes** on a strike's card does what `!pardonplayer` does, for that
 rule. Lifting an appeal against what Vergil did takes that one strike off
 (`lift_clears_strike` in `[appeals]`), or the next word would carry on from it.
 
@@ -465,8 +476,9 @@ Who can use each one is set in `commands.toml`, like every command: see [command
 
 ## Dry run
 automod starts in **dry run** because the first start writes `dry_run = true` under
-`[automod]` in `settings.toml`: it counts strikes and logs what it would do, but
-doesn't kick, mute, ban or tell anyone. A `settings.toml` without that line (or
+`[automod]` in `settings.toml`: for what it catches by itself, it counts strikes and
+logs what it would do, but doesn't kick, mute, ban or tell anyone. A strike the staff
+give acts all the same (see [Vergil on each server](#vergil-on-each-server)). A `settings.toml` without that line (or
 without an `[automod]` section at all) runs automod live, so keep the line until
 you mean it. Watch its lines for a while (in the window they're tagged `VRGL`; in
 `logs/huragok.log` they start `part.automod:`), then set `dry_run = false` and start
@@ -474,7 +486,8 @@ Huragok again (`settings.toml` is read as it starts), or switch one server at a
 time on its page in D (applied at once, see [Vergil on each server](#vergil-on-each-server)).
 Dry-run strikes and mutes are kept apart: going live starts everyone from zero. `!strike <player> name`,
 `!banname`, `!banword` and `!unbanword` still change their file in dry run (the
-lists are yours either way); nobody is kicked for it until dry run is off.
+lists are yours either way). The player named is kicked at once; anyone else is
+kicked for it as they join only where Vergil is on.
 
 ## Settings
 In `settings.toml`, under `[automod]` (in the file's VERGIL part; the section kept
@@ -491,7 +504,7 @@ its name):
 | `check_names` | `true` | Kick names with a word from `automod.txt` in them. `names.txt` applies either way |
 | `name_match` | `"anywhere"` | How a word from `automod.txt` catches a name: `"anywhere"` in it, or `"words"` (only as a word of its own, the name taken apart at its capitals and digits). See [Names](#names) |
 | `moderators_kick_at_most` | `"1d"` | The longest kick with a time a moderator can give, and lift with `!pardon`. Admins and faculty have no limit. A value that isn't a time counts as `"1d"`. See [commands.md](commands.md#kicks-with-a-time-and-bans) |
-| `across_servers` | `true` | Huragok's moderation (`!` commands, Vergil, the relay, the window's console) reaches every server: a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), and so does an admin Huragok makes. The game's own `/kick` and `/ban`, and votes, stay on their server (only written on the player's record; `!banall` puts a `/ban` on every server). `false`: Huragok's stay on theirs too |
+| `across_servers` | `true` | Moderation is every server's, whoever gives it (`!` commands, Vergil, Discord, the console, the relay, the window, and the game's own `/kick`, `/ban` and scoreboard): a mute follows the player to any server, a kick keeps them off every server until its time is up, a ban goes on Huragok's own list and every server's ban list (a new server's too), an unban lifts every ban on them everywhere, and an admin made or unmade is one on every server. A ban already on one server's own list (a `/ban` from before) becomes every server's at the next look. A rank on one server is a rank on all of them, in game and in Discord. Only a vote's kick and the server's own stay on their server, and so does an admin's own `/ban` or `/kick` of a fellow admin or faculty. `false`: each server's moderation and ranks are its own. The update to 0.7.0 turns it on once where it was off |
 | `cooldown_seconds` | `10` | Lines this close together count as one strike |
 | `split_seconds` | `10` | Catch a word split over lines this close together |
 | `messages` | | Change what players read: `chat`, `name`, `manual`, `next`, `muted`, and `public` (what everyone reads; `""` says nothing), using `{notice}` (the Superintendent's face and phrase for it), `{detail}`, `{label}`, `{strike}`, `{action}`, `{next}`, `{by}`, `{player}`, and `{left}` in `muted`. For a brace players should read, write `{{` or `}}`: `check` names a message with a stray one, and while running such a message falls back to the default rather than stopping automod |

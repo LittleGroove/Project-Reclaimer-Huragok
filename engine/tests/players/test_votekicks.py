@@ -142,19 +142,20 @@ def test_a_refused_vote_is_explained_to_whoever_called_it(tmp_path: Path, run, c
                 sup.bus.emit("log.vote_refused", SERVER, caller=caller, reason=reason)
 
             refused("Bravo", "Charlie can't be vote-kicked on this server.")
-            assert await wait_for(lambda: tells_to(fake, BRAVO)) == [
-                "[^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here, so no vote can kick them. If they're "
-                "breaking the rules, tell the host."]
+            await wait_for(lambda: "tell the host." in " ".join(tells_to(fake, BRAVO)))
+            assert " ".join(tells_to(fake, BRAVO)) == (  # in pieces of 120 characters
+                "[^_^] BE A HERO! REPORT VIOLATORS! Charlie 77777777 (#6) [LG Test Server] is a member here, so no vote "
+                "can kick them. If they're breaking the rules, tell the host.")
             assert "Bravo tried to vote-kick Charlie, a member here; the server refused" in caplog.text
             refused("Bravo", "Mod can't be vote-kicked on this server.")  # told a moment ago: not again
             refused("Alice", "Admin can't be vote-kicked on this server.")
             await wait_for(lambda: tells_to(fake, ALICE))
-            assert "Admin is an admin here" in tells_to(fake, ALICE)[0]
+            assert "[LG Test Server] is an admin here" in tells_to(fake, ALICE)[0]
             refused("Faculty", "Bravo can't be vote-kicked on this server.")  # the host's own list: no role to explain
             refused("Faculty", "Another vote is under way. Wait for it to end.")
             refused("Mod", "Charlie can't be vote-kicked on this server.")  # handled in order: once Mod is told,
             await wait_for(lambda: tells_to(fake, MOD))                      # the two before are done
-            assert len(tells_to(fake, BRAVO)) == 1 and not tells_to(fake, FACULTY)
+            assert len(tells_to(fake, BRAVO)) == 2 and not tells_to(fake, FACULTY)  # one line, in two pieces
             assert "Faculty tried to vote-kick Bravo; the server refused" in caplog.text
             assert not fake.named("cancelvote")
 
@@ -174,8 +175,8 @@ def test_on_a_program_without_the_list_a_vote_on_them_is_cancelled(tmp_path: Pat
 
             await fake.event("vote", state="called", subject="kick Charlie", caller="Bravo")
             assert (await wait_for(lambda: fake.named("cancelvote")))[0]["by"] == "Vergil"
-            await wait_for(lambda: "[^_^] BE A HERO! REPORT VIOLATORS! Charlie is a member here: no vote can kick them."
-                           in says(fake))
+            await wait_for(lambda: "[^_^] BE A HERO! REPORT VIOLATORS! Charlie 77777777 (#6) [LG Test Server] is a member "
+                                   "here: no vote can kick them." in " ".join(says(fake)))
             await wait_for(lambda: "cancelled Bravo's vote to kick Charlie, a member here" in caplog.text)
             await fake.event("vote", state="called", subject="kick Mod (A7B)", caller="Alice")  # same-name suffix
             await wait_for(lambda: len(fake.named("cancelvote")) == 2)

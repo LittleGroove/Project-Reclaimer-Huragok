@@ -118,10 +118,10 @@ def test_a_note_written_read_and_taken_away(tmp_path: Path, run: Any, fake: Fake
             await rcon.join(3, "Alice", ALICE)
             await wait_for(lambda: huragok.storage.player(ALICE) is not None, timeout=10)
             _, token = fake.slash("note", "add", player=ALICE, text="seen spawn killing")
-            assert "Note #1 on **Alice**" in await answer_text(fake, token)
+            assert "Note 1 on **Alice** `cccccccc`" in await answer_text(fake, token)  # "note 1": a # is only a player's number (H6)
             _, token = fake.slash("note", "list", player="Alice")  # typed, not picked: fine when only one has gone by it
             said = await answer_text(fake, token)
-            assert "#1 " in said and "seen spawn killing" in said
+            assert "Note 1, " in said and "seen spawn killing" in said
             _, token = fake.slash("note", "remove", number=1)
             assert "gone" in await answer_text(fake, token)
             _, token = fake.slash("note", "list", player=ALICE)
@@ -156,7 +156,7 @@ def test_who_may_do_what(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
             assert "for staff" in await answer_text(fake, token)
             assert huragok.storage.notes_of(ALICE) == []
             _, token = fake.slash("note", "add", user=OTHER, roles=(PROBATION_ROLE,), player=ALICE, text="on probation, and watching")
-            assert "Note #1" in await answer_text(fake, token)
+            assert "Note 1" in await answer_text(fake, token)
             _, token = fake.slash("note", "remove", user=OTHER, roles=(PROBATION_ROLE,), number=1)
             assert "takes a moderator" in await answer_text(fake, token)
             _, token = fake.slash("flag", "set", user=OTHER, roles=(PROBATION_ROLE,), player=ALICE, flag="watch")
@@ -234,7 +234,7 @@ def test_a_flagged_player_joining_tells_staff_in_the_flags_colour(tmp_path: Path
             await rcon.join(3, "Alice", ALICE)
             await wait_for(lambda: any("flagged" in str(card.get("description")) for card in cards_of(fake)), timeout=15)
             card = next(card for card in cards_of(fake) if "flagged" in str(card.get("description")))
-            assert card["description"] == "**Alice** is on, flagged **voice abuser**: shouting"
+            assert card["description"] == f"**Alice** `cccccccc` [{SERVER}] is on, flagged **voice abuser**: shouting"
             assert card["color"] == 0xE67E22  # orange, from [notes] flags
 
     run(scenario())
@@ -298,6 +298,6 @@ def test_a_change_is_on_the_audit_feed(tmp_path: Path, run: Any, fake: FakeDisco
             await wait_for(lambda: huragok.storage.player(ALICE) is not None, timeout=10)
             _, token = fake.slash("flag", "set", player=ALICE, flag="watch")
             await answer_text(fake, token)
-            await wait_for(lambda: any("flagged Alice watch" in str(post.get("content")) for post in fake.posted), timeout=15)
+            await wait_for(lambda: any(f"flagged Alice `cccccccc` [{SERVER}] watch" in str(post.get("content")) for post in fake.posted), timeout=15)  # by their tag
 
     run(scenario())

@@ -13,11 +13,11 @@ from discord import ui
 
 from ..core.storage import acting
 from ..players.relay import READ_ONLY, without_addresses
-from ..players.router import LOOKING
+from ..players.router import LOOKING, split_words
 from ..rcon import masked
 from ..servers.state import Player
 from . import cards, consoleclear, features, kept, tidy
-from .client import SaysWhatWentWrong, acting_as, answer, someone_from
+from .client import SaysWhatWentWrong, acting_as, answer, named, someone_from
 from .config import colour_value
 from .ranks import Someone, as_they_may_see, can_act, game_rank, rank_of, rank_to_run, times_a_kick
 from .speakers import say
@@ -133,8 +133,28 @@ async def heard(part: DiscordPart, message: discord.Message) -> None:
     await _ask_or_run(part, message, server, line, someone)
 
 
+RAW_MODERATION = {"ban", "unban", "kick", "pardon", "mute", "unmute", "admin"}  # console lines that reach every server with across_servers on (players/reach.py)
+
+
+def reaches_everywhere(part: DiscordPart, line: str) -> bool:
+    """Whether a line's command reaches every server, whichever one it's sent to: a list's or a role's (/banword, /promote), and with [automod] across_servers on a
+    mute, kick or ban, typed with ! or without (the console's own `ban` too: the server names it as the console's, and Huragok passes it on)."""
+    from .slash import EVERYWHERE, MODERATING
+
+    prefix = part.ctx.command_prefix
+    word = line.removeprefix(prefix).partition(" ")[0].lower()
+    if line.startswith(prefix):
+        return word in EVERYWHERE or (word in MODERATING and part.across())
+    return word in RAW_MODERATION and part.across()
+
+
+def where_line_goes(part: DiscordPart, server: str, line: str) -> str:
+    return "every server" if reaches_everywhere(part, line) else cards.clean(server)
+
+
 def _rank_for_line(part: DiscordPart, someone: Someone, server: str, line: str) -> str:
-    """A ! command that reaches every server takes the rank they have on all of them. A console line is the server's own, so it's their rank there."""
+    """A ! command that reaches every server takes the rank they have on all of them; a console line, their rank on its server. With across_servers on, a rank on one server is
+    a rank on all of them (ranks.everywhere), so either is the same: up to 0.7.0 a console `ban` reached every server on one server's rank (the scope audit, A1)."""
     prefix = part.ctx.command_prefix
     if line.startswith(prefix):
         command, _, rest = line.removeprefix(prefix).partition(" ")
@@ -154,7 +174,7 @@ async def _ask_or_run(part: DiscordPart, message: discord.Message, server: str, 
             await _gone_if_secret(message, line)
         return
     if line.startswith(prefix):
-        why = cards.clean(part.ctx.refuses(word, None, server=server, player=Player(0, acting_as(part, message.author), f"discord:{message.author.id}"), role=rank))  # it names what they typed
+        why = cards.clean(as_they_may_see(part.file, "moderator", part.ctx.refuses(word, None, server=server, player=Player(0, acting_as(part, message.author), f"discord:{message.author.id}"), role=rank)))  # it names what they typed; everyone with a rank reads it
     else:
         why = _no_raw_lines(part, rank)
     if why:
@@ -165,8 +185,8 @@ async def _ask_or_run(part: DiscordPart, message: discord.Message, server: str, 
         return
     if word in {str(name).lower() for name in part.file.section("console").get("confirm") or []}:
         view = _Sure(part, message, server, line)
-        try:
-            view.asked = await message.reply(say(part.file, "console.sure", line=_code(masked(line)), server=cards.clean(server)), view=view, mention_author=False, allowed_mentions=discord.AllowedMentions.none())
+        try:  # who the line comes to, after it: "!kick 4" says nothing of who #4 is until it's done (the identity audit of 21 November 2026)
+            view.asked = await message.reply(say(part.file, "console.sure", line=_code(masked(line)), server=where_line_goes(part, server, line)) + _resolved(view.who), view=view, mention_author=False, allowed_mentions=discord.AllowedMentions.none())
         finally:
             await _gone_if_secret(message, line)  # not after they've said Yes: it shouldn't sit there while they decide
     else:
@@ -188,7 +208,9 @@ async def _run(part: DiscordPart, message: discord.Message, server: str, line: s
 async def _running(part: DiscordPart, message: discord.Message, server: str, line: str, someone: Someone) -> None:
     config = part.file
     rank = _rank_for_line(part, someone, server, line)
-    who = acting_as(part, message.author)
+    who = acting_as(part, message.author)  # as the game and its record have them; their cards name them as part.actor does
+    part.real_names[f"discord:{message.author.id}"] = named(message.author)
+    who_it_was = who_on_the_line(part, server, line, f"discord:{message.author.id}")  # before it's done: a kick takes them off the server
     prefix = part.ctx.command_prefix
     raw = not line.startswith(prefix)
     if raw:
@@ -209,7 +231,9 @@ async def _running(part: DiscordPart, message: discord.Message, server: str, lin
     if worked:
         changes_only = config.section("console").get("audit", "changes") == "changes"
         if not changes_only or (name_of_line(part, line) not in LOOKING and name_of_line(part, line) not in READ_ONLY):
-            part.audit("console", say(config, "audit.console", who=who, server=server, line=masked(line)), merge=True)
+            every = reaches_everywhere(part, line)  # who #4 was, as it was typed: a day later, "!kick 4" says nothing. Each piece cleaned once
+            part.audit("console", cards.Shown(say(config, "audit.console", who=part.who(message.author), server=cards.clean(server), where="" if every else f" (on {cards.clean(server)})",
+                                                  line=cards.clean(masked(line)) + _resolved(who_it_was))), merge=True)
         if raw and line.partition(" ")[0].lower() == "pardon":
             _pardon_on_record(part, server, line.partition(" ")[2].strip(), who)
     fit_to_read = without_addresses(as_they_may_see(config, "moderator", (text if raw else part.named_in(text)) or say(config, "console.done")), None)[0]  # everyone with a rank reads this channel, so everyone's answer is what the lowest may see: an address is for the window or the relay
@@ -258,6 +282,30 @@ def _no_raw_lines(part: DiscordPart, rank: str) -> str:
 
 def _code(text: str) -> str:
     return "`" + str(text).replace("`", "'")[:300] + "`"
+
+
+def who_on_the_line(part: DiscordPart, server: str, line: str, asker: str) -> str:
+    """Who a line's player comes to, the one way (slash.who_it_is), with what was typed for them: a Huragok command
+    that names a player first, or the server's own moderation (`kick 3`, whose 3 is #3). "" when the line names nobody,
+    or it can't be told here: the command asks, or says why not."""
+    from .slash import who_it_is
+
+    prefix = part.ctx.command_prefix
+    word, _, rest = line.removeprefix(prefix).partition(" ")
+    word = word.lower()
+    if line.startswith(prefix):
+        spec = next((spec for spec, _ in part.ctx.game_commands() if word == spec.name or word in spec.aliases), None)
+        if spec is None or not spec.player:
+            return ""
+    elif word not in RAW_MODERATION - {"admin"}:
+        return ""
+    words = split_words(rest)
+    return who_it_is(part, words[0], server, asker) if words else ""
+
+
+def _resolved(shown: str) -> str:
+    """" → Nate `1a2b3c4d` (#4) [HugeGrass]" after a line, or nothing."""
+    return f" → {shown}" if shown else ""
 
 
 async def _reply(message: discord.Message, text: str, **more: Any) -> None:
@@ -319,6 +367,7 @@ class _Sure(SaysWhatWentWrong, ui.View):
         super().__init__(timeout=SURE_SECONDS)
         self.part, self.message, self.server, self.line = part, message, server, line
         self.asked: discord.Message | None = None
+        self.who = who_on_the_line(part, server, line, f"discord:{message.author.id}")
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         consoleclear.touched(self.part, self.message.channel.id)
@@ -330,7 +379,7 @@ class _Sure(SaysWhatWentWrong, ui.View):
     @ui.button(label="Yes", style=discord.ButtonStyle.danger)
     async def yes(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
         self.stop()
-        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=_code(masked(self.line)), server=cards.clean(self.server)), view=None)
+        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=_code(masked(self.line)), server=where_line_goes(self.part, self.server, self.line)) + _resolved(self.who), view=None)
         await _run(self.part, self.message, self.server, self.line, someone_from(interaction.user))
 
     @ui.button(label="No", style=discord.ButtonStyle.secondary)

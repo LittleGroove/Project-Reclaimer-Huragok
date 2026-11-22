@@ -90,6 +90,26 @@ def test_the_countdown_ladder_warns_then_restarts(world, run) -> None:
     run(scenario())
 
 
+def test_a_row_lists_each_player_apart(world, run) -> None:
+    """`online`: each player on with their number, name and ID (the P list, the window's player finder): a name with a
+    comma in it is one player. `names` stays, joined, for the dashboard's column and an older version's live.json."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+
+    async def scenario() -> None:
+        fleet.boot()
+        await cycle(manager, clock)
+        state.connected = True
+        await cycle(manager, clock)
+        state.players[2] = Player(2, "Bob, Jr", ALICE, team="red", admin=True)
+        state.players[1] = Player(1, "", "b" * 64)  # 0.10: no name yet
+        row = manager.row(1, clock.now)
+        assert row["names"] == "?, Bob, Jr"
+        assert [(p["number"], p["name"], p["id"], p["team"], p["admin"]) for p in row["online"]] == [
+            (1, "", "b" * 64, "", False), (2, "Bob, Jr", ALICE, "red", True)]
+
+    run(scenario())
+
+
 def test_cancel_and_the_empty_shortcut(world, run) -> None:
     clock, settings, backend, fleet, manager, client, state, seen = world
 

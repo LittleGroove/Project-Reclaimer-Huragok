@@ -8,36 +8,86 @@ B bans, admins and the VPN block, U updates (Huragok's, the server program's, Wo
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Callable
 
 from ...core.events import Event
+from ...core.tags import NO_NAME, shown_name, tag
+from ...core.text import is_player_id
 from ...program.plays import applies_when, check_plays, plays_problem, write_plays
 from ...program.settings import (
     APPLIES, FOLDER_SETTINGS, GROUPS, SERVER_SETTINGS, can_reset, catalogue, check_path, check_value, display, offered,
     parse, reset, summary, write,
 )
 from ...games.bungie import GAMES
+from ...players.targets import QUOTES, is_team, is_time, plain
 from ...rcon import masked as mask_console_line
 from ..controllers import Row
+from ..whoswho import Known, console_line, find
 from .base import Screens
 from .files import FILES
 
+log = logging.getLogger(__name__)
+
+ID_LISTS = ("admins", "vote_kick_immune")  # dedicated.toml's settings that list player IDs: shown with who each is
 
 
-def describe_event(event: Event) -> str | None:
-    """One line for a server event, as a console shows it; None for events not worth a line."""
+def _number(value: Any) -> int:
+    """A player's #number as an event gives it; 0 for none."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    return int(value) if isinstance(value, str) and value.isdecimal() else 0
+
+
+def _player(event: Event, known: Known | None) -> str:
+    """The player an event is about, as their tag: the #number they had on the event's server, when it gives one (the
+    console's own, so typed back there), and the server they were on. An address ban names no player: the address; an
+    unban by what was typed: that."""
+    data = event.data
+    player_id = str(data.get("id") or "").lower()
+    given = str(data.get("name") or "")
+    number = _number(data.get("number"))
+    if not is_player_id(player_id) and not number:
+        return shown_name(given or data.get("ip") or data.get("target") or "") or "someone"
+    server = str(event.server or "")
+    if not number and is_player_id(player_id):
+        live = known.on(player_id) if known is not None else None
+        server = live.server if live is not None else ""
+        number = live.number if live is not None and live.server == event.server else 0
+    if not given and is_player_id(player_id) and event.name != "rcon.join":  # 0.10's join names nobody yet
+        given = known.name(player_id) if known is not None else ""
+    return tag(given or (NO_NAME if is_player_id(player_id) else ""), player_id, handle=f"#{number}" if number else "",
+               server=server)
+
+
+def _actor(data: dict[str, Any], known: Known | None) -> str:
+    """" by Alice 33cc44dd": who acted, by their tag when the event gives their player ID."""
+    by, by_id = str(data.get("by") or ""), str(data.get("by_id") or "").lower()
+    if is_player_id(by_id):
+        return f" by {tag(by or (known.name(by_id) if known is not None else ''), by_id)}"
+    return f" by {shown_name(by)}" if shown_name(by) else ""
+
+
+def describe_event(event: Event, known: Known | None = None) -> str | None:
+    """One line for a server event, as a console shows it; None for events not worth a line. Each player as their tag
+    (core/tags.py); `known`: who the window knows a player ID to be, for an event that names nobody (0.10 names a
+    player after they join, and a leave can name nobody)."""
     name = event.name.removeprefix("rcon.")
     clock = time.strftime("%H:%M:%S", time.localtime(event.time))
     data = event.data
-    who = str(data.get("name") or data.get("target") or "")
-    by = f" by {data['by']}" if data.get("by") else ""
+    who = _player(event, known)
+    by = _actor(data, known)
     if name == "chat":
         channel = str(data.get("channel") or "all")
         prefix = "" if channel == "all" else f"[{channel}] "
         return f"{clock} {prefix}{who}: {data.get('text', '')}"
     if name == "join":
-        return f"{clock} + {who} joined (#{data.get('number', '?')}{', admin' if data.get('admin') else ''})"
+        return f"{clock} + {who} joined{' (admin)' if data.get('admin') else ''}"
+    if name == "state.named":
+        return f"{clock} = {who}: their name came in"
     if name == "leave":
         return f"{clock} - {who} left"
     if name == "refused":
@@ -45,6 +95,10 @@ def describe_event(event: Event) -> str | None:
     if name in ("kick", "ban", "unban", "mute", "unmute", "pardon", "admin_added", "admin_removed"):
         reason = f": {data['reason']}" if data.get("reason") else ""
         return f"{clock} * {name.replace('_', ' ')} {who}{by}{reason}"
+    if name in ("role_added", "role_removed"):
+        role = f"role {data['role']}" if data.get("role") else "a role"
+        given = name == "role_added"
+        return f"{clock} * {role} {'given to' if given else 'taken from'} {who}{by}"
     if name == "vote":
         return f"{clock} vote {data.get('state', '')}: {data.get('subject', '')} (by {data.get('caller', '?')})"
     if name == "phase":
@@ -75,6 +129,48 @@ class ManageScreens(Screens):
             self.by_name = (name or "").strip()
         return self.by_name
 
+    def _known(self) -> Known:
+        """Who's who for one screen: the servers' players from the dashboard's rows, the rest from the records."""
+        return Known(self.controller.rows, lambda: getattr(self._settings(), "database", None))
+
+    async def _player_line(self, server: str, line: str, known: Known) -> str | None:
+        """A console line that names a player, with that player found first, the way the game's commands find one
+        (whoswho.find): a #number, a name, a player ID or its first 8 characters. A name several players have, or one that
+        only looks like someone's, is a numbered list to pick from. The line as the server is sent it: the player as
+        their #number when they're on it, else as their player ID, and who that is said beneath. None: nobody (said
+        why), nothing sent. A line that names no player, an address, or a server whose players the window can't see,
+        goes as typed."""
+        parsed = console_line(line, known.is_name)
+        if parsed is None:
+            return line
+        here = known.here(server)
+        words, after = parsed.ref.split(), (parsed.rest.split() or [""])[0]
+        expected = is_time(after) or is_team(after) or after.lower() in ("0", "voice", "text", "all")
+        if here and parsed.ref[:1] not in QUOTES and after and not expected:
+            # "kick nate higgins spam" with Nate and Nate Higgers on: it can't be told which (a typo), so neither.
+            longer = [p for p in here if len(p.name.split()) > len(words)
+                      and plain(" ".join(p.name.split()[:len(words)])) == plain(parsed.ref)]
+            if longer and known.is_name(parsed.ref):
+                self.note(f"'{parsed.ref} {parsed.rest.split()[0]}…' could be someone else: put the name in quotes, or "
+                          f"use the #number. Longer names that start the same: "
+                          + "; ".join(known.tag(p.id, here=server) for p in longer), "yellow")
+                return None
+        finding = find(known, server, parsed.ref, scope="here" if parsed.sends == "here" else "seen")
+        if finding.as_typed:
+            return line
+        if finding.unknown and parsed.sends == "id":
+            self.note(f"Nobody called '{parsed.ref}' is on a server or in Huragok's records: sent as typed, for the "
+                      "server to find in its own list.", "gray")
+            return line
+        found = await self.pick_player(finding, server)
+        if found is None:
+            return None
+        sent = parsed.sent(found, server)
+        self.note(f"{mask_console_line(sent)}  →  {found.tag(server)}", "cyan")
+        log.info("[%s] the window's console line %s → %s", server, mask_console_line(sent),
+                 found.tag(server, whole=True))
+        return sent
+
     async def _console(self, server: str, line: str) -> list[str]:
         """One console command through the supervisor's connection; the reply's lines, printed."""
         results = await self.controller.verb("rcon", server, text=line, by=self.by_name or "")
@@ -102,10 +198,14 @@ class ManageScreens(Screens):
         await self._who()
         self.heading(row["name"], "Console", note=f"as {self.by_name}" if self.by_name else "as the Superintendent")
         self.note("For example:  players   status   say hello   kick #3 camping   mute Bravo 30m   maps   help")
-        self.note("Events arrive between commands; an empty line (or Esc) goes back to the dashboard.")
+        self.note("A player is their #number, name, or player ID (or its first 8 characters); a name several players "
+                  "share is asked about first. Events arrive between commands; an empty line (or Esc) goes back to "
+                  "the dashboard.")
+        known = self._known()
 
         def on_event(event: Event) -> None:
-            line = describe_event(event)
+            known.learn(event.get("id"), event.get("name"))
+            line = describe_event(event, known)
             if line:
                 self.held.push(f"    {line}", "gray" if event.name != "rcon.chat" else None)
 
@@ -116,7 +216,9 @@ class ManageScreens(Screens):
                 line = await self.prompt_line(f"  {row['name']}>", masked=mask_console_line)
                 if not line:
                     return
-                await self._console(row["name"], line)
+                sent = await self._player_line(row["name"], line, known)
+                if sent is not None:
+                    await self._console(row["name"], sent)
         finally:
             unwatch()
 
@@ -209,6 +311,15 @@ class ManageScreens(Screens):
                 continue
             await self._settings_group(settings, server, row, GROUPS[int(answer) - 1])
 
+    def _setting_text(self, setting: Any, value: Any, known: Known | None = None) -> str:
+        """A setting's value as the screens show it; a list of player IDs (admins, vote_kick_immune) with who each is,
+        where Huragok knows: "Alice 1a2b3c4d, Bravo 9f8e7d6c". Only shown so: the file keeps the IDs alone."""
+        if setting.key in ID_LISTS and isinstance(value, list) and value:
+            known = known or self._known()
+            known.names([str(v) for v in value])
+            return ", ".join(known.tag(str(v)) if is_player_id(str(v)) else str(v) for v in value)
+        return display(setting, value)
+
     async def _settings_group(self, settings: Any, server: Any, row: Row, group: tuple[str, str, str]) -> None:
         key, title, what = group
         version = await self._program_version(settings, server, row)
@@ -217,10 +328,11 @@ class ManageScreens(Screens):
                        if s.group == key and offered(s, version)]
             self.heading(server.name, "Settings", title, note=what)
             rows = []
+            known = self._known()
             for setting, value, where in entries:
                 origin = "" if where in ("this server", "the file", f"[{setting.scope}]", "settings.toml") else \
                     f"({where})"
-                rows.append((setting.name, display(setting, value), origin, setting.help))
+                rows.append((setting.name, self._setting_text(setting, value, known), origin, setting.help))
             panel = self.listing(rows, wrap=True)
             if len(entries) == 1:
                 answer = "1" if await self.prompt_yes_no(f"  Change {entries[0][0].name}?", True) else ""
@@ -268,8 +380,15 @@ class ManageScreens(Screens):
                     "lines": "one line, or several separated by |", "time": "HH:MM on the 24-hour clock, empty for none",
                     "path": f"relative to {server.folder.name}", "str": "text"}.get(setting.kind, "text")
             secret = "password" in setting.key
-            text = await self.prompt_line(f"  New value ({hint}; now {display(setting, value)}; Enter leaves it)",
-                                          secret=secret)
+            now = display(setting, value)
+            if setting.key in ID_LISTS and isinstance(value, list) and value:
+                known = self._known()
+                known.names([str(v) for v in value])
+                self.note("Now:")
+                for entry in value:  # each whole, as it's typed back; with who it is, where that's known
+                    self.note(f"  {known.tag(str(entry), whole=True) if is_player_id(str(entry)) else entry}")
+                now = f"the {len(value)} above"
+            text = await self.prompt_line(f"  New value ({hint}; now {now}; Enter leaves it)", secret=secret)
             if text is None:
                 return
             if not text.strip():
@@ -319,7 +438,7 @@ class ManageScreens(Screens):
             self.note(f"{setting.key}: this server's own value taken out; the default applies. Takes effect: "
                       f"{APPLIES[setting.applies]}.", "green")
         else:
-            self.note(f"{setting.key} = {display(setting, new)} written for {setting.where}. Takes effect: "
+            self.note(f"{setting.key} = {self._setting_text(setting, new)} written for {setting.where}. Takes effect: "
                       f"{APPLIES[setting.applies]}. The dashboard's events show the server's answer.", "green")
         if setting.key == "max_players":
             self._by_players_reach(server)
@@ -791,6 +910,7 @@ class ManageScreens(Screens):
             await self.wait_any_key(20)
             return
         await self._who()
+        known = self._known()
         while True:
             self.heading(row["name"], "Bans, admins and the VPN block",
                          note=f"as {self.by_name}" if self.by_name else "as the Superintendent")
@@ -824,6 +944,8 @@ class ManageScreens(Screens):
                     continue
                 await self._console(row["name"], f"vpn {address}".strip())
             else:
+                # A player is found as the game finds one (a name several have is asked about), then sent by their
+                # #number or player ID: an ID's first 8 characters do too.
                 prompts = {"U": ("unban", "Name, player ID, device fingerprint, IP or range"),
                            "N": ("ban", "Player ID, IP or range, then a time (30m, 7d) and a reason, e.g. "
                                         "203.0.113.4 7d spamming"),
@@ -836,7 +958,9 @@ class ManageScreens(Screens):
                 target = await self.prompt_line(f"  {command}: {hint}")
                 if not target:
                     continue
-                await self._console(row["name"], f"{command} {target}")
+                line = await self._player_line(row["name"], f"{command} {target}", known)
+                if line is not None:
+                    await self._console(row["name"], line)
 
     # U: updates ------------------------------------------------------------------------------
 

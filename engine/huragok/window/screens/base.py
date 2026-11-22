@@ -30,6 +30,7 @@ from ...games.plays import game_type_game, map_game, takes
 from ...program.dedicated import SLOW, Dedicated, DedicatedError, ToolResult, tool_for
 from ..controllers import Row
 from ..tui import Parts, cells, format_listing, heading_parts, pad
+from ..whoswho import Finding, Found
 
 
 PROMPT_TIMEOUT = 120.0
@@ -350,6 +351,24 @@ class Screens:
                 return []
             picked.append(row)
         return picked[:1] if single else picked
+
+    async def pick_player(self, finding: Finding, here: str = "") -> Found | None:
+        """The player a typed reference came to (whoswho.find): the one; or, when it could be several, the one the host
+        picks from them, numbered, each as their tag with what tells them apart. None: nobody (said why), or the host
+        picked none. `here`: the server whose console the host types to, whose players show their #number."""
+        if finding.one is not None:
+            return finding.one
+        if not finding.found:
+            self.note(finding.why or "Nobody: nothing was done.", "yellow")
+            return None
+        self.note(finding.head or f"That could be {len(finding.found)} players:", "yellow")
+        panel = self.listing([(found.describe(here),) for found in finding.found])
+        answer = await self.prompt_line("  Which one? (number; Esc: none of them)", panel=panel)
+        if answer and answer.strip().isdecimal() and 1 <= int(answer) <= len(finding.found):
+            return finding.found[int(answer) - 1]
+        if answer:
+            self.note(f"'{answer}' isn't one of them: nothing was done.", "yellow")
+        return None
 
     def show_results(self, results: list[tuple[str, Result]]) -> None:
         for name, result in results:

@@ -30,7 +30,15 @@ class Part:
     def name_of(self, player_id: str, given: str = "") -> str:
         return given or player_id[:8]
 
+    def on_server(self, player_id: str) -> str:
+        return self.where.get(player_id, "")
+
+    def actor(self, by_id: str, by: str = "") -> str:
+        """As the part writes whoever did it: here, by the name the record has."""
+        return cards.Shown(clean(by or "someone"))
+
     def __init__(self, path: Path, facts: Facts | None = None) -> None:
+        self.where: dict[str, str] = {}  # player ID -> the server they're on now
         self.file = load(path)
         self.facts = facts
         self.real_names: dict[str, str] = {}
@@ -117,7 +125,8 @@ def test_a_kick_says_who_what_why_and_its_case(tmp_path: Path) -> None:
     feeds.handle(kick())
     [post] = part.posts
     card = post["embeds"][0]
-    assert card["description"] == "Mod kicked **Alice** (spam)" and card["footer"]["text"] == "Alpha · case 1432"
+    # Who it's about, the one way (core/tags.py): the start of their ID tells two of a name apart; no server, as they're on none now
+    assert card["description"] == "Mod kicked **Alice** `cccccccc` (spam)" and card["footer"]["text"] == "Alpha · case 1432"
     assert card["title"] == "Kick · CRIME DOESN'T PAY!"
     assert post["channel"] == LOGS and post["persona"] == "vergil" and post["flags"] == 4096
     assert post["allowed_mentions"] == {"parse": [], "roles": []}
@@ -159,7 +168,7 @@ def test_vergils_own_action_makes_no_card_as_its_strike_does(tmp_path: Path) -> 
 def test_any_text_can_be_reworded(tmp_path: Path) -> None:
     feeds, part, _ = feeds_for(tmp_path, ON + '[text]\n"moderation.kick" = "{player} got the boot from {by}"\n')
     feeds.handle(kick())
-    assert part.posts[0]["embeds"][0]["description"] == "**Alice** got the boot from Mod"
+    assert part.posts[0]["embeds"][0]["description"] == "**Alice** `cccccccc` got the boot from Mod"
 
 
 @pytest.mark.parametrize("text, hidden", [("spam from 203.0.113.9:11774", "203.0.113.9"), ("on 2001:db8:1:2:3:4:5:6", "2001:db8")])
@@ -181,13 +190,13 @@ def test_a_failed_action_says_so(tmp_path: Path) -> None:
     feeds, part, _ = feeds_for(tmp_path, ON)
     feeds.handle(kick(ok=False, text="no such player"))
     card = part.posts[0]["embeds"][0]
-    assert "Didn't work: Mod kicked **Alice** (spam) (no such player)" in card["description"]
+    assert "Didn't work: Mod kicked **Alice** `cccccccc` (spam) (no such player)" in card["description"]
 
 
 def test_an_action_for_someone_not_on_says_when(tmp_path: Path) -> None:
     feeds, part, _ = feeds_for(tmp_path, ON)
     feeds.handle(kick(pending=True))
-    assert part.posts[0]["embeds"][0]["fields"][0]["value"] == "As they next join: they aren't on now"
+    assert part.posts[0]["embeds"][0]["fields"][0]["value"] == "As they next join, on any server: they aren't on now"  # whichever server they join next
 
 
 def test_a_cards_colour_is_its_lines(tmp_path: Path) -> None:
@@ -245,7 +254,7 @@ def test_dry_run_is_for_vergils_feed_alone(tmp_path: Path) -> None:
     strike = Event("automod.strike", "Alpha", {"player_id": ALICE, "player_name": "Alice", "rule": "slurs", "strike": 2, "action": "mute 1h",
                                                "evidence": "a bad word", "dry_run": True, "ok": True})
     feeds.handle(strike)
-    assert "Vergil's only watching: **Alice** would get strike" in part.posts[0]["content"]  # nothing to act on, so one line
+    assert "Vergil's only watching: **Alice** `cccccccc` would get strike" in part.posts[0]["content"]  # nothing to act on, so one line
     feeds, part, _ = feeds_for(tmp_path, "[feed.vergil]\nenabled = true\n[messages]\nvergil-would = { post = false }\n")
     feeds.handle(strike)
     assert part.posts == []
@@ -283,7 +292,7 @@ def test_every_line_of_the_file_has_a_card_and_every_card_a_line(tmp_path: Path)
     config = load(tmp_path / "none")
     made = {card.message for card in sample_cards(config)}
     assert made == set(config.section("messages")) and len(made) >= 50
-    assert all(card.line and "{" not in card.line for card in sample_cards(config))
+    assert [card.line for card in sample_cards(config) if not card.line or "{" in card.line] == []  # each one filled in: none blank, no {placeholder} left
 
 
 def test_a_message_goes_where_its_line_says(tmp_path: Path) -> None:
@@ -514,7 +523,7 @@ def test_only_first_joins_post_unless_asked(tmp_path: Path) -> None:
     feeds.handle(_joined())
     assert part.posts == []  # seen before
     feeds.handle(_joined("c" * 64, "Charlie"))
-    assert "**Charlie** joined for the first time" in part.posts[0]["content"]
+    assert "**Charlie** `cccccccc` [Alpha] joined for the first time" in part.posts[0]["content"]  # on the server they joined
     assert "203.0.113.9" not in str(part.posts)
 
 
@@ -523,7 +532,7 @@ def test_a_new_name_on_a_known_player(tmp_path: Path) -> None:
     part.visits["b" * 64] = 1.0
     part.names["b" * 64] = "OldName"
     feeds.handle(_joined())
-    assert "**Bravo** was last seen as OldName" in part.posts[0]["content"]
+    assert "**Bravo** `bbbbbbbb` [Alpha] was last seen as OldName" in part.posts[0]["content"]
 
 
 def test_a_regular_back_after_a_long_time(tmp_path: Path) -> None:
@@ -544,7 +553,7 @@ def test_refused_joins_and_leaves(tmp_path: Path) -> None:
     feeds.handle(Event("rcon.refused", "Alpha", {"id": "b" * 64, "name": "Bravo", "ip": "203.0.113.9", "reason": "banned"}))
     feeds.handle(Event("rcon.leave", "Alpha", {"id": "b" * 64, "name": "Bravo", "number": 1}))
     said = [p["content"] for p in part.posts]
-    assert said == ["Alpha · **Bravo** was turned away: banned", "Alpha · **Bravo** left"]
+    assert said == ["Alpha · **Bravo** `bbbbbbbb` was turned away: banned", "Alpha · **Bravo** `bbbbbbbb` [Alpha] left"]  # turned away: never on it
 
 
 # The real part, on the fake Discord ---------------------------------------------------------------------------------
@@ -594,7 +603,7 @@ def test_every_source_of_moderation_reaches_the_channel_once(tmp_path: Path, run
             assert case is None or str(case) in card["embeds"][0]["footer"]["text"]
             await rcon.event("ban", id="b" * 64, name="Bravo", by="Admin", reason="cheating", expires=0)  # someone's own /ban in game
             await wait_for(lambda: len(fake.posted) == 2, timeout=15)
-            assert "Admin banned **Bravo** (cheating)" in fake.posted[1]["embeds"][0]["description"]
+            assert "Admin banned **Bravo** `bbbbbbbb` (cheating)" in fake.posted[1]["embeds"][0]["description"]
             assert fake.unversioned == 0
 
     run(scenario())

@@ -62,6 +62,25 @@ def size_text(size: int, places: int = 0) -> str:
     return f"{size} bytes"
 
 
+CHAT_LINE = 120  # characters one chat line gets: a longer reply or [Server] line is split, word by word
+
+
+def wrap(text: str, limit: int = CHAT_LINE) -> list[str]:
+    """Text as chat lines of `limit` characters at most, split between words (a word longer than that is a line of its
+    own); each line of the text starts a new one."""
+    lines: list[str] = []
+    for paragraph in text.splitlines() or [""]:
+        line = ""
+        for word in paragraph.split(" "):
+            if line and len(line) + 1 + len(word) > limit:
+                lines.append(line)
+                line = word
+            else:
+                line = f"{line} {word}" if line else word
+        lines.append(line)
+    return [l for l in lines if l.strip()]
+
+
 def one_line(text: str) -> str:
     """A message the server sent on several lines, as one log line (the window shows one line per entry)."""
     return " | ".join(part.strip() for part in text.splitlines() if part.strip())

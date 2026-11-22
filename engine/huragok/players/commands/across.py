@@ -1,27 +1,28 @@
-"""One player, every server: what Huragok does on one server reaches the others ([automod] across_servers, on by
-default; mutes follow players through Vergil's list, in automod).
+"""One player, every server: a kick, ban or unban on one server reaches the others ([automod] across_servers, on by
+default; mutes follow players through Vergil's list, in automod). players/reach.py says what reaches where.
 
-Every server keeps a ban list of its own (a /ban in game is that server's; repair.own_bans splits the shared one
-servers had up to 0.4.4), and Huragok keeps its own list (commands_every_server): the bans it gives and the admins it
-makes. Those are put on every server's list as they're given, again as each server's console connects and every ten
-minutes (a server added since, or one whose list was reset), and on a player who gets in anyway: on every server but
-the one it was given on, whose own list rules there. One taken off Huragok's list is taken off every server's, a
-server that was down meanwhile as it connects again (only the entry Huragok put there: a /ban since stands). !banall
-puts a ban from one server's list (a /ban) on Huragok's.
+Every server keeps a ban list of its own (repair.own_bans split the shared one servers had up to 0.4.4), and Huragok
+keeps its own list (commands_every_server): every ban given, and the admins made. Those are put on every server's list
+as they're given, again as each server's console connects and every ten minutes (a server added since, or one whose
+list was reset), and on a player who gets in anyway: on every server but the one it was given on, whose own list has
+it. A ban on a server's own list that Huragok's doesn't have yet (a /ban from before 0.7.0, given while Huragok was
+down) goes on Huragok's at that look. One taken off Huragok's list is taken off every server's, a server that was down
+meanwhile as it connects again. !banall puts a ban from one server's list on Huragok's at once.
 
-Only Huragok's own actions go across: its ! commands, Vergil, and anything else sent through the console (the relay,
-the window's console). The server says which those are: it names who acted as "Alice (RCON)" (or "RCON"). The game's
-own / commands and scoreboard buttons ("Alice", an admin in game) stay on the server they were used on, as do a
-vote's kicks and the server's own: the host's call (24 October): / for one server, ! for all of them.
+Whoever gives it, it goes across: Huragok's ! commands, Vergil, the relay, the window's console, and the game's own
+/ commands and scoreboard buttons (the host's call, 21 November 2026: "no more split actions on a per-server basis";
+up to then, / was one server's and ! every server's, the call of 24 October). Only a vote's kick and the server's
+own stay on the server they happened on: the server names who acted "vote" or "Server" for those.
 
-- A kick through Huragok keeps the player off every server until the kick's time is up: on another server now,
-  they're kicked there too; joining another meanwhile, they're kicked as they join (and let straight back in, as
-  Vergil's name kicks are, so the server's own kick count isn't run up), with where and why. A pardon through
-  Huragok (!pardon on any server, the window's, the relay's) lets them back on every server.
-- An admin made or unmade through the console some other way than !admin (the window, the relay) is every
-  server's too, as !admin's are.
-- A ban through Huragok reaches every server that keeps a ban list of its own: servers still sharing one list
-  (until their next start) have it already. So does an unban. A ban or unban sent here isn't sent on again.
+- A kick keeps the player off every server until the kick's time is up: on another server now, they're kicked there
+  too; joining another meanwhile, they're kicked as they join (and let straight back in, as Vergil's name kicks are,
+  so the server's own kick count isn't run up), with where and why. A pardon (letting them back: !pardon on any
+  server, the window's, the relay's, the game's own) lets them back on every server.
+- An admin made or unmade some other way than !admin (the window, the relay, the game) is every server's too, as
+  !admin's are.
+- A ban reaches every server that keeps a ban list of its own: servers still sharing one list (until their next start)
+  have it already. So does an unban, which lifts every ban on them on every server. A ban or unban sent here isn't sent
+  on again.
 """
 
 from __future__ import annotations
@@ -34,16 +35,20 @@ from pathlib import Path
 from typing import Any
 
 from ...core.background import background
+from ...core.commandsfile import ROLES
 from ...core.events import Event
 from ...core.part import command, every, on
+from ...core.tags import SHORT
 from ...core.text import describe_seconds, is_player_id
 from ...program.settings import path_setting
 from ...rcon import RconError, ban_list
 from ...servers.state import Player
+from ..ledger import plain_reason
 from ..outbox import ASK_SECONDS, results
+from ..reach import by_a_person
 from ..router import CommandCall
 from ..targets import FULL_ID, ago, outranked, plain
-from ..who import from_console, through_console, who
+from ..who import from_console, who
 from .base import CommandsBase
 from .lists import Kick
 
@@ -57,7 +62,7 @@ DECIDED_KEPT = 500  # events whose echo was decided: several handlers ask about 
 UNBAN_RETRY_SECONDS = 30.0  # an unban for a server whose list didn't answer: asked again this often…
 UNBAN_RETRIES = 20  # …this many times (10 minutes), from its queue (behind whatever it holds)
 SHARED_RECORD = "shared-ban-lists.json"  # records/: the shared lists repair.own_bans gave servers a copy of
-LIFTS_KEPT = 30 * 86400.0  # a server down this long after a ban came off Huragok's list keeps it (then: !unban there)
+LIFTS_KEPT = 30 * 86400.0  # a server down this long after an admin was unmade on Huragok's list keeps them one there
 
 
 class AcrossServers(CommandsBase):
@@ -108,6 +113,33 @@ class AcrossServers(CommandsBase):
         if waiting:
             waiting.pop()
 
+    def _spreads(self, event: Event) -> bool:
+        """Whether a kick or ban the server announces is every server's: someone's (not a vote's or the server's own),
+        and for an admin's own in game (the game's /kick or /ban) one their rank allows. An admin's /ban of a fellow
+        admin or of faculty stays on the server it was given on, as !ban would refuse it, and takes no roles: Huragok's
+        own commands, Vergil, the relay and the window are held to the ranks already."""
+        by = event.get("by")
+        if not by_a_person(by):
+            return False
+        if from_console(by, self.ctx.servers, event.server):
+            return True
+        target = str(event.get("id") or "").lower()
+        if not is_player_id(target):
+            return True  # an address: nobody's rank
+        state = self.ctx.servers.get(event.server or "")
+        giver = next((p for p in (state.players.values() if state is not None else []) if p.name.strip() == str(by).strip()), None)
+        taking = self.ctx.highest_role(Player(0, str(event.get("name") or ""), target))
+        # The game lets only that server's admins kick and ban, so whoever did is one at least, whatever Huragok's lists
+        # say (and if they've left already, that's all that's known); a player named like the console isn't it.
+        giving = self.ctx.highest_role(giver) if giver is not None else "admin"
+        giving = giving if ROLES.index(giving) >= ROLES.index("admin") else "admin"
+        if giving == "faculty" or ROLES.index(taking) < ROLES.index(giving):
+            return True
+        self.ctx.log.warning("[%s] %s's %s of %s (%s) stays on this server: an admin can't do that to %s on every server",
+                             event.server, by, event.name.removeprefix("rcon."), self._logged(target, event.get("name")), taking,
+                             "faculty" if taking == "faculty" else "a fellow admin")
+        return False
+
     # Kicks -----------------------------------------------------------------------------------------------------
 
     def _across_block(self, player_id: str, server: str) -> Any:
@@ -119,7 +151,9 @@ class AcrossServers(CommandsBase):
 
     async def _across_kick(self, server: str, player: Any, kick: Any) -> None:
         left = describe_seconds(kick.time + kick.seconds - time.time())
-        reason = f"Kicked from {kick.server} by {kick.by}" + (f": {kick.reason}." if kick.reason else ".") + f" You can join again in {left}."
+        # How far, as every kick's message says it (the host's call, 21 November 2026): where it was given is part of why.
+        reason = (f"Kicked off every server by {kick.by} (on {kick.server})" + (f": {kick.reason}." if kick.reason else ".")
+                  + f" You can join any server again in {left}.")
         self._across_mark(server, "kick", player.id)
         moderation = self.ctx.moderation
         action = await moderation.kick(server, player, reason, by=kick.by, evidence=f"kicked on {kick.server}",
@@ -136,11 +170,11 @@ class AcrossServers(CommandsBase):
         player_id = str(event.get("id") or "").lower()
         if not player_id or not event.server or not self._across() or self._across_echo(event.server, "kick", player_id, event):
             return
-        if not from_console(event.get("by"), self.ctx.servers, event.server):
-            return  # the game's own /kick, a vote's, the server's: this server's alone
+        if not self._spreads(event):
+            return  # a vote's kick, the server's own, or an admin's of someone their rank doesn't reach: this server's alone
         seconds = event.get("seconds")
         kick = Kick(time.time(), event.server, player_id, str(event.get("name") or player_id[:8]), who(event.get("by")),
-                    str(event.get("reason") or ""),
+                    plain_reason(event.get("reason")),  # its own message says how far
                     float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else 600.0,
                     True)
         for server, state in list(self.ctx.servers.items()):
@@ -237,19 +271,20 @@ class AcrossServers(CommandsBase):
                 self._across_unmark(server, "ban", row["target"])  # refused: no echo comes
         except RconError as error:  # no answer: a server frozen with its console up may still do it, later
             ok, text = False, str(error)
-        self.ctx.log.info("[%s] %s's ban (by %s on %s) put on this server's list%s", server, row["name"] or
-                          row["target"][:8], row["by"], row["server"] or "a shared list, before 0.5.0",
+        self.ctx.log.info("[%s] the ban on %s (by %s on %s) put on this server's list%s", server,
+                          self._logged(row["target"], row["name"]), row["by"], row["server"] or "a shared list, before 0.5.0",
                           "" if ok else f": FAILED: {text}")
         return ok
 
     @on("rcon.ban")
     async def _across_banned(self, event: Event) -> None:
-        """A ban through Huragok (a ! command, Vergil, the relay): on Huragok's list, and every server's."""
+        """A ban, whoever gave it (a ! command, Vergil, the relay, the game's own /ban): on Huragok's list, and every
+        server's."""
         target = str(event.get("id") or event.get("ip") or "").lower()
         if not target or not event.server or not self._across() or self._across_echo(event.server, "ban", target, event):
             return
-        if not from_console(event.get("by"), self.ctx.servers, event.server):
-            return  # the game's own /ban: this server's alone (!banall makes it every server's)
+        if not self._spreads(event):
+            return  # a vote's, the server's own, or an admin's of someone their rank doesn't reach: this server's alone
         expires = event.get("expires")
         until: float | None = None
         if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0:
@@ -267,23 +302,31 @@ class AcrossServers(CommandsBase):
 
     @on("rcon.unban")
     async def _across_unbanned(self, event: Event) -> None:
-        """An unban through Huragok lifts Huragok's ban everywhere: off its list, and off every server's. Another
-        server's own /ban of them stays (the host's call, 25 October: !unban says where)."""
+        """An unban, whoever gave it, lifts the ban everywhere: off Huragok's list, and every ban on them off every
+        server's (up to 0.7.0 another server's own /ban stayed: the host's call of 25 October, undone on 21 November)."""
         target = str(event.get("target") or "").strip()
         if not target or not event.server or self._across_echo(event.server, "unban", target, event):
             return
-        if not from_console(event.get("by"), self.ctx.servers, event.server):
+        if not by_a_person(event.get("by")):
             return
-        by = who(event.get("by"))
+        self.unban_everywhere(event.server, target, who(event.get("by")),
+                              kick_only=self.ctx.moderation.lifting_a_kick(event.server, target))
+
+    def unban_everywhere(self, origin: str, target: str, by: str, *, kick_only: bool = False) -> None:
+        """An unban given on `origin`: off Huragok's list, and sent to every other server with a list of its own (an
+        !unban on a server that didn't have the ban comes here too: no unban event follows, and the ban stayed
+        everywhere else, the scope audit of 20 November 2026, A10). `kick_only`: it only lets them back from a kick
+        with a time, so a server holding a ban for good on them keeps it (audit 2026-11, 5.2)."""
         self.lift_every_server("ban", target, by)
         if not self._across():
             return
-        for server in self._own_lists(event.server):
-            self.ctx.outbox.send(server, f"the unban of {target} (given on {event.server})",
-                                 lambda server=server: self._unban_on(server, target, event.server, by))
+        for server in self._own_lists(origin):
+            self.ctx.outbox.send(server, f"the unban of {target} (given on {origin})",
+                                 lambda server=server: self._unban_on(server, target, origin, by, kick_only=kick_only))
 
-    async def _unban_on(self, server: str, target: str, origin: str, by: str, tries: int = 0) -> bool:
-        """An unban through Huragok on `origin`, passed on to `server`: only a ban Huragok put there. A list that
+    async def _unban_on(self, server: str, target: str, origin: str, by: str, tries: int = 0, *,
+                        kick_only: bool = False) -> bool:
+        """An unban on `origin`, passed on to `server`: every ban on them there comes off. A list that
         doesn't answer is asked again from the server's queue (behind whatever it holds) until it does: a server
         frozen with its console up works through a ban it held once it thaws, after the unban was given, and that
         ban mustn't stand (the simulation, 26 October). Asking stops once Huragok bans them again meanwhile."""
@@ -298,20 +341,18 @@ class AcrossServers(CommandsBase):
                     if self.every_server("ban", target):
                         return  # banned again through Huragok since: that ban stands
                     self.ctx.outbox.send(server, f"the unban of {target} (given on {origin}), again",
-                                         lambda: self._unban_on(server, target, origin, by, tries + 1))
+                                         lambda: self._unban_on(server, target, origin, by, tries + 1, kick_only=kick_only))
 
                 background(again(), f"[{server}] the unban of {target} asked again", self.ctx.log)
             return False
-        mine = [e for e in entries if self._names(e, target) and through_console(e.get("banned_by"))]
-        if not mine:
-            return False  # not banned there, or a /ban there (that server's)
-        now = time.time()
-        theirs = [e for e in entries if self._names(e, target) and not through_console(e.get("banned_by"))
-                  and not (isinstance(e.get("expires"), (int, float)) and e["expires"] <= now)]
-        if theirs:  # the server's unban lifts every ban on them, its own /ban too, which stays (audit 2026-11, 5.2)
-            who = ", ".join(sorted({str(e.get("banned_by") or "someone") for e in theirs}))
-            self.ctx.log.info("[%s] unban of %s on %s by %s not passed on here: %s banned them on this server too, "
-                              "and that ban stays (its unban would lift both)", server, target, origin, by, who)
+        if not any(self._names(e, target) for e in entries):
+            return False  # not banned there
+        if kick_only and (kept := [e for e in entries if self._names(e, target) and not (
+                isinstance(e.get("expires"), (int, float)) and not isinstance(e.get("expires"), bool) and e["expires"] > 0)]):
+            # The server's unban lifts every ban on them: letting them back from a kick mustn't lift a ban for good
+            who = ", ".join(sorted({str(e.get("banned_by") or "someone") for e in kept}))
+            self.ctx.log.info("[%s] %s let back from a kick on %s by %s: not passed on here, where %s banned them for "
+                              "good (its unban would lift that too)", server, target, origin, by, who)
             return False
         self._across_mark(server, "unban", target)
         try:
@@ -333,9 +374,9 @@ class AcrossServers(CommandsBase):
             or (bool(entry.get("name")) and plain(str(entry["name"])) == plain(target))
 
     async def _banned_elsewhere(self, server: str, target: str) -> tuple[list[str], list[str]]:
-        """The other servers' own bans of this target (a /ban there): "Other by Mod (/ban: spam)", and the
-        servers whose list didn't answer. The lists are read side by side, ASK_SECONDS at most: one that doesn't
-        answer by then isn't waited on."""
+        """The other servers' bans of this target, with [automod] across_servers off (each server's moderation its
+        own): "Other by Mod (spam)", and the servers whose list didn't answer. The lists are read side by side,
+        ASK_SECONDS at most: one that doesn't answer by then isn't waited on."""
         said: list[str] = []
         silent: list[str] = []
         others = [other for other, state in self.ctx.servers.items() if other != server and state.connected]
@@ -352,16 +393,15 @@ class AcrossServers(CommandsBase):
                 silent.append(other)
                 continue
             for entry in entries:
-                if self._names(entry, target) and not through_console(entry.get("banned_by")):
+                if self._names(entry, target):
                     reason = str(entry.get("reason") or "")
-                    said.append(f"{other} by {who(entry.get('banned_by'))} (/ban" + (f": {reason}" if reason else "")
-                                + ")")
+                    said.append(f"{other} by {who(entry.get('banned_by'))}" + (f" ({reason})" if reason else ""))
         return said, silent
 
-    # Pardons: a kick through Huragok is every server's, and so is its pardon -----------------------------------
+    # Pardons: a kick is every server's, and so is letting them back -----------------------------------------------
 
     async def _pardon_elsewhere(self, server: str, target: str, by: str) -> list[str]:
-        """The kicks through Huragok on other servers keeping this player (ID, or the name they were kicked under)
+        """The kicks on other servers keeping this player (ID, or the name they were kicked under)
         off `server` too: pardoned where they were given and taken off the list. Those servers."""
         if not self._across():
             return []
@@ -389,8 +429,8 @@ class AcrossServers(CommandsBase):
 
     @on("rcon.pardon")
     async def _across_pardoned(self, event: Event) -> None:
-        """A pardon the server announces: off the kick list there; one through Huragok (the window's, the relay's)
-        lets them back on every server, as !pardon does."""
+        """A pardon the server announces: off the kick list there; one someone gave (the window's, the relay's, the
+        game's own) lets them back on every server, as !pardon does."""
         target = str(event.get("id") or event.get("target") or "").strip()
         if not target or not event.server or self._across_echo(event.server, "pardon", target, event):
             return
@@ -400,10 +440,10 @@ class AcrossServers(CommandsBase):
         for kick in [k for k in listed if k.server == event.server
                      and (k.id == target.lower() or plain(k.name) == plain(target))]:
             listed.remove(kick)
-        if from_console(event.get("by"), self.ctx.servers, event.server):
+        if by_a_person(event.get("by")):
             await self._pardon_elsewhere(event.server, target, who(event.get("by")))
 
-    # Admins made through the console: every server's, as !admin's are ------------------------------------------
+    # Admins made some other way than !admin: every server's, as !admin's are -----------------------------------
 
     @on("rcon.admin_added")
     async def _across_admin_added(self, event: Event) -> None:
@@ -414,12 +454,12 @@ class AcrossServers(CommandsBase):
         await self._across_admin(event, "remove")
 
     async def _across_admin(self, event: Event, verb: str) -> None:
-        """An admin made or unmade through the console some other way than !admin (the window's B screen, the
-        relay, a console tool): on Huragok's list or off it, and so on every server's. !admin's own come back as
-        events too, marked as sent (roles.py)."""
+        """An admin made or unmade some other way than !admin (the window's B screen, the relay, a console tool, the
+        game's own): on Huragok's list or off it, and so on every server's. !admin's own come back as events too,
+        marked as sent (roles.py)."""
         target = str(event.get("id") or event.get("target") or "").lower()
         if not FULL_ID.fullmatch(target) or not event.server or not self._across() \
-                or not from_console(event.get("by"), self.ctx.servers, event.server) \
+                or not by_a_person(event.get("by")) \
                 or self._across_echo(event.server, "admin", target, event):
             return
         by = who(event.get("by"))
@@ -446,7 +486,7 @@ class AcrossServers(CommandsBase):
                 self._across_unmark(server, "admin", target)
         except RconError as error:
             ok, text = False, str(error)
-        self.ctx.log.info("[%s] admin %s %s (by %s on %s) passed on here%s", server, verb, target[:8], by, origin,
+        self.ctx.log.info("[%s] admin %s %s (by %s on %s) passed on here%s", server, verb, self._logged(target), by, origin,
                           "" if ok else f": {text}")
         return ok
 
@@ -470,13 +510,13 @@ class AcrossServers(CommandsBase):
 
     async def _every_server_check(self, server: str) -> None:
         """A server's own list against Huragok's: a ban or an admin it lacks (a server added since, or one that was
-        down or whose list was reset) is put on it; one Huragok's list let go of while it was down is taken off."""
+        down or whose list was reset) is put on it; one Huragok's list let go of while it was down is taken off; a ban
+        it has that Huragok's doesn't (a /ban from before 0.7.0) goes on Huragok's, and every server's."""
         if not self._across():
             return
         bans, admins = self.every_server("ban"), self.every_server("admin")
-        unbanned, unmade = self._lifted_lately("ban"), self._lifted_lately("admin")
-        if bans or unbanned:
-            await self._every_server_bans(server, bans, unbanned)
+        unmade = self._lifted_lately("admin")
+        await self._every_server_bans(server, bans)
         state = self.ctx.server(server)
         if admins and state.admins is not None:
             for row in admins:
@@ -485,44 +525,81 @@ class AcrossServers(CommandsBase):
                         self._across_mark(server, "admin", row["target"])
                         await self.ctx.rcon(server).command("admin", "add", row["target"], by=row["by"] or None)
                         self.ctx.log.info("[%s] %s made an admin here too (Huragok's list: made by %s)", server,
-                                          row["name"] or row["target"][:8], row["by"])
+                                          self._logged(row["target"], row["name"]), row["by"])
                     except RconError as error:
-                        self.ctx.log.warning("[%s] couldn't make %s an admin here: %s", server, row["target"][:8],
-                                             error)
+                        self.ctx.log.warning("[%s] couldn't make %s an admin here: %s", server,
+                                             self._logged(row["target"], row["name"]), error)
         if unmade and state.admins and unmade.keys() & state.admins:
             await self._every_server_unmade(server, unmade)
 
-    async def _every_server_bans(self, server: str, bans: list[Any], unbanned: dict[str, float]) -> None:
+    def _lifted_ever(self, kind: str) -> dict[str, float]:
+        """Taken off Huragok's list, however long ago, and not back on it: target -> when it last came off."""
+        rows = self.ctx.db.query("SELECT target, MAX(lifted) AS lifted FROM commands_every_server WHERE kind = ? AND "
+                                 "lifted IS NOT NULL GROUP BY target", (kind,))
+        on = {row["target"] for row in self.every_server(kind)}
+        return {row["target"]: float(row["lifted"]) for row in rows if row["target"] not in on}
+
+    async def _every_server_bans(self, server: str, bans: list[Any]) -> None:
         data, _ = await ban_list(self.ctx.rcon(server))
         if data is None:
             return
         have: dict[str, dict[str, Any]] = {}
-        for entry in [*data["players"], *data["ips"]]:
-            if target := str(entry.get("id") or entry.get("ip") or "").lower():
-                have[target] = entry
+        players = [e for e in data["players"] if e.get("id")]
+        linked = {e.get("group") for e in players if e.get("group") is not None}
+        for entry in [*players, *data["ips"]]:
+            if (target := str(entry.get("id") or entry.get("ip") or "").lower()) and (
+                    entry.get("id") or entry.get("group") is None or entry.get("group") not in linked):
+                have[target] = entry  # an address linked to a player's ban goes with theirs
         for row in bans:
-            if row["target"] not in have and row["server"] != server:  # where it was given, its own list rules
+            if row["target"] not in have and row["server"] != server:  # where it was given, its own list has it
                 await self._put_ban(server, row)
-        for target, lifted in unbanned.items():
-            entry = have.get(target)
-            at = entry.get("banned_at") if entry else None
+        listed, lifted_ever, now = {row["target"] for row in bans}, self._lifted_ever("ban"), time.time()
+        for target, entry in have.items():
+            if target in listed or not by_a_person(entry.get("banned_by")):
+                continue  # on Huragok's list already, or a vote's (that server's alone)
+            at = entry.get("banned_at")
             at = at / 1000 if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 1e11 else at
-            # Only the entry Huragok put there (through the console, before it came off): a /ban since stands.
-            if entry is None or not through_console(entry.get("banned_by")) or not isinstance(at, (int, float)) \
-                    or at > lifted:
-                continue
-            self._across_mark(server, "unban", target)
-            try:
-                done = await self.ctx.rcon(server).command("unban", target)
-                ok, text = done.ok, done.text
-            except RconError as error:
-                ok, text = False, str(error)
-            self.ctx.log.info("[%s] %s's ban, taken off Huragok's list while this server was away, taken off here%s",
-                              server, entry.get("name") or target[:8], "" if ok else f": FAILED: {text}")
+            at = float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+            lifted = lifted_ever.get(target)
+            if lifted is not None:
+                if at is not None and at <= lifted:
+                    await self._unban_left(server, target, entry)  # lifted everywhere while this server was away
+                continue  # given since it was lifted (or when isn't known): put on Huragok's list below if it's new
+            await self._take_on(server, target, entry, now)
+
+    async def _take_on(self, server: str, target: str, entry: dict[str, Any], now: float) -> None:
+        """A ban on one server's own list that Huragok's doesn't have (a /ban from before 0.7.0, or one given while
+        Huragok was down): on Huragok's list, and so on every server's."""
+        expires = entry.get("expires")
+        until: float | None = None
+        if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0:
+            until = expires / 1000 if expires > 1e11 else float(expires)
+            if until <= now:
+                return  # run out: the server drops it
+        name = str(entry.get("name") or entry.get("ip") or target[:8])
+        if not self.add_every_server("ban", target, name=name, reason=str(entry.get("reason") or ""),
+                                     by=who(entry.get("banned_by")), server=server, expires=until):
+            return
+        row = self.every_server("ban", target)[-1]
+        self.ctx.log.info("%s's ban on %s's own list (by %s) is every server's now", name, server, row["by"])
+        for other in self._own_lists(server):
+            self.ctx.outbox.send(other, f"{name}'s ban (on {server}'s own list)",
+                                 lambda other=other: self._put_ban(other, row))
+
+    async def _unban_left(self, server: str, target: str, entry: dict[str, Any]) -> None:
+        """A ban lifted on every server while this one was away: off this one's list too."""
+        self._across_mark(server, "unban", target)
+        try:
+            done = await self.ctx.rcon(server).command("unban", target)
+            ok, text = done.ok, done.text
+        except RconError as error:
+            ok, text = False, str(error)
+        self.ctx.log.info("[%s] the ban on %s, lifted on every server while this one was away, taken off here%s",
+                          server, self._logged(target, entry.get("name")), "" if ok else f": FAILED: {text}")
 
     async def _every_server_unmade(self, server: str, unmade: dict[str, float]) -> None:
-        """An admin Huragok made, unmade while this server was away: unmade here (one the console added since, or
-        dedicated.toml's, stays)."""
+        """An admin unmade while this server was away: unmade here (dedicated.toml's stays: that file makes them
+        one)."""
         try:
             reply = await self.ctx.rcon(server).command("admin")
         except RconError:
@@ -533,16 +610,16 @@ class AcrossServers(CommandsBase):
                 continue
             target, at = str(entry.get("id") or "").lower(), entry.get("added_at")
             at = at / 1000 if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 1e11 else at
-            if target not in unmade or not through_console(entry.get("added_by")) or not isinstance(at, (int, float)) \
+            if target not in unmade or not by_a_person(entry.get("added_by")) or not isinstance(at, (int, float)) \
                     or at > unmade[target]:
                 continue
             try:
                 self._across_mark(server, "admin", target)
                 await self.ctx.rcon(server).command("admin", "remove", target)
                 self.ctx.log.info("[%s] %s is no longer an admin here either (taken off Huragok's list while this "
-                                  "server was away)", server, target[:8])
+                                  "server was away)", server, self._logged(target))
             except RconError as error:
-                self.ctx.log.warning("[%s] couldn't take %s off this server's admins: %s", server, target[:8], error)
+                self.ctx.log.warning("[%s] couldn't take %s off this server's admins: %s", server, self._logged(target), error)
 
     # Bans from before 0.5.0: the servers' shared list, every server's when given -----------------------------
 
@@ -626,6 +703,12 @@ class AcrossServers(CommandsBase):
         if rows and not self._across_echo(event.server, "ban", player_id):
             await self._put_ban(event.server, rows[-1])
 
+    def _logged(self, target: Any, name: Any = "") -> str:
+        """A player for the log: their whole ID (core/tags.py, the host's call, 21 November 2026), or an address as it
+        is."""
+        target = str(target or "")
+        return self.ctx.names.describe(target, str(name or "")) if is_player_id(target) else str(name or target)
+
     # !banall: a server's /ban made every server's ----------------------------------------------------------------
 
     @command("banall", usage="<@number | player | player ID>",
@@ -654,11 +737,11 @@ class AcrossServers(CommandsBase):
                 return
             entry = next((e for e in entries if str(e.get("id") or "").lower() == player.id), None)
             if entry is None:
-                await call.reply(f"{player.name} isn't banned on this server: {call.prefix}ban bans them on every "
+                await call.reply(f"{call.tag(player)} isn't banned on this server: {call.prefix}ban bans them on every "
                                  "server.")
                 return
         listed_id = str(entry.get("id") or "").lower()
-        if is_player_id(listed_id) and (why := outranked(call, Player(0, str(entry.get("name") or listed_id[:8]),
+        if is_player_id(listed_id) and (why := outranked(call, Player(0, self.ctx.names.name(listed_id, str(entry.get("name") or "")),
                                                                       listed_id))):
             await call.reply(why)  # as !ban: a /ban on faculty or a fellow admin isn't spread by an admin
             return
@@ -667,15 +750,16 @@ class AcrossServers(CommandsBase):
     async def _ban_everywhere(self, server: str, entry: dict[str, Any], by: str) -> str:
         """One entry of a server's own ban list onto Huragok's, and so every server's: what to tell whoever asked."""
         target = str(entry.get("id") or entry.get("ip")).lower()
-        name = str(entry.get("name") or entry.get("ip") or target[:8])
+        name = str(entry.get("name") or entry.get("ip") or target[:8])  # kept with it: plain
+        shown = self.ctx.names.tag(target, str(entry.get("name") or "")) if is_player_id(target) else name  # who reads it
         if self.every_server("ban", target):
-            return f"{name}'s ban is on every server already."
+            return f"The ban on {shown} is on every server already."
         expires = entry.get("expires")
         until = None
         if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0:
             until = expires / 1000 if expires > 1e11 else float(expires)
         if until is not None and until <= time.time():
-            return f"{name}'s ban has run out: there's nothing to put on every server."
+            return f"The ban on {shown} has run out: there's nothing to put on every server."
         reason = str(entry.get("reason") or "")
         given = who(entry.get("banned_by")) if entry.get("banned_by") else by
         self.add_every_server("ban", target, name=name, reason=reason, by=given, server=server, expires=until)
@@ -693,7 +777,7 @@ class AcrossServers(CommandsBase):
                                         duration=f"{max(1, round(until - time.time()))}s" if until is not None else None)
         left = "for good" if until is None else f"{ago(until - time.time())} left"
         later = failed + waiting
-        return (f"{name}'s ban (by {given}" + (f": {reason}" if reason else "") + f", {left}) is on every server "
+        return (f"The ban on {shown} (by {given}" + (f": {reason}" if reason else "") + f", {left}) is on every server "
                 + ("now" if not later else f"as each answers ({', '.join(later)} not yet)")
                 + ", and stays on Huragok's list for new ones.")
 
@@ -710,11 +794,13 @@ class AcrossServers(CommandsBase):
         found = [e for e in entries if str(e.get("id") or e.get("ip") or "").lower() == text.lower()]
         if not found:
             found = [e for e in entries if str(e.get("name") or "").casefold() == text.casefold()]
-        if not found and len(text) >= 4:  # the start of an ID, as the list shows them
+        if not found and len(text) >= SHORT:  # the start of an ID, as every tag shows it (8 characters, as in game)
             found = [e for e in entries if str(e.get("id") or "").lower().startswith(text.lower())]
         if not found:
             return False, f"Nothing on {server}'s ban list is '{text}': L lists it (a player ID, an address or a name)."
         if len(found) > 1:
-            listed = "; ".join(f"{e.get('name') or '?'} {str(e.get('id') or e.get('ip'))[:8]}" for e in found[:6])
-            return False, f"'{text}' could be {listed}: use the player ID."
+            listed = [self.ctx.names.tag(str(e["id"]), str(e.get("name") or "")) if e.get("id") else str(e.get("ip"))
+                      for e in found[:6]]
+            return False, "\n".join([f"'{text}' could be {len(found)} entries; use the ID (its first 8 characters will do):",
+                                      *listed])
         return True, await self._ban_everywhere(server, found[0], by)

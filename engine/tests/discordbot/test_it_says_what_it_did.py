@@ -7,9 +7,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from conftest import ALICE, BRAVO, MOD
 from test_audit_findings import ADMIN_USER, FIRST, SECOND, buttons_of, on, said_back, up  # noqa: F401
 from test_audit_findings import bot_file as audit_file
+from test_audit_2026_11 import ACROSS_OFF
 from test_cards_do_what_they_say import report, reports_on
 from test_tickets import PROBATION_ROLE, REPORTS, STAFF, bot_file, fake, fill, posts_in, row_of, strike  # noqa: F401
 from testkit.fake_discord import ADMIN_ROLE, MOD_ROLE, FakeDiscord
@@ -41,43 +44,72 @@ def number_of(huragok: Any, kind: str) -> int:
 
 
 # Ban everywhere ---------------------------------------------------------------------------------------------------------
+# No card offers Ban everywhere any more (0.7.0): with [automod] across_servers on every ban is every server's, and the
+# card about someone banned on another server isn't made; with it off there's no every-server list to put a ban on
+# (!banall says so). A card posted before still has the button, and it still runs !banall: pressed here by its ID.
 
 
-async def banned_on_first_joined_on_second(huragok: Any, consoles: Any, part: Any) -> int:
+def old_ban_everywhere(number: int) -> str:
+    """The Ban everywhere button a card posted before 0.7.0 still has."""
+    return f"huragok:t:{number}:banall"
+
+
+def text_of(post: dict[str, Any]) -> str:
+    return str(post.get("content")) + str(post.get("embeds"))
+
+
+async def banned_on_first_joined_on_second(huragok: Any, consoles: Any, part: Any, fake: FakeDiscord, *, across: bool = True) -> int:
+    """Banned by the first server's own /ban, and joining the second: with across_servers off, the card about it; with
+    it on there's none (the ban is every server's), and a card opened by hand stands in for one posted before. Either
+    way the card doesn't offer Ban everywhere."""
     huragok.vergil.moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Mod", source="in game", reason="cheating")
     await consoles[SECOND].join(3, "Alice", ALICE)
     await wait_for(lambda: huragok.superintendent.states[SECOND].player_by_id(ALICE), timeout=10)
-    await wait_for(lambda: huragok.storage.query("SELECT 1 FROM discord_tickets WHERE kind = 'watch-banned-elsewhere'"), timeout=15)
-    number = number_of(huragok, "watch-banned-elsewhere")
+    if across:
+        await wait_for(lambda: any(f"**Alice** `{ALICE[:8]}` [{SECOND}] is new here" in text_of(post) for post in fake.posted), timeout=15)  # the watch list has looked at the join
+        assert not huragok.storage.query("SELECT 1 FROM discord_tickets WHERE kind = 'watch-banned-elsewhere'")
+        number = part.tickets.open_by_hand("Mod", ALICE, "Alice", SECOND)
+    else:
+        await wait_for(lambda: huragok.storage.query("SELECT 1 FROM discord_tickets WHERE kind = 'watch-banned-elsewhere'"), timeout=15)
+        number = number_of(huragok, "watch-banned-elsewhere")
     await wait_for(lambda: part.tickets.get(number)["message"], timeout=10)
+    assert "Ban everywhere" not in buttons_of(card_of(huragok, number))
     return number
 
 
 def test_ban_everywhere_runs_where_the_ban_is_and_does_it(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """An old card's Ban everywhere, pressed with across_servers on: run where the ban is (the first server's own list
+    has it, not the second's, where the card is), it puts that ban on Huragok's list, and so every server's, and says so."""
     async def scenario() -> None:
         audit_file(tmp_path, ("feed", "watch"))
         async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
             part = await up(huragok)
             consoles[FIRST].ban_list.append({"id": ALICE, "name": "Alice", "reason": "cheating", "banned_by": "Mod", "banned_at": int(time.time())})
-            number = await banned_on_first_joined_on_second(huragok, consoles, part)
+            number = await banned_on_first_joined_on_second(huragok, consoles, part, fake)
             card = card_of(huragok, number)
-            fake.press(buttons_of(card)["Ban everywhere"], card, user=ADMIN_USER, roles=(ADMIN_ROLE,))
+            fake.press(old_ban_everywhere(number), card, user=ADMIN_USER, roles=(ADMIN_ROLE,))
             await wait_for(lambda: any("every server" in line for line in lines_on(huragok, number)), timeout=15)
             assert huragok.storage.query("SELECT 1 FROM commands_every_server WHERE kind = 'ban' AND target = ? AND lifted IS NULL", (ALICE,))
 
     run(scenario())
 
 
-def test_ban_everywhere_doesnt_claim_what_didnt_happen(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """The record says a ban, and no server's list has it any more."""
+@pytest.mark.parametrize("across", [True, False], ids=["across_on", "across_off"])
+def test_ban_everywhere_doesnt_claim_what_didnt_happen(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """The record says a ban, and no server's list has it any more: an old card's Ban everywhere says what came back,
+    and claims nothing. With across_servers off there's no every-server list to put a ban on: the card about the ban
+    elsewhere is still made (without the button), and an old card's button says why it can't."""
     async def scenario() -> None:
         audit_file(tmp_path, ("feed", "watch"))
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             part = await up(huragok)
-            number = await banned_on_first_joined_on_second(huragok, consoles, part)
+            number = await banned_on_first_joined_on_second(huragok, consoles, part, fake, across=across)
             card = card_of(huragok, number)
-            _, token = fake.press(buttons_of(card)["Ban everywhere"], card, user=ADMIN_USER, roles=(ADMIN_ROLE,))
-            await wait_for(lambda: any(f["token"] == token for f in fake.followups), timeout=15)
+            _, token = fake.press(old_ban_everywhere(number), card, user=ADMIN_USER, roles=(ADMIN_ROLE,))
+            told = await said_back(fake, token)
+            assert "is on every server" not in told, told
+            if not across:
+                assert "no every-server list" in told, told
             assert not any("every server" in line for line in lines_on(huragok, number))
             assert not huragok.storage.query("SELECT 1 FROM commands_every_server WHERE kind = 'ban' AND target = ?", (ALICE,))
 
@@ -87,10 +119,15 @@ def test_ban_everywhere_doesnt_claim_what_didnt_happen(tmp_path: Path, run: Any,
 # Lift it ------------------------------------------------------------------------------------------------------------------
 
 
-def test_lifting_one_of_two_bans_doesnt_tell_them_its_over(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_lifting_one_of_two_bans_doesnt_tell_them_its_over(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """Banned by each of two servers' own /ban. With [automod] across_servers off each server's moderation is its own:
+    Lift it lifts one, and they aren't told it's over while the other stands. With it on (the default) an unban lifts
+    every ban on them on every server, a server's own /ban too (the host's call, 21 November 2026): one press, and it's
+    over."""
     async def scenario() -> None:
         audit_file(tmp_path, ("appeals",))
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             part = await up(huragok)
             for server in (FIRST, SECOND):
                 consoles[server].ban_list.append({"id": ALICE, "name": "Alice", "reason": "cheating", "banned_by": "Mod", "banned_at": int(time.time())})
@@ -99,6 +136,13 @@ def test_lifting_one_of_two_bans_doesnt_tell_them_its_over(tmp_path: Path, run: 
             await wait_for(lambda: part.tickets.get(number)["message"], timeout=10)
             card = card_of(huragok, number)
             _, token = fake.press(buttons_of(card)["Lift it"], card, user=ADMIN_USER, roles=(ADMIN_ROLE,))
+            if across:
+                await wait_for(lambda: huragok.storage.query("SELECT outcome FROM discord_appeals")[0]["outcome"] == "lifted", timeout=15)
+                await wait_for(lambda: consoles[FIRST].named("unban") and consoles[SECOND].named("unban"), timeout=15)  # off both lists
+                await wait_for(lambda: not part.tickets.standing(ALICE)["banned"], timeout=15)  # and the record knows: the other server's own /ban is lifted too
+                assert not any("Still banned" in line for line in lines_on(huragok, number))
+                await wait_for(lambda: [post for post in fake.posted if str(post["channel"]).startswith("dm")], timeout=15)  # and they're told
+                return
             await wait_for(lambda: any(f["token"] == token and "Still banned" in str(f.get("content")) for f in fake.followups), timeout=15)
             assert huragok.storage.query("SELECT outcome FROM discord_appeals")[0]["outcome"] == ""
             assert not [post for post in fake.posted if str(post["channel"]).startswith("dm")]
@@ -127,7 +171,12 @@ def test_a_kick_on_one_server_doesnt_hide_a_ban_on_another(tmp_path: Path, run: 
     run(scenario())
 
 
-def test_a_command_unban_doesnt_lift_a_servers_own_ban_in_the_record(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_a_command_unban_lifts_a_servers_own_ban_in_the_record_too(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """With [automod] across_servers on, an unban lifts every ban on them on every server, a server's own /ban too (the
+    host's call, 21 November 2026: up to then the record kept the /ban on its server); letting them back from a kick
+    lifts no ban for good."""
+    from huragok.players.ledger import KICK_LIFTED
+
     async def scenario() -> None:
         audit_file(tmp_path)
         async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, _):
@@ -135,9 +184,11 @@ def test_a_command_unban_doesnt_lift_a_servers_own_ban_in_the_record(tmp_path: P
             moderation = huragok.vergil.moderation
             moderation.record_seen("ban", FIRST, ALICE, "Alice", by="Mod", source="in game", reason="own")
             huragok.storage.record_action(kind="ban", server=SECOND, target_id=ALICE, target_name="Alice", by="Mod", source="commands", reason="every")
-            huragok.storage.record_action(kind="unban", server=SECOND, target_id=ALICE, target_name="Alice", by="Mod", source="commands")
-            assert part.banned_on(ALICE) == [FIRST]
+            huragok.storage.record_action(kind="unban", server=SECOND, target_id=ALICE, target_name="Alice", by="Mod", source="commands", reason=KICK_LIFTED)
+            assert part.banned_on(ALICE) == [FIRST]  # letting back from a kick: the ban for good on FIRST stands
             assert part.where_it_lives(ALICE, ("ban",)) == FIRST
+            huragok.storage.record_action(kind="unban", server=SECOND, target_id=ALICE, target_name="Alice", by="Mod", source="commands")
+            assert part.banned_on(ALICE) == []
 
     run(scenario())
 
@@ -161,17 +212,25 @@ def test_a_lift_goes_where_that_thing_was_given(tmp_path: Path, run: Any, fake: 
 
 
 def test_a_strike_that_did_nothing_says_so_and_changes_nothing(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """The strike command only answered, and gave no strike: the card says what it said, and nothing on it changes (the
+    report isn't upheld, the card stays open, nothing is expected of it). Up to 0.7.0 that was a strike with Vergil off
+    on the server; a staff strike ignores the server's own Vergil now (the host's call, 21 November 2026), so here it's
+    a moderator's strike whose next step is the ban for good, which goes to the admins instead (only admins ban)."""
     async def scenario() -> None:
         reports_on(bot_file(tmp_path))
-        (tmp_path / "automod.txt").write_text(WORD_LIST, encoding="utf-8")
+        (tmp_path / "automod.txt").write_text("badword | 1h | | 1 | slurs\n", encoding="utf-8")
         async with running(tmp_path) as (huragok, rcon, _):
             part = await up(huragok)
             post = await report(huragok, fake, rcon)
             number = number_of(huragok, "reports-made")
-            huragok.runners["automod"].part.mode = lambda server: "off"
-            token = await fill(fake, "Strike", post, {"Which rule": "slurs", THE_REASON: "voice"}, **ADMIN)
-            assert await said_back(fake, token)
-            assert not huragok.storage.query("SELECT 1 FROM automod_strikes")
+            huragok.storage.execute(  # an earlier strike, so the next is the ban
+                "INSERT INTO automod_strikes (time, server, player_id, player_name, rule, grp, source, evidence, by, action, duration, kick, expires, dry_run, ok, waiting) "
+                "VALUES (?, ?, ?, 'Alice', 'slurs', 'slurs', 'chat', 'x', 'Vergil', 'mute', '1h', NULL, 0, 0, 1, 0)", (time.time(), SERVER, ALICE))
+            token = await fill(fake, "Strike", post, {"Which rule": "slurs", THE_REASON: "voice"}, **MODERATOR)
+            said = await said_back(fake, token)
+            assert "Sent to the admins" in said, said
+            assert len(huragok.storage.query("SELECT 1 FROM automod_strikes")) == 1
+            assert not rcon.named("ban")
             assert huragok.storage.query("SELECT upheld FROM discord_reports")[0]["upheld"] == 0
             assert row_of(huragok, number)["state"] == "open"
             assert not part.tickets.expecting  # so the next real act on them still gets its card
@@ -283,7 +342,7 @@ def test_someone_elses_ban_a_moment_ago_stops_a_lift_going_through(tmp_path: Pat
             sent = len(consoles[FIRST].named("unmute"))
             _, token = fake.press(buttons_of(card)["Unmute"], card, user="4441", roles=(ADMIN_ROLE,))
             told = await said_back(fake, token)
-            assert "First Mod muted them a moment ago" in told and "Nothing was done" in told
+            assert f"First Mod muted Alice `{ALICE[:8]}`" in told and "a moment ago" in told and "Nothing was done" in told  # who, by their tag
             assert len(consoles[FIRST].named("unmute")) == sent
             fake.press(buttons_of(card)["Unmute"], card, user="4441", roles=(ADMIN_ROLE,))
             await wait_for(lambda: len(consoles[FIRST].named("unmute")) > sent, timeout=15)
@@ -320,9 +379,9 @@ def test_each_servers_list_numbers_on_with_nobody_twice() -> None:
     alice, eve = Candidate(ALICE, "Alice"), Candidate(BRAVO, "Eve")
     with picks.adding("me"):
         assert picks.offer("me", [alice]) == [(1, alice)]
-        assert picks.offer("me", [alice, eve]) == [(2, eve)]
+        assert picks.offer("me", [alice, eve]) == [(1, alice), (2, eve)]  # Alice keeps her @1: nobody has two
     assert picks.get("me", 1) is alice and picks.get("me", 2) is eve
-    assert picks.offer("me", [eve]) == [(1, eve)]  # a new list, on its own, starts again
+    assert picks.offer("me", [eve]) == [(2, eve)]  # a new list never renumbers anyone (sticky @numbers, the host's call of 21 November 2026, E2)
 
 
 def test_letback_at_a_number_goes_to_the_server_it_was_given_on(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
@@ -656,6 +715,9 @@ def test_a_refused_command_isnt_on_the_audit_log(tmp_path: Path, run: Any, fake:
 
 
 def test_the_audit_log_cuts_a_players_whole_id(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """A player's whole ID is never on the audit log. It was cut to 8 characters; the line names the player by name now,
+    and whoever ran it by their Discord name, with no server for what reaches every server (the scope audit of 20
+    November 2026, A8)."""
     async def scenario() -> None:
         audit_file(tmp_path, ("feed", "audit"), ("commands",))
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
@@ -663,8 +725,11 @@ def test_the_audit_log_cuts_a_players_whole_id(tmp_path: Path, run: Any, fake: F
             await on(huragok, consoles[FIRST], FIRST)
             _, token = fake.command("allowvote", user="4441", roles=(ADMIN_ROLE,), player=ALICE, server=FIRST)
             await said_back(fake, token)
-            await wait_for(lambda: any(ALICE[:8] in str(post.get("content")) + str(post.get("embeds")) for post in fake.posted), timeout=15)
-            assert not any(ALICE in str(post.get("content")) + str(post.get("embeds")) for post in fake.posted)
+            await wait_for(lambda: any("/allowvote " in text_of(post) for post in fake.posted), timeout=15)
+            audit = next(text_of(post) for post in fake.posted if "/allowvote " in text_of(post))
+            # As typed (the start of the ID, as a whole one is never on it), then who that is, by their tag (H2)
+            assert f"user4441: /allowvote {ALICE[:8]} → Alice `{ALICE[:8]}` [{FIRST}]" in audit and f"(on {FIRST})" not in audit, audit
+            assert not any(ALICE in text_of(post) for post in fake.posted)
 
     run(scenario())
 

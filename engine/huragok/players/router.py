@@ -26,11 +26,14 @@ from ..core.background import background
 from ..core.commandsfile import HELP, PROBATION, ROLES, TITLES, rank_plural
 from ..core.events import Event, EventBus
 from ..core.part import CommandSpec
-from ..core.storage import acting
+from ..core.storage import PICKED, acting
+from ..core.text import CHAT_LINE, is_player_id
+from ..core.text import wrap as wrap_chat
 from ..rcon import RconError
 from ..servers.state import Player, ServerState
+from .naming import Names
 from .roles import Roles
-from .targets import QUOTES, SCOPES, Picks, find, is_team, is_time, outranked, player_and_rest
+from .targets import QUOTES, SCOPES, Candidate, Picks, find, is_team, is_time, outranked, player_and_rest
 
 if TYPE_CHECKING:
     from ..core.settings import Settings
@@ -42,7 +45,7 @@ log = logging.getLogger(__name__)
 
 RESERVED = {"yes", "no"}  # the server counts these as votes
 WORD = re.compile(r"[a-z][a-z0-9_-]{0,31}")
-LINE_LIMIT = 120  # characters per private line; longer replies are split
+LINE_LIMIT = CHAT_LINE  # characters per private line; longer replies are split
 # What a probationary moderator runs as a moderator does: looking, never acting. Every other moderators' command that
 # names a player is a request (requests.py); one that names nobody isn't theirs until they're a moderator.
 LOOKING = {"players", "whois", "said", "kicks", "mutes", "rules", "roles", "health", "bannames", "novotes", "reports", "requests",
@@ -79,17 +82,8 @@ def unquote(words: list[str]) -> str:
 
 
 def wrap(text: str, limit: int = LINE_LIMIT) -> list[str]:
-    lines: list[str] = []
-    for paragraph in text.splitlines() or [""]:
-        line = ""
-        for word in paragraph.split(" "):
-            if line and len(line) + 1 + len(word) > limit:
-                lines.append(line)
-                line = word
-            else:
-                line = f"{line} {word}" if line else word
-        lines.append(line)
-    return [l for l in lines if l.strip()]
+    """Private lines of a reply (core/text.py's wrap)."""
+    return wrap_chat(text, limit)
 
 
 def role_plural(role: str) -> str:
@@ -115,9 +109,37 @@ class CommandCall:
     states: dict[str, ServerState] | None = None  # every server's, to say where someone else is
     history: PlayerHistory | None = None  # players seen here: names that have left, by ID
     role_of: Callable[[Player], str] | None = None  # a player's rank: the highest they hold on any server
-    picks: Picks | None = None  # each caller's last list: @1, @2…
+    picks: Picks | None = None  # each caller's @numbers: @1, @2…
     target: Player | None = None  # the player a command declaring `player` names
     rest: list[str] = field(default_factory=list)  # the words after them
+    picked: dict[str, str] = field(default_factory=dict)  # player ID -> the #number or @number they were picked by
+
+    def tag(self, who: Player | str, given: str = "", *, handle: str | None = None, server: str | None = None) -> str:
+        """A player as this caller reads one (core/tags.py): "Nate 1a2b3c4d (#4) [HugeGrass]". The handle is the one
+        they typed for them; else their #number, when they're on the caller's server; else the caller's @number for
+        them, given now if they had none, so anyone a reply names can be acted on with what it shows. `given`: the
+        name a record has, for someone nothing newer is known about. `server`: where they were, when that's what
+        counts (an action's own picture); None: where they are now."""
+        names = Names(self.states or {self.server: self.state}, self.history)
+        player_id = (who.id if isinstance(who, Player) else str(who or "")).lower()
+        where, live = names.on(player_id)
+        if handle is None:
+            handle = self.handle_for(player_id, where, live, given or (who.name if isinstance(who, Player) else ""))
+        return names.tag(who, given, handle=handle, server=where if server is None else server)
+
+    def handle_for(self, player_id: str, where: str, live: Player | None, name: str = "") -> str:
+        """What this caller types for them: what they typed, their #number here, or their @number."""
+        if typed := self.picked.get(player_id):
+            return typed
+        if where == self.server and live is not None and live.number:
+            return f"#{live.number}"
+        if self.picks is not None and is_player_id(player_id):
+            return f"@{self.picks.number_for(self.player.id, Candidate(player_id, name, where=where))}"
+        return ""
+
+    def tags(self, players: list[Player]) -> str:
+        """Several players, for one line: "A 1a2b3c4d (#4) [Alpha], B 9f8e7d6c (@1)"."""
+        return ", ".join(self.tag(player) for player in players)
 
     async def reply(self, text: str) -> None:
         """Private lines to the caller. One the console can't deliver (slow, or away) is logged and the rest
@@ -290,8 +312,12 @@ class CommandRouter:
 
     async def _run(self, registered: Registered, call: CommandCall) -> bool:
         """Whether it ran: False if its guards stopped it, having said why."""
-        with acting(call.player.id, call.role):
-            return await self._running(registered, call)
+        token = PICKED.set(call.picked)  # how it picked its players goes in the ledger with what it does
+        try:
+            with acting(call.player.id, call.role):
+                return await self._running(registered, call)
+        finally:
+            PICKED.reset(token)
 
     async def _running(self, registered: Registered, call: CommandCall) -> bool:
         """A command that declares `player` gets them found first, with every guard (targets.py): no name, a name
@@ -312,6 +338,10 @@ class CommandRouter:
             if target is None:
                 return False
             call.target, call.rest = target, rest
+            # What the line typed above turned out to mean, with the whole ID (the log is searched by it).
+            log.info("[%s] %s%s %s → %s", call.server, call.prefix, call.name, call.text.strip(),
+                     Names(call.states or {call.server: call.state}, call.history).tag(
+                         target, handle=call.picked.get(target.id, ""), whole=True))
         await registered.method(call)
         return True
 
@@ -336,7 +366,11 @@ class CommandRouter:
             target, rest = await call.player_and_rest(scope="seen", acts=True, start=spec.start, follows=follows)
         if target is None or self.on_request is None:
             return False
-        await self.on_request(call, registered, target, rest)
+        token = PICKED.set(call.picked)
+        try:
+            await self.on_request(call, registered, target, rest)
+        finally:
+            PICKED.reset(token)
         return True
 
     def every_command(self) -> list[tuple[CommandSpec, str]]:
@@ -385,10 +419,12 @@ class CommandRouter:
         return outranked(call, target)
 
     async def run_as(self, name: str, target: Player | None, words: list[str], *, server: str, player: Player, role: str,
-                     tell: Callable[[str, str, str], Awaitable[Any]], looking: bool = False) -> str | None:
+                     tell: Callable[[str, str, str], Awaitable[Any]], looking: bool = False,
+                     picked: str = "") -> str | None:
         """Run `name` on `target` for `player` (`role`), on `server`, as if they'd typed it there: a confirmed
         request (requests.py), a button in Discord. Their replies go through `tell`. None when it ran; else why it
-        couldn't. `looking`: it acts on nobody, so anyone's rank will do. `target` None: a command that names nobody."""
+        couldn't. `looking`: it acts on nobody, so anyone's rank will do. `target` None: a command that names nobody.
+        `picked`: the #number or @number the target was first picked by (a request), for what it says and records."""
         registered = self.commands.get(self.aliases.get(name, name))
         if registered is None or not self._available(registered):
             return f"there's no {self.prefix}{name} to run"
@@ -408,8 +444,14 @@ class CommandRouter:
             return why
         if registered.spec.player and target is not None:
             call.target, call.rest = target, list(words)
-        with acting(player.id, role):
-            await registered.method(call)
+        if target is not None and picked:
+            call.picked[target.id] = picked
+        token = PICKED.set(call.picked)
+        try:
+            with acting(player.id, role):
+                await registered.method(call)
+        finally:
+            PICKED.reset(token)
         return None
 
     @staticmethod

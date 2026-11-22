@@ -21,8 +21,9 @@ from typing import Any
 from ..core.background import background
 from ..rcon import RconError
 from ..core.events import Event
+from ..core import tags
 from ..core.commandsfile import ROLES
-from ..core.text import TIME, describe_seconds, seconds_of
+from ..core.text import TIME, describe_seconds, is_player_id, seconds_of
 from ..players.ledger import shown_kind
 from ..players.targets import player_and_rest
 from ..core.part import Part, command, every, on
@@ -97,6 +98,7 @@ class DiscordPart(Part):
         self.path = self.home / FILE
         self.records = self.home / "records"
         self.file = load(self.path)
+        self.file.everywhere = self.ranks_everywhere
         self.outbox = Outbox(on_refused=self._refused, on_long_wait=self._long_wait,
                              long_wait=lambda: float(self.file.limit("wait_seconds")))
         self.poster = Poster(lambda: self.file, self.outbox)
@@ -182,6 +184,15 @@ class DiscordPart(Part):
 
             sides.season_ended(self)
 
+    def across(self) -> bool:
+        """[automod] across_servers: moderation, and ranks, are every server's (players/reach.py)."""
+        return bool(self.ctx.part_option("automod", "across_servers", True))
+
+    def ranks_everywhere(self) -> bool:
+        """What discord.toml's [ranks] are told: a rank on one server is a rank on all of them, while across_servers is
+        on (the host's call, 21 November 2026)."""
+        return self.across()
+
     def where_to_run(self, player_id: str = "", preferred: str = "") -> str:
         """The server a command from Discord runs on, when nobody's said: where the player is; else the one it's about, if that's up; else any that's up. A stopped server can't do anything, and what's done
         on one is passed on to the rest. With none up, the one it's about or the first: looking still works, and acting says why it can't."""
@@ -264,12 +275,26 @@ class DiscordPart(Part):
 
     # What the feeds need to know about a player ---------------------------------------------------------------
 
-    def record_of(self, player_id: str, case: str = "") -> str:
-        """What's on their record, or before this case: "2 mutes, 1 kick"."""
+    def record_of(self, player_id: str, case: str = "", until: float | None = None) -> str:
+        """What's on their record before this case (`case`), or before this moment (`until`): "2 strikes, 1 kick". A strike counts once, as a strike: what it
+        did (Vergil's mute or kick) isn't counted again. A ticket's own action isn't on the record it shows (the scope audit of 20 November 2026, A6:
+        a kick's card said "1 kick" of that kick, and a strike's never counted strikes)."""
         before = int(case) if str(case).isascii() and str(case).isdecimal() else 2**62
-        rows = self.ctx.db.query("SELECT kind, duration FROM actions WHERE target_id = ? AND dry_run = 0 AND ok = 1 AND number < ? AND kind IN "
-                                 "('mute', 'kick', 'ban', 'warn') AND (evidence IS NULL OR (evidence NOT LIKE 'still muted:%' AND evidence NOT LIKE 'kicked on %'))", (player_id.lower(), before))
+        cutoff = until if until is not None else 2.0**62
+        if until is None and before < 2**62:  # strikes have no case number: before the case's own moment
+            given = self.ctx.db.query("SELECT time FROM actions WHERE number = ?", (before,))
+            cutoff = float(given[0]["time"]) if given else cutoff
+        rows = self.ctx.db.query("SELECT kind, duration FROM actions WHERE target_id = ? AND dry_run = 0 AND ok = 1 AND number < ? AND time < ? AND kind IN "
+                                 "('mute', 'kick', 'ban', 'warn') AND source != 'automod' AND (evidence IS NULL OR (evidence NOT LIKE 'still muted:%' AND evidence NOT LIKE 'kicked on %'))",
+                                 (player_id.lower(), before, cutoff))
         counts = Counter(shown_kind(row["kind"], row["duration"]) for row in rows)
+        try:
+            struck = self.ctx.db.query("SELECT COUNT(*) AS n FROM automod_strikes WHERE player_id = ? AND dry_run = 0 AND pardoned IS NULL AND time < ?",
+                                       (player_id.lower(), cutoff))[0]["n"]
+        except sqlite3.Error:  # no Vergil here
+            struck = 0
+        if struck:
+            counts["strike"] = int(struck)
         return ", ".join(f"{n} {kind}{'s' if n != 1 else ''}" for kind, n in counts.most_common())
 
     def said_by(self, player_id: str, lines: int, before: float) -> list[str]:
@@ -285,16 +310,16 @@ class DiscordPart(Part):
         now = time.time()
         since = now - float(self.file.section("tickets").get("evidence_minutes", 30) or 30) * 60
         try:
-            rows = self.ctx.db.query("SELECT name, text, time FROM commands_chat WHERE server = ? AND time >= ? ORDER BY time DESC LIMIT ?", (server, since, lines))
+            rows = self.ctx.db.query("SELECT player_id, name, text, time FROM commands_chat WHERE server = ? AND time >= ? ORDER BY time DESC LIMIT ?", (server, since, lines))
         except sqlite3.Error:
             return []
-        return [f"{clean(row['name'])}: {clean(row['text'])} ({_how_long_before(now - float(row['time']))})" for row in reversed(rows)]
+        return [f"{cards.tagged(row['name'], row['player_id'], server)}: {clean(row['text'])} ({_how_long_before(now - float(row['time']))})" for row in reversed(rows)]
 
     def kicked_lately(self, player_id: str, seconds: float, now: float) -> Any:
         """Their last kick, if the server's block ended under `seconds` ago, or hasn't yet (it blocks 10, 30, 60, then 120 minutes, the count starting
         again after a day without a kick; one with a time, that long). Not if it was pardoned: that's staff letting them back. A kick passed on to another
         server is the first server's block, so it doesn't count."""
-        rows = self.ctx.db.query("SELECT time, by, reason, kind, duration FROM actions WHERE target_id = ? AND kind IN ('kick', 'pardon', 'ban', 'unban') AND ok = 1 AND dry_run = 0 "
+        rows = self.ctx.db.query("SELECT time, by, by_id, reason, kind, duration FROM actions WHERE target_id = ? AND kind IN ('kick', 'pardon', 'ban', 'unban') AND ok = 1 AND dry_run = 0 "
                                  "AND (evidence IS NULL OR evidence NOT LIKE 'kicked on %') ORDER BY time DESC LIMIT 8", (player_id,))
         if not rows or shown_kind(rows[0]["kind"], rows[0]["duration"]) != "kick":  # let back, or banned for good
             return None
@@ -308,10 +333,79 @@ class DiscordPart(Part):
         block = seconds_of(duration) if TIME.fullmatch(duration) else KICK_BLOCKS[min(kicks, len(KICK_BLOCKS)) - 1]
         return rows[0] if now - float(rows[0]["time"]) <= block + seconds else None
 
+    # Who's who: a player written the one way (core/tags.py), the host's call of 21 November 2026 ------------------
+
     def name_of(self, player_id: str, given: str = "") -> str:
-        """Who a player is to anyone reading: the name they were last seen under. An old one means nothing to whoever comes next, and an ID means nothing to anyone."""
-        record = self.ctx.players.get(player_id.lower()) if player_id else None
-        return str(record.last_name) if record is not None and record.last_name else given or player_id[:8]
+        """The plain name a player goes by: on a server now, the one it has; else the last one seen; else `given`, else
+        the start of their ID. For what isn't read as who they are (the name a command is run with): what's read is
+        their tag (tag, label)."""
+        return (self.ctx.names.name(player_id, given) if player_id else given) or tags.short_id(player_id)
+
+    def on_server(self, player_id: str) -> str:
+        """The server they're on now; "" for none."""
+        return self.ctx.names.on(player_id)[0] if player_id else ""
+
+    def tag(self, player_id: str, given: str = "", *, server: str | None = None, handle: str = "", bold: bool = False) -> cards.Shown:
+        """A player as Discord writes one: the name they go by now, the start of their ID in a code box, the server
+        they're on ("Nate `1a2b3c4d` [HugeGrass]"). `given`: the name a record has, for whoever's known no better.
+        `server`: where they were, when that's what counts; None looks up where they are now. `handle` (#4, @2) only
+        where whoever reads it can type it back. Cleaned: it goes into a card or an answer as it is."""
+        player_id = str(player_id or "").strip().lower()
+        name = self.ctx.names.name(player_id, given) if is_player_id(player_id) else given
+        return cards.tagged(name, player_id, self.on_server(player_id) if server is None else server, handle=handle, bold=bold)
+
+    def label(self, player_id: str, given: str = "", *, server: str | None = None, handle: str = "") -> str:
+        """The same in plain words, for what Discord shows without formatting: a choice as someone types, a menu's line,
+        a form's title, a thread's name."""
+        player_id = str(player_id or "").strip().lower()
+        name = self.ctx.names.name(player_id, given) if is_player_id(player_id) else given
+        return tags.tag(name, player_id, handle=handle, server=self.on_server(player_id) if server is None else server)
+
+    def titled(self, words: str, player_id: str, given: str = "", most: int = 45) -> str:
+        """A form's title naming a player, in Discord's 45 characters: "Mute: Nate Higgers 1a2b3c4d". A long name is cut
+        short before the ID is, as the ID is what tells them apart; the rest of the tag (label) goes in the form."""
+        player_id = str(player_id or "").strip().lower()
+        known = is_player_id(player_id)
+        name = tags.shown_name(self.ctx.names.name(player_id, given) if known else given) or (tags.NO_NAME if known else "")
+        tail = f" {tags.short_id(player_id)}" if known else ""
+        room = max(most - len(words) - 2 - len(tail), 1)
+        if len(name) > room:
+            name = name[:room - 1].rstrip() + "…"
+        return (f"{words}: {name}{tail}" if name or tail else words)[:most]
+
+    def who(self, user: Any) -> cards.Shown:
+        """Someone in this Discord, the one way (the host's call, 21 November 2026, H5): their name here, and the tag
+        of the player their account's linked to: "Buck (Rookie `1a2b3c4d` [HugeGrass])", or the tag alone when it's
+        the same name. Only for reading: what's kept, and what the game's told, is their name (client.named,
+        client.acting_as)."""
+        from .client import named
+
+        return self.member_shown(str(getattr(user, "id", "") or ""), named(user))
+
+    def member_shown(self, member: str, name: str = "", *, otherwise: str = "") -> cards.Shown:
+        """A member by their Discord ID, as who() writes them. `name`: their name here, if it's known; else the one their
+        link keeps; else `otherwise` (what a record says: `shown_as`'s name for them, after a restart)."""
+        try:
+            link = self.links.of_member(member) if member else None
+        except sqlite3.Error:  # the links' table, before its schema step
+            link = None
+        name = name or (str(link["member_name"] or "") if link is not None else "") or otherwise or "someone"
+        if link is None:
+            return cards.Shown(clean(name))
+        player = self.tag(str(link["player_id"]), str(link["player_name"] or ""))
+        same = self.name_of(str(link["player_id"]), str(link["player_name"] or "")).casefold() == name.casefold()
+        return player if same else cards.Shown(f"{clean(name)} ({player})")
+
+    def actor(self, by_id: str, by: str = "") -> cards.Shown:
+        """Whoever did something, for a card or a line: someone in this Discord by their name here (as they pressed or
+        typed, else as the record or their link has it) with their linked player; a player in game by their tag;
+        anything else (the window, Vergil, a server's own) as the record names it."""
+        by_id = str(by_id or "")
+        if by_id.startswith("discord:"):
+            return self.member_shown(by_id.removeprefix("discord:"), self.real_names.get(by_id, ""), otherwise=by.removesuffix(" (Discord)"))
+        if is_player_id(by_id):
+            return self.tag(by_id, by)
+        return cards.Shown(clean(by or "someone"))
 
     def name_now(self, server: str, player_id: str, *, or_last: bool = False) -> str:
         """The name a player goes by on a server now, as its live picture has it; "" if it has none: 0.10's join names
@@ -324,23 +418,31 @@ class DiscordPart(Part):
         return str(record.last_name) if record is not None and record.last_name else ""
 
     def named_in(self, text: str) -> str:
-        """What a command answered, with whoever it's about by name: a server's answer often only has the ID it was given."""
+        """What a command answered, with whoever it's about by their tag, in plain words, as the game's own answers
+        write one: a server's answer often only has the whole ID it was given. Someone Huragok has never seen keeps the
+        ID, for whoever may see it to see."""
         def named(found: re.Match[str]) -> str:
-            record = self.ctx.players.get(found[0].lower())
-            return str(record.last_name) if record is not None and record.last_name else found[0]
+            player_id = found[0].lower()
+            return self.label(player_id) if self.ctx.players.get(player_id) is not None or self.on_server(player_id) else found[0]
 
         return WHOLE_ID.sub(named, text)
 
     def banned_on(self, player_id: str) -> list[str]:
-        """The servers whose last word on this player was a ban, for good: one with a time is a kick, and runs out without a word. A command's unban lifts what commands gave, on every server, wherever it was typed.
-        A server's own /ban stays that server's until it's lifted there."""
-        rows = self.ctx.db.query("SELECT server, kind, duration, source FROM actions WHERE target_id = ? AND ok = 1 AND dry_run = 0 AND kind IN ('ban', 'unban') ORDER BY number", (player_id.lower(),))
+        """The servers whose last word on this player was a ban, for good: one with a time is a kick, and runs out without a word. With across_servers on, anyone's unban lifts
+        every ban on every server (the host's call, 21 November 2026), but letting them back from a kick lifts no ban for good; with it off, a command's unban lifts what commands
+        gave, on every server, and a server's own /ban stays that server's until it's lifted there."""
+        from ..players.ledger import KICK_LIFTED
+
+        across = self.across()
+        rows = self.ctx.db.query("SELECT server, kind, duration, source, reason FROM actions WHERE target_id = ? AND ok = 1 AND dry_run = 0 AND kind IN ('ban', 'unban') ORDER BY number", (player_id.lower(),))
         last: dict[str, tuple[str, str]] = {}
         for row in rows:
             server = str(row["server"] or "")
             if row["kind"] == "unban":
                 last.pop(server, None)
-                if row["source"] == "commands":
+                if across and row["source"] != "vote" and row["reason"] != KICK_LIFTED:
+                    last = {}
+                elif row["source"] == "commands":
                     last = {name: given for name, given in last.items() if given[1] == "in game"}
             else:
                 last[server] = (shown_kind(row["kind"], row["duration"]), str(row["source"] or ""))
@@ -378,12 +480,12 @@ class DiscordPart(Part):
         now = time.time()
         if now - self._called.get(player_id, 0.0) < float(options.get("cooldown_seconds", 0) or 0):
             return False
-        card = cards.called(self.file, server, name, why, self.recent_chat(server, int(options.get("recent_lines", 0) or 0)))
+        card = cards.called(self.file, server, name, why, self.recent_chat(server, int(options.get("recent_lines", 0) or 0)), player_id)
         if self.file.mode == "off" or not self.feeds.reaches(card):
             return False
         self._called[player_id] = now
         self.feeds.deliver(card)
-        self.tell_staff_in_game(callout("request", f"{name} called for an admin on {server}" + (f": {why}" if why else ".")), skip=player_id)
+        self.tell_staff_in_game(callout("request", f"{self.ctx.names.public(player_id, name)} called for an admin" + (f": {why}" if why else ".")), skip=player_id)
         return True
 
     def tell_staff_in_game(self, text: str, *, skip: str = "") -> None:
@@ -441,17 +543,18 @@ class DiscordPart(Part):
         if player.id == call.player.id:
             await call.reply("You can't report yourself.")
             return
-        outcome, _ = self.reports.make(call.player.id, call.player.name, player.id, player.name, call.server, " ".join(rest_of_line), "game")
+        # The server they're on, not the reporter's: the card's tag says where the player is (the identity audit, 12)
+        outcome, _ = self.reports.make(call.player.id, call.player.name, player.id, player.name, self.on_server(player.id) or None, " ".join(rest_of_line), "game")
         if outcome == TOO_MANY:
             await call.reply(say(self.file, "reports.too_many"))
         elif outcome == TOO_SOON:
             await call.reply(f"You reported someone a moment ago. Give it {describe_seconds(float(options.get('reporter_cooldown_seconds', 0) or 0))}.")
         elif outcome == ALREADY:
-            await call.reply("Added to your report." if rest_of_line else f"You've reported {player.name} already: the staff have it.")
+            await call.reply("Added to your report." if rest_of_line else f"You've reported {call.tag(player)} already: the staff have it.")
         elif outcome == OFF:
             await call.reply("That can't reach anyone just now.")
         elif outcome == TAKEN and options.get("thank_reporter", True):
-            await call.reply(callout("request", "Thanks: the staff have it on Discord."))
+            await call.reply(callout("request", f"Thanks: the staff have your report of {call.tag(player)} on Discord."))
         elif outcome == TAKEN:
             await call.reply("Sent.")  # so they know it worked, whatever else isn't said
 
@@ -520,7 +623,7 @@ class DiscordPart(Part):
 
     @command("mods", help="Which staff are on the servers now", role="player", when="discord_on")
     async def mods(self, call: Any) -> None:
-        on = [f"{player.name} ({server})" for server, state in self.ctx.servers.items() for player in state.players.values()
+        on = [call.tag(player, server=str(server)) for server, state in self.ctx.servers.items() for player in state.players.values()
               if ROLES.index(self.ctx.highest_role(player)) >= ROLES.index("moderator")]
         if on:
             await call.reply("Staff on now: " + ", ".join(sorted(on)))
@@ -538,11 +641,12 @@ class DiscordPart(Part):
         now = time.time()
         lines = []
         for row in rows[:OPEN_SHOWN]:
-            kind = "A call" if str(row["kind"]) == "calls-called" else "A report"
-            about = f" on {row['player_name']}" if row["player_name"] else ""
-            where = f", {row['server']}" if row["server"] else ""
+            kind = "a call" if str(row["kind"]) == "calls-called" else "a report"
+            about = f" on {call.tag(str(row['player_id']), str(row['player_name'] or ''))}" if row["player_id"] or row["player_name"] else ""  # where they are now: the tag says
+            where = f", {row['server']}" if row["server"] and not about else ""
             hand = " (in hand)" if str(row["state"]) == "active" else ""
-            lines.append(f"#{row['number']} {kind}{about}{where}, {describe_seconds(now - float(row['opened']))} ago{hand}")
+            # "Ticket 12", not "#12": a # is a player's number in game (the host's call, 21 November 2026, H6)
+            lines.append(f"Ticket {row['number']}: {kind}{about}{where}, {describe_seconds(now - float(row['opened']))} ago{hand}")
         more = f"\n…and {len(rows) - OPEN_SHOWN} more" if len(rows) > OPEN_SHOWN else ""
         await call.reply(f"{len(rows)} open:\n" + "\n".join(lines) + more)
 
@@ -556,10 +660,16 @@ class DiscordPart(Part):
             self._call(event.server, player_id, str(event.get("name") or ""), str(event.get("text") or ""))
 
     def audit(self, kind: str, text: str, *, merge: bool = False) -> None:
-        """Something done from Discord or the window, for the audit feed."""
+        """Something done from Discord or the window, for the audit feed. `text` is cleaned, unless it's been written for
+        Discord already (cards.Shown): then its pieces were, each once."""
         card = cards.audit(kind, text, self.file)
         card.merge = merge  # a burst of these, one after another, is one line
         self.feeds.deliver(card)
+
+    def audit_setup(self, user: Any, what: str) -> None:
+        """A change to the bot's setup, for the audit feed: who made it, the one way (who; it said `shown_as`, which can
+        be "a moderator" on every line), and what it was."""
+        self.audit("setup", cards.Shown(say(self.file, "audit.setup", who=self.who(user), what=clean(what))))
 
     @every(seconds=15)
     async def status_tick(self) -> None:
@@ -657,6 +767,7 @@ class DiscordPart(Part):
             self.ctx.refresh_problems()
         if fresh is None:
             return False
+        fresh.everywhere = self.ranks_everywhere
         previous, self.file = self.file, fresh
         self.feeds.unblock()
         self.log.info("discord.toml reloaded")

@@ -38,6 +38,9 @@ class OtherServer:
     def named(self, name: str) -> list[tuple[str, ...]]:
         return [args for command, args, _ in self.sent if command == name]
 
+    def stop(self) -> None:
+        """As Huragok closes (a test that fails before taking it out again): nothing to stop."""
+
 
 class ThawingServer(OtherServer):
     """A server frozen with its console up that thaws: while frozen, each command waits `seconds` and times out (as

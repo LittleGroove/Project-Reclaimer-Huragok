@@ -310,9 +310,42 @@ def test_d_changes_who_is_who_and_the_commands(tmp_path: Path, run) -> None:
     permissions = load_permissions(path.parent / "commands.toml")
     assert BRAVO not in permissions.members["moderator"] and BRAVO not in permissions.members["member"]
     assert permissions.roles["kick"] == "admin" and "kick" in permissions.off
-    assert "Bravo is a moderator now." in text and "Bravo is a member now (no longer moderator: one role each)." in text
-    assert "Bravo isn't a member any more." in text and "!kick: admin and up." in text and "!kick is off." in text
+    # Each as their tag (the name from Huragok's records, the start of their ID).
+    assert "Bravo cccccccc is a moderator now." in text
+    assert "Bravo cccccccc is a member now (no longer moderator: one role each)." in text
+    assert "Take Bravo cccccccc out of the members?" in text and "Bravo cccccccc isn't a member any more." in text
+    assert "!kick: admin and up." in text and "!kick is off." in text
     assert "keeps lines starting with /" in text
+
+
+def test_d_names_role_holders_from_the_records_and_notes_them_as_in_game(tmp_path: Path, run) -> None:
+    """Who each is comes from Huragok's records (the name now), not the note in commands.toml (the name then, said
+    after when it's another); a player is picked by a name or an ID's start too; the note written is !promote's form,
+    on one line whatever the name has in it."""
+    path = template_root(tmp_path)
+    commands = path.parent / "commands.toml"
+    cy = "f" * 64
+    storage = Storage(path.parent / "records" / "huragok.sqlite3")
+    storage.record_join(BRAVO, "Al:pha", None, 1_700_000_000)
+    storage.record_join(BRAVO, "Bravo", None, 1_700_000_100)
+    storage.record_join(cy, "Cy\x1b[2J\r", None, 1_700_000_200)  # control characters: tomllib refuses them in a comment
+    storage.close()
+    add_player(commands, "moderator", BRAVO, "Al:pha: promoted by Alice on 2026-10-18")
+    keys = ["C", "ENTER",
+            "2", "ESC",  # Moderators: Bravo, promoted as Al:pha
+            "3", "A", "ENTER", "1", "ENTER", "ESC",  # Members: Cy, the latest seen
+            "1", "A", "ENTER", *BRAVO[:8], "ENTER", "ESC",  # Faculty: Bravo, by the start of their ID
+            "ESC", "ESC"]
+    menu, terminal = screen(path, keys)
+    run(menu.screen_settings())
+    text = " ".join(text_of(terminal).split())
+    assert "Bravo cccccccc" in text and "promoted by Alice on 2026-10-18 (as Al:pha)" in text
+    members = load_permissions(commands).members  # read as Huragok reads it: the notes didn't break it
+    assert cy in members["member"] and BRAVO in members["faculty"] and BRAVO not in members["moderator"]
+    notes = player_notes(commands)
+    assert notes[cy].startswith("Cy [2J: added as member by the host in Huragok's window on ")
+    assert notes[BRAVO].startswith("Bravo: added as faculty by the host in Huragok's window on ")
+    assert "Bravo cccccccc is faculty now (no longer moderator: one role each)." in text
 
 
 def test_d_adds_vergils_rules_and_banned_names(tmp_path: Path, run) -> None:
@@ -427,9 +460,10 @@ def test_d_commands_toml_made_faculty_typed_and_the_cooldown(tmp_path: Path, run
     text = text_of(terminal)
     permissions = load_permissions(commands)
     assert FACULTY in permissions.members["faculty"] and permissions.cooldown == 5 and permissions.prefix == "?"
-    assert player_notes(commands)[FACULTY].startswith("added as faculty in Huragok's window on ")
-    assert "No players in Huragok's records yet" in text and "is faculty now." in text
-    assert "Not changed: Alice is not a player ID" in text and "Not changed: a number of seconds, 0 to 3600." in text
+    assert player_notes(commands)[FACULTY].startswith("added as faculty by the host in Huragok's window on ")
+    assert "No players in Huragok's records yet" in text and f"(no name yet) {FACULTY[:8]} is faculty now." in text
+    assert "Nobody called 'Alice' is on a server or in Huragok's records." in text
+    assert "Not changed: a number of seconds, 0 to 3600." in text
     assert "cooldown_seconds = 5 written." in text and "Commands start with ? now: !help reads ?help." in text
 
 

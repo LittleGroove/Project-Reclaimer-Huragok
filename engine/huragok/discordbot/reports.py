@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.background import background
 from ..core.events import Event
+from ..core.text import is_player_id
 from ..lore import callout
 from . import cards, rest, tidy
 from .cards import Card
@@ -86,7 +87,7 @@ class Reports:
         ongoing = self.part.tickets.ongoing(problem)
         if ongoing and self.db.query("SELECT 1 FROM discord_reports WHERE ticket = ? AND reporter = ?", (ongoing, reporter)):  # theirs is there: what they've added isn't lost, and isn't another report
             if why:
-                self.part.tickets.add_line(ongoing, say(self.config, "reports.added", who=cards.clean(reporter_name), why=cards.clean(why)), touch=False)
+                self.part.tickets.add_line(ongoing, say(self.config, "reports.added", who=self.part.actor(reporter, reporter_name), why=cards.clean(why)), touch=False)
                 self.part.tickets.show(ongoing)
             return ALREADY, ongoing
         if self._too_soon(reporter):
@@ -96,18 +97,27 @@ class Reports:
             return TOO_MANY, 0
         record = self.track_record(reporter)
         lines = self.part.said_by(player_id, int(self.options.get("evidence_lines", 0) or 0), self.clock())
-        card = cards.reported(self.config, reporter_name, record, player_id, player_name, server, why, lines, problem, mention=_mention(reporter))
+        card = cards.reported(self.config, self._reporter(reporter, reporter_name), record, player_id, player_name, server, why, lines, problem, mention=_mention(reporter))
         number = self._open(card, "reports-made")
         if not number:
             return OFF, 0
         self.db.execute("INSERT INTO discord_reports (time, reporter, reporter_name, player_id, player_name, why, source, ticket) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (self.clock(), reporter, reporter_name, player_id, player_name, why, source, number))
         self._enough_people(player_id, player_name, number)
-        self.part.tell_staff_in_game(callout("request", f"{reporter_name} reported {player_name}" + (f" on {server}" if server else "") + (f": {why}" if why else ".")), skip=reporter)
+        names = self.part.ctx.names  # read in game: their #number on the server they're on, which says it (core/tags.py)
+        reporter_said = names.public(reporter, reporter_name) if is_player_id(reporter) else reporter_name
+        self.part.tell_staff_in_game(callout("request", f"{reporter_said} reported {names.public(player_id, player_name)}" + (f": {why}" if why else ".")), skip=reporter)
         return TAKEN, number
 
-    def message_reported(self, reporter: str, reporter_name: str, author: str, channel_name: str, link: str, quoted: str, why: str) -> tuple[str, int]:
-        """A message in the Discord, not a player: one ticket for it, as its link's its only subject."""
+    def _reporter(self, reporter: str, name: str) -> str:
+        """Whoever reported, in bold: a player by their tag, someone in this Discord as part.who writes them."""
+        if reporter.startswith("discord:"):
+            return cards.Shown(f"**{self.part.member_shown(reporter.removeprefix('discord:'), name)}**")
+        return self.part.tag(reporter, name, bold=True) if is_player_id(reporter) else name
+
+    def message_reported(self, reporter: str, reporter_name: str, author: str, channel_name: str, link: str, quoted: str, why: str, author_id: str = "") -> tuple[str, int]:
+        """A message in the Discord, not a player: one ticket for it, as its link's its only subject. `author_id`:
+        "discord:<their ID>", so the card says who it really is, as the reporter's does."""
         if not self.takes("discord"):
             return OFF, 0
         if self._too_soon(reporter):
@@ -116,7 +126,8 @@ class Reports:
         ongoing = self.part.tickets.ongoing(problem)
         if ongoing and self.db.query("SELECT 1 FROM discord_reports WHERE ticket = ? AND reporter = ?", (ongoing, reporter)):
             return ALREADY, ongoing
-        card = cards.message_reported(self.config, reporter_name, self.track_record(reporter), author, channel_name, link, quoted, why, mention=_mention(reporter))
+        card = cards.message_reported(self.config, self._reporter(reporter, reporter_name), self.track_record(reporter), author, channel_name, link, quoted, why, mention=_mention(reporter),
+                                      author_mention=_mention(author_id) if author_id else "")
         card.problem = problem  # one message, one card, however many people report it
         number = self._open(card, "reports-message")
         if not number:
@@ -144,9 +155,10 @@ class Reports:
         ticket = self.part.tickets.get(number)
         mention, roles = self.part.feeds.ping_of(line)
         minutes = f"{float(self.options.get('threshold_minutes', 10) or 10):g}"
-        self.part.tickets.add_line(number, cards.enough_reports(self.config, people, player_name, minutes, "").line.rstrip(": "), touch=False)
+        who = self.part.tag(player_id, player_name, bold=True)
+        self.part.tickets.add_line(number, cards.enough_reports(self.config, people, who, minutes, "").line.rstrip(": "), touch=False)
         self.part.tickets.show(number)
-        text = cards.enough_reports(self.config, people, player_name, minutes, f"[{say(self.config, 'ticket.number', number=number)}]({self.part.tickets.link(ticket)})").line
+        text = cards.enough_reports(self.config, people, who, minutes, f"[{say(self.config, 'ticket.number', number=number)}]({self.part.tickets.link(ticket)})").line
         lasting = float(line.get("remove_after_minutes", 0) or 0) * 60  # it's on the card, for good. This is only to get someone's attention
 
         def posted(reply: Any) -> None:
@@ -158,7 +170,7 @@ class Reports:
 
     def upheld(self, number: int) -> None:
         """Someone acted on a report's ticket: everyone's report on it goes down as right, and they're told, once."""
-        waiting = self.db.query("SELECT reporter, player_name FROM discord_reports WHERE ticket = ? AND upheld = 0", (number,))
+        waiting = self.db.query("SELECT reporter, player_id, player_name FROM discord_reports WHERE ticket = ? AND upheld = 0", (number,))
         self.db.execute("UPDATE discord_reports SET upheld = 1 WHERE ticket = ?", (number,))
         if self.options.get("tell_reporter", "acted") in ("acted", "all"):
             self._tell(waiting, "reports.told_acted")
@@ -166,14 +178,16 @@ class Reports:
     def dismissed(self, number: int) -> None:
         """Nothing came of it. [reports] tell_reporter says whether they hear that."""
         if self.options.get("tell_reporter", "acted") == "all":
-            self._tell(self.db.query("SELECT reporter, player_name FROM discord_reports WHERE ticket = ? AND upheld = 0", (number,)), "reports.told_dismissed")
+            self._tell(self.db.query("SELECT reporter, player_id, player_name FROM discord_reports WHERE ticket = ? AND upheld = 0", (number,)), "reports.told_dismissed")
 
     def _tell(self, rows: list[Any], key: str) -> None:
-        """Whoever reported, however they did: on a server now, or as they next join; by DM from Discord, which they may have closed. Nobody else is ever told who reported whom."""
+        """Whoever reported, however they did: on a server now, or as they next join; by DM from Discord, which they may have closed. Nobody else is ever told who reported whom.
+        Who they reported is named the one way: in Discord its ID in a code box, in game as the game's lines write it."""
         config = self.config
         for row in rows:
-            reporter, text = str(row["reporter"]), say(config, key, player=str(row["player_name"]))
+            reporter, player_id, player_name = str(row["reporter"]), str(row["player_id"] or ""), str(row["player_name"])
             if reporter.startswith("discord:"):
+                text = say(config, key, player=self.part.tag(player_id, player_name))
                 user = reporter.removeprefix("discord:")
 
                 async def send(user: str = user, text: str = text) -> Any:
@@ -185,6 +199,7 @@ class Reports:
 
                 self.part.outbox.put(send, priority=ANSWER, bucket="dm", what="telling someone how their report went", on_fail=refused)
                 continue
+            text = say(config, key, player=self.part.ctx.names.tag(player_id, player_name) if player_id else player_name)
             where = next(((server, player) for server, state in list(self.part.ctx.servers.items()) if (player := state.player_by_id(reporter))), None)
             if where is None:
                 self.part.notice_for(reporter, callout("request", text))
@@ -199,7 +214,7 @@ class Reports:
         number = self.part.tickets.ongoing(f"report:{player_id}")
         if not number or number == pressed:  # a press on the report's own card has said so itself
             return False
-        card = cards.moderation(self.config, self.part.feeds._by_real_name(event))
+        card = cards.moderation(self.config, self.part.feeds.shown(event))
         if card is not None:
             self.part.tickets.add_line(number, card.line)
         self.upheld(number)

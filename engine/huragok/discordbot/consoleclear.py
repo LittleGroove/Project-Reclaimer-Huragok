@@ -188,8 +188,7 @@ def _when(snowflake: str) -> str:
 
 
 def _author(message: dict[str, Any]) -> str:
-    author = message.get("author") or {}
-    return str(author.get("global_name") or author.get("username") or "?")
+    return rest.display_name(message.get("author"), message.get("member")) or "?"
 
 
 def _words(config: DiscordConfig, message: dict[str, Any]) -> list[str]:
@@ -217,7 +216,7 @@ def transcript(config: DiscordConfig, name: str, messages: list[dict[str, Any]],
 
     def add(message: dict[str, Any], indent: str = "") -> None:
         reply_to = (message.get("referenced_message") or {}).get("author") or {}
-        lead = f"{indent}[{_when(str(message['id']))}] {_author(message)}" + (f", replying to {reply_to.get('global_name') or reply_to.get('username')}" if reply_to else "") + ":"
+        lead = f"{indent}[{_when(str(message['id']))}] {_author(message)}" + (f", replying to {rest.display_name(reply_to)}" if reply_to else "") + ":"
         words = _words(config, message)
         out.append(f"{lead} {words[0]}" if words else lead)
         out.extend(f"{indent}    {line}" for line in words[1:])

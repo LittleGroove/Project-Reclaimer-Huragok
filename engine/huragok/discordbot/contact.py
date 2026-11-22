@@ -141,7 +141,7 @@ class Contact:
             if message.get("type", 0) not in SAID:
                 continue
             when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time_of(str(message["id"]))))
-            author = (message.get("author") or {}).get("username") or "?"
+            author = rest.display_name(message.get("author"), message.get("member")) or "?"  # as named, everywhere else: not their username
             words = " ".join([str(message.get("content") or ""), *[f"{embed.get('title') or ''}: {embed.get('description') or ''}" for embed in message.get("embeds") or []]]).strip()
             files = " ".join(str(file.get("url") or "") for file in message.get("attachments") or [])
             lines.append(f"[{when}] {author}: {words} {files}".rstrip())

@@ -7,8 +7,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from conftest import ALICE, BRAVO
-from test_audit_findings import ADMIN_USER, FIRST, SECOND, SCOPED, on, said_back, up  # noqa: F401
+from test_a_real_fleet import saying_yes
+from test_audit_findings import ACROSS_OFF, ADMIN_USER, FIRST, SECOND, SCOPED, on, said_back, up  # noqa: F401
 from test_audit_findings import bot_file as audit_file
 from test_console import bot_file as console_file
 from test_console import reply_to
@@ -67,17 +70,25 @@ def test_a_players_whole_id_isnt_in_what_report_offers(tmp_path: Path, run: Any,
     run(scenario())
 
 
-def test_a_rank_on_one_server_doesnt_reach_every_server(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """A moderator scoped to one server made a global moderator in commands.toml, in three presses."""
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_rank_on_one_server_doesnt_reach_every_server(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """A moderator scoped to one server made a global moderator in commands.toml, in three presses. That holds with
+    [automod] across_servers off; with it on (the default), a rank on one server is a rank on every server (the host's
+    call, 21 November 2026), so the same ban is asked about and goes through."""
     async def scenario() -> None:
         audit_file(tmp_path, ("commands",), text=SCOPED.replace('rank = "moderator"', 'rank = "admin"'))
         fake.roles.append(FakeDiscord._role("5200", "First's admins", 1, "0"))
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             sent = len(consoles[FIRST].named("ban"))
-            _, token = fake.command("ban", user="7777", roles=("5200",), player=ALICE, reason="x", server=FIRST)
-            assert "reaches every server" in await said_back(fake, token)
+            opened, token = fake.command("ban", user="7777", roles=("5200",), player=ALICE, reason="x", server=FIRST)
+            if across:
+                assert "to **every server**?" in await said_back(fake, token)  # asked first, as for anyone with the rank
+                await saying_yes(fake, opened, token, user="7777", roles=("5200",))
+                await wait_for(lambda: len(consoles[FIRST].named("ban")) > sent, timeout=15)
+                return
+            assert "reaches every server, and your rank is only on some of them" in await said_back(fake, token)
             assert len(consoles[FIRST].named("ban")) == sent
 
     run(scenario())
@@ -180,14 +191,17 @@ def test_a_password_goes_when_their_rank_is_refused(tmp_path: Path, run: Any, fa
     run(scenario())
 
 
-def test_a_reason_thats_only_a_time_isnt_read_as_how_long(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_reason_thats_only_a_time_isnt_read_as_how_long(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """A mute for good whose reason is "7d" would end in 7 days if the server read it as how long. With [automod]
+    across_servers on, what they read says it reaches every server, so it isn't a time alone anyway."""
     async def scenario() -> None:
         audit_file(tmp_path)
-        async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST,), body="" if across else ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             await huragok.vergil.moderation.act("mute", FIRST, ALICE, by="Mod", source="commands", reason="7d")
-            assert consoles[FIRST].named("mute")[-1]["args"][1:] == ["7d."]
+            assert consoles[FIRST].named("mute")[-1]["args"][1:] == (["7d (every server)"] if across else ["7d."])
 
     run(scenario())
 

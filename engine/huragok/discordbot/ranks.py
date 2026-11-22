@@ -55,10 +55,19 @@ def is_faculty(config: DiscordConfig, user_id: str) -> bool:
     return str(user_id) in {str(one).strip() for one in config.section("ranks").get("faculty", [])}
 
 
+def everywhere(config: DiscordConfig) -> bool:
+    """Whether a rank on one server is a rank on all of them ([automod] across_servers: the host's call, 21 November
+    2026, "admin on one server? admin everywhere"): then a role scoped to some servers counts on every server."""
+    told = getattr(config, "everywhere", None)
+    return bool(told()) if callable(told) else False
+
+
 def rank_of(config: DiscordConfig, someone: Someone, server: str | None = None) -> str:
     """Their rank: the highest their roles give them; `server`: there, with the roles that only count on some servers
-    (without it, only what holds on every server). "player" when nothing maps."""
+    (without it, only what holds on every server). With a rank everywhere (`everywhere`), a scoped role counts on every
+    server, `server` or not. "player" when nothing maps."""
     ranks = config.section("ranks")
+    anywhere = everywhere(config)
     if is_faculty(config, someone.user_id):
         return "faculty"
     if someone.timed_out and ranks.get("timeout_suspends", True):
@@ -73,7 +82,7 @@ def rank_of(config: DiscordConfig, someone: Someone, server: str | None = None) 
         rank = str(block.get("rank", "")).strip().replace("_", "-")
         servers = block.get("servers") or []
         servers = [servers] if isinstance(servers, str) else servers  # "Server 10" isn't in "Server 1"
-        if rank in RANK_KEYS and (server is not None and (server in servers or "*" in servers) or "*" in servers):
+        if rank in RANK_KEYS and (anywhere or server is not None and (server in servers or "*" in servers) or "*" in servers):
             found = _higher(found, rank)
     if someone.administrator and ranks.get("discord_administrators") in ("moderator", "admin"):
         found = _higher(found, str(ranks["discord_administrators"]))
@@ -98,6 +107,7 @@ def highest_rank(config: DiscordConfig, someone: Someone, servers: Iterable[Any]
 
 
 # What reaches further than the server it's run on, so it takes the rank someone has on all of them. A kick with a time does too.
+# With a rank everywhere (across_servers on) a rank is the same on every server, so this changes nothing then.
 REACHES_EVERY_SERVER = {"ban", "banall", "unban", "promote", "demote", "admin", "banname", "unbanname", "banword", "unbanword", "changebanword", "pardonplayer", "confirm", "deny"}
 
 

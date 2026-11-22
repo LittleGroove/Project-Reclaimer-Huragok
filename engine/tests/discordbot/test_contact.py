@@ -373,7 +373,7 @@ def test_case_shows_staff_what_happened(tmp_path: Path, run: Any, fake: FakeDisc
             await wait_for(lambda: any(c.get("token") == token for c in fake.callbacks), timeout=10)
             form = next(c for c in fake.callbacks if c.get("token") == token)["data"]
             text = str(form["embeds"][0])
-            assert form["flags"] == 64 and "**kick** of **Alice**" in text and "by Mod <t:" in text and "slurs in voice" in text and "7 days" in text
+            assert form["flags"] == 64 and "**kick** of **Alice** `cccccccc`" in text and "by Mod <t:" in text and "slurs in voice" in text and "7 days" in text
             _, token = fake.command("case", user=MOD_USER, roles=(MOD_ROLE,), number=number + 99)
             assert "no case" in await answer_text(fake, token)
 

@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any
 from ..core.events import Event
 from ..core.text import TIME, describe_time
 from ..players.ledger import shown_kind
-from ..players.targets import FULL_ID
+from ..core.tags import named_then
+from ..players.targets import FULL_ID, ID_START
 from . import cards, rest
 from .config import defaults
 from .outbox import ANSWER
@@ -114,17 +115,20 @@ class Appeals:
         player_id = str(rows[0]["player_id"])
         return player_id, self.part.name_of(player_id)
 
-    def find(self, typed: str) -> tuple[str, str]:
-        """(their ID, their name) for a code, a player ID, or a name in full, which can be one they've gone by. Of several with a name, the one with something to appeal."""
+    def find(self, typed: str) -> list[tuple[str, str]]:
+        """(their ID, their name) for everyone it could be: a code or a player ID is one player; the start of an ID (8
+        characters or more), or a name in full, which can be one they've gone by, can be several. Which of several is
+        never guessed (the identity audit of 21 November 2026: the first with something to appeal was taken)."""
         wanted = typed.strip()
         found = self.find_code(wanted)
         if found[0]:
-            return found
+            return [found]
         if FULL_ID.fullmatch(wanted):
             record = self.part.ctx.players.get(wanted.lower())
-            return (wanted.lower(), str(record.last_name)) if record is not None else ("", "")
-        named = self.part.ctx.players.named(wanted)
-        return next((one for one in named if self.what_stands(one[0])), named[0] if named else ("", ""))
+            return [(wanted.lower(), str(record.last_name))] if record is not None else []
+        if ID_START.fullmatch(wanted):
+            return [(str(record.id), str(record.last_name)) for record in self.part.ctx.players.find(wanted)]
+        return list(dict(self.part.ctx.players.named(wanted)).items())
 
     def open_one(self, player_id: str) -> int:
         """Their appeal that's still waiting. One that's been decided and brought back to deal with something else isn't: they can appeal again, when the wait's up."""
@@ -224,13 +228,15 @@ class Appeals:
         case, server, said = "", None, []
         if rows:
             row = rows[0]
-            case = say(self.config, "appeals.case", number=row["number"], what=shown_kind(row["kind"], row["duration"], row["reason"]), by=cards.clean(str(row["by"] or "")), when=f"<t:{int(row['time'])}:R>",
-                       why=f": {cards.clean(row['reason'])}" if row["reason"] else "")
+            then = named_then(row["target_name"], self.part.name_of(player_id, player_name))  # given under another name: "ban as Alpha" (H8)
+            case = say(self.config, "appeals.case", number=row["number"], what=shown_kind(row["kind"], row["duration"], row["reason"]) + (f" as {cards.clean(then)}" if then else ""),
+                       by=self.part.actor(str(row["by_id"] or ""), str(row["by"] or "")), when=f"<t:{int(row['time'])}:R>", why=f": {cards.clean(row['reason'])}" if row["reason"] else "")
             server = str(row["server"] or "") or None
             said = self.part.said_by(player_id, int(self.config.section("tickets").get("evidence_lines", 0) or 0), float(row["time"]))
         also = [kind for kind in ("ban", "kick", "mute") if kind != about and self.part.tickets.standing(player_id)[{"ban": "banned", "kick": "kicked", "mute": "muted"}[kind]]]
         came_with = say(self.config, "appeals.with_code") if proved else say(self.config, "appeals.name_only") if self.codes_used() else ""
-        number = self.part.tickets.open_as("appeals-made", cards.appeal(self.config, member_name, about, player_id, player_name, server, case, said, answers, came_with=came_with, also=also, mention=f" (<@{member}>)" if member.isdecimal() else ""), "appeals")
+        number = self.part.tickets.open_as("appeals-made", cards.appeal(self.config, member_name, about, player_id, player_name, server, case, said, answers, came_with=came_with, also=also, mention=f" (<@{member}>)" if member.isdecimal() else "",
+                                                                       on_server=self.part.on_server(player_id)), "appeals")
         if number:
             self.db.execute("INSERT INTO discord_appeals (time, member, member_name, player_id, player_name, about, ticket, proved) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (self.clock(), member, member_name, player_id, player_name, about, number, int(proved)))
         return number
@@ -267,7 +273,7 @@ class Appeals:
         appeal = self.of_ticket(number)
         still = self.what_else_stands(str(appeal["player_id"])) if appeal is not None and outcome == LIFTED else ""
         text = say(config, f"appeals.told_{outcome}", why=why, length=describe_time(length) if TIME.fullmatch(length or "") else length, discord=cards.clean(self.part.guild_name or "the Discord"),
-                   player=cards.clean(appeal["player_name"] if appeal is not None else ""), what=say(config, f"appeals.about_{appeal['about']}") if appeal is not None else "it")
+                   player=self.part.tag(str(appeal["player_id"]), str(appeal["player_name"] or "")) if appeal is not None else "", what=say(config, f"appeals.about_{appeal['about']}") if appeal is not None else "it")
         if still:
             text += " " + say(config, "appeals.still_stands", what=say(config, f"appeals.about_{still}"))
         if then:
@@ -290,7 +296,7 @@ class Appeals:
             return False
         player_id = str(event.get("target_id") or "").lower()
         number = self.open_one(player_id)
-        who = str(event.get("by") or "")
+        who = event.get("by_shown") or str(event.get("by") or "")  # the one way, as the feeds have it (part.actor)
         if not number:
             self._second_thoughts(player_id, pressed, who, str(event.get("kind")))
             return False

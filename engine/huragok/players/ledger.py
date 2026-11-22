@@ -6,6 +6,7 @@ one dry-run switch, and players always reading who acted ("muted by Alice").
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import re
 import time
@@ -14,11 +15,13 @@ from collections.abc import Callable
 from typing import Any
 
 from ..core.events import EventBus
-from ..core.storage import ACTING_ID, Storage
+from ..core.storage import ACTING_ID, Storage, picked_as
+from ..core.tags import tag
 from ..core.text import describe_time, is_player_id
 from ..lore import callout
 from ..rcon import RconClient, RconError
 from ..servers.state import Player, ServerState
+from .reach import MODERATION
 
 log = logging.getLogger(__name__)
 
@@ -43,17 +46,27 @@ def shown_kind(kind: Any, duration: Any, reason: Any = "") -> str:
     return "kick" if kind == "ban" and duration else str(kind)
 
 
-def kick_reason(duration: str, reason: str) -> str:
-    """What a kick with a time gives the server as the ban's reason: the player reads it as they're removed and every time they try to join."""
-    return f"Kicked for {describe_time(duration)}" + (f": {reason}" if reason else ".")
+EVERY_SERVER_NOTE = "(every server)"  # what a player reads after the reason for a mute, kick or ban that reaches every server (the host's call, 21 November 2026)
+
+
+def kick_reason(duration: str, reason: str, everywhere: bool = False) -> str:
+    """What a kick with a time gives the server as the ban's reason: the player reads it as they're removed and every time they try to join, with how far it
+    reaches (`everywhere`: [automod] across_servers)."""
+    return f"Kicked {'off every server ' if everywhere else ''}for {describe_time(duration)}" + (f": {reason}" if reason else ".")
 
 
 TIME_ONLY = re.compile(r"\d+\s*[a-zA-Z]+")
 
 
+WORDS = {"pardon": "let back"}  # what an action is called where it's written down (the host's call, 21 November 2026)
+NOBODY = ("vote", "a vote", "server", "the server", "time")  # who acted, as the ledger has it, when nobody did
+
+
 def plain_reason(text: Any) -> str:
-    """What a kick was for, without what kick_reason put in front of it for the player: for lists, which say it's a kick and how long for themselves."""
-    return re.sub(r"^Kicked for [^:.]+[:.]\s*", "", str(text or ""))
+    """What a kick was for, without what kick_reason put in front of it for the player (or the note after it): for lists, which say it's a kick, how long for,
+    and where, themselves."""
+    text = re.sub(r"^Kicked (?:off every server )?for [^:.]+[:.]\s*", "", str(text or ""))
+    return text.removesuffix(EVERY_SERVER_NOTE).rstrip()
 
 
 @dataclass(frozen=True)
@@ -69,9 +82,32 @@ class Action:
     dry_run: bool
     ok: bool
     text: str
+    picked_as: str = ""  # "#4" or "@2": how the command that asked for it picked the player
+    on_server: str = ""  # the server the player was on as it was done; "" for nobody on
+    target_text: str = ""  # what was sent when it wasn't a player ID: a name, or an address
+    number: int = 0  # their #number on `on_server` as it was done
+
+    @property
+    def target_shown(self) -> str:
+        """What it was done to, when there's no player ID: the name typed, or "that address" (never an address
+        itself, which isn't for every reader)."""
+        text = self.target_text.strip()
+        try:
+            ipaddress.ip_address(text.split(":")[0] if text.count(":") == 1 else text)
+            return "that address"
+        except ValueError:
+            return text or "someone"
+
+    @property
+    def who(self) -> str:
+        """The player, for the log: the whole ID, the handle typed, the server they were on (core/tags.py)."""
+        if not self.target_id:
+            return self.target_name or self.target_text or "someone"  # the log has addresses
+        return tag(self.target_name or "", self.target_id, handle=self.picked_as, server=self.on_server, whole=True)
 
     def describe(self) -> str:
-        what = f"{self.kind} {self.target_name or self.target_id}"
+        kind = shown_kind(self.kind, self.duration, self.reason)
+        what = f"{WORDS.get(kind, kind)} {self.who}"
         if self.duration:
             what += f" for {self.duration}"
         if self.reason:
@@ -83,6 +119,7 @@ class Moderation:
     def __init__(self, clients: dict[str, RconClient], states: dict[str, ServerState], storage: Storage,
                  bus: EventBus, *, dry_run: bool = False) -> None:
         self.ban_note: Callable[[str, str | None], str] | None = None  # what a ban's message adds (Discord: how to appeal)
+        self.across: Callable[[], bool] | None = None  # [automod] across_servers (Vergil sets it): every server's or not
         self.clients = clients
         self.states = states
         self.storage = storage
@@ -92,10 +129,26 @@ class Moderation:
         # sent is in the ledger already (the announcement can arrive before the console's reply).
         self._sent: dict[tuple[str, str, str], float] = {}
         self._housekeeping: dict[tuple[str, str], float] = {}  # (server, player ID) -> when a pardon that's no one's decision went out
+        self._kick_lifts: dict[tuple[str, str], float] = {}  # (server, player ID) -> when an unban that only lets them back from a kick went out
+
+    def reach(self, kind: str, by: str, source: str, evidence: Any = None) -> str:
+        """How far an action goes (players/reach.py): "every server" for a mute, kick or ban someone gave, while
+        across_servers is on; "server" for one that stays where it was given (a vote's, the server's own, every one
+        with across_servers off). Huragok passing one on, or putting a mute back, is part of the action it's for."""
+        across = bool(self.across()) if self.across is not None else False
+        if not across or kind not in MODERATION or source == "vote" or str(by or "").strip().lower() in NOBODY:
+            return "server"
+        return "every server"
 
     def housekeeping_pardon(self, server: str, target: str, seconds: float = 60.0) -> bool:
         """Whether the server's announcement of a pardon is Huragok tidying up, not someone letting a player back."""
         sent = self._housekeeping.get((server, target.lower()))
+        return sent is not None and time.monotonic() - sent < seconds
+
+    def lifting_a_kick(self, server: str, target: str, seconds: float = 60.0) -> bool:
+        """Whether the server's announcement of an unban is Huragok letting someone back from a kick with a time (its timed
+        ban underneath), not an unban: passed on, it mustn't lift a ban for good another server has (audit 2026-11, 5.2)."""
+        sent = self._kick_lifts.get((server, target.lower()))
         return sent is not None and time.monotonic() - sent < seconds
 
     def sent_lately(self, server: str, kind: str, target_id: str, seconds: float = 30.0) -> bool:
@@ -116,6 +169,14 @@ class Moderation:
         known = self.storage.player(target.lower())  # someone who's left, by the name they had
         return target, target.lower(), known.last_name if known else None
 
+    def on_server(self, player_id: str | None) -> str:
+        """The server this player is on now, "" for none: a connected one's picture first (a stale one may have
+        them still)."""
+        if not player_id:
+            return ""
+        on = [(name, state) for name, state in self.states.items() if state.player_by_id(player_id)]
+        return next((name for name, state in on if getattr(state, "connected", True)), on[0][0] if on else "")
+
     async def act(self, kind: str, server: str, target: Player | str, *, by: str, source: str,
                   reason: str = "", duration: str | None = None, evidence: str | None = None,
                   dry_run: bool = False, pending: bool = False, told: str = "") -> Action:
@@ -135,6 +196,8 @@ class Moderation:
         if kind not in KINDS:
             raise ValueError(f"unknown action {kind}")
         ref, target_id, name = self._target(server, target)
+        where = self.on_server(target_id)  # as it's done: a kick takes them off before the reply comes
+        number = self._number(where, target_id)
         dry = dry_run or self.dry_run
         ok, text = True, ""
         if dry:
@@ -147,7 +210,13 @@ class Moderation:
             self._sent[(server, kind, (target_id or ref).lower())] = now
             if kind == "pardon" and is_housekeeping(evidence):
                 self._housekeeping[(server, (target_id or ref).lower())] = now
+            if kind == "unban" and reason == KICK_LIFTED:
+                self._kick_lifts = {key: when for key, when in self._kick_lifts.items() if now - when < 60}
+                self._kick_lifts[(server, (target_id or ref).lower())] = now
             client = self.clients[server]
+            if (not told and kind in ("mute", "kick", "ban") and source != "automod" and not is_housekeeping(evidence)
+                    and self.reach(kind, by, source) != "server"):
+                told = f"{reason.rstrip()} {EVERY_SERVER_NOTE}".strip()  # what they read says how far it goes (Vergil's own messages say it themselves)
             try:
                 if kind == "warn":
                     reply = await client.command("tell", ref, callout("warn", f"Warning from {by}: {reason}" if reason
@@ -168,15 +237,29 @@ class Moderation:
                 ok, text = reply.ok, reply.text
             except RconError as error:
                 ok, text = False, str(error)
-        action = Action(kind, server, target_id, name, by, source, reason, duration, dry, ok, text)
+        action = Action(kind, server, target_id, name, by, source, reason, duration, dry, ok, text,
+                        picked_as=picked_as(target_id), on_server=where, target_text="" if target_id else ref,
+                        number=number)
         case = self.storage.record_action(kind=kind, server=server, target_id=target_id, target_name=name, by=by,
                                           source=source, reason=reason, duration=duration, evidence=evidence,
-                                          dry_run=dry, ok=ok, reply=text)
-        log.info("[%s] %s by %s via %s: %s", server, action.describe(), by, source, "ok" if ok else f"failed: {text}")
+                                          dry_run=dry, ok=ok, reply=text, on_server=where)
+        reach = self.reach(kind, by, source, evidence)
+        # Where it was sent, unless it waits for them (sent nowhere yet); how far it goes, on the action itself (not on
+        # its passing on to the other servers, which say where it was given).
+        log.info("%s%s by %s via %s%s: %s", "" if pending and not dry else f"[{server}] ", action.describe(), by, source,
+                 " → every server" if reach != "server" and not is_housekeeping(evidence) else "",
+                 "ok" if ok and not pending else text if ok else f"failed: {text}")
         self.bus.emit("moderation.action", server, kind=kind, target_id=target_id, target_name=name, by=by, by_id=ACTING_ID.get(),
                       source=source, reason=reason, duration=duration, evidence=evidence, dry_run=dry,
-                      ok=ok, text=text, pending=pending and not dry, case=case)
+                      ok=ok, text=text, pending=pending and not dry, case=case, reach=reach,
+                      picked_as=action.picked_as, on_server=where, number=number)
         return action
+
+    def _number(self, server: str, player_id: str | None) -> int:
+        """Their #number on the server they're on, 0 for none."""
+        state = self.states.get(server) if server and player_id else None
+        player = state.player_by_id(player_id) if state is not None and player_id else None
+        return player.number if player is not None else 0
 
 
     def record_seen(self, kind: str, server: str, target_id: str | None, target_name: str | None, *, by: str,
@@ -184,13 +267,18 @@ class Moderation:
         """An action Huragok didn't send but saw the server announce (an admin's own /kick or /ban in game, a vote's
         kick): in the ledger for the player's history (!whois). Its event is `moderation.seen`, not `.action`: automod and
         the commands act on that one, and nobody acts on this; the Discord feed shows both."""
+        where = self.on_server(target_id)
         case = self.storage.record_action(kind=kind, server=server, target_id=target_id, target_name=target_name, by=by,
                                           source=source, reason=reason, duration=duration, evidence=None, dry_run=False,
-                                          ok=True, reply="seen on the server")
+                                          ok=True, reply="seen on the server", on_server=where)
+        reach = self.reach(kind, by, source)
         self.bus.emit("moderation.seen", server, kind=kind, target_id=target_id, target_name=target_name, by=by, by_id=ACTING_ID.get(), source=source,
-                      reason=reason, duration=duration, evidence=None, dry_run=False, ok=True, text="", pending=False, case=case)
-        log.info("[%s] %s %s by %s (%s)%s", server, kind, target_name or target_id, by, source,
-                 f": {reason}" if reason else "")
+                      reason=reason, duration=duration, evidence=None, dry_run=False, ok=True, text="", pending=False, case=case,
+                      reach=reach, picked_as="", on_server=where, number=self._number(where, target_id))
+        shown = shown_kind(kind, duration, reason)
+        who = tag(target_name or "", target_id, server=where, whole=True) if target_id else (target_name or "someone")
+        log.info("[%s] %s %s by %s (%s)%s%s", server, WORDS.get(shown, shown), who, by, source,
+                 " → every server" if reach != "server" else "", f": {reason}" if reason else "")
 
 
 class ModerationView:
@@ -238,6 +326,9 @@ class ModerationView:
 
     def housekeeping_pardon(self, server: str, target: str) -> bool:
         return self._service.housekeeping_pardon(server, target)
+
+    def lifting_a_kick(self, server: str, target: str) -> bool:
+        return self._service.lifting_a_kick(server, target)
 
     def sent_lately(self, server: str, kind: str, target_id: str) -> bool:
         return self._service.sent_lately(server, kind, target_id)

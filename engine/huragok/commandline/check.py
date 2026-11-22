@@ -89,7 +89,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     from ..core.part import commands_of
     from ..parts import PARTS, config_problem
     from ..core.commandsfile import ROLES, TITLES
-    from ..core.commandsfile import all_commands
+    from ..core.commandsfile import all_commands, note_name, player_notes
+    from ..core.storage import last_names
+    from ..core.tags import tag
     from ..core.priority import unavailable as unavailable_priority
     from ..servers.state import ServerState
 
@@ -252,9 +254,14 @@ def cmd_check(args: argparse.Namespace) -> int:
     out.note("Each role can also use the commands listed above it. No vote can kick a member or anyone above.")
     if not permissions.members["faculty"]:
         out.warn(f"warning: nobody is faculty yet: put your player ID under [faculty] players in {COMMANDS_FILE}")
-    for player_id, roles in permissions.doubles(a.lower() for a in admins).items():
-        out.warn(f"warning: {player_id[:8]}… is listed as {' and '.join(roles)}: one role each, and {roles[0]} is "
-                 f"the one that counts. Take the other line out of {COMMANDS_FILE} (or dedicated.toml's admins), "
+    doubles = permissions.doubles(a.lower() for a in admins)
+    # Each named: the last name Huragok's records have, else the one beside them in commands.toml.
+    names = last_names(settings.database, doubles) if doubles else {}
+    notes = player_notes(permissions.path) if doubles and permissions.path else {}
+    for player_id, roles in doubles.items():
+        name = names.get(player_id) or note_name(notes.get(player_id, ""))[0]
+        out.warn(f"warning: {tag(name, player_id)} is listed as {' and '.join(roles)}: one role each, and {roles[0]} "
+                 f"is the one that counts. Take the other line out of {COMMANDS_FILE} (or dedicated.toml's admins), "
                  "or !demote / !promote them in game, which keeps one")
     for line in permissions.unknown:
         out.warn(f"warning: {line}")

@@ -139,7 +139,8 @@ class LocalController:
             if event.server == server:
                 listener(event)
 
-        stops = [self.supervisor.bus.subscribe(pattern, mine) for pattern in ("rcon.*", "byplayers.*")]
+        # state.named: a 0.10 player's name, which comes a few seconds after their join.
+        stops = [self.supervisor.bus.subscribe(pattern, mine) for pattern in ("rcon.*", "byplayers.*", "state.named")]
         return lambda: [stop() for stop in stops] and None
 
     def rows(self) -> list[Row]:

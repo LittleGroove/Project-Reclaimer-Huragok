@@ -197,9 +197,9 @@ class VoteKicks(CommandsBase):
         self._told = {k: t for k, t in self._told.items() if now - t < TELL_GAP}
         self._told[key] = now
         try:
-            await self.ctx.tell(server, callers[0], callout("immune", f"{targets[0].name} is {ARTICLE[role]} here, "
-                                                                      "so no vote can kick them. If they're breaking "
-                                                                      "the rules, tell the host."))
+            await self.ctx.tell(server, callers[0], callout("immune", f"{self.ctx.names.public(targets[0])} is "
+                                                                      f"{ARTICLE[role]} here, so no vote can kick them. "
+                                                                      "If they're breaking the rules, tell the host."))
         except RconError:
             pass
 
@@ -230,8 +230,8 @@ class VoteKicks(CommandsBase):
             return
         self.log.warning("[%s] cancelled %s's vote to kick %s, %s here", server, caller, target.name, ARTICLE[role])
         try:
-            await self.ctx.say(server, callout("immune", f"{target.name} is {ARTICLE[role]} here: no vote can kick "
-                                                         "them."))
+            await self.ctx.say(server, callout("immune", f"{self.ctx.names.public(target)} is {ARTICLE[role]} here: "
+                                                         "no vote can kick them."))
         except RconError:
             pass
         await self._sync(server, time.monotonic() + BUDGET)  # the list wasn't in step, or the server has none

@@ -20,11 +20,14 @@ from typing import Any
 
 from ...core.events import Event
 from ...core.part import command, on
+from ...core.tags import short_id
 from ...core.text import is_player_id, seconds_of
 from ...servers.state import Player
 from ..ledger import is_housekeeping, plain_reason, shown_kind
 from ..router import CommandCall
 from ..targets import ago, ask, named
+from ..ledger import NOBODY
+from ..reach import MODERATION, by_a_person
 from ..who import acting_name, through_console, who
 from .base import CommandsBase
 
@@ -82,7 +85,8 @@ class HistoryCommands(CommandsBase):
             return  # Vergil's own go in as Vergil sends them
         if source == "console" and self.ctx.moderation.sent_lately(event.server, kind, target):
             return  # a ! command's, in the ledger already
-        self.ctx.moderation.record_seen(kind, event.server, target if is_player_id(target) else None, name or target[:8],
+        name = name or (self.ctx.names.name(target) if is_player_id(target) else target)  # a name, never an ID's start
+        self.ctx.moderation.record_seen(kind, event.server, target if is_player_id(target) else None, name or None,
                                         by=who(by), source=source, reason=reason, duration=duration)
 
     @on("rcon.kick")
@@ -169,7 +173,7 @@ class HistoryCommands(CommandsBase):
         player_id = target.id
         record = self.ctx.players.get(player_id)
         if record is None:
-            await call.reply(f"{player_id[:8]}: never seen here.")
+            await call.reply(f"Nobody with the ID {short_id(player_id)} has been seen here.")
             return
         shown = min(count, MOST) if count else RECENT
         now = time.time()
@@ -195,7 +199,7 @@ class HistoryCommands(CommandsBase):
                 ways[way] = ways.get(way, 0) + 1
             lines.append(f"Record: {kinds} ({', '.join(f'{n} {way}' for way, n in ways.items())})")
         else:
-            lines.append("Record: nothing: never kicked, muted, banned or warned here.")
+            lines.append("Record: nothing: never kicked, muted, banned or warned.")
         if strikes := self._whois_strikes(player_id):
             lines.append("Strikes: " + strikes)
         if probation := self.probation_record(player_id):  # requests.py
@@ -213,18 +217,29 @@ class HistoryCommands(CommandsBase):
                 reason = (found.group(1) if found else str(row["evidence"] or reason)[:80]) + (f": {written}" if written else "")
             length = shown_time(row["duration"])
             how = label(row)
-            lines.append(f"{when} case {row['number']} {row['server']}: {shown_kind(row['kind'], row['duration'], row['reason'])}" + (f" {length}" if length else "")
+            where = self._case_where(row)
+            lines.append(f"{when} case {row['number']}{' ' + where if where else ''}: {shown_kind(row['kind'], row['duration'], row['reason'])}" + (f" {length}" if length else "")
                          + f" by {row['by']}" + (f" ({how})" if how else "") + (f": {reason}" if reason else ""))
         if len(rows) > shown:
-            lines.append(f"…{len(rows) - shown} older: {call.prefix}whois {record.last_name} {min(len(rows), MOST)}")
+            lines.append(f"…{len(rows) - shown} older: {call.prefix}whois {short_id(player_id)} {min(len(rows), MOST)}")
         await call.reply("\n".join(lines))
 
+    def _case_where(self, row: Any) -> str:
+        """Where a case on the record reaches: "every server" for a mute, kick or ban someone gave while across_servers is on, the player's (no server) for
+        a warning, or the server it stayed on (a vote's, the server's own, every one with across_servers off). The server it was typed on isn't where it went."""
+        kind, by = str(row["kind"] or ""), str(row["by"] or "").strip().lower()
+        if self._across() and kind in MODERATION and row["source"] != "vote" and by not in NOBODY:
+            return "every server"
+        return "" if kind == "warn" else str(row["server"] or "")
+
     def _whois_who(self, call: CommandCall, record: Any, player_id: str) -> str:
-        where = next((f"on {server} as #{p.number}" for server, state in self.ctx.servers.items()
-                      if (p := state.player_by_id(player_id))), f"last here {ago(time.time() - record.last_seen)} ago")
+        """The first line: who they are (core/tags.py: the server they're on is in it), on now or when last here,
+        their rank, how often they've been."""
+        on = any(state.player_by_id(player_id) for state in self.ctx.servers.values())
+        where = "on now" if on else f"last here {ago(time.time() - record.last_seen)} ago"
         role = self.ctx.role_of(call.server, Player(0, record.last_name, player_id))
         since = time.strftime("%Y-%m-%d", time.localtime(record.first_seen))
-        return (f"{record.last_name} ({player_id[:8]}): {where}" + (f", {role}" if role != "player" else "")
+        return (f"{call.tag(player_id, record.last_name)}: {where}" + (f", {role}" if role != "player" else "")
                 + f" · {record.visits} visit{'s' if record.visits != 1 else ''} since {since}")
 
     async def _whois_now(self, player_id: str, now: float) -> str:
@@ -301,8 +316,8 @@ class HistoryCommands(CommandsBase):
             for entry in entries:
                 if str(entry.get("id") or "").lower() != player_id:
                     continue
-                if everywhere and through_console(entry.get("banned_by")):
-                    continue  # Huragok's: said above
+                if everywhere and by_a_person(entry.get("banned_by")):
+                    continue  # on Huragok's list: said above
                 how = "" if through_console(entry.get("banned_by")) else "/ban "
                 key = (left(entry.get("expires")), f"{how}by {who(entry.get('banned_by'))}", str(entry.get("reason") or ""))
                 same.setdefault(key, []).append(server)
@@ -313,7 +328,7 @@ class HistoryCommands(CommandsBase):
             rows = self.ctx.db.query("SELECT * FROM actions WHERE target_id = ? AND server = ? AND kind IN ('ban', "
                                      "'unban') AND ok = 1 AND dry_run = 0 ORDER BY time DESC LIMIT 1",
                                      (player_id, server))
-            if not rows or rows[0]["kind"] != "ban" or (everywhere and rows[0]["source"] != "in game"):
+            if not rows or rows[0]["kind"] != "ban" or (everywhere and rows[0]["source"] != "vote"):  # every server's: said above
                 continue
             ban = rows[0]
             length = shown_time(ban["duration"])

@@ -28,7 +28,7 @@ from .core.context import PartContext
 from .core.events import Event
 from .core.serverfolders import FolderProblem, ServerConfig, discover_servers
 from .core.tables import ConfigError
-from .core.text import one_line
+from .core.text import one_line, wrap
 from .rcon import RconClient
 from .servers.backends import make_backend
 from .servers.fleet import Fleet, Lifecycle
@@ -398,13 +398,16 @@ class SuperintendentContext(PartContext):
         return (manager.pid if manager is not None else None) or (state.pid if state is not None else None)
 
     async def say(self, server: str, text: str) -> None:
-        """A [Server] line everyone on the server reads."""
-        await self._superintendent.clients[server].command("say", text)
+        """A [Server] line everyone on the server reads: a long one in lines of 120 characters, as a private reply is
+        (a player named the one way, core/tags.py, takes about 40)."""
+        for line in wrap(text) or [text]:
+            await self._superintendent.clients[server].command("say", line)
 
     async def tell(self, server: str, player: Player | str, text: str) -> None:
-        """A [Server] line only this player reads."""
+        """A [Server] line only this player reads, in lines of 120 characters."""
         ref = player.id if isinstance(player, Player) else player
-        await self._superintendent.clients[server].command("tell", ref, text)
+        for line in wrap(text) or [text]:
+            await self._superintendent.clients[server].command("tell", ref, line)
 
     def server_rows(self) -> list[dict[str, Any]]:
         """Every server as the window sees it: its phase, uptime, address…"""

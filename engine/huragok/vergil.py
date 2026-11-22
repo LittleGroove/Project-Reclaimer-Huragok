@@ -25,9 +25,11 @@ from .core.events import Event
 from .core.serverfolders import ServerConfig
 from .core.storage import PlayerHistory
 from .players.ledger import Moderation, ModerationView
+from .players.naming import Names
 from .players.outbox import Outbox
 from .core.settings import RelayUser
 from .players.relay import Relay
+from .players.reach import across
 from .players.roles import Roles
 from .players.router import CommandRouter
 from .servers.state import Player
@@ -51,7 +53,8 @@ class Vergil:
         self.bus = bus
         self.moderation = Moderation(superintendent.clients, superintendent.states, huragok.storage, bus,
                                      dry_run=settings.dry_run)
-        self.roles = Roles(settings)
+        self.moderation.across = lambda: across(settings)  # how far each action goes, on its record (players/reach.py)
+        self.roles = Roles(settings, superintendent.states)
         self.commands = CommandRouter(settings, bus, superintendent.states, superintendent.clients, self.roles,
                                       PlayerHistory(huragok.storage))
         self.relay = Relay(settings, superintendent.clients, superintendent.states, bus)
@@ -157,6 +160,11 @@ class VergilContext(SuperintendentContext):
         self.moderation = ModerationView(vergil.moderation, source=self.name, by=self.acts_as, dry_run=self.dry_run)
         self.outbox = vergil.outbox  # each server's queue of what's passed on to it (players/outbox.py)
 
+    @property
+    def names(self) -> Names:
+        """Who a player ID is, for a tag (players/naming.py): their name now and the server they're on."""
+        return Names(self.servers, self.players)
+
     def last_visit(self, player_id: str) -> float | None:
         """When this player was here before the visit they just began; None the first time, or when it isn't known."""
         return self._vergil.last_visit.get(player_id.lower())
@@ -261,17 +269,17 @@ class VergilContext(SuperintendentContext):
         found = getattr(part, "by_name", {}).get(rule)
         if found is None:
             return False
-        previous = part.active_strikes(player_id, found, dry=bool(server) and part.mode(server) == "dry_run")
+        previous = part.active_strikes(player_id, found, dry=part._staff_dry())  # a staff strike's count: never a server's dry run
         return found.step_for(previous).removes
 
     def next_strike(self, player_id: str, rule: str, server: str | None = None) -> str:
-        """What a strike on this rule would do to them now, in words: "" if that can't be said. On a server in dry run,
-        its strikes are counted apart, as the strike there would count them."""
+        """What a strike on this rule would do to them now, in words: "" if that can't be said. Counted as the staff's
+        strike counts (real strikes, whatever Vergil is on that server: the host's call, 21 November 2026)."""
         part = self._automod()
         found = getattr(part, "by_name", {}).get(rule)
         if found is None:
             return ""
-        previous = part.active_strikes(player_id, found, dry=bool(server) and part.mode(server) == "dry_run")
+        previous = part.active_strikes(player_id, found, dry=part._staff_dry())
         return f"Strike {previous + 1}: {found.step_for(previous).describe()}"
 
     def command_there(self, name: str) -> bool:

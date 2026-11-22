@@ -366,7 +366,9 @@ def test_a_report_of_a_name_two_people_share_isnt_guessed(tmp_path: Path, run: A
     run(scenario())
 
 
-def test_picking_between_players_shows_a_plain_player_only_names(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+def test_picking_between_players_shows_a_plain_player_each_ones_tag(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """Everyone may see the start of an ID (the host's call, 21 November 2026, H2): it's how two of a name are told
+    apart. Never the whole of it."""
     async def scenario() -> None:
         bot_file(tmp_path, ("reports",))
         async with fleet(tmp_path, up=(FIRST,)) as (huragok, consoles):
@@ -376,8 +378,8 @@ def test_picking_between_players_shows_a_plain_player_only_names(tmp_path: Path,
             await on(huragok, consoles[FIRST], FIRST, 5, "Viewer", "e" * 64)
             await consoles[FIRST].chat("e" * 64, "Viewer", "!report Nate")
             await wait_for(lambda: consoles[FIRST].named("tell"), timeout=10)
-            told = str(consoles[FIRST].named("tell")[-1])
-            assert ALICE[:8] not in told and BRAVO[:8] not in told
+            told = " ".join(str(tell["args"][-1]) for tell in consoles[FIRST].named("tell") if tell["args"][0] == "e" * 64)  # to the viewer, a player to a line
+            assert ALICE[:8] in told and BRAVO[:8] in told and ALICE not in told and BRAVO not in told
 
     run(scenario())
 
@@ -385,21 +387,34 @@ def test_picking_between_players_shows_a_plain_player_only_names(tmp_path: Path,
 # Rank -------------------------------------------------------------------------------------------------------------------------
 
 SCOPED = f'\n[[ranks.scoped]]\nrole = "5200"\nrank = "moderator"\nservers = ["{FIRST}"]\n'
+ACROSS_OFF = "[automod]\nacross_servers = false\n"  # each server's moderation, and ranks, its own
 
 
-def test_a_rank_for_one_server_counts_on_that_server(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """It only counted in the typed console: on commands and cards they were nobody."""
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_rank_for_one_server_counts_on_that_server(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """It only counted in the typed console: on commands and cards they were nobody. With [automod] across_servers off
+    it counts on that server alone; with it on (the default), a rank on one server is a rank on every server (the
+    host's call, 21 November 2026)."""
 
     async def scenario() -> None:
         bot_file(tmp_path, text=SCOPED)
         fake.roles.append(FakeDiscord._role("5200", "First's mods", 1, "0"))
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             part = await up(huragok)
             await on(huragok, consoles[FIRST], FIRST)
             await on(huragok, consoles[SECOND], SECOND, 4, "Bravo", BRAVO)
             _, token = fake.command("kick", user=OTHER, roles=("5200",), player=ALICE, reason="spam")
             await said_back(fake, token)
             await wait_for(lambda: consoles[FIRST].named("kick"), timeout=15)
+            if across:  # their rank on the first server is theirs on the second too: a card there, and a kick there
+                other = await card_for(fake, part, SECOND, "Bravo", BRAVO)
+                _, token = fake.press(buttons_of(other)["Whois"], other, user=OTHER, roles=("5200",))
+                looked = await said_back(fake, token)
+                assert "Bravo" in looked and "isn't one you're staff on" not in looked
+                _, token = fake.command("kick", user=OTHER, roles=("5200",), player=BRAVO, reason="spam", server=SECOND)
+                assert "is kicked off every server" in await said_back(fake, token)
+                await wait_for(lambda: consoles[SECOND].named("kick"), timeout=15)
+                return
             _, token = fake.command("kick", user=OTHER, roles=("5200",), player=BRAVO, reason="spam", server=SECOND)
             assert "and up" in await said_back(fake, token)
             assert consoles[SECOND].named("kick") == []

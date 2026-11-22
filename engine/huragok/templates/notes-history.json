@@ -424,7 +424,13 @@
      "# until its time is up, and a ban reaches servers with a ban list of their own",
      "# (servers sharing one have it already). The game's own /kick and /ban, and votes,",
      "# stay on their server; Huragok only writes them on the player's record. false:",
-     "# Huragok's stay on their server too. Each server's own Vergil is on its page in D."
+     "# Huragok's stay on their server too. Each server's own Vergil is on its page in D.",
+     "# Moderation is every server's: a mute, kick or ban follows the player to every",
+     "# server for its time, and a rank on one server is a rank on all of them, whoever",
+     "# gave it (! commands, Vergil, Discord, the console, the game's own /kick and /ban).",
+     "# Only a vote's kick and the server's own stay on their server. false: each",
+     "# server's moderation and ranks are its own. Each server's own Vergil (what it",
+     "# catches by itself) is on its page in D."
     ],
     "updates|beta": [
      "# true: beta releases too (GitHub pre-releases), to try what's coming before it's",
@@ -710,7 +716,8 @@
      "The commands you can use, or how to use one"
     ],
     "strikes": [
-     "Your automod strikes (moderators: anyone's)"
+     "Your automod strikes (moderators: anyone's)",
+     "Your strikes (moderators: anyone's)"
     ],
     "banname": [
      "Ban a name: whoever uses it is kicked as they join, until they change it (names.txt)"
@@ -725,19 +732,23 @@
     "kick": [
      "Remove them; the server keeps them out 10, 30, 60, then 120 minutes",
      "Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban",
-     "Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban. Someone who has left can be kept off with a time"
+     "Remove them: the server keeps them out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban. Someone who has left can be kept off with a time",
+     "Remove them from every server: kept out 10, 30, 60, then 120 minutes, or for the time you give, told how long, e.g. !kick Bravo 7d cheating; perm is a ban"
     ],
     "mute": [
      "Nobody hears their voice or reads their chat, e.g. !mute Bravo 30m spam",
-     "Nobody hears their voice or reads their chat, e.g. !mute Bravo 30m spam; someone who left is muted as they join"
+     "Nobody hears their voice or reads their chat, e.g. !mute Bravo 30m spam; someone who left is muted as they join",
+     "Nobody hears their voice or reads their chat, on every server, e.g. !mute Bravo 30m spam; someone who left is muted as they join"
     ],
     "pardon": [
      "Let a kicked player back in now",
-     "Let a kicked player back in now (a ! kick's: on every server)"
+     "Let a kicked player back in now (a ! kick's: on every server)",
+     "Let a kicked player back on every server now"
     ],
     "players": [
      "Who's on, with #numbers and player IDs",
-     "Who's on, with #numbers and player IDs; !players nate lists those with nate in their name"
+     "Who's on, with #numbers and player IDs; !players nate lists those with nate in their name",
+     "Who's on, with #numbers and player IDs; !players nate lists those with nate in their name; !players <server> another server's, !players all every server's, with @numbers to act on them"
     ],
     "promote": [
      "One step up the roles: player, member, moderator, admin (up to the role below yours)",
@@ -749,10 +760,12 @@
      "Who has which role: faculty, admins, moderators, probationary moderators, members"
     ],
     "strike": [
-     "Give a strike on an automod rule, e.g. for something said in voice; 'name' bans their name"
+     "Give a strike on an automod rule, e.g. for something said in voice; 'name' bans their name",
+     "Give a strike on a list of the word list (for what's said in voice, say): it acts on every server; 'name' bans their name"
     ],
     "unmute": [
-     "Lift a mute, also for someone who left"
+     "Lift a mute, also for someone who left",
+     "Lift a mute, on every server, also for someone who left"
     ],
     "warn": [
      "A private warning, recorded"
@@ -764,7 +777,8 @@
     "ban": [
      "Ban their ID, address and device; no time means for good, e.g. !ban Bravo 7d cheating",
      "Ban their ID, address and device, for good. Give a time and it's a kick that long instead, e.g. !ban Bravo 7d cheating",
-     "Ban their ID, address and device; no time means for good, and a time makes it a kick that long, e.g. !ban Bravo 7d cheating"
+     "Ban their ID, address and device; no time means for good, and a time makes it a kick that long, e.g. !ban Bravo 7d cheating",
+     "Ban their ID, address and device from every server; no time means for good, and a time makes it a kick that long, e.g. !ban Bravo 7d cheating"
     ],
     "cancelvote": [
      "End the vote under way with no result"
@@ -791,7 +805,8 @@
      "Show or pick the next game"
     ],
     "pardonplayer": [
-     "Clear someone's automod strikes and lift what automod did to them"
+     "Clear someone's automod strikes and lift what automod did to them",
+     "Clear someone's strikes, and lift what they did (a mute, kick or ban, on every server)"
     ],
     "passvote": [
      "Pass the vote under way"
@@ -831,7 +846,8 @@
      "The banned names (names.txt); @numbers for !unbanname"
     ],
     "kicks": [
-     "Who's been kicked lately (here, or off every server by a ! kick), with who and why; @numbers for !pardon"
+     "Who's been kicked lately (here, or off every server by a ! kick), with who and why; @numbers for !pardon",
+     "Who's been kicked lately (here, or off every server by a kick on another), with who and why; @numbers for !pardon"
     ],
     "mutes": [
      "Who's muted: Vergil's list (strikes, moderators' mutes) and the server's; @numbers for !unmute"

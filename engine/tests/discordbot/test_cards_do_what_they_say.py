@@ -124,12 +124,17 @@ def test_every_live_card_on_a_player_follows_how_they_stand(tmp_path: Path, run:
     run(scenario())
 
 
+ACROSS_OFF = "[automod]\nacross_servers = false\n"  # each server's moderation its own
+
+
 def test_banned_on_one_server_and_on_another_still_has_buttons(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """The card for "joined, and is banned elsewhere" exists to act on them: it used to offer only the opposite."""
+    """The card for "joined, and is banned elsewhere" exists to act on them: it used to offer only the opposite. It's
+    only made with [automod] across_servers off (with it on, a ban is every server's: see the next test), and no card
+    offers "Ban everywhere" any more: with it off there's no every-server list to put a ban on."""
 
     async def scenario() -> None:
         bot_file(tmp_path)
-        async with fleet(tmp_path, up=("Red", "Blue")) as (huragok, consoles):
+        async with fleet(tmp_path, up=("Red", "Blue"), body=ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             await huragok.vergil.moderation.act("ban", "Red", ALICE, by="Mod", source="in game", reason="cheating")
             await consoles["Blue"].join(3, "Alice", ALICE)
@@ -137,7 +142,27 @@ def test_banned_on_one_server_and_on_another_still_has_buttons(tmp_path: Path, r
             await wait_for(lambda: any("banned-elsewhere" in str(row["kind"]) for row in huragok.storage.query("SELECT kind FROM discord_tickets")), timeout=10)
             row = next(row for row in huragok.storage.query("SELECT * FROM discord_tickets") if "banned-elsewhere" in str(row["kind"]))
             labels = buttons_of(latest(fake, int(row["number"]), huragok))
-            assert {"Mute", "Kick", "Ban everywhere"} <= set(labels)
+            assert {"Mute", "Kick"} <= set(labels) and "Ban everywhere" not in labels, labels
+
+    run(scenario())
+
+
+def test_banned_on_one_server_is_banned_on_the_next_with_across_on(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """With [automod] across_servers on (the default), a ban on one server is every server's: Huragok bans them on the
+    next one they join, so there's no "banned elsewhere" card to make, and nothing offers "Ban everywhere"."""
+
+    async def scenario() -> None:
+        bot_file(tmp_path)
+        async with fleet(tmp_path, up=("Red", "Blue")) as (huragok, consoles):
+            part = await up(huragok)
+            await huragok.vergil.moderation.act("ban", "Red", ALICE, by="Mod", source="in game", reason="cheating")
+            await consoles["Blue"].join(3, "Alice", ALICE)
+            await wait_for(lambda: consoles["Blue"].named("ban"), timeout=15)  # given on Red, and on Blue too
+            await wait_for(lambda: part.outbox.waiting == 0, timeout=10)
+            kinds = [str(row["kind"]) for row in huragok.storage.query("SELECT kind FROM discord_tickets")]
+            assert not any("banned-elsewhere" in kind for kind in kinds), kinds
+            for row in huragok.storage.query("SELECT number FROM discord_tickets"):
+                assert "Ban everywhere" not in buttons_of(latest(fake, int(row["number"]), huragok))
 
     run(scenario())
 
@@ -148,7 +173,7 @@ def test_a_wrong_strike_can_be_taken_back_from_its_card(tmp_path: Path, run: Any
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
             post = await strike(huragok, rcon, fake)
-            assert "Pardon strike" in buttons_of(post)
+            assert "Clear strikes" in buttons_of(post)  # was "Pardon strike"
 
     run(scenario())
 

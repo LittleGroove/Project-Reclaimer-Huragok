@@ -195,10 +195,10 @@ async def _finish_power(part: DiscordPart, interaction: discord.Interaction, ser
     who = named(interaction.user)
     worked, said = await run_power(part, server, action, who, why)
     log.info("%s used %s on %s from Discord: %s", who, action, server, said)
-    if worked and action != "updates":
-        part.audit("power", say(part.file, "audit.power", who=who, what=POWERS[action][0].lower(), server=server))
+    if worked and action != "updates":  # who, the one way (part.who): `who` is what the server's told, as their name
+        part.audit("power", cards.Shown(say(part.file, "audit.power", who=part.who(interaction.user), what=cards.clean(POWERS[action][0].lower()), server=cards.clean(server))))
         if ticket:  # pressed from an alert: it's that alert's story
-            part.tickets.add_line(ticket, say(part.file, "ticket.power", who=cards.clean(who), what=POWERS[action][0].lower()))
+            part.tickets.add_line(ticket, say(part.file, "ticket.power", who=part.who(interaction.user), what=POWERS[action][0].lower()))
             part.tickets.show(ticket)
     panel = ServerPanel(part, server, said if worked else f"Couldn't: {said}", ticket=ticket)
     await interaction.edit_original_response(embed=panel.card(), view=panel)

@@ -43,9 +43,10 @@ class SaidCommands(CommandsBase):
         rows = self.ctx.db.query("SELECT * FROM commands_chat WHERE player_id = ? ORDER BY time DESC LIMIT ?",
                                  (target.id, count))
         if not rows:
-            await call.reply(f"{target.name} hasn't typed anything in chat here (in the last {KEEP_DAYS} days).")
+            await call.reply(f"{call.tag(target)} hasn't typed anything in chat on any server (in the last {KEEP_DAYS} days).")
             return
         now = time.time()
         lines = [f"{ago(now - r['time'])} ago" + (f" on {r['server']}" if r["server"] != call.server else "")
                  + (" (team)" if r["channel"] == "team" else "") + f" {r['name']}: {r['text']}" for r in reversed(rows)]
-        await call.reply("\n".join(lines))
+        # Whose lines these are, first: each line has the name it was typed under, which may be someone else's too.
+        await call.reply("\n".join([f"What {call.tag(target)} said:", *lines]))

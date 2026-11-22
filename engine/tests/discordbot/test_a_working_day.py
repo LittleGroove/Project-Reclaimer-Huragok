@@ -79,7 +79,7 @@ def test_reports_lists_whats_open_in_game(tmp_path: Path, run: Any, fake: FakeDi
             await rcon.join(4, "Mod", MOD)
             await report(huragok, fake, rcon)
             await rcon.chat(MOD, "Mod", "!reports")
-            await wait_for(lambda: any("A report on Alice" in line for line in tells_to(rcon, MOD)), timeout=15)
+            await wait_for(lambda: any("a report on Alice" in line for line in tells_to(rcon, MOD)), timeout=15)
 
     run(scenario())
 
@@ -213,7 +213,7 @@ def test_a_card_says_where_they_are_now(tmp_path: Path, run: Any, fake: FakeDisc
             number = part.tickets.open_by_hand("Mod", ALICE, "Alice", FIRST)
             fields = part.tickets.embed(part.tickets.get(number)).get("fields") or []
             now = next(field for field in fields if field["name"] == "Now")
-            assert f"on {FIRST}" in now["value"]
+            assert f"`{ALICE[:8]}` (#" in now["value"] and f"[{FIRST}]" in now["value"]  # their tag there, with the #number staff on it type
 
     run(scenario())
 

@@ -11,19 +11,19 @@ import io
 import json
 import re
 import time
-from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import discord
 from discord import app_commands
 
 from ..core.storage import acting
+from ..core.tags import named_then
 from ..players.ledger import shown_kind
 from ..players.targets import FULL_ID
 from ..core.commandsfile import PROBATION
 from . import features
 from .alerts import GAME, MOST_PER_MEMBER, PLAYERS
-from .cards import clean, lasting_words
+from .cards import Shown, clean, lasting_words
 from .cards import counted as cards_counted
 from .client import ANOTHER_DISCORD, answer, elsewhere, named, part_of, someone_from
 from .ranks import can_act, highest_rank
@@ -52,17 +52,29 @@ def matching(part: DiscordPart, typed: str, most: int = MOST_CHOICES) -> list[tu
     return list({player_id: name for player_id, name in reversed(part.ctx.players.like(typed, most))}.items())[::-1]
 
 
-def name_shown(part: DiscordPart, player_id: str, matched: str = "") -> str:
-    """The name they go by now, and the one that was typed if it's an old one. Their ID isn't how anyone knows them."""
-    now = part.name_of(player_id, matched)
-    return f"{now} (was {matched})" if matched and now.casefold() != matched.casefold() and matched != "That player ID" else now
+def choice_label(part: DiscordPart, player_id: str, matched: str = "", *, handle: str = "") -> str:
+    """A player in a list as someone types: their tag (core/tags.py), always, as two of a name are only told apart by
+    it, then the name that was typed if it's an old one: "Bravo 1a2b3c4d [Alpha] · was Alpha"."""
+    now = part.label(player_id, matched, handle=handle)
+    was = bool(matched) and part.name_of(player_id, matched).casefold() != matched.casefold() and matched != "That player ID"
+    return f"{now} · was {matched}" if was else now
 
 
 def as_choices(part: DiscordPart, interaction: discord.Interaction, found: list[tuple[str, str]]) -> list[app_commands.Choice[str]]:
-    """What Discord shows, as (what it says, their ID). Only two of a name get a piece of their ID, to tell them apart. Who may not see IDs gets a stand-in for what's picked."""
+    """What Discord shows, as (what it says, their ID): in Discord's 100 characters, the tag first, so what's cut is what comes after it. Who may not see IDs gets a stand-in
+    for what's picked: the whole ID is as visible as it ever was (the host's call, 21 November 2026, H2)."""
     sees_ids = highest_rank(part.file, someone_from(interaction.user), part.ctx.servers) in ("admin", "faculty") or bool(part.file.section("ranks").get("moderators_see_ids"))
-    twice = {name for name, count in Counter(label.partition(" · ")[0].casefold() for label, _ in found).items() if count > 1}
-    return [app_commands.Choice(name=(f"{label} · {player_id[:8]}" if label.partition(" · ")[0].casefold() in twice else label)[:100], value=player_id if sees_ids else part.opaque(player_id)) for label, player_id in found[:MOST_CHOICES]]
+    return [app_commands.Choice(name=label[:100], value=player_id if sees_ids else part.opaque(player_id)) for label, player_id in found[:MOST_CHOICES]]
+
+
+def refused_for(part: DiscordPart, typed: str, found: list[Any]) -> str:
+    """Why nobody was picked from what was typed: nobody, or several, each by their tag to tell them apart. What was
+    picked from a list and has since been forgotten (a restart) is a stand-in, never shown as if it were a name."""
+    text = "that" if re.fullmatch(r"p:[0-9a-f]{16}", typed.strip()) else clean(typed)
+    if not found:
+        return f"Nobody here has gone by {text}. Pick from the list as you type."
+    shown = ", ".join(part.tag(record.id, record.last_name) for record in found[:8])
+    return f"{len(found)} players have gone by {text}: {shown}. Pick the one you mean from the list as you type, or give the start of their ID."
 
 
 async def player_choices(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
@@ -70,7 +82,7 @@ async def player_choices(interaction: discord.Interaction, typed: str) -> list[a
     if not can_act(rank_here(interaction)):
         return []
     part = interaction.client.part  # type: ignore[attr-defined]
-    return as_choices(part, interaction, [(name_shown(part, player_id, name), player_id) for player_id, name in matching(part, typed)])
+    return as_choices(part, interaction, [(choice_label(part, player_id, name), player_id) for player_id, name in matching(part, typed)])
 
 
 async def flag_choices(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
@@ -105,12 +117,12 @@ class StaffCommands(app_commands.Group):
         found = self.part.ctx.players.find(self.part.meant(text))  # a stand-in for who's picked, for whoever may not see IDs (audit 6.11)
         if len(found) == 1:
             return found[0]
-        await answer(interaction, f"Nobody here has gone by {clean(text)}. Pick from the list as you type." if not found else
-                     f"{len(found)} players have gone by {clean(text)}. Pick the one you mean from the list as you type.")
+        await answer(interaction, refused_for(self.part, text, found))
         return None
 
     def _audit(self, interaction: discord.Interaction, key: str, record: PlayerRecord, **values: str) -> None:
-        self.part.audit("notes", say(self.part.file, key, who=clean(named(interaction.user)), player=clean(record.last_name), **values))
+        """Who did it and to whom, the one way, cleaned once: cleaned twice, a name with a _ in it showed a backslash."""
+        self.part.audit("notes", Shown(say(self.part.file, key, who=self.part.who(interaction.user), player=self.part.tag(record.id, record.last_name), **values)))
 
 
 class NoteCommands(StaffCommands):
@@ -132,7 +144,8 @@ class NoteCommands(StaffCommands):
         with acting(f"discord:{interaction.user.id}"):
             number = self.part.ctx.players.add_note(record.id, text, named(interaction.user), expires=time.time() + keep * DAY if keep else None)
         self._audit(interaction, "audit.note.add", record)
-        await answer(interaction, f"Note #{number} on **{clean(record.last_name)}**" + (f", for {cards_counted(keep, 'day')}." if keep else "."))
+        # "note 3", not "#3": a # is only ever a player's number (the host's call, 21 November 2026, H6)
+        await answer(interaction, f"Note {number} on {self.part.tag(record.id, record.last_name, bold=True)}" + (f", for {cards_counted(keep, 'day')}." if keep else "."))
 
     @app_commands.command(name="list", description="What staff have written about a player")
     @app_commands.describe(player="Who: pick from the list as you type")
@@ -144,9 +157,9 @@ class NoteCommands(StaffCommands):
         if record is None:
             return
         players = self.part.ctx.players
-        lines = [f"**{clean(record.last_name)}**"]
+        lines = [self.part.tag(record.id, record.last_name, bold=True)]
         lines += [f"Flagged **{clean(row['flag'])}** by {clean(row['by'])}" + (f": {clean(row['why'])}" if row["why"] else "") for row in players.flags(record.id)]
-        lines += [f"#{row['number']} {clean(row['by'])}, {time.strftime('%Y-%m-%d', time.localtime(row['time']))}: {clean(row['text'])}" for row in players.notes(record.id)]
+        lines += [f"Note {row['number']}, {clean(row['by'])}, {time.strftime('%Y-%m-%d', time.localtime(row['time']))}: {clean(row['text'])}" for row in players.notes(record.id)]
         await answer(interaction, ("\n".join(lines) if len(lines) > 1 else f"{lines[0]}: nothing written about them.")[:MOST_SHOWN], lasts="looks")
 
     @app_commands.command(description="Take a note away, by its number")
@@ -157,12 +170,12 @@ class NoteCommands(StaffCommands):
         players = self.part.ctx.players
         player_id = players.drop_note(number)
         if player_id is None:
-            await answer(interaction, f"There's no note #{number}.")
+            await answer(interaction, f"There's no note {number}.")
             return
         record = players.get(player_id)
         if record is not None:
             self._audit(interaction, "audit.note.remove", record)
-        await answer(interaction, f"Note #{number} is gone.")
+        await answer(interaction, f"Note {number} is gone" + (f", from {self.part.tag(record.id, record.last_name)}." if record is not None else "."))
 
 
 class FlagCommands(StaffCommands):
@@ -182,7 +195,7 @@ class FlagCommands(StaffCommands):
             return
         rows = self.part.flags_of(record.id)
         lines = [f"**{clean(row['flag'])}**" + (f": {clean(row['why'])}" if row["why"] else "") for row in rows]
-        await answer(interaction, f"**{clean(record.last_name)}**: " + ("\n".join(lines) if lines else "no flags."), lasts="looks")
+        await answer(interaction, f"{self.part.tag(record.id, record.last_name, bold=True)}: " + ("\n".join(lines) if lines else "no flags."), lasts="looks")
 
     @app_commands.command(name="set", description="Flag a player")
     @app_commands.describe(player="Who: pick from the list as you type", flag="Which: pick from the list", why="Why, for the other staff")
@@ -200,7 +213,7 @@ class FlagCommands(StaffCommands):
         with acting(f"discord:{interaction.user.id}"):
             self.part.ctx.players.set_flag(record.id, flag, why, named(interaction.user))
         self._audit(interaction, "audit.flag.set", record, flag=clean(flag))
-        await answer(interaction, f"**{clean(record.last_name)}** is flagged **{clean(flag)}**.")
+        await answer(interaction, f"{self.part.tag(record.id, record.last_name, bold=True)} is flagged **{clean(flag)}**.")
 
     @app_commands.command(description="Take a flag off a player")
     @app_commands.describe(player="Who: pick from the list as you type", flag="Which")
@@ -212,10 +225,10 @@ class FlagCommands(StaffCommands):
         if record is None:
             return
         if not self.part.ctx.players.clear_flag(record.id, flag):
-            await answer(interaction, f"**{clean(record.last_name)}** isn't flagged {clean(flag)}.")
+            await answer(interaction, f"{self.part.tag(record.id, record.last_name, bold=True)} isn't flagged {clean(flag)}.")
             return
         self._audit(interaction, "audit.flag.clear", record, flag=clean(flag))
-        await answer(interaction, f"**{clean(record.last_name)}** isn't flagged **{clean(flag)}** any more.")
+        await answer(interaction, f"{self.part.tag(record.id, record.last_name, bold=True)} isn't flagged **{clean(flag)}** any more.")
 
 
 async def server_choices(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
@@ -294,15 +307,24 @@ async def open_ticket(interaction: discord.Interaction, player: str) -> None:
         return
     found = part.ctx.players.find(part.meant(player))
     if len(found) != 1:
-        await answer(interaction, f"Nobody here has gone by {clean(player)}. Pick from the list as you type." if not found else
-                     f"{len(found)} players have gone by {clean(player)}. Pick the one you mean from the list as you type.")
+        await answer(interaction, refused_for(part, player, found))
         return
     record = found[0]
-    where = next((server for server, state in part.ctx.servers.items() if state.player_by_id(record.id)), "")
-    if part.tickets.open_by_hand(named(interaction.user), record.id, record.last_name, where):
-        await answer(interaction, f"A ticket on **{clean(record.last_name)}** is on its way.")
+    where = part.on_server(record.id)
+    if part.tickets.open_by_hand(part.who(interaction.user), record.id, part.name_of(record.id, record.last_name), where):
+        await answer(interaction, f"A ticket on {part.tag(record.id, record.last_name, bold=True)} is on its way.")
     else:
         await answer(interaction, "It has nowhere to post: staff has no channel. Faculty can set one in `/huragok setup` → Channels.")
+
+
+def where_case(part: DiscordPart, row: Any) -> str:
+    """How far a case reaches (players/reach.py): every server for a mute, kick or ban someone gave while across_servers is on; else the server it stayed on."""
+    from ..players.ledger import NOBODY
+    from ..players.reach import MODERATION
+
+    if part.across() and str(row["kind"] or "") in MODERATION and row["source"] != "vote" and str(row["by"] or "").strip().lower() not in NOBODY:
+        return "On every server"
+    return f"On {clean(row['server'])} only" if part.across() and str(row["kind"] or "") in MODERATION else f"On {clean(row['server'])}"
 
 
 @app_commands.command(name="case", description="One recorded action: what, who and why, with that player's tickets")
@@ -321,8 +343,13 @@ async def case_command(interaction: discord.Interaction, number: int) -> None:
         return
     row = rows[0]
     target = str(row["target_id"] or "")
-    lines = [f"**{shown_kind(row['kind'], row['duration'], row['reason'])}** of **{clean(part.name_of(target, str(row['target_name'] or '')))}**, by {clean(str(row['by'] or '').removesuffix(' (Discord)'))} <t:{int(row['time'])}:R>",
-             *([f"On {clean(row['server'])}"] if row["server"] else []), *([f"Why: {clean(row['reason'])}"] if row["reason"] else []), *([f"Length: {lasting_words(str(row['duration']))}"] if row["duration"] else [])]
+    kept = row.keys()  # a case from before 0.7.0 has no on_server or picked_as
+    then = named_then(row["target_name"], part.name_of(target, str(row["target_name"] or "")))  # done to them under another name: "as Alpha" (H8)
+    who = part.tag(target, str(row["target_name"] or ""), server=str(row["on_server"] or "") if "on_server" in kept else "", bold=True)
+    picked_as = str(row["picked_as"] or "") if "picked_as" in kept else ""
+    lines = [f"**{shown_kind(row['kind'], row['duration'], row['reason'])}** of {who}" + (f", as {clean(then)}" if then else "") + f", by {part.actor(str(row['by_id'] or ''), str(row['by'] or '').removesuffix(' (Discord)'))} <t:{int(row['time'])}:R>"
+             + (say(part.file, "moderation.picked", handle=clean(picked_as)) if picked_as else ""),
+             *([where_case(part, row)] if row["server"] else []), *([f"Why: {clean(row['reason'])}"] if row["reason"] else []), *([f"Length: {lasting_words(str(row['duration']))}"] if row["duration"] else [])]
     tickets = part.ctx.db.query("SELECT number, channel, message FROM discord_tickets WHERE player_id = ? AND message != '' ORDER BY number DESC LIMIT 5", (target,)) if target else []
     if tickets:
         lines.append("Tickets on them: " + ", ".join(f"[{one['number']}](https://discord.com/channels/{part.file.guild}/{one['channel']}/{one['message']})" for one in tickets))
@@ -380,7 +407,8 @@ async def tickets_command(interaction: discord.Interaction) -> None:
     for row in rows:
         kind = str(row["kind"]).partition("-")[0]
         said = part.tickets.lines_of(int(row["number"]))
-        shown = [f"[{row['number']}]({part.tickets.link(row)})" if row["message"] else f"{row['number']} (its card hasn't got there yet)", KIND_WORDS.get(kind, kind), clean(row["player_name"] or ""), clean(row["server"] or ""),
+        about = part.tag(str(row["player_id"]), str(row["player_name"] or "")) if row["player_id"] else ""  # where they are now: their tag says, and the card's server says the rest
+        shown = [f"[{row['number']}]({part.tickets.link(row)})" if row["message"] else f"{row['number']} (its card hasn't got there yet)", KIND_WORDS.get(kind, kind), about or clean(row["player_name"] or ""), "" if about else clean(row["server"] or ""),
                  re.sub(r"[*_]", "", str(said[-1]["text"]))[:80] + f", <t:{int(said[-1]['time'])}:R>" if said else f"nobody yet, <t:{int(row['opened'])}:R>", "thread" if row["thread"] else ""]
         lines.append(" · ".join(part for part in shown if part))
     text = "\n".join(lines)

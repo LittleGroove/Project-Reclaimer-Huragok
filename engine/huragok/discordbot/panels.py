@@ -13,7 +13,7 @@ import discord
 from discord import ui
 
 from . import cards, contact, features, kept, rest, tidy
-from .client import NOT_FACULTY, SaysWhatWentWrong, acting_as, answer, someone_from
+from .client import NOT_FACULTY, SaysWhatWentWrong, answer, someone_from
 from .config import add_faculty, colour_value, colour_value_of, LOG, ping_value, pings_of, RANK_KEYS, remove_faculty, set_channel, set_message, set_rank_roles, set_switch, TICKET
 from .features import FEATURES, MARKS
 from ..core.commandsfile import rank_word
@@ -146,7 +146,7 @@ class _Recommended(ui.Button[Panel]):
             if not feature.is_on(self.part.file):
                 set_switch(self.part.path, feature.table, feature.switch, feature.on_value)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what="the recommended features are on"))
+        self.part.audit_setup(interaction.user, "the recommended features are on")
         await Home(self.part).open(interaction)
 
 
@@ -211,7 +211,7 @@ class _RankSelect(ui.RoleSelect[Panel]):
         log.info("%s set the %s roles in Discord: %s", interaction.user.name, self.rank,
                  ", ".join(name for _, name in wanted) or "none")
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the {self.rank} roles are {', '.join(name for _, name in wanted) or 'none'}"))
+        self.part.audit_setup(interaction.user, f"the {self.rank} roles are {', '.join(name for _, name in wanted) or 'none'}")
         await Ranks(self.part).open(interaction)
 
 
@@ -251,7 +251,7 @@ class _FacultySelect(ui.UserSelect[Panel]):
                 add_faculty(self.part.path, faculty, name)
         log.info("%s changed the bot's faculty in Discord", interaction.user.name)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what="changed the bot's faculty"))
+        self.part.audit_setup(interaction.user, "changed the bot's faculty")
         await FacultyPanel(self.part).open(interaction)
 
 
@@ -288,7 +288,7 @@ class _ChannelSelect(ui.ChannelSelect[Panel]):
         log.info("%s set the %s channel in Discord: %s", interaction.user.name, self.key, picked.name if picked else "none")
         await self.part.look_now()
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the {self.key} channel is {picked.name if picked else 'none'}"))
+        self.part.audit_setup(interaction.user, f"the {self.key} channel is {picked.name if picked else 'none'}")
         await Channels(self.part, self.page, said=_verdict(self.part, self.key, str(picked.id)) if picked else "").open(interaction)
 
 
@@ -371,7 +371,7 @@ class _UnsetSelect(ui.Select[Panel]):
         set_channel(self.part.path, key, "")
         log.info("%s unset the %s channel in Discord", interaction.user.name, key)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the {key} channel is unset"))
+        self.part.audit_setup(interaction.user, f"the {key} channel is unset")
         await Channels(self.part, self.page).open(interaction)
 
 
@@ -419,7 +419,7 @@ class _TicketChoice(ui.Select[Panel]):
         value: Any = int(self.values[0]) if self.key == "stale_after_days" else self.values[0]
         set_switch(self.part.path, ("tickets",), self.key, value)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"tickets: {self.key} is {value}"))
+        self.part.audit_setup(interaction.user, f"tickets: {self.key} is {value}")
         await Tickets(self.part).open(interaction)
 
 
@@ -534,7 +534,7 @@ class _TellSelect(ui.RoleSelect[Panel]):
         for key in self.keys:
             set_message(self.part.path, key, ping=ping_value([str(role.id) for role in self.values]))
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.about}: {_audit_words(list(self.values))}"))
+        self.part.audit_setup(interaction.user, f"{self.about}: {_audit_words(list(self.values))}")
         await WhoGetsTold(self.part, self.page).open(interaction)
 
 
@@ -594,7 +594,7 @@ class _TableForm(SaysWhatWentWrong, ui.Modal):
         found = {name.strip(): value.strip() for name, _, value in (line.partition("=") for line in str(self.words.value).splitlines()) if name.strip() and value.strip()}
         set_switch(self.part.path, self.section, self.key, found)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{'.'.join(self.section)}: {self.key}"))
+        self.part.audit_setup(interaction.user, f"{'.'.join(self.section)}: {self.key}")
         await answer(interaction, "Saved.")
 
 
@@ -684,7 +684,7 @@ class _NestedChoice(ui.Select[Panel]):
         picked = [json.loads(value) for value in self.values]
         set_switch(self.part.path, self.table, self.key, picked if self.several else picked[0])
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{'.'.join(self.table)}: {self.key} is {picked if self.several else picked[0]}"))
+        self.part.audit_setup(interaction.user, f"{'.'.join(self.table)}: {self.key} is {picked if self.several else picked[0]}")
         await self.screen(self.part).open(interaction)
 
 
@@ -710,7 +710,7 @@ class _NestedWordsForm(SaysWhatWentWrong, ui.Modal):
             return
         set_switch(self.part.path, self.table, self.key, [line.strip() for line in str(self.words.value).splitlines() if line.strip()])
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{'.'.join(self.table)}: {self.key}"))
+        self.part.audit_setup(interaction.user, f"{'.'.join(self.table)}: {self.key}")
         await answer(interaction, "Saved.")
 
 
@@ -729,7 +729,7 @@ class _ConsoleChoice(ui.Select[Panel]):
         else:
             set_switch(path, ("console",), self.key, value)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the console: {self.key} is {value}"))
+        self.part.audit_setup(interaction.user, f"the console: {self.key} is {value}")
         await Console(self.part).open(interaction)
 
 
@@ -769,7 +769,7 @@ class _AsksFirstForm(SaysWhatWentWrong, ui.Modal):
         wanted = [word.strip().lstrip("!").lower() for word in str(self.words.value).replace(",", " ").split() if word.strip().lstrip("!")]
         set_switch(self.part.path, ("console",), "confirm", wanted)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what="what the console asks first"))
+        self.part.audit_setup(interaction.user, "what the console asks first")
         await interaction.response.send_message(f"These ask first now: {', '.join(wanted) or 'nothing'}.", ephemeral=True)
 
 
@@ -915,8 +915,7 @@ class _SeasonChannel(ui.ChannelSelect[Panel]):
         channel = self.values[0] if self.values else None
         set_switch(self.part.path, ("leaderboards",), "season_channel", str(channel.id) if channel else "")
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user),
-                                     what=f"the season's boards go to {'#' + channel.name if channel else 'the boards channel'}"))
+        self.part.audit_setup(interaction.user, f"the season's boards go to {'#' + channel.name if channel else 'the boards channel'}")
         await BoardOrderPanel(self.part).open(interaction)
 
 class _MoveEarlier(ui.Select[Panel]):
@@ -941,8 +940,7 @@ class _MoveEarlier(ui.Select[Panel]):
             boards[at - 1], boards[at] = boards[at], boards[at - 1]
             set_switch(self.part.path, ("leaderboards",), "boards", boards)
             await self.part.reload(force=True)
-            self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user),
-                                         what=f"the board {_board_title(boards[at - 1])} is number {at} now"))
+            self.part.audit_setup(interaction.user, f"the board {_board_title(boards[at - 1])} is number {at} now")
         await BoardOrderPanel(self.part).open(interaction)
 
 class _BoardToggle(ui.Select[Panel]):
@@ -961,7 +959,7 @@ class _BoardToggle(ui.Select[Panel]):
         boards = [one for one in boards if one != entry] if entry in boards else [*boards, entry]
         set_switch(self.part.path, ("leaderboards",), "boards", boards)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"the board {_board_title(entry)} is {'on' if entry in boards else 'off'}"))
+        self.part.audit_setup(interaction.user, f"the board {_board_title(entry)} is {'on' if entry in boards else 'off'}")
         await LeaderboardsPanel(self.part, self.period).open(interaction)
 
 
@@ -1098,7 +1096,7 @@ class _TopRoleSelect(ui.RoleSelect[Panel]):
         set_switch(self.part.path, ("roles",), "top", top)
         await self.part.reload(force=True)
         self.part.roles_due = True
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{role.name} is the top role of {_board_title(self.entry)}"))
+        self.part.audit_setup(interaction.user, f"{role.name} is the top role of {_board_title(self.entry)}")
         await StatsRolesPanel(self.part, self.entry).open(interaction)
 
 
@@ -1135,7 +1133,7 @@ class _SideRoleSelect(ui.RoleSelect[Panel]):
         set_switch(self.part.path, ("sides",), f"{self.side}_role", str(role.id) if role else "")
         await self.part.reload(force=True)
         self.part.roles_due = True
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.side.title()}'s role is {role.name if role else 'none'}"))
+        self.part.audit_setup(interaction.user, f"{self.side.title()}'s role is {role.name if role else 'none'}")
         await SidesPanel(self.part).open(interaction)
 
 
@@ -1207,7 +1205,7 @@ class _SettingChoice(ui.Select[Panel]):
         value = [one for many in picked for one in (many if isinstance(many, list) else [many])] if self.several else picked[0]
         set_switch(self.part.path, (self.section,), self.key, value)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.section}: {self.key} is {value}"))
+        self.part.audit_setup(interaction.user, f"{self.section}: {self.key} is {value}")
         await self.screen(self.part).open(interaction)
 
 
@@ -1220,7 +1218,7 @@ class _SettingSwitch(ui.Button[Panel]):
     async def callback(self, interaction: discord.Interaction) -> None:
         set_switch(self.part.path, (self.section,), self.key, not self.now)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.section}: {self.key} is {'off' if self.now else 'on'}"))  # it may have just opened something to everyone
+        self.part.audit_setup(interaction.user, f"{self.section}: {self.key} is {'off' if self.now else 'on'}")  # it may have just opened something to everyone
         await self.screen(self.part).open(interaction)
 
 
@@ -1239,7 +1237,7 @@ class _FeatureSwitch(ui.Button[Panel]):
         await self.part.reload(force=True)
         if self.feature.key == "contact":
             self.part.contact.keep_card()  # so the panel can say where it is, rather than in a moment
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.feature.title} is {'off' if turned == self.feature.off_value else 'on'}"))
+        self.part.audit_setup(interaction.user, f"{self.feature.title} is {'off' if turned == self.feature.off_value else 'on'}")
         await self.screen(self.part).open(interaction)
 
 
@@ -1271,7 +1269,7 @@ class _WordsForm(SaysWhatWentWrong, ui.Modal):
         typed = str(self.words.value).strip()
         set_switch(self.part.path, (self.section,), self.key, [line.strip() for line in typed.splitlines() if line.strip()] if self.is_list else typed)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.section}: {self.key}"))
+        self.part.audit_setup(interaction.user, f"{self.section}: {self.key}")
         await interaction.response.send_message("Saved.", ephemeral=True)
 
 
@@ -1449,7 +1447,7 @@ class _MessageChannel(ui.ChannelSelect[Panel]):
         names = {str(value).strip(): name for name, value in self.part.file.section("channels").items() if str(value).strip()}
         set_message(self.part.path, self.key, channel=names.get(str(picked.id), f"#{picked.name}"))
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} goes to #{picked.name}"))
+        self.part.audit_setup(interaction.user, f"{self.key} goes to #{picked.name}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1461,7 +1459,7 @@ class _MessagePing(ui.RoleSelect[Panel]):
     async def callback(self, interaction: discord.Interaction) -> None:
         set_message(self.part.path, self.key, ping=ping_value([str(role.id) for role in self.values]))
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} {_audit_words(list(self.values))}"))
+        self.part.audit_setup(interaction.user, f"{self.key} {_audit_words(list(self.values))}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1532,7 +1530,7 @@ class _MessageCloses(ui.Select[Panel]):
         wanted = "" if self.values[0] == "default" else self.values[0]
         set_message(self.part.path, self.key, closes_to=wanted)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} when it's finished: {wanted or 'as Tickets says'}"))
+        self.part.audit_setup(interaction.user, f"{self.key} when it's finished: {wanted or 'as Tickets says'}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1547,7 +1545,7 @@ class _MessageClosesChannel(ui.ChannelSelect[Panel]):
         picked = self.values[0]
         set_message(self.part.path, self.key, closes_to=str(picked.id))
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} when it's finished goes to #{picked.name}"))
+        self.part.audit_setup(interaction.user, f"{self.key} when it's finished goes to #{picked.name}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1565,7 +1563,7 @@ class _MessageColour(ui.Select[Panel]):
     async def callback(self, interaction: discord.Interaction) -> None:
         set_message(self.part.path, self.key, colour=self.values[0])
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} is {self.values[0]}"))
+        self.part.audit_setup(interaction.user, f"{self.key} is {self.values[0]}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1577,7 +1575,7 @@ class _MessageSwitch(ui.Button[Panel]):
     async def callback(self, interaction: discord.Interaction) -> None:
         set_message(self.part.path, self.key, post=not self.posting)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{self.key} is {'off' if self.posting else 'on'}"))
+        self.part.audit_setup(interaction.user, f"{self.key} is {'off' if self.posting else 'on'}")
         await OneMessage(self.part, self.key, self.page).open(interaction)
 
 
@@ -1602,7 +1600,7 @@ class _FeatureSelect(ui.Select[Panel]):
         set_switch(self.part.path, feature.table, feature.switch, turned)
         log.info("%s switched %s %s in Discord", interaction.user.name, feature.key, "off" if turned == feature.off_value else "on")
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.setup", who=acting_as(self.part, interaction.user), what=f"{feature.title} is {'off' if turned == feature.off_value else 'on'}"))
+        self.part.audit_setup(interaction.user, f"{feature.title} is {'off' if turned == feature.off_value else 'on'}")
         await Features(self.part, self.page).open(interaction)
 
 

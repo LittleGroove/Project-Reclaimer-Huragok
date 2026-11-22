@@ -23,7 +23,7 @@ import threading
 import time
 import unicodedata
 from collections import deque
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 Parts = list[tuple[str, str | None]]  # one line in several colours: [(text, colour), ...]
 
@@ -604,10 +604,14 @@ def content_colour(text: str) -> str | None:
     return None
 
 
-def event_colour(level: int, text: str) -> str:
-    """A dashboard event's colour: its level when that's a warning or worse, otherwise what it says, else gray."""
+def event_colour(level: int, text: str, names: Iterable[str] = ()) -> str:
+    """A dashboard event's colour: its level when that's a warning or worse, otherwise what it says, else gray. What
+    it says is Huragok's own words: `names` (the players on now) are taken out first, so a player called FAILED or
+    Crashed doesn't turn the lines about them yellow or red."""
     if level >= logging.WARNING:
         return level_colour(level)
+    for name in sorted({n.strip() for n in names if n and n.strip()}, key=len, reverse=True):
+        text = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", " ", text)
     return content_colour(text) or "gray"
 
 

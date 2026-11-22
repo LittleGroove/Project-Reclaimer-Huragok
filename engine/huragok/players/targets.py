@@ -8,16 +8,21 @@ they have spaces, capitals and apostrophes, and they change at will. What a comm
 - The player is the longest name the line starts with ("!kick Nate Higgers spam"), word for word in any case;
   quotes work too, as on the console. A name that is the start of a longer one, with more words after it, could be
   either: the caller is asked, unless the next word is one the command expects there (a time, a rule).
-- A name more than one player has acts on nobody. The caller gets each of them with what tells them apart (how the
-  name is written, their team, how long they've been on or when they were last here, their role, a mute, the start
-  of their player ID) and what to type: #4 for someone on this server, @1 for someone who isn't (the caller's own
-  list, for ten minutes). For a command that reaches players who left (scope "seen"), the ones seen here count too.
+- A name more than one player has acts on nobody. The caller gets each of them, one a line, written the one way
+  (core/tags.py: "Nate 1a2b3c4d (#4) [HugeGrass]") with what tells them apart (their team, how long they've been on
+  or when they were last here, their role, a mute) and what to type: #4 for someone on this server, @1 for someone
+  who isn't (the caller's own list). For a command that reaches players who left (scope "seen"), the ones seen here
+  count too.
 - The start of a name acts on nobody, except for a command that only looks or lifts (`start`), and then only when
   one player on has it.
 - Nobody acts on someone of their own role or above (`acts`; faculty excepted), named by name, number or ID alike.
 
-Lists of players who aren't on (!bans, !mutes, !kicks) number their entries the same way, so `!unban @2` is the
-second ban the caller was shown.
+How each player was picked (#4, @2) is kept on the call (`call.picked`), so what the command says it did names them
+with what was typed, and the ledger keeps it with the action.
+
+@numbers stick (the host's call, 21 November 2026): anyone a reply names who isn't on the caller's server gets one,
+and keeps it for ten minutes in every list and reply that names them, so @2 never quietly becomes someone else.
+Lists of players who aren't on (!bans, !mutes, !kicks) number their entries the same way: `!unban @2`.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..core.commandsfile import PROBATION, ROLES
+from ..core.tags import SHORT, tag
 from ..core.text import PLAYER_ID, lookalike
 from ..servers.state import Player
 from .roles import a_role
@@ -40,14 +46,15 @@ if TYPE_CHECKING:
 NUMBER = re.compile(r"#?(\d{1,4})")  # a player's #number; the number alone means it too, as on the console
 PICK = re.compile(r"@(\d{1,3})")  # an entry of the caller's last list
 FULL_ID = PLAYER_ID  # a whole player ID, either case
-ID_START = re.compile(r"[0-9a-fA-F]{8,63}")  # the start of a player ID: lists show the first 8
+ID_START = re.compile(r"[0-9a-fA-F]{%d,63}" % SHORT)  # the start of a player ID: every tag shows the first 8
 QUOTES = {'"': '"', "“": "”", "'": "'"}  # a name in quotes, as the console takes it: "Master Chief"
 TIME = re.compile(r"\d+[smhdw]", re.IGNORECASE)
 FOREVER = {"perm", "permanent", "forever", "never"}
 TEAMS = {"red", "blue", "green", "orange", "purple", "gold", "brown", "pink"}
-PICKS_SECONDS = 600  # how long @numbers stand for a list's entries
+PICKS_SECONDS = 600  # how long @numbers stand for whoever they were given to, from the last time one was used or shown
+MOST_PICKS = 999  # @numbers one caller can have at once (PICK reads three digits); past it they start again from @1
 LISTED = 6  # players named in one "could be" answer
-SCOPES = ("on", "seen")
+SCOPES = ("on", "any", "seen")  # this server; any server (or by player ID, someone who left); anyone seen
 
 
 def is_time(word: str) -> bool:
@@ -94,60 +101,93 @@ class Candidate:
     note: str = ""  # what a list knows about them: "banned 2d ago by Alice: cheating"
     target: str = ""  # what the console takes for the entry when it isn't the player ID (an address ban's IP)
 
-    def describe(self, handle: str, role: str = "", now: float | None = None) -> str:
+    def server(self, here: str) -> str:
+        """The server they're on: the caller's (`here`) for someone with a #number there, else the one they're on."""
+        return here if self.number else self.where
+
+    def describe(self, handle: str, role: str = "", now: float | None = None, *, here: str = "",
+                 plain: bool = False) -> str:
+        """"Nate 1a2b3c4d (#4) [HugeGrass]: red, on 12m, moderator, muted": the tag (core/tags.py), then what tells
+        them apart. `here`: the caller's server. `plain`: the tag alone, for a player asking (others' ranks and mutes
+        aren't theirs)."""
         now = time.time() if now is None else now
+        shown = tag(self.name, self.id, handle=handle, server=self.server(here))
+        if plain:
+            return shown
         bits: list[str] = []
         if self.number:
             bits += [self.team.lower()] if self.team else []
             bits += [f"on {ago(now - self.since)}"] if self.since else []
-        elif self.where:
-            bits.append(f"on {self.where}")
-        elif self.since:
+        elif self.since and not self.where:
             bits.append(f"seen {ago(now - self.since)} ago")
         bits += [role] if role and role != "player" else []
         bits += ["muted"] if self.muted else []
         bits += [self.note] if self.note else []
-        bits += [self.id[:8]] if self.id else []
-        return f"{handle} {self.name}" + (f" ({', '.join(bits)})" if bits else "")
+        return shown + (f": {', '.join(bits)}" if bits else "")
+
+    @property
+    def key(self) -> str:
+        """What one entry is, whichever list names it: the player ID, else what the console takes (an address), else
+        the name (a name banned as text)."""
+        return (self.id or self.target or self.name).lower()
 
 
 class Picks:
-    """Each caller's last list of players who aren't on: @1, @2… stand for its entries for ten minutes."""
+    """Each caller's @numbers: @1, @2… for the players replies named who weren't on the caller's server, and the
+    entries of the lists they were shown (!bans, !mutes, !kicks). Sticky: someone keeps their number in every list and
+    reply that names them, and new people get the next one, so a number never changes who it means. Ten minutes after
+    the caller last used or was shown one, they all run out, and the next list starts again at @1."""
 
     def __init__(self) -> None:
         self._lists: dict[str, tuple[float, list[Candidate]]] = {}
-        self._adding: set[str] = set()
 
     @contextmanager
     def adding(self, caller: str) -> Iterator[None]:
-        """Each server's list in one answer: one numbering through them all, and someone they all name once. Without it @1 would mean the last server's, whichever one it was read from."""
-        self._lists.pop(caller, None)
-        self._adding.add(caller)
-        try:
-            yield
-        finally:
-            self._adding.discard(caller)
+        """Several lists in one answer, one numbering through them all. Every list is numbered that way now (sticky
+        @numbers), so this only keeps what calls it working."""
+        yield
+
+    def _live(self, caller: str) -> list[Candidate]:
+        made, entries = self._lists.get(caller, (0.0, []))
+        if entries and time.monotonic() - made > PICKS_SECONDS:
+            self._lists.pop(caller, None)
+            return []
+        return entries
 
     def offer(self, caller: str, entries: list[Candidate]) -> list[tuple[int, Candidate]]:
-        """Each entry with its number."""
-        if caller in self._adding and caller in self._lists:
-            have = self._lists[caller][1]
-            known = {entry.id or entry.target or entry.name for entry in have}
-            fresh = [entry for entry in entries if (entry.id or entry.target or entry.name) not in known]
-            self._lists[caller] = (time.monotonic(), have + fresh)
-            return list(enumerate(fresh, len(have) + 1))
-        self._lists[caller] = (time.monotonic(), list(entries))
-        return list(enumerate(entries, 1))
+        """Each entry with its number: the one it already has, or the next free one. What's newer about someone (a
+        ban's note, the server they're on) replaces what was kept."""
+        have = list(self._live(caller))
+        if len(have) + len(entries) > MOST_PICKS:
+            have = []
+        index = {entry.key: number for number, entry in enumerate(have, 1)}
+        numbered = []
+        for entry in entries:
+            number = index.get(entry.key)
+            if number is None:
+                have.append(entry)
+                number = index[entry.key] = len(have)
+            else:
+                have[number - 1] = entry
+            numbered.append((number, entry))
+        self._lists[caller] = (time.monotonic(), have)
+        return numbered
+
+    def number_for(self, caller: str, entry: Candidate) -> int:
+        """Their @number for this caller, given now if they had none."""
+        return self.offer(caller, [entry])[0][0]
 
     def get(self, caller: str, number: int) -> Candidate | str:
         """The entry, or why there's none."""
         made, entries = self._lists.get(caller, (0.0, []))
         if not entries:
-            return f"You have no list for @{number}: @numbers are the players a list or a question named last."
+            return f"You have no @{number}: @numbers are the players a list or a reply named to you."
         if time.monotonic() - made > PICKS_SECONDS:
-            return f"Your last list is over {PICKS_SECONDS // 60} minutes old: ask again for a fresh one."
+            return (f"Your @numbers ran out ({PICKS_SECONDS // 60} minutes without one being used or shown): ask "
+                    "again for a fresh list.")
         if not 1 <= number <= len(entries):
-            return f"Your last list has @1 to @{len(entries)}."
+            return f"You have @1 to @{len(entries)}."
+        self._lists[caller] = (time.monotonic(), entries)  # used: they stay a while longer
         return entries[number - 1]
 
 
@@ -243,24 +283,20 @@ async def ask(call: CommandCall, about: str, found: list[Candidate], *, alike: b
     it (letters of another script or style): said so, and picked the same way, even when there's one."""
     shown = found[:LISTED]
     away = [c for c in shown if not c.number]
-    if away and call.picks is not None:
-        call.picks.offer(call.player.id, away)
-    items, n = [], 0
-    for c in shown:
-        if c.number:
-            handle = f"#{c.number}"
-        else:
-            n += 1
-            handle = f"@{n}"
-        # A plain player asking (!report) sees names and how to pick: others' ranks, mutes and IDs aren't theirs.
-        items.append(c.describe(handle, _role(call, c)) if ROLES.index(call.role) >= ROLES.index(PROBATION) else f"{handle} {c.name}")
-    more = f" and {len(found) - LISTED} more" if len(found) > LISTED else ""
+    numbers = dict(zip((c.key for c in away), (n for n, _ in call.picks.offer(call.player.id, away))
+                       if call.picks is not None else range(1, len(away) + 1)))
+    # A plain player asking (!report) sees who they are and how to pick: others' ranks and mutes aren't theirs.
+    plain = ROLES.index(call.role) < ROLES.index(PROBATION)
+    items = [c.describe(f"#{c.number}" if c.number else f"@{numbers[c.key]}", _role(call, c), here=call.server,
+                        plain=plain) for c in shown]
+    more = [f"…and {len(found) - LISTED} more: a longer name or the ID narrows it."] if len(found) > LISTED else []
     use = "#number" if not away else "@number" if len(away) == len(shown) else "#number or @number"
     if alike:
-        await call.reply(f"Nobody here is called {about}. {'These look' if len(found) > 1 else 'This looks'} like it: "
-                         f"{'; '.join(items)}{more}. Use the {use}.")
-        return
-    await call.reply(f"{about} could be {'; '.join(items)}{more}. Use the {use}.")
+        head = (f"Nobody here is called {about}. {'These look' if len(found) > 1 else 'This looks'} like it; use the "
+                f"{use}:")
+    else:
+        head = f"{about} could be {len(found)} players. Use the {use}:"
+    await call.reply("\n".join([head, *items, *more]))
 
 
 def _role(call: CommandCall, candidate: Candidate) -> str:
@@ -269,18 +305,23 @@ def _role(call: CommandCall, candidate: Candidate) -> str:
     return call.role_of(Player(candidate.number, candidate.name, candidate.id))
 
 
-def _away(call: CommandCall, candidate: Candidate, scope: str) -> Player | None:
-    """Someone who isn't on the caller's server, for a command of this scope: who they are (number 0), or None."""
-    if scope == "seen":
+def _away(call: CommandCall, candidate: Candidate, scope: str, explicit: bool = False) -> Player | None:
+    """Someone who isn't on the caller's server, for a command of this scope: who they are (number 0), or None. Scope
+    "any" (a kick: every server's, [automod] across_servers): someone on another server, or anyone named by player ID or
+    @number (`explicit`); a name alone doesn't reach someone who's left, whom another player may be called now."""
+    if scope == "seen" or (scope == "any" and (candidate.where or explicit)):
         return Player(0, candidate.name, candidate.id)
     return None
 
 
-async def _not_here(call: CommandCall, candidate: Candidate) -> None:
+async def _not_here(call: CommandCall, candidate: Candidate, scope: str = "on") -> None:
+    who = call.tag(candidate.id, candidate.name) if candidate.id else candidate.name
     if candidate.where:
-        await call.reply(f"{candidate.name} is on {candidate.where}, not this server.")
+        await call.reply(f"{who} is on another server, not this one.")
+    elif scope == "any":
+        await call.reply(f"{who} isn't on any server now: their ID or @number names them anyway.")
     else:
-        await call.reply(f"{candidate.name} isn't on this server now.")
+        await call.reply(f"{who} isn't on this server now.")
 
 
 async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = False) -> Player | None:
@@ -301,10 +342,12 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
         if isinstance(got, str):
             await call.reply(got)
             return None
+        if got.id:
+            call.picked[got.id] = f"@{pick[1]}"
         if player := state.player_by_id(got.id):
             return player
-        if (away := _away(call, got, scope)) is None:
-            await _not_here(call, got)
+        if (away := _away(call, got, scope, explicit=True)) is None:
+            await _not_here(call, got, scope)
         return away
     number = NUMBER.fullmatch(ref)
     if number:
@@ -316,6 +359,7 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
             await ask(call, f"'{ref}'", [_on(player), *(_on(p) for p in named)])
             return None
         if player is not None:
+            call.picked[player.id] = f"#{player.number}"
             return player
         if ref.startswith("#"):
             await call.reply(f"Nobody is #{number[1]} on this server now. {call.prefix}players lists them.")
@@ -326,9 +370,9 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
         if player := state.player_by_id(player_id):
             return player
         record = history.get(player_id) if history is not None else None
-        candidate = _seen(call, record) if record else Candidate(player_id, player_id[:8])
-        if (away := _away(call, candidate, scope)) is None:
-            await _not_here(call, candidate)
+        candidate = _seen(call, record) if record else Candidate(player_id, "(never seen here)")
+        if (away := _away(call, candidate, scope, explicit=True)) is None:
+            await _not_here(call, candidate, scope)
         return away
     folded, shape = plain(ref), looks(ref)
     here = [_on(p) for p in sorted(state.players.values(), key=lambda p: p.number) if plain(p.name) == folded]
@@ -340,14 +384,16 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
         await ask(call, f"'{ref}'", here + lookalikes)
         return None
     away_named = [c for c in _seen_named(call, ref) if c.id not in {h.id for h in here}]
-    if scope == "on" and here:
+    if scope in ("on", "any") and here:
         away_named = []  # someone on has it: someone gone can't be acted on here anyway
+    if scope == "any":
+        away_named = [c for c in away_named if c.where] or away_named[:1]  # on another server; else one who's left, told so
     found = here + away_named
     if len(found) == 1:
         if found[0].number:
             return state.players[found[0].number]
         if (away := _away(call, found[0], scope)) is None:
-            await _not_here(call, found[0])
+            await _not_here(call, found[0], scope)
         return away
     if found:
         await ask(call, f"'{ref}'", found)
@@ -360,8 +406,8 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
         records = [r for r in (history.find(ref) if history is not None else []) if r.id.startswith(id_start)]
         if len(records) == 1 and not on:
             candidate = _seen(call, records[0])
-            if (away := _away(call, candidate, scope)) is None:
-                await _not_here(call, candidate)
+            if (away := _away(call, candidate, scope, explicit=True)) is None:
+                await _not_here(call, candidate, scope)
             return away
         if on or records:
             await ask(call, f"'{ref}'", [_on(p) for p in on] + [_seen(call, r) for r in records
@@ -378,9 +424,10 @@ async def find(call: CommandCall, ref: str, *, scope: str = "on", start: bool = 
     starts += sorted((p for p in state.players.values() if p not in starts and len(shape) >= 3
                       and looks(p.name).startswith(shape)), key=lambda p: p.number)  # offered, never acted on
     if starts:
-        listed = ", ".join(f"{p.name} (#{p.number})" for p in starts[:LISTED])
+        listed = [call.tag(p) for p in starts[:LISTED]]
         hint = f"#{starts[0].number}" if len(starts) == 1 else "the #number"
-        await call.reply(f"Nobody here is called '{ref}'. Did you mean {listed}? Use {hint}.")
+        head = f"Nobody here is called '{ref}'. Did you mean {'this' if len(listed) == 1 else 'one of these'}? Use {hint}:"
+        await call.reply("\n".join([head, *listed]))
         return None
     if number:
         await call.reply(f"Nobody is #{number[1]} on this server now. {call.prefix}players lists them.")
@@ -399,7 +446,7 @@ def outranked(call: CommandCall, player: Player) -> str:
     role = call.role_of(player)
     if ROLES.index(role) < ROLES.index(call.role):
         return ""
-    return f"{player.name} is {a_role(role)}; you can't do that to them."
+    return f"{call.tag(player)} is {a_role(role)}; you can't do that to them."
 
 
 async def player_and_rest(call: CommandCall, text: str | None = None, *, scope: str = "on", acts: bool = False,
@@ -420,4 +467,4 @@ async def player_and_rest(call: CommandCall, text: str | None = None, *, scope: 
 async def offer(call: CommandCall, entries: list[Candidate]) -> list[str]:
     """A list's entries numbered @1, @2… for the caller (ten minutes), each described: for !bans, !mutes, !kicks."""
     numbered = call.picks.offer(call.player.id, entries) if call.picks is not None else list(enumerate(entries, 1))
-    return [c.describe(f"@{n}" + (f" #{c.number}" if c.number else ""), _role(call, c)) for n, c in numbered]
+    return [c.describe(f"@{n}", _role(call, c), here=call.server) for n, c in numbered]

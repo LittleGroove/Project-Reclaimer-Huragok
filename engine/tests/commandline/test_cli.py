@@ -789,6 +789,27 @@ def test_check_names_settings_that_do_nothing_and_old_values(tmp_path: Path, cap
     assert "Ready, but read the settings warnings above" in out and "Everything looks ready" not in out
 
 
+def test_check_names_a_player_listed_under_two_roles(tmp_path: Path, capsys) -> None:
+    """By their tag: the name Huragok's records have, else the one noted beside them in commands.toml."""
+    from conftest import FACULTY, MOD
+
+    from huragok.core.storage import Storage
+
+    commands = (f'[faculty]\nplayers = ["{FACULTY}"]\n[moderator]\nplayers = [\n    "{MOD}",  # Bra:vo: promoted by '
+                f'Alice on 2026-10-01\n]\n[member]\nplayers = ["{MOD}"]\n')
+    path = _checkable(tmp_path / "reclaimer", commands=commands)
+    path.write_text(path.read_text(encoding="utf-8").replace('database = ""', 'database = "records/huragok.sqlite3"'),
+                    encoding="utf-8")
+    cli.main(["-c", str(path), "check"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "warning: Bra:vo bbbbbbbb is listed as moderator and member: one role each" in out  # a name with a ":"
+    storage = Storage(load(path).database)
+    storage.record_join(MOD, "Bravo Now", None)
+    storage.close()
+    cli.main(["-c", str(path), "check"])
+    assert "warning: Bravo Now bbbbbbbb is listed as moderator and member" in " ".join(capsys.readouterr().out.split())
+
+
 def test_check_says_whether_each_mod_is_good_to_go(tmp_path: Path, capsys) -> None:
     from testkit.mods import a_map, a_mod
 

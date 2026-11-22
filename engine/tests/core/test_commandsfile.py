@@ -140,6 +140,22 @@ def test_one_role_each_and_check_names_anyone_listed_twice(tmp_path: Path) -> No
                                                          bravo: ["moderator", "member"]}
 
 
+def test_a_note_names_the_player_whatever_their_name_has_in_it(tmp_path: Path) -> None:
+    from huragok.core.commandsfile import note_name, remove_player
+
+    assert note_name("Bravo: promoted by Alice on 2026-10-18") == ("Bravo", "promoted by Alice on 2026-10-18")
+    assert note_name("Bo:b: added as moderator by Al:ice on 2026-11-21") == ("Bo:b", "added as moderator by Al:ice "
+                                                                                     "on 2026-11-21")
+    assert note_name("X: Y: the host's own words", ["X: Y"]) == ("X: Y", "the host's own words")  # a name seen
+    assert note_name("Bravo: a regular") == ("Bravo", "a regular") and note_name("added as member by x on y") == (
+        "", "added as member by x on y")
+    # A change that can't be made names who by their tag: the note's name and the start of their ID.
+    path = write(tmp_path, f'[moderator]\nplayers = [\n    "{MOD}",  # Bo:b: promoted by Alice on 2026-10-18\n]\n'
+                           '[bogus]\n')
+    with pytest.raises(PermissionsError, match=r"not changed \(Bo:b bbbbbbbb out of moderator\): .*\[bogus\]"):
+        remove_player(path, "moderator", MOD)
+
+
 def test_a_change_within_one_tick_of_the_clock_is_still_seen(tmp_path: Path) -> None:
     """Windows moves file times in steps of about 16 ms: a second save in the same step (two !promote at once) left
     the time as it was, and the roles in force stayed the old ones until the file changed again."""

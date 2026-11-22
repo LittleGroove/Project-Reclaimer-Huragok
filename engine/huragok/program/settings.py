@@ -324,8 +324,8 @@ SETTINGS: list[Setting] = [
       "[process] priority applies", "huragok", choices=PRIORITIES),
     S("automod", "huragok", "choice", "huragok", "Vergil on this server: on (it acts on the word list in chat and "
       "names), dry_run (it watches and only logs what it would do) or off (it leaves this server's chat and names "
-      "alone). Mutes already decided, a moderator's or a strike's, still follow players here as [automod] "
-      "across_servers says. - takes its own out, so [automod] dry_run applies", "huragok", choices=AUTOMOD_MODES),
+      "alone). Only what Vergil catches by itself: the staff's strikes, and mutes already decided, still count here "
+      "as [automod] across_servers says. - takes its own out, so [automod] dry_run applies", "huragok", choices=AUTOMOD_MODES),
 ]
 
 SERVER_SETTINGS = [s for s in SETTINGS if s.scope == "server"]

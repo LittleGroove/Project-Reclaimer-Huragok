@@ -60,6 +60,8 @@ def said(fake: FakeDiscord) -> str:
 
 
 def test_a_case_shows_what_they_said_and_their_record(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+    """Their record is what came before the case: the card's own action isn't on it (the scope audit of 20 November
+    2026, A6: a mute's card said "1 mute" of that mute)."""
     async def scenario() -> None:
         bot_file(tmp_path, "moderation")
         async with running(tmp_path) as (huragok, rcon, _):
@@ -72,11 +74,11 @@ def test_a_case_shows_what_they_said_and_their_record(tmp_path: Path, run: Any, 
             await wait_for(lambda: len(cards_of(fake)) == 1, timeout=15)
             fields = {field["name"]: field["value"] for field in cards_of(fake)[0]["fields"]}
             assert fields["What they said before it"].split("\n")[0].startswith("you are all bad") and fields["What they said before it"].split("\n")[1].startswith("really bad")
-            assert fields["Their record"] == "1 mute"  # this one too
+            assert fields["Their record"] == "Nothing on record"  # not this one
             await huragok.vergil.moderation.act("kick", SERVER, ALICE, by="Mod", source="commands", reason="ruder")
             await wait_for(lambda: len(cards_of(fake)) == 2, timeout=15)
             fields = {field["name"]: field["value"] for field in cards_of(fake)[1]["fields"]}
-            assert fields["Their record"] in ("1 mute, 1 kick", "1 kick, 1 mute")
+            assert fields["Their record"] == "1 mute"  # the mute before it, and not the kick it's about
 
     run(scenario())
 
@@ -112,7 +114,7 @@ def test_someone_back_soon_after_a_kick(tmp_path: Path, run: Any, fake: FakeDisc
             before = len(cards_of(fake))
             await rcon.join(4, "Alice", ALICE)
             await wait_for(lambda: len(cards_of(fake)) > before, timeout=15)
-            assert "**Alice** is back, under a minute after being kicked (Mod: spam)" in said(fake)
+            assert f"**Alice** `cccccccc` [{SERVER}] is back, under a minute after being kicked (Mod: spam)" in said(fake)  # on the server they joined
 
     run(scenario())
 
@@ -175,7 +177,7 @@ def test_a_name_like_a_staff_members(tmp_path: Path, run: Any, fake: FakeDiscord
             await wait_for(lambda: huragok.storage.player(MOD) is not None, timeout=10)
             before = len(cards_of(fake))
             await rcon.join(2, "Moderat0r", BRAVO)
-            await wait_for(lambda: "has a name like Moderator's" in said(fake), timeout=15)
+            await wait_for(lambda: "has a name like a member of staff's: Moderator" in said(fake), timeout=15)
             assert len(cards_of(fake)) > before
             # Their own name isn't like themself.
             mods = [text for text in said(fake).split("\n") if text.startswith("**Moderator**") and "name like" in text]
@@ -203,20 +205,28 @@ def test_someone_new_on_a_quiet_server(tmp_path: Path, run: Any, fake: FakeDisco
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
             await rcon.join(3, "Alice", ALICE)
-            await wait_for(lambda: "**Alice** is new here" in said(fake), timeout=15)
+            await wait_for(lambda: f"**Alice** `cccccccc` [{SERVER}] is new here" in said(fake), timeout=15)
 
     run(scenario())
 
 
-def test_someone_banned_on_another_server(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_someone_banned_on_another_server(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """With [automod] across_servers off each server's bans are its own, so a ban elsewhere is news to this server's
+    staff. With it on (the default) a ban is every server's, and Huragok puts it on this one as they join: no card."""
     async def scenario() -> None:
         bot_file(tmp_path, "watch")
-        async with running(tmp_path) as (huragok, rcon, _):
+        async with running(tmp_path, "" if across else "[automod]\nacross_servers = false\n") as (huragok, rcon, _):
             part = await up(huragok)
             huragok.storage.record_action(kind="ban", server="Elsewhere", target_id=ALICE, target_name="Alice", by="Admin", source="in game")
             assert part.banned_elsewhere(ALICE, SERVER) == ["Elsewhere"]
             await rcon.join(3, "Alice", ALICE)
-            await wait_for(lambda: "**Alice** joined, and is banned on Elsewhere" in said(fake), timeout=15)
+            if across:
+                await wait_for(lambda: f"**Alice** `cccccccc` [{SERVER}] is new here" in said(fake), timeout=15)  # the watch list has looked at the join
+                await wait_for(lambda: part.outbox.waiting == 0, timeout=10)
+                assert "is banned on" not in said(fake)
+            else:
+                await wait_for(lambda: f"**Alice** `cccccccc` [{SERVER}] joined, and is banned on Elsewhere" in said(fake), timeout=15)
             huragok.storage.record_action(kind="unban", server="Elsewhere", target_id=ALICE, target_name="Alice", by="Admin", source="in game")
             assert part.banned_elsewhere(ALICE, SERVER) == []
 
@@ -229,7 +239,7 @@ def test_the_anti_cheat_acting(tmp_path: Path, run: Any, fake: FakeDiscord) -> N
         async with running(tmp_path) as (huragok, rcon, _):
             await up(huragok)
             await rcon.event("cheat", id=ALICE, name="Alice", category="invalid_game_data", detail="bad game data (ref 4F2A)", action="kicked")
-            await wait_for(lambda: "The server kicked **Alice**: bad game data (ref 4F2A)" in said(fake), timeout=15)
+            await wait_for(lambda: f"The server kicked **Alice** `cccccccc` [{SERVER}]: bad game data (ref 4F2A)" in said(fake), timeout=15)
 
     run(scenario())
 
@@ -263,8 +273,8 @@ def test_calladmin_tells_staff_with_the_chat_and_keeps_to_its_cooldown(tmp_path:
             await rcon.chat(ALICE, "Alice", "!calladmin Bravo is team killing")
             await wait_for(lambda: len(cards_of(fake)) == 1, timeout=15)
             card = cards_of(fake)[0]
-            assert card["description"] == "**Alice** is calling for an admin: Bravo is team killing"
-            assert "Bravo: ha ha" in card["fields"][0]["value"]
+            assert card["description"] == f"**Alice** `cccccccc` [{SERVER}] is calling for an admin: Bravo is team killing"
+            assert f"Bravo `dddddddd` [{SERVER}]: ha ha" in card["fields"][0]["value"]  # two of a name in the chat are told apart
             await wait_for(lambda: any("staff have been told" in line for line in tells_to(rcon, ALICE)), timeout=10)
             await rcon.chat(ALICE, "Alice", "!calladmin again")
             await wait_for(lambda: any("can't reach anyone" in line for line in tells_to(rcon, ALICE)), timeout=10)
@@ -315,7 +325,7 @@ def test_a_word_in_chat_calls_too(tmp_path: Path, run: Any, fake: FakeDiscord) -
             await up(huragok)
             await rcon.join(3, "Alice", ALICE)
             await rcon.chat(ALICE, "Alice", "ADMIN PLS he is hacking")
-            await wait_for(lambda: "**Alice** is calling for an admin" in said(fake), timeout=15)
+            await wait_for(lambda: "**Alice** `cccccccc`" in said(fake) and "is calling for an admin" in said(fake), timeout=15)
 
     run(scenario())
 
@@ -331,7 +341,7 @@ def test_mods_says_who_is_on(tmp_path: Path, run: Any, fake: FakeDiscord) -> Non
             await rcon.join(2, "Faculty", FACULTY)
             await wait_for(lambda: len(huragok.superintendent.states[SERVER].players) == 3, timeout=10)
             await rcon.chat(ALICE, "Alice", "!mods")
-            await wait_for(lambda: any(f"Faculty ({SERVER}), Mod ({SERVER})" in line for line in tells_to(rcon, ALICE)), timeout=10)
+            await wait_for(lambda: any(f"Faculty aaaaaaaa (#2) [{SERVER}], Mod bbbbbbbb (#1) [{SERVER}]" in line for line in tells_to(rcon, ALICE)), timeout=10)  # each by their tag
 
     run(scenario())
 

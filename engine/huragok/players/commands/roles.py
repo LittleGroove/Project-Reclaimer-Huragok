@@ -8,10 +8,12 @@ player can be promoted up to the role below the caller's own (moderators make pr
 moderators, faculty make admins) and demoted only by someone above them. A probationary moderator (0.5.3, a staff
 meeting) uses moderators' commands as requests a moderator or admin confirms (requests.py); commands.toml lists them
 as members, with a note, and Huragok's database marks them (an older Huragok, if an update is put back, refuses a
-section it doesn't know, and sees a member). Faculty are the host's: changed only in commands.toml. A ban through Huragok (!ban,
-Vergil's) takes every role away; the game's own /ban is that server's alone, and the roles stay (the host's call, 25
-October). A player's rank is the highest they hold on any server (an admin is each server's own), so nobody acts
-on someone of their own role or above anywhere, and only faculty can ban an admin.
+section it doesn't know, and sees a member). Faculty are the host's: changed only in commands.toml. A ban for good
+takes every role away, whoever gave it (a ! command, Vergil, the game's own /ban: every server's, [automod]
+across_servers); with across_servers off, only one through the console does (the host's call, 25 October). A player's
+rank is the highest they hold on any server (with across_servers on, a rank on one server is theirs on every server:
+the host's call, 21 November 2026), so nobody acts on someone of their own role or above anywhere, and only faculty can
+ban an admin.
 
 Members and moderators live in commands.toml, one line per player saying who they are and who changed it, the
 rest of the file as the host wrote it. Admins are the servers' own lists (the console's `admin add` and `admin
@@ -28,6 +30,7 @@ import time
 from ...core.commandsfile import PROBATION, ROLES, rank_plural
 from ...core.events import Event
 from ...core.part import command, on
+from ...core.tags import short_id
 from ...core.tomledit import add_to_list, remove_from_list
 from ...lore import callout
 from ...rcon import RconError
@@ -50,7 +53,7 @@ class RoleCommands(CommandsBase):
         target = call.target
         assert target is not None
         now = self.ctx.highest_role(target)
-        who = self._role_name(target)
+        who = call.tag(target, self._role_name(target))
         if now in ("admin", "faculty"):
             await call.reply(f"{who} is {a_role(now)}: as high as a promotion goes" + (" (faculty are listed in "
                              "commands.toml)." if now == "admin" else "."))
@@ -62,7 +65,8 @@ class RoleCommands(CommandsBase):
             return
         if await self._role_move(call, target, now, new, "promoted"):
             await call.reply(f"{who} is {a_role(new)} now" + (f" (was {a_role(now)})." if now != "player" else "."))
-            await self._role_tell(call, target, f"{call.player.name} made you {a_role(new)} here.")
+            await self._role_tell(call, target, f"{call.player.name} made you {a_role(new)}"
+                                  + (" on every server." if self._across() else "."))
 
     @command("demote", usage="<player>", help="One step down the roles: an admin becomes a moderator, a moderator a "
              "probationary moderator, then a member, a member a player", role="moderator", player="seen",
@@ -77,12 +81,15 @@ class RoleCommands(CommandsBase):
     async def admin(self, call: CommandCall) -> None:
         verb = call.args[0].lower() if call.args else "list"
         if verb not in ("add", "remove") or len(call.args) < 2:
+            if self._across():  # every server's admins: one on any server is one on all of them (the scope audit, B13)
+                await self._admin_list(call)
+                return
             await self._line(call, "admin")  # the list, as the server keeps it
             return
         target, _ = await call.player_and_rest(call.text.strip().split(None, 1)[1], scope="seen")
         if target is None:
             return
-        now, who = self.ctx.role_of(call.server, target), self._role_name(target)
+        now, who = self.ctx.role_of(call.server, target), call.tag(target, self._role_name(target))
         if verb == "remove":
             if now != "admin":
                 await call.reply(f"{who} isn't an admin" + (f" (they're {a_role(now)})." if now != "player" else "."))
@@ -98,6 +105,17 @@ class RoleCommands(CommandsBase):
             await self._role_tell(call, target, f"{call.player.name} made you an admin"
                                   + (" on every server." if self._across() else " here."))
 
+    async def _admin_list(self, call: CommandCall) -> None:
+        """Every server's admins, as one list: with across_servers on, an admin on one server is an admin on all of them (where they're on a server's
+        own list, if that isn't every server)."""
+        where: dict[str, list[str]] = {}
+        for server in self.ctx.servers:
+            for player_id in self._role_admins(server):
+                where.setdefault(player_id, []).append(server)
+        names = [call.tag(i, self._role_seen(i)) + (f" (on {', '.join(where[i])}'s list)" if len(where[i]) < len(self.ctx.servers) else "")
+                 for i in sorted(where)]
+        await self._reply_text(call, f"Admins on every server ({len(names)}): {', '.join(names) if names else 'none'}")
+
     @command("roles", help="Who has which role: faculty, admins, moderators, probationary moderators, members",
              role="moderator")
     async def roles(self, call: CommandCall) -> None:
@@ -112,19 +130,21 @@ class RoleCommands(CommandsBase):
         for role, ids in (("faculty", members.get("faculty", set())), ("admin", set(where)),
                           ("moderator", members.get("moderator", set())), (PROBATION, probation),
                           ("member", listed - probation)):
-            names = [self._role_seen(i) + (f" (on {', '.join(where[i])})" if role == "admin" and len(where[i])
-                                           < len(self.ctx.servers) else "") for i in sorted(ids)]
+            names = [call.tag(i, self._role_seen(i)) + (f" (on {', '.join(where[i])}'s list)" if role == "admin" and len(where[i])
+                                                          < len(self.ctx.servers) else "") for i in sorted(ids)]
             lines.append(f"{rank_plural(role)} ({len(names)}): {', '.join(names) if names else 'none'}")
         await self._reply_text(call, "\n".join(lines))
 
     @on("rcon.ban")
     async def banned(self, event: Event) -> None:
-        """A ban through Huragok (!ban, Vergil's, the relay's) takes every role away: the role goes with the right to
-        play, on every server. The game's own /ban is that server's alone: the roles stay. One with a time is a kick:
-        they'll be back, and so will their role."""
+        """A ban for good takes every role away: the role goes with the right to play, on every server. Whoever gave
+        it, with [automod] across_servers on (the game's own /ban is every server's too); with it off, the game's own
+        /ban is that server's alone, and the roles stay. One with a time is a kick: they'll be back, and so will their
+        role."""
         player_id = str(event.get("id") or "").lower()
         by = str(event.get("by") or "").strip()
-        if not player_id or not event.server or event.get("expires") or not from_console(by, self.ctx.servers, event.server):
+        everyone_s = self._spreads(event) if self._across() else from_console(by, self.ctx.servers, event.server)
+        if not player_id or not event.server or event.get("expires") or not everyone_s:
             return
         target = Player(0, str(event.get("name") or self._role_seen(player_id)), player_id)
         now = self.ctx.highest_role(target)
@@ -142,7 +162,7 @@ class RoleCommands(CommandsBase):
     # Moving a player along the ladder ------------------------------------------------------------------------
 
     async def _role_demote(self, call: CommandCall, target: Player) -> None:
-        now, who = self.ctx.highest_role(target), self._role_name(target)
+        now, who = self.ctx.highest_role(target), call.tag(target, self._role_name(target))
         if now == "player":
             await call.reply(f"{who} has no role to lose.")
             return
@@ -161,10 +181,11 @@ class RoleCommands(CommandsBase):
         """Take `target` from `old` to `new`, so they hold that one role alone. False: it couldn't, and the caller
         was told (nothing half-changed is left behind)."""
         path = self.ctx.permissions.path or self.ctx.home / "commands.toml"
-        who = self._role_name(target)
-        note = f"{who}: {how} by {call.player.name} on {time.strftime('%Y-%m-%d')}"
+        who = call.tag(target, self._role_name(target))
+        plain = self._role_name(target)  # commands.toml keeps the plain name: the window reads it back
+        note = f"{plain}: {how} by {call.player.name} on {time.strftime('%Y-%m-%d')}"
         if new == PROBATION:
-            note = f"{who}: a probationary moderator ({how} by {call.player.name} on {time.strftime('%Y-%m-%d')})"
+            note = f"{plain}: a probationary moderator ({how} by {call.player.name} on {time.strftime('%Y-%m-%d')})"
         section = FILE_SECTION.get(new)
         added = made_admin = False
         try:
@@ -196,11 +217,12 @@ class RoleCommands(CommandsBase):
                              else f"Couldn't: {error}.")
             return False
         if new == PROBATION:
-            self._probation_mark(target.id, who, call.player.name)
+            self._probation_mark(target.id, plain, call.player.name)
         elif old == PROBATION:
             self._probation_unmark(target.id)
         self.ctx.reload_permissions()
-        self.ctx.log.info("[%s] %s %s %s: %s -> %s", call.server, call.player.name, how, who, old, new)
+        self.ctx.log.info("[%s] %s %s %s: %s -> %s", call.server, call.player.name, how,
+                          self.ctx.names.describe(target, plain), old, new)
         if warning:
             await call.reply(warning)
         return True
@@ -265,17 +287,20 @@ class RoleCommands(CommandsBase):
         return target.name or self._role_seen(target.id)
 
     def _role_seen(self, player_id: str) -> str:
-        record = self.ctx.players.get(player_id)
-        return f"{record.last_name} ({player_id[:8]})" if record else player_id[:8]
+        """Their name, as kept with a role (commands.toml, Huragok's admin list): the name they go by, plain. A reply
+        names them with the tag (call.tag), which has their ID."""
+        return self.ctx.names.name(player_id) or short_id(player_id)
 
     def _role_admins(self, server: str) -> set[str]:
         state = self.ctx.server(server)
         return set(state.admins) if state.admins is not None else {p.id for p in state.players.values() if p.admin}
 
     async def _role_tell(self, call: CommandCall, target: Player, text: str) -> None:
-        if not target.number:  # not on this server now
+        """Told wherever they are: on another server too (it only reached someone on the caller's)."""
+        server, there = self.ctx.names.on(target.id)
+        if there is None:  # on no server now
             return
         try:
-            await self.ctx.tell(call.server, target, callout("promoted", text))
+            await self.ctx.tell(server, there, callout("promoted", text))
         except RconError:  # a greeting that doesn't arrive changes nothing
-            self.ctx.log.debug("[%s] couldn't tell %s", call.server, target.name)
+            self.ctx.log.debug("[%s] couldn't tell %s", server, target.name)

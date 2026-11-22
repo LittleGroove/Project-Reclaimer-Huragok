@@ -198,6 +198,14 @@ def guild_member(token: str, guild_id: str, user_id: str) -> dict[str, Any]:
     return call("GET", f"/guilds/{guild_id}/members/{user_id}", token)
 
 
+def display_name(user: dict[str, Any] | None, member: dict[str, Any] | None = None) -> str:
+    """Someone as this Discord shows them, from what its web API sends: their nickname here, else their display name,
+    else their username; as client.named has them from discord.py. Staff are named one way (the host's call, 21
+    November 2026, H5): a transcript said a username, an audit line a nickname."""
+    user, member = user or {}, member or {}
+    return str(member.get("nick") or user.get("global_name") or user.get("username") or "")
+
+
 def invite_url(application_id: str, permissions: int, guild_id: str = "") -> str:
     query = {"client_id": application_id, "scope": "bot applications.commands", "permissions": str(permissions)}
     if guild_id:
@@ -316,6 +324,6 @@ def delete_webhook_message(url: str, message_id: str) -> Reply:
 
 __all__ = ["API", "BadToken", "DiscordError", "INTENT_FLAGS", "PERMISSIONS", "PERMISSION_NAMES", "Refused", "Reply",
            "SlowDown", "Unreachable", "application", "bot_guilds", "bot_user", "call", "channel_webhooks",
-           "create_webhook", "delete_webhook_message", "edit_channel", "edit_current_member", "edit_message", "edit_webhook_message",
+           "create_webhook", "delete_webhook_message", "display_name", "edit_channel", "edit_current_member", "edit_message", "edit_webhook_message",
            "execute_webhook", "guild", "guild_channels", "guild_member", "guild_roles", "invite_url",
            "post_message", "send", "set_voice_status", "valid_webhook", "webhook_info"]

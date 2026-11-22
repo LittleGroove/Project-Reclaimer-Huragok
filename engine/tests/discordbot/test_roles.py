@@ -127,7 +127,7 @@ def test_faculty_of_the_bot_are_faculty_in_game_once_linked(tmp_path: Path, run:
             part = await up(huragok)
             code = await code_in_game(huragok, rcon)  # Alice, a player in game, is the host
             opened, token = fake.command("link", user=FACULTY_USER, code=code)
-            assert "Is **Alice** you?" in await answer_text(fake, token)  # faculty say whose it is first (audit 0.6.1, 3.3)
+            assert "Is **Alice `cccccccc`" in await answer_text(fake, token)  # faculty say whose it is first (audit 0.6.1, 3.3)
             assert ALICE not in load_permissions(tmp_path / "commands.toml").members["faculty"]
             assert "Linked" in str((await and_yes(fake, opened, token, label="Yes, that's me")).get("content"))
             await wait_for(lambda: ALICE in load_permissions(tmp_path / "commands.toml").members["faculty"], timeout=15)

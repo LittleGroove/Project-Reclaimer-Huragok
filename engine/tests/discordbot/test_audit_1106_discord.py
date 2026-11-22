@@ -6,8 +6,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from conftest import ALICE, BRAVO
-from test_audit_2026_11 import FIRST, SCOPED_ROLE, SECOND, scoped, scoped_roles
+from test_audit_2026_11 import ACROSS_OFF, FIRST, SCOPED_ROLE, SECOND, scoped, scoped_roles
 from test_tickets import ADMIN_ROLE, MOD_ROLE, MOD_USER, STAFF, buttons_of, fake, form_of, posts_in, said_back, up  # noqa: F401
 from test_word_list_reports import commands_file
 from testkit.fake_discord import FakeDiscord
@@ -82,7 +84,8 @@ def test_a_number_in_a_command_with_no_server_box_isnt_guessed(tmp_path: Path, r
 
 
 def test_pardon_strike_on_a_card_whose_list_was_taken_off_clears_only_that_list(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """2.3: the card's list taken off the word list: its name was read as the reason, and every strike on every list cleared."""
+    """2.3: the card's list taken off the word list: its name was read as the reason, and every strike on every list
+    cleared. (The button was Pardon strike: it's Clear strikes now.)"""
 
     async def scenario() -> None:
         commands_file(tmp_path)
@@ -101,7 +104,7 @@ def test_pardon_strike_on_a_card_whose_list_was_taken_off_clears_only_that_list(
             words.write_text("meanword | 10m, 1h, 1d | 3 | 5 | insults\n", encoding="utf-8")
             await automod.reload_if_changed()
             await wait_for(lambda: "slurs" not in automod.by_name, timeout=20)
-            _, opened = fake.press(buttons_of(card)["Pardon strike"], card)
+            _, opened = fake.press(buttons_of(card)["Clear strikes"], card)
             form = await form_of(fake, opened)
             assert form["components"][0].get("description") == "It clears every strike on slurs, and lifts what they did"
             edits = len(fake.original_edits)
@@ -115,7 +118,7 @@ def test_pardon_strike_on_a_card_whose_list_was_taken_off_clears_only_that_list(
 
 
 def test_a_card_that_heard_a_word_pardons_only_the_strikes_that_joined_it(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """2.4: a heard card offered Pardon strike for yesterday's strike, and cleared it."""
+    """2.4: a heard card offered Pardon strike (Clear strikes now) for yesterday's strike, and cleared it."""
 
     async def scenario() -> None:
         commands_file(tmp_path)
@@ -127,12 +130,12 @@ def test_a_card_that_heard_a_word_pardons_only_the_strikes_that_joined_it(tmp_pa
             struck(huragok, 1000.0, SERVER, ALICE, "Alice", "slurs")  # yesterday's
             await rcon.chat(ALICE, "Alice", "rudeword")
             await wait_for(lambda: posts_in(fake, STAFF), timeout=15)
-            assert "Pardon strike" not in buttons_of(posts_in(fake, STAFF)[-1])
+            assert "Clear strikes" not in buttons_of(posts_in(fake, STAFF)[-1])
             await rcon.chat(ALICE, "Alice", "meanword")  # a strike joins the card
             await wait_for(lambda: "insults" in standing(huragok), timeout=15)
-            await wait_for(lambda: "Pardon strike" in buttons_of(latest(fake, posts_in(fake, STAFF)[-1])), timeout=15)
+            await wait_for(lambda: "Clear strikes" in buttons_of(latest(fake, posts_in(fake, STAFF)[-1])), timeout=15)
             card = latest(fake, posts_in(fake, STAFF)[-1])
-            _, opened = fake.press(buttons_of(card)["Pardon strike"], card)
+            _, opened = fake.press(buttons_of(card)["Clear strikes"], card)
             form = await form_of(fake, opened)
             assert form["components"][0].get("description") == "It clears every strike on insults, and lifts what they did"
             fake.fill_in(opened, card, {"Why": "a joke between friends"})
@@ -209,7 +212,10 @@ def test_yes_pressed_twice_sends_it_once(tmp_path: Path, run: Any, fake: FakeDis
 
 
 def test_strikes_offered_on_a_dry_run_server_count_as_the_strike_would(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
-    """2.8: in dry run, the suggestion counted real strikes and the strike dry ones."""
+    """2.8: in dry run, the suggestion counted real strikes and the strike dry ones: they must count alike. A staff
+    strike ignores the server's own Vergil dry run now (the host's call, 21 November 2026: only Huragok's whole dry run
+    holds it back), so both count the real strikes alone, Vergil's two dry-run catches aren't counted, and the strike
+    acts: the mute is sent."""
 
     async def scenario() -> None:
         commands_file(tmp_path)
@@ -222,10 +228,15 @@ def test_strikes_offered_on_a_dry_run_server_count_as_the_strike_would(tmp_path:
             for _ in range(2):
                 await rcon.chat(ALICE, "Alice", "badword")
                 await asyncio.sleep(0.3)
-            await wait_for(lambda: len(huragok.storage.query("SELECT 1 FROM automod_strikes")) == 2, timeout=15)
-            assert (await offered(fake, "strike", player=ALICE))[0]["name"] == "slurs · Strike 3: kicked for 1 hour"
+            await wait_for(lambda: len(huragok.storage.query("SELECT 1 FROM automod_strikes WHERE dry_run = 1")) == 2, timeout=15)
+            assert not rcon.named("mute")  # Vergil's own catches still follow the server's dry run
+            offer = (await offered(fake, "strike", player=ALICE))[0]["name"]
             _, token = fake.command("strike", player=ALICE, rule="slurs")
-            assert "slurs strike 3 of 4, kicked for 1 hour" in await said_back(fake, token)
+            said = await said_back(fake, token)
+            assert "slurs strike 1 of 4, muted for 1 day" in said and "dry run" not in said, said
+            await wait_for(lambda: rcon.named("mute"), timeout=15)
+            assert len(huragok.storage.query("SELECT 1 FROM automod_strikes WHERE dry_run = 0")) == 1
+            assert offer == "slurs · Strike 1: muted for 1 day", offer  # what was offered is what the strike did
 
     run(scenario())
 
@@ -250,7 +261,7 @@ def test_a_rule_box_that_isnt_a_list_is_refused_never_a_reason(tmp_path: Path, r
             assert "no list called slrus to strike on" in await said_back(fake, token)
             assert standing(huragok) == {"insults": 1, "slurs": 1}
             _, token = fake.command("clearstrikes", player=ALICE, rule="slur", reason="misheard")
-            assert "1 strike cleared (slurs)" in await said_back(fake, token)
+            assert "cleared their strikes: 1 (slurs)" in await said_back(fake, token)
             assert standing(huragok) == {"insults": 1}
 
     run(scenario())
@@ -297,16 +308,20 @@ def test_clearstrikes_with_only_a_reason_clears_everything(tmp_path: Path, run: 
             for rule in ("slurs", "insults"):
                 struck(huragok, 1000.0, SERVER, ALICE, "Alice", rule)
             _, token = fake.command("clearstrikes", player=ALICE, reason="a misunderstanding")
-            assert "2 strikes cleared" in await said_back(fake, token)
+            said = await said_back(fake, token)
+            assert "cccccccc" in said and "cleared their strikes: 2 (insults, slurs)" in said, said  # never seen: named by their ID's start
             assert standing(huragok) == {}
 
     run(scenario())
 
 
-def test_a_strike_that_bans_from_a_moderator_goes_to_the_admins_and_a_one_server_rank_cant_remove(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_strike_that_bans_from_a_moderator_goes_to_the_admins_and_a_one_server_rank_cant_remove(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
     """The host's calls (6 November): only Huragok and admins ban, so a moderator's /strike whose next step is the ban
     is a request for the admins, with its card; and a strike that would remove someone or ban reaches every server, so
-    a rank held on one server can't give it (one that mutes, it can)."""
+    with [automod] across_servers off (each server's ranks its own) a rank held on one server can't give it (one that
+    mutes, it can). With it on (the default), a rank on one server is a rank on every server (the host's call, 21
+    November 2026): that moderator's strike that removes goes through, and theirs that bans goes to the admins too."""
     from test_tickets import bot_file as tickets_file
 
     from huragok.discordbot import cards
@@ -315,25 +330,35 @@ def test_a_strike_that_bans_from_a_moderator_goes_to_the_admins_and_a_one_server
         scoped(tickets_file(tmp_path))
         scoped_roles(fake)
         (tmp_path / "automod.txt").write_text("badword | 1d | | 1 | slurs\nmeanword | | 0, 1d | | kicks\n", encoding="utf-8")
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             fake_events: list[Any] = []
             huragok.bus.subscribe("commands.request", fake_events.append)
             await up(huragok)
             await wait_for(lambda: "strike" in names(fake), timeout=15)
             await consoles[FIRST].join(3, "Alice", ALICE)
             await wait_for(lambda: huragok.superintendent.states[FIRST].player_by_id(ALICE), timeout=10)
-            # A one-server moderator: a mute is theirs to give; a kick for a day (every server's) isn't.
+            # A one-server moderator: a mute is theirs to give.
             _, token = fake.command("strike", user=MOD_USER, roles=(SCOPED_ROLE,), player=ALICE, rule="slurs", server=FIRST)
             assert "slurs strike 1 of 1, muted for 1 day" in await said_back(fake, token)
-            _, token = fake.command("strike", user=MOD_USER, roles=(SCOPED_ROLE,), player=ALICE, rule="kicks", server=FIRST)
-            assert "reaches every server" in await said_back(fake, token)
-            # A moderator everywhere: the ban for good goes to the admins.
-            _, token = fake.command("strike", user=MOD_USER, roles=(MOD_ROLE,), player=ALICE, rule="slurs")
+            if not across:  # each server's rank: a kick for a day (every server's) isn't theirs
+                _, token = fake.command("strike", user=MOD_USER, roles=(SCOPED_ROLE,), player=ALICE, rule="kicks", server=FIRST)
+                assert "reaches every server" in await said_back(fake, token)
+            # The ban for good goes to the admins: from a moderator everywhere, and with across on from the one-server
+            # moderator too, whose rank is every server's then.
+            if across:
+                _, token = fake.command("strike", user=MOD_USER, roles=(SCOPED_ROLE,), player=ALICE, rule="slurs", server=FIRST)
+            else:
+                _, token = fake.command("strike", user=MOD_USER, roles=(MOD_ROLE,), player=ALICE, rule="slurs")
             said = await said_back(fake, token)
-            assert "Sent to the admins as #1" in said, said
+            assert "Sent to the admins as request 1" in said, said  # "request 1": a # is a player's number (H6)
             assert not consoles[FIRST].named("ban") and not consoles[SECOND].named("ban")
             asked = next(e for e in fake_events if e.name == "commands.request")
             card = cards.request(huragok.runners["discord"].part.file, asked)  # its card, where [feed.requests] is on
-            assert "asks an admin, #1: !strike Alice slurs" in card.line and "the ban for good, which only an admin gives" in card.line
+            assert "asks an admin, request 1: !strike Alice cccccccc slurs" in card.line and "the ban for good, which only an admin gives" in card.line
+            if across:  # the one-server moderator's kick for a day is theirs to give, and it's given
+                _, token = fake.command("strike", user=MOD_USER, roles=(SCOPED_ROLE,), player=ALICE, rule="kicks", server=FIRST)
+                said = await said_back(fake, token)
+                assert "kicks strike 1, kicked for 1 day" in said and "reaches every server" not in said, said
+                await wait_for(lambda: consoles[FIRST].named("ban"), timeout=15)  # the server's ban for a day: the kick
 
     run(scenario())

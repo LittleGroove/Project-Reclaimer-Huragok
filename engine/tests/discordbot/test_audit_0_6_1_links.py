@@ -73,7 +73,7 @@ def test_faculty_say_whose_code_it_is_and_unlinking_takes_it_back(tmp_path: Path
             part = await up(huragok)
             code = await code_in_game(huragok, rcon)
             _, token = fake.command("link", user=FACULTY_USER, code=code)
-            assert "Is **Alice** you?" in await answer_text(fake, token)
+            assert "Is **Alice `cccccccc`" in await answer_text(fake, token)
             assert part.links.of_member(FACULTY_USER) is None  # nothing done until they say
             part.links.use_code(code, FACULTY_USER, "the host")
             assert await part.links.faculty_claimed(FACULTY_USER) == "Alice"

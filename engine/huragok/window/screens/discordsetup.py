@@ -4,11 +4,13 @@ this works in a second window too, and whether or not the bot is connected."""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 from ...content.catalogue import parse_picks
 from ...core import desktop
+from ...core.tags import shown_name
 from ...discordbot import features, rest
 from ...discordbot.config import (
     FILE, RANK_KEYS, DiscordConfig, add_faculty, load, make_file, remove_faculty, set_channel, set_guild,
@@ -29,6 +31,25 @@ BOT_STEPS = (
     "4. Also there: Reset Token, and copy it. It's a password: anyone who has it can act as your bot.",
     "5. Paste the token here. Huragok checks it, then gives you the link that adds the bot to your Discord.",
 )
+
+
+ENTRY_NOTE = re.compile(r"""^\s*["'](\d+)["']\s*,?\s*#\s*(?P<note>.*?)\s*$""")  # `"123",  # alice` in a list
+
+
+def _list_notes(path: Path) -> dict[str, str]:
+    """The note beside each Discord ID that has a line of its own in discord.toml (a faculty member's username, as the
+    bot writes it at a claim), by the ID."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {}
+    return {m.group(1): shown_name(m.group("note")) for m in map(ENTRY_NOTE.match, lines) if m and m.group("note")}
+
+
+def _who(name: str | None, user: str) -> str:
+    """A Discord user as the faculty screen says them: "alice (123456789012345678)"; the ID alone when no name is
+    noted."""
+    return f"{name} ({user})" if name else user
 
 
 class DiscordScreens(Screens):
@@ -228,13 +249,15 @@ class DiscordScreens(Screens):
                 continue
             chosen = [(str(roles[n - 1].get("id")), str(roles[n - 1].get("name"))) for n in picks]
             set_rank_roles(path, key, chosen, guild_roles=known)
-        await self._discord_faculty(path)
+        await self._discord_faculty(path, config)
 
-    async def _discord_faculty(self, path: Path) -> None:
+    async def _discord_faculty(self, path: Path, config: DiscordConfig | None = None) -> None:
         faculty = [str(faculty).strip() for faculty in load(path).section("ranks").get("faculty", [])]
+        notes = _list_notes(path)  # the username the bot notes beside each as they claim it
         self.heading("Discord", "Faculty", note="People, never a role: they can use /huragok. Easiest: K makes a code, and "
                                                "they type /huragok claim <code>.")
-        self.listing([(faculty,) for faculty in faculty] or [("nobody yet",)], index=False)
+        self.listing([(notes.get(user) or "(no name noted)", user) for user in faculty] or [("nobody yet",)],
+                     index=False)
         answer = await self.prompt_line("  A Discord user ID to add or take off (Enter for neither)")
         if not answer or not answer.strip():
             return
@@ -243,10 +266,24 @@ class DiscordScreens(Screens):
             self.note("That isn't a user ID (a long number: Copy User ID in Discord, with Developer Mode on).", "yellow")
         elif user in faculty:
             remove_faculty(path, user)
-            self.note(f"{user} isn't faculty now.", "green")
+            self.note(f"{_who(notes.get(user), user)} isn't faculty now.", "green")
         else:
-            add_faculty(path, user)
-            self.note(f"{user} is faculty now.", "green")
+            name = await self._discord_username(config, user)
+            add_faculty(path, user, name)  # noted beside them, as the bot notes whoever claims it
+            self.note(f"{_who(name, user)} is faculty now." if name else
+                      f"{user} is faculty now (Discord didn't say who that is, so no name is noted beside it).", "green")
+
+    async def _discord_username(self, config: DiscordConfig | None, user: str) -> str:
+        """A member's username, as Discord has it ("" when it can't say: not in the bot's Discord, no token)."""
+        if config is None or not config.token or not config.guild:
+            return ""
+        try:
+            member = await self.slow(rest.guild_member, config.token, config.guild, user, note="Asking Discord who "
+                                                                                                "that is…")
+        except (DiscordError, OSError):
+            return ""
+        person = member.get("user") if isinstance(member, dict) else None
+        return shown_name(person.get("username") or "") if isinstance(person, dict) else ""
 
     # Channels ---------------------------------------------------------------------------------------------------
 

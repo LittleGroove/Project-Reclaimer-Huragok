@@ -37,10 +37,11 @@ def _elsewhere(part: DiscordPart, interaction: discord.Interaction) -> bool:
 
 
 async def on_now(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
-    """Whoever's on a server now: anyone in a game can see that. Who's been here isn't everyone's to search, so anyone else has to be typed in full."""
+    """Whoever's on a server now: anyone in a game can see that. Who's been here isn't everyone's to search, so anyone else has to be typed in full. Each by their tag, with the
+    server they're on: two of a name on two servers were two lines alike (the identity audit of 21 November 2026; the start of an ID is everyone's to see, H2)."""
     part = part_of(interaction)
-    found = [(player.name, player.id) for state in part.ctx.servers.values() for player in state.players.values() if player.name.strip() and typed.casefold() in player.name.casefold()]  # a blank name would stop the whole list
-    return [app_commands.Choice(name=str(name)[:100], value=part.opaque(str(player_id))) for name, player_id in sorted(found)[:MOST_CHOICES]]
+    found = [(player.name, str(server), player.id) for server, state in part.ctx.servers.items() for player in state.players.values() if player.name.strip() and typed.casefold() in player.name.casefold()]  # a blank name would stop the whole list
+    return [app_commands.Choice(name=part.label(str(player_id), str(name), server=server)[:100], value=part.opaque(str(player_id))) for name, server, player_id in sorted(found)[:MOST_CHOICES]]
 
 
 def who_is_meant(part: DiscordPart, typed: str) -> tuple[str, str, str | None, bool]:
@@ -61,17 +62,19 @@ def who_is_meant(part: DiscordPart, typed: str) -> tuple[str, str, str | None, b
     return (*next(iter(seen.items())), None, False) if seen else ("", wanted, None, False)
 
 
-def _answer_of(part: DiscordPart, outcome: str, name: str, reporter: str = "") -> str:
+def _answer_of(part: DiscordPart, outcome: str, name: str, reporter: str = "", player_id: str = "") -> str:
+    """What they're told. Who they reported, the one way: the answer says who it found, so a wrong one is seen."""
     config = part.file
+    who = part.tag(player_id, name) if player_id else cards.clean(name)
     if outcome == TOO_SOON:
         return say(config, "reports.too_soon", when=f"<t:{int(part.reports.next_allowed(reporter))}:R>")
     if outcome == TOO_MANY:
         return say(config, "reports.too_many")
     if outcome == ALREADY:
-        return say(config, "reports.already", player=cards.clean(name) or "that")
+        return say(config, "reports.already", player=who or "that")
     if outcome == OFF:
         return say(config, "reports.off")
-    return say(config, "reports.thanks") if config.section("reports").get("thank_reporter", True) else say(config, "reports.sent")
+    return say(config, "reports.thanks", of=f" of {who}" if who else "") if config.section("reports").get("thank_reporter", True) else say(config, "reports.sent")
 
 
 async def keep_proof(part: DiscordPart, proof: discord.Attachment, number: int, who: str) -> None:
@@ -110,8 +113,8 @@ async def report_command(interaction: discord.Interaction, player: str, why: str
     who = named(interaction.user)
     outcome, number = part.reports.make(f"discord:{interaction.user.id}", who, player_id, name, server, why.strip(), "discord")
     if outcome in (TAKEN, ALREADY) and proof is not None:  # sent second is still the only evidence of a voice there can be
-        await keep_proof(part, proof, number, who)
-    await answer(interaction, say(part.file, "reports.added_answer") if outcome == ALREADY and (why.strip() or proof is not None) else _answer_of(part, outcome, name, f"discord:{interaction.user.id}"))
+        await keep_proof(part, proof, number, part.who(interaction.user))
+    await answer(interaction, say(part.file, "reports.added_answer") if outcome == ALREADY and (why.strip() or proof is not None) else _answer_of(part, outcome, name, f"discord:{interaction.user.id}", player_id))
 
 
 class _ReportMessage(SaysWhatWentWrong, ui.Modal):
@@ -123,7 +126,8 @@ class _ReportMessage(SaysWhatWentWrong, ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         message = self.reported
-        outcome, _ = self.part.reports.message_reported(f"discord:{interaction.user.id}", named(interaction.user), message.author.display_name, getattr(message.channel, "name", "?"), message.jump_url, message.content, str(self.why.value).strip())
+        outcome, _ = self.part.reports.message_reported(f"discord:{interaction.user.id}", named(interaction.user), named(message.author), getattr(message.channel, "name", "?"), message.jump_url, message.content, str(self.why.value).strip(),
+                                                        author_id=f"discord:{message.author.id}")
         await answer(interaction, _answer_of(self.part, outcome, "", f"discord:{interaction.user.id}"))
 
 
@@ -142,7 +146,7 @@ def _already_appealed(part: DiscordPart, interaction: discord.Interaction, playe
     """Why not, when: nobody can see the card it's about, but anyone with a rank can, and may not know it's there."""
     number = part.appeals.open_one(player_id)
     appeal = part.appeals.of_ticket(number)
-    text = say(part.file, "appeals.already", player=cards.clean(name), when=f"<t:{int(appeal['time'])}:R>" if appeal is not None else "a while back")
+    text = say(part.file, "appeals.already", player=part.tag(player_id, name), when=f"<t:{int(appeal['time'])}:R>" if appeal is not None else "a while back")
     ticket = part.tickets.get(number)
     if ticket is not None and can_act(highest_rank(part.file, someone_from(interaction.user), part.ctx.servers)):
         text += " " + say(part.file, "appeals.already_staff", ticket=f"[{say(part.file, 'ticket.number', number=number)}]({part.tickets.link(ticket)})")
@@ -151,7 +155,7 @@ def _already_appealed(part: DiscordPart, interaction: discord.Interaction, playe
 
 class _AppealForm(SaysWhatWentWrong, ui.Modal):
     def __init__(self, part: DiscordPart, player_id: str, name: str, about: str, proved: bool = False) -> None:
-        super().__init__(title=say(part.file, "appeals.form_title")[:45], timeout=900)
+        super().__init__(title=part.titled(say(part.file, "appeals.form_title"), player_id, name), timeout=900)  # who it found, so a wrong one is seen before it's sent
         self.part, self.player_id, self.name, self.about, self.proved = part, player_id, name, about, proved
         self.answers: list[tuple[str, ui.TextInput[Any]]] = []
         for question in part.appeals.questions():
@@ -180,7 +184,12 @@ async def appeal_command(interaction: discord.Interaction, who: str) -> None:
     if not part.appeals.takes():
         await answer(interaction, say(config, "appeals.off"))
         return
-    player_id, name = part.appeals.find(who)
+    found = part.appeals.find(who)
+    standing = [one for one in found if part.appeals.what_stands(one[0])]
+    if len(standing) > 1:  # which is theirs isn't guessed: each one, the one way, to tell them apart by
+        await answer(interaction, say(config, "appeals.which", who=cards.clean(who), players=", ".join(part.tag(player_id, name) for player_id, name in standing[:10])))
+        return
+    player_id, name = (standing or found or [("", "")])[0]
     proved = bool(part.appeals.find_code(who)[0])
     if player_id and not proved and part.appeals.codes_used() and config.section("appeals").get("code_only"):
         await answer(interaction, say(config, "appeals.code_needed"))
@@ -266,8 +275,8 @@ async def _link(interaction: discord.Interaction, code: str, show: app_commands.
     if code.strip():
         before = part.links.of_member(member)
         if not sure and before is None and is_faculty(config, member) and in_game(config, "faculty") == "faculty" \
-                and (whose := part.links.peek(code)):
-            await interaction.response.send_message(say(config, "link.faculty_sure", player=cards.clean(whose)), view=_FacultyLinkSure(part, code, show),
+                and (whose := part.links.peek(code))[0]:  # high stakes: who it is, by the ID too
+            await interaction.response.send_message(say(config, "link.faculty_sure", player=part.tag(*whose)), view=_FacultyLinkSure(part, code, show),
                                                     ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             return
         outcome, player_id, player_name = part.links.use_code(code, member, member_name)
@@ -278,14 +287,14 @@ async def _link(interaction: discord.Interaction, code: str, show: app_commands.
             await answer(interaction, say(config, "link.no_code"))
             return
         if outcome != LINKED:
-            await answer(interaction, say(config, "link.member_taken" if outcome == MEMBER_TAKEN else "link.player_taken", player=cards.clean(player_name)))
+            await answer(interaction, say(config, "link.member_taken" if outcome == MEMBER_TAKEN else "link.player_taken", player=part.tag(player_id, player_name)))
             return
-        linked_now = player_name
-        if before is None:  # this made it
-            part.audit("link", say(config, "audit.link", who=member_name, player=player_name))
+        linked_now = player_id
+        if before is None:  # this made it: who they linked to, the one way, as a name says nothing of which (the identity audit of 21 November 2026)
+            part.audit("link", cards.Shown(say(config, "audit.link", who=cards.clean(member_name), player=part.tag(player_id, player_name))))
             _tell_linked(part, player_id, member_name)
             if await part.links.faculty_claimed(member):  # faculty of the bot: faculty in game too
-                part.audit("link", say(config, "audit.faculty", player=player_name))
+                part.audit("link", cards.Shown(say(config, "audit.faculty", player=part.tag(player_id, player_name))))
     if show is not None and not part.links.show(member, show.value):
         await answer(interaction, say(config, "link.not_linked"))
         return
@@ -298,11 +307,11 @@ async def _link(interaction: discord.Interaction, code: str, show: app_commands.
         return
     shown = _shown_words(part, part.links.how_shown(mine))
     if linked_now:
-        await answer(interaction, say(config, "link.linked", player=cards.clean(linked_now), shown=shown))
+        await answer(interaction, say(config, "link.linked", player=part.tag(str(mine["player_id"]), str(mine["player_name"] or "")), shown=shown))
     elif show is not None:
         await answer(interaction, say(config, "link.shown_as", shown=shown))
     else:
-        await answer(interaction, say(config, "link.status", player=cards.clean(part.links.player_name(mine)), shown=shown))
+        await answer(interaction, say(config, "link.status", player=part.tag(str(mine["player_id"]), str(mine["player_name"] or "")), shown=shown))
 
 
 async def _side_player(part: DiscordPart, interaction: discord.Interaction) -> str:
@@ -381,7 +390,7 @@ async def unlink_command(interaction: discord.Interaction, member: discord.Membe
     mine = someone_from(interaction.user)
     matches = part.links.find_players(player) if member is None and player.strip() else []
     if len(matches) > 1:
-        await answer(interaction, say(config, "link.two_named", player=cards.clean(player.strip())))
+        await answer(interaction, say(config, "link.two_named", player=cards.clean(player.strip()), players=", ".join(part.tag(str(one["player_id"]), str(one["player_name"] or "")) for one in matches[:10])))
         return
     found = part.links.of_member(str(member.id)) if member is not None else matches[0] if matches else None
     if (member is not None or player.strip()) and found is None:
@@ -407,9 +416,10 @@ async def unlink_command(interaction: discord.Interaction, member: discord.Membe
     player_name = part.links.player_name(gone)
     whose = named(member) if member is not None else str(gone["member_name"] or whose_id) if someone_else else named(interaction.user)
     await part.links.faculty_unclaimed(gone)
-    part.audit("link", say(config, "audit.unlink", who=named(interaction.user), member=whose, player=player_name))
-    await answer(interaction, say(config, "link.unlinked_them", member=cards.clean(whose), player=cards.clean(player_name)) if someone_else
-                 else say(config, "link.unlinked", player=cards.clean(player_name)))
+    unlinked = part.tag(str(gone["player_id"]), player_name)
+    part.audit("link", cards.Shown(say(config, "audit.unlink", who=part.who(interaction.user), member=cards.clean(whose), player=unlinked)))
+    await answer(interaction, say(config, "link.unlinked_them", member=cards.clean(whose), player=unlinked) if someone_else
+                 else say(config, "link.unlinked", player=unlinked))
 
 
 def _link_rank(part: DiscordPart, link: Any) -> str:

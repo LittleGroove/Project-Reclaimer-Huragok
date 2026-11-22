@@ -183,7 +183,7 @@ def test_slow_replies_dont_switch_the_commands_off(tmp_path: Path, run) -> None:
             assert runner.enabled and not runner._failures
             del fake.replies["tell"]
             await fake.chat(MOD, "Mod", "!players")
-            await wait_for(lambda: any("#4 Bravo" in t for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any("Bravo dddddddd (#4)" in t for t in tells_to(fake, MOD)))
 
     run(scenario())
 
@@ -211,7 +211,6 @@ COMMANDS = [  # (caller, the line, the command the server gets, its args)
     ("Faculty", "!maxping 150", "maxping 150", []),
     ("Faculty", "!servername LG Night Games", "servername LG Night Games", []),
     ("Faculty", "!admin add bravo", "admin", ["add", BRAVO]),
-    ("Faculty", "!admin list", "admin list", []),
     ("Faculty", "!reload", "reload", []),
 ]
 IDS = {"Mod": MOD, "Faculty": FACULTY}
@@ -235,9 +234,12 @@ def test_every_command_reaches_the_console_as_who_typed_it(tmp_path: Path, run) 
             warn = sup.storage.actions_for(BRAVO)
             assert any(row["kind"] == "warn" and row["by"] == "Mod" and row["reason"] == "spamming" for row in warn)
 
+            await fake.chat(FACULTY, "Faculty", "!admin list")  # every server's admins, as one list: nothing sent
+            await wait_for(lambda: any(t.startswith("Admins on every server (") for t in tells_to(fake, FACULTY)))
+
             await fake.chat(MOD, "Mod", "!whois bravo")  # read from Huragok's records: nothing sent
             await wait_for(lambda: any("by Mod (!warn): spamming" in t for t in tells_to(fake, MOD)))
-            assert any(t.startswith("Bravo (dddddddd): ") for t in tells_to(fake, MOD))
+            assert any(t.startswith("Bravo dddddddd (#4) [LG Test Server]: ") for t in tells_to(fake, MOD))
 
     run(scenario())
 
@@ -250,7 +252,8 @@ def test_an_action_whose_reply_times_out_is_recorded_once_and_not_sent_again(tmp
             sup.superintendent.clients[SERVER].command_timeout = 0.3
             fake.replies["kick"] = lambda m: None
             await fake.chat(MOD, "Mod", "!kick bravo spam")
-            await wait_for(lambda: any(t.startswith("Couldn't: no reply to 'kick'") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Couldn't kick Bravo dddddddd") and "no reply to 'kick'" in t
+                                       for t in tells_to(fake, MOD)))
             await asyncio.sleep(0.5)
             assert len(fake.named("kick")) == 1
             rows = [r for r in sup.storage.actions_for(BRAVO) if r["kind"] == "kick"]
@@ -276,7 +279,7 @@ def test_admins_cant_ban_faculty_or_admins_by_player_id(tmp_path: Path, run) -> 
             await wait_for(lambda: any("is an admin; you can't do that to them" in t for t in tells_to(fake, ADMIN)))
             assert not fake.named("ban")
             await fake.chat(ADMIN, "Admin", f"!ban {ZED} 7d alt")  # anyone else, offline, by ID: fine
-            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [ZED, "7d", "alt"]
+            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [ZED, "7d", "alt (every server)"]  # what they read says how far
 
     run(scenario())
 
@@ -291,17 +294,18 @@ def test_a_name_start_never_lands_on_someone_else(tmp_path: Path, run) -> None:
             await fake.join(6, "Bobby", bobby)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 6)
             await fake.chat(MOD, "Mod", "!kick bob")
-            await wait_for(lambda: any("Bob isn't on this server now." in t for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Bob b0b22222") and "isn't on any server now: their ID or @number "
+                                       "names them anyway" in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!mute bobb 10m")
-            await wait_for(lambda: any("Nobody here is called 'bobb'. Did you mean Bobby (#6)? Use #6." in t
+            await wait_for(lambda: any("Nobody here is called 'bobb'. Did you mean this? Use #6:" in t
                                        for t in tells_to(fake, MOD)))
             assert not fake.named("kick") and not fake.named("mute")
             await fake.chat(MOD, "Mod", "!mute 6 10m")  # the number alone is the #number, as on the console
-            assert (await wait_for(lambda: fake.named("mute")))[0]["args"] == [bobby, "10m"]
+            assert (await wait_for(lambda: fake.named("mute")))[0]["args"] == [bobby, "10m", "(every server)"]
             await fake.chat(FACULTY, "Faculty", "!ban bob 1d spam")  # seen: banned by their ID while away
-            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [bob, "1d", "spam"]
+            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [bob, "1d", "spam (every server)"]
             await fake.chat(FACULTY, "Faculty", "!admin add bobb")  # the start of a name never makes an admin
-            await wait_for(lambda: any("Did you mean Bobby (#6)?" in t for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any("Did you mean this? Use #6:" in t for t in tells_to(fake, FACULTY)))
             assert not [c for c in fake.named("admin") if c.get("args")]  # (the bare one is the state refresh)
             await fake.chat(MOD, "Mod", f"!unmute {ZED}")  # never seen: the server unmutes by ID
             assert (await wait_for(lambda: fake.named("unmute")))[0]["args"] == [ZED]
@@ -325,14 +329,16 @@ def test_a_name_that_only_looks_like_it_is_asked_about_never_acted_on(tmp_path: 
             await fake.join(7, "ᴢᴜʟᴜ", zulu)  # small capitals
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 7)
             await fake.chat(MOD, "Mod", "!kick zulu spam")
-            await wait_for(lambda: any(t.startswith("Nobody here is called 'zulu'. This looks like it: #7 ᴢᴜʟᴜ")
-                                       and t.endswith("Use the #number.") for t in tells_to(fake, MOD)))
-            await fake.chat(MOD, "Mod", "!kick bravo spam")  # Bravo (#4) and ΒRΑVΟ (#6) both on
-            await wait_for(lambda: any(t.startswith("'Bravo' could be #4 Bravo") and "#6 ΒRΑVΟ" in t
+            await wait_for(lambda: any(t == "Nobody here is called 'zulu'. This looks like it; use the #number:"
                                        for t in tells_to(fake, MOD)))
+            assert any(t.startswith("ᴢᴜʟᴜ 8e8e8e8e (#7) [LG Test Server]") for t in tells_to(fake, MOD))
+            await fake.chat(MOD, "Mod", "!kick bravo spam")  # Bravo (#4) and ΒRΑVΟ (#6) both on
+            await wait_for(lambda: any(t == "'Bravo' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
+            assert any(t.startswith("Bravo dddddddd (#4) [LG Test Server]") for t in tells_to(fake, MOD))
+            assert any(t.startswith("ΒRΑVΟ 9f9f9f9f (#6) [LG Test Server]") for t in tells_to(fake, MOD))
             assert not fake.named("kick")
             await fake.chat(MOD, "Mod", "!kick #6 spam")  # picked by number
-            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [fake_bravo, "spam"]
+            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [fake_bravo, "spam (every server)"]
 
     run(scenario())
 
@@ -351,31 +357,33 @@ def test_players_with_one_name_are_told_apart_and_picked_by_number(tmp_path: Pat
             await fake.join(6, "Bob", bob_here)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 6)
             sup.superintendent.states[SERVER].players[6].team = "Red"
-            # !kick only reaches players on this server: one Bob is, so it's him.
+            # !kick reaches players on a server, this one first: one Bob is on it, so it's him.
             await fake.chat(MOD, "Mod", "!kick bob spamming")
-            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [bob_here, "spamming"]
+            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [bob_here, "spamming (every server)"]
             joined = sup.superintendent.states[SERVER].players[6].joined
             await fake.join(6, "Bob", bob_here)
             await wait_for(lambda: sup.superintendent.states[SERVER].players[6].joined != joined)
             sup.superintendent.states[SERVER].players[6].team = "Red"
             # !ban reaches players who left too: three Bobs, so nobody is banned until one is picked.
             await fake.chat(FACULTY, "Faculty", "!ban bob 7d cheating")
-            asked = await wait_for(lambda: [" ".join(tells_to(fake, FACULTY))] if "number." in " ".join(
-                tells_to(fake, FACULTY)) else [])
-            assert re.fullmatch(r"'Bob' could be #6 Bob \(red, on \d+s, 1a1a1a1a\); @1 bob \(seen 2h ago, 2b2b2b2b\); "
-                                r"@2 BOB \(seen 3d ago, 3c3c3c3c\)\. Use the #number or @number\.", asked[0]), asked
+            asked = await wait_for(lambda: [t for t in tells_to(fake, FACULTY)] if any(
+                t.startswith("BOB 3c3c3c3c") for t in tells_to(fake, FACULTY)) else [])
+            start = asked.index("'Bob' could be 3 players. Use the #number or @number:")
+            assert re.fullmatch(r"Bob 1a1a1a1a \(#6\) \[LG Test Server\]: red, on \d+s", asked[start + 1]), asked
+            assert asked[start + 2:start + 4] == ["bob 2b2b2b2b (@1): seen 2h ago", "BOB 3c3c3c3c (@2): seen 3d ago"], asked
             assert not fake.named("ban")
             await fake.chat(FACULTY, "Faculty", "!ban @2 7d cheating")  # the one seen 3 days ago, by his player ID
-            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [bob_old, "7d", "cheating"]
+            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [bob_old, "7d", "cheating (every server)"]
             await fake.chat(FACULTY, "Faculty", "!ban @5 7d")
-            await wait_for(lambda: any(t == "Your last list has @1 to @2." for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any(t == "You have @1 to @2." for t in tells_to(fake, FACULTY)))
             await fake.chat(MOD, "Mod", "!kick @1")  # a list is the caller's own
-            await wait_for(lambda: any(t.startswith("You have no list for @1") for t in tells_to(fake, MOD)))
-            await fake.chat(FACULTY, "Faculty", "!kick @1")  # @1 left: !kick can't reach him
-            await wait_for(lambda: any(t == "bob isn't on this server now." for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any(t.startswith("You have no @1") for t in tells_to(fake, MOD)))
+            await fake.chat(FACULTY, "Faculty", "!kick @1")  # @1 left: a kick needs a time to reach him (as he joins)
+            await wait_for(lambda: any(t.startswith("bob 2b2b2b2b (@1) isn't on any server now, so there's nobody to kick: a "
+                                                    "time keeps them off every server as they join") for t in tells_to(fake, FACULTY)))
             sup.vergil.commands.picks._lists[FACULTY] = (time.monotonic() - 601, sup.vergil.commands.picks._lists[FACULTY][1])
             await fake.chat(FACULTY, "Faculty", "!ban @1")
-            await wait_for(lambda: any("over 10 minutes old: ask again" in t for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any("Your @numbers ran out" in t for t in tells_to(fake, FACULTY)))
             assert len(fake.named("ban")) == 1
 
     run(scenario())
@@ -398,15 +406,16 @@ def test_bans_and_kicks_are_lists_to_lift_from_by_number(tmp_path: Path, run) ->
             await fake.chat(ADMIN, "Admin", "!bans")
             await wait_for(lambda: any("unban @number lifts one" in t for t in tells_to(fake, ADMIN)))
             said = tells_to(fake, ADMIN)
-            assert said[0] == f"@1 bob (kicked 1m ago by Vergil: slurs; 6d left; this server, {two[:8]})"
-            assert said[1] == f"@2 Bob (banned 2h ago by Alice: cheating; this server, {one[:8]})"
+            assert said[0] == f"bob {two[:8]} (@1): kicked 1m ago by Vergil: slurs; 6d left; this server"
+            assert said[1] == f"Bob {one[:8]} (@2): banned 2h ago by Alice: cheating; this server"
             await fake.chat(ADMIN, "Admin", "!unban @2")  # Alice's ban on the first Bob, by his player ID
             assert (await wait_for(lambda: fake.named("unban")))[0]["args"] == [one]
             fake.ban_list.append({"id": one, "name": "Bob", "reason": "again", "banned_at": now})
             await fake.chat(ADMIN, "Admin", "!unban bob")  # two bans with that name: asked, nothing lifted
-            await wait_for(lambda: any(t.startswith("'bob' could be @1 Bob (banned") for t in tells_to(fake, ADMIN)))
+            await wait_for(lambda: any(t == "'bob' could be 2 players. Use the @number:" for t in tells_to(fake, ADMIN)))
+            assert any(t.startswith(f"Bob {one[:8]} (@2): banned") for t in tells_to(fake, ADMIN))  # still @2: they stick
             assert len(fake.named("unban")) == 1
-            await fake.chat(ADMIN, "Admin", "!unban @2")
+            await fake.chat(ADMIN, "Admin", "!unban @1")
             await wait_for(lambda: len(fake.named("unban")) == 2)
             assert fake.named("unban")[1]["args"] == [two]
             await fake.chat(ADMIN, "Admin", "!bans nobody")
@@ -416,8 +425,8 @@ def test_bans_and_kicks_are_lists_to_lift_from_by_number(tmp_path: Path, run) ->
             await fake.chat(MOD, "Mod", "!kick bravo spamming")
             await wait_for(lambda: fake.named("kick"))
             await fake.chat(MOD, "Mod", "!kicks")
-            await wait_for(lambda: any(t.startswith("@1 Bravo (kicked") for t in tells_to(fake, MOD)))
-            listed = next(t for t in tells_to(fake, MOD) if t.startswith("@1 Bravo"))
+            await wait_for(lambda: any(t.startswith("Bravo dddddddd (@1)") and ": kicked" in t for t in tells_to(fake, MOD)))
+            listed = next(t for t in tells_to(fake, MOD) if t.startswith("Bravo dddddddd (@1)"))
             assert "by Mod: spamming; out 9m more" in listed or "by Mod: spamming; out 10m more" in listed
             answers = len(tells_to(fake, MOD))
             await fake.chat(MOD, "Mod", "!pardon @1")
@@ -450,7 +459,8 @@ def test_said_shows_what_a_player_typed_even_after_they_left(tmp_path: Path, run
             await fake.chat(FACULTY, "Faculty", "!said bravo 2")
             await wait_for(lambda: len([t for t in tells_to(fake, FACULTY) if "Bravo: line" in t]) == 2)
             await fake.chat(FACULTY, "Faculty", "!said admin")  # (commands are chat lines too: the Faculty's own are kept)
-            await wait_for(lambda: any(t.startswith("Admin hasn't typed anything") for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any(t.startswith("Admin eeeeeeee") and "hasn't typed anything" in t
+                                       for t in tells_to(fake, FACULTY)))
 
     run(scenario())
 
@@ -459,7 +469,8 @@ def test_said_shows_what_a_player_typed_even_after_they_left(tmp_path: Path, run
 def test_kicks_and_bans_reach_every_server(tmp_path: Path, run, across: bool) -> None:
     """The host's ask: a kick or a ban on one server reaches the others ([automod] across_servers, on by default): a
     kicked player is kept off every server until the kick's time is up, and a ban reaches every server that keeps a
-    ban list of its own. A vote's kick stays where it happened."""
+    ban list of its own, whoever gave it: the game's own /kick and /ban too (the host's call, 21 November 2026: "no
+    more split actions"). Only a vote's kick stays where it happened. Off, each server's moderation is its own."""
     async def scenario() -> None:
         body = "" if across else "[automod]\nacross_servers = false\n"
         async with running(tmp_path, body) as (sup, fake, _):
@@ -472,36 +483,48 @@ def test_kicks_and_bans_reach_every_server(tmp_path: Path, run, across: bool) ->
             await wait_for(lambda: fake.named("kick"))
             if across:
                 kick = (await wait_for(lambda: other.named("kick")))[0]
-                assert kick[0] == BRAVO and kick[1].startswith("Kicked from LG Test Server by Mod: spamming. You can "
-                                                               "join again in ")
+                assert kick[0] == BRAVO and kick[1].startswith("Kicked off every server by Mod (on LG Test Server): "
+                                                               "spamming. You can join any server again in ")
                 await wait_for(lambda: other.named("pardon"))  # let back in: the block is the first server's
                 sup.bus.emit("rcon.join", "Other", number=3, name="Bravo", id=BRAVO, ip="", admin=False)
                 await wait_for(lambda: len(other.named("kick")) == 2)  # joining meanwhile: kicked as they join
-            # A vote's kick stays where it happened, and so do the game's own /kick and /ban (an admin in game: the
-            # server names them without "(RCON)"): / is that server's, ! every server's.
+            # A vote's kick stays where it happened; the game's own /kick and /ban (an admin in game: the server names
+            # them without "(RCON)") reach every server, as a ! command's do.
             sup.bus.emit("rcon.kick", SERVER, id=ALICE, name="Alice", by="vote", reason="", seconds=600)
+            sup.bus.emit("rcon.join", "Other", number=4, name="Alice", id=ALICE, ip="", admin=False)
+            await asyncio.sleep(0.3)
+            assert not [k for k in other.named("kick") if k[0] == ALICE]  # the vote's: that server's alone
             sup.bus.emit("rcon.kick", SERVER, id=ALICE, name="Alice", by="LilGremlin", reason="name bad", seconds=600)
             sup.bus.emit("rcon.ban", SERVER, id="7" * 64, name="Grok", by="UrDadsBull", reason="spam", expires=0)
             sup.bus.emit("rcon.join", "Other", number=4, name="Alice", id=ALICE, ip="", admin=False)
+            if across:
+                assert (await wait_for(lambda: [k for k in other.named("kick") if k[0] == ALICE]))[0][1].startswith(
+                    "Kicked off every server by LilGremlin (on LG Test Server): name bad.")
+                assert (await wait_for(lambda: [b for b in other.named("ban") if b[0] == "7" * 64]))[0][-1] == "spam"
             # A ban reaches a server with a ban list of its own, for the time it has left; an unban too.
             sup.bus.emit("rcon.ban", SERVER, id=ZED, name="Zed", by="Alice (RCON)", reason="cheating",
                          expires=int(time.time()) + 3600)
             sup.bus.emit("rcon.unban", SERVER, target=ZED, by="Faculty (RCON)")
             if across:
-                ban = (await wait_for(lambda: other.named("ban")))[0]
-                assert ban[0] == ZED and 3590 <= int(ban[1][:-1]) <= 3600 and ban[2] == "cheating"
-                assert next(by for command, _, by in other.sent if command == "ban") == "Alice"
+                ban = (await wait_for(lambda: [b for b in other.named("ban") if b[0] == ZED]))[0]
+                assert 3590 <= int(ban[1][:-1]) <= 3600 and ban[2] == "cheating"
+                assert next(by for command, args, by in other.sent if command == "ban" and args[0] == ZED) == "Alice"
                 assert (await wait_for(lambda: other.named("unban")))[0] == (ZED,)
                 sup.bus.emit("rcon.ban", "Other", id=ZED, name="Zed", by="Alice (RCON)", reason="cheating", expires=0)
-            # Moderation commands stay each server's own: someone on another server is that server's to mute.
+            # A mute is every server's too: someone on another server is muted there (the host's call, 21 November
+            # 2026); with across_servers off, that server's to mute.
             sup.superintendent.states["Other"].players[5] = Player(5, "Zed", ZED)
             await fake.chat(MOD, "Mod", f"!mute {ZED} 10m")
-            await wait_for(lambda: any(t == f"{ZED[:8]} is on Other, not this server." for t in tells_to(fake, MOD)))
+            if across:
+                assert (await wait_for(lambda: other.named("mute")))[0][:2] == (ZED, "10m")
+                await wait_for(lambda: any(t.startswith(f"Zed {ZED[:8]} (@") and t.endswith(") [Other] is muted on every server for "
+                                                                             "10 minutes.") for t in tells_to(fake, MOD)))
+            else:
+                await wait_for(lambda: any(t.startswith(f"Zed {ZED[:8]}") and "[Other] is on another server: with [automod] "
+                                           "across_servers off" in t for t in tells_to(fake, MOD)))
             await asyncio.sleep(0.3)
-            assert not [k for k in other.named("kick") if k[0] == ALICE] and not other.named("mute")
             assert [c for c in fake.named("ban") if c.get("args", [""])[0] == ZED] == []  # never sent back
-            assert not [b for b in other.named("ban") if b[0] == "7" * 64]  # the /ban stayed on its server
-            # …but both are on the players' records, for !whois.
+            # All on the players' records, for !whois.
             assert ("kick", "in game", "LilGremlin") in [(r["kind"], r["source"], r["by"])
                                                          for r in sup.storage.actions_for(ALICE)]
             if not across:
@@ -540,8 +563,8 @@ def test_whois_is_a_rap_sheet_of_everything_however_it_was_given(tmp_path: Path,
             await fake.chat(MOD, "Mod", "!whois bravo")
             await wait_for(lambda: any("by Mod (!warn): stop spamming" in t for t in tells_to(fake, MOD)))
             sheet = tells_to(fake, MOD)
-            sheet = sheet[next(n for n, t in enumerate(sheet) if t.startswith("Bravo (dddddddd): ")):]
-            assert sheet[0].startswith("Bravo (dddddddd): on LG Test Server as #4 · 1 visit since")
+            sheet = sheet[next(n for n, t in enumerate(sheet) if t.startswith("Bravo dddddddd (#4) [LG Test Server]: ")):]
+            assert sheet[0].startswith("Bravo dddddddd (#4) [LG Test Server]: on now · 1 visit since")
             text = " ".join(sheet)
             now = text[text.index("Now: "):text.index("Record: ")]
             assert "muted 23h left (by Mod: spamming)" in now and "kicked from LG Test Server, out " in now
@@ -549,23 +572,24 @@ def test_whois_is_a_rap_sheet_of_everything_however_it_was_given(tmp_path: Path,
             assert "banned on every server, for good (by Bob: cheating)" in now  # the relay's: Huragok's list
             record = next(t for t in sheet if t.startswith("Record: "))
             assert record.startswith("Record: 1 ban, 2 kicks, 1 mute, 1 warn (") and "by /" in record
-            assert any(t.endswith("LG Test Server: kick 10m by LilGremlin (/kick): name bad") for t in sheet)
+            # Each case says how far it reached: a person's every server, a vote's its server only (the scope audit, B8)
+            assert any(t.endswith("every server: kick 10m by LilGremlin (/kick): name bad") for t in sheet)
             assert any(t.endswith("LG Test Server: kick 30m by a vote") for t in sheet)
-            assert any(t.endswith("LG Test Server: mute 1d by Mod (!mute): spamming") for t in sheet)
-            assert any(t.endswith("LG Test Server: ban by Bob (console ban): cheating") for t in sheet)
+            assert any(t.endswith("every server: mute 1d by Mod (!mute): spamming") for t in sheet)
+            assert any(t.endswith("every server: ban by Bob (console ban): cheating") for t in sheet)
             await fake.chat(FACULTY, "Faculty", "!whois bravo 2")  # the latest two, and how to see more
-            await wait_for(lambda: any(t.startswith("…3 older: !whois Bravo 5") for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any(t.startswith("…3 older: !whois dddddddd 5") for t in tells_to(fake, FACULTY)))
             # "Player 2" alone is a name; with "Player" on too, the 2 could be his lines: asked, never guessed.
             await fake.join(6, "Player 2", "6a" * 32)
             await wait_for(lambda: 6 in sup.superintendent.states[SERVER].players)
             await fake.chat(FACULTY, "Faculty", "!whois player 2")
-            await wait_for(lambda: any(t.startswith("Player 2 (6a6a6a6a): on LG Test Server as #6")
+            await wait_for(lambda: any(t.startswith("Player 2 6a6a6a6a (#6) [LG Test Server]: on now")
                                        for t in tells_to(fake, FACULTY)))
             await fake.join(7, "Player", "7b" * 32)
             await wait_for(lambda: 7 in sup.superintendent.states[SERVER].players)
             await fake.chat(FACULTY, "Faculty", "!whois player 2")
-            await wait_for(lambda: any(t.startswith("'player 2' could be #6 Player 2") and "#7 Player (" in t
-                                       for t in tells_to(fake, FACULTY)))
+            await wait_for(lambda: any(t == "'player 2' could be 2 players. Use the #number:" for t in tells_to(fake, FACULTY)))
+            assert any(t.startswith("Player 7b7b7b7b (#7) [LG Test Server]") for t in tells_to(fake, FACULTY))
             await wait_for(lambda: any(t == "A number after the player is how many lines: !whois #number 2."
                                        for t in tells_to(fake, FACULTY)))
 
@@ -573,9 +597,10 @@ def test_whois_is_a_rap_sheet_of_everything_however_it_was_given(tmp_path: Path,
 
 
 def test_huragoks_own_bans_are_on_every_servers_list(tmp_path: Path, run) -> None:
-    """The host's call: every server keeps a ban list of its own, and Huragok keeps its own list of the bans it gives
-    (! commands, Vergil) and the admins it makes, put on every server's: as given, again as a server connects (one
-    added since, or reset), and on a player who gets in anyway. A /ban stays its server's until !banall."""
+    """The host's call: every server keeps a ban list of its own, and Huragok keeps its own list of the bans given
+    (! commands, Vergil, the game's own /ban since 0.7.0) and the admins made, put on every server's: as given, again as
+    a server connects (one added since, or reset), and on a player who gets in anyway. !banall puts one a server's list
+    has and Huragok's doesn't on it at once."""
     gone = "7" * 64
 
     async def scenario() -> None:
@@ -588,7 +613,7 @@ def test_huragoks_own_bans_are_on_every_servers_list(tmp_path: Path, run) -> Non
             try:
                 await fake.chat(FACULTY, "Faculty", "!ban bravo 7d cheating")  # through Huragok: every server's
                 ban = (await wait_for(lambda: other.named("ban")))[0]
-                assert ban[0] == BRAVO and 604000 < int(ban[1][:-1]) <= 604800 and ban[2] == "cheating"
+                assert ban[0] == BRAVO and 604000 < int(ban[1][:-1]) <= 604800 and ban[2] == "cheating (every server)"
                 assert next(by for command, _, by in other.sent if command == "ban") == "Faculty"
                 # The other server's list was reset (a new server, a lost file): put back as its console connects.
                 other.banned.clear()
@@ -607,23 +632,19 @@ def test_huragoks_own_bans_are_on_every_servers_list(tmp_path: Path, run) -> Non
                 await asyncio.sleep(0.3)
                 assert BRAVO not in other.banned
 
-                # The game's own /ban stays its server's; !bans says which are which; !banall makes it every server's.
+                # The game's own /ban is every server's too (the host's call, 21 November 2026), and !bans says so.
                 fake.ban_list = [{"id": gone, "name": "Grok", "reason": "spam bot", "banned_by": "LilGremlin",
                                   "banned_at": int(time.time())}]
                 sup.bus.emit("rcon.ban", SERVER, id=gone, name="Grok", by="LilGremlin", reason="spam bot", expires=0)
-                await asyncio.sleep(0.3)
-                assert gone not in other.banned
-                await fake.chat(ADMIN, "Admin", "!bans")
-                await wait_for(lambda: any(t.startswith("@1 Grok (banned") and "; this server" in t
-                                           for t in tells_to(fake, ADMIN)))
-                await fake.chat(ADMIN, "Admin", "!banall @1")
-                await wait_for(lambda: any(t.startswith("Grok's ban (by LilGremlin: spam bot, for good) is on every "
-                                                        "server now") for t in tells_to(fake, ADMIN)))
-                assert gone in other.banned
+                await wait_for(lambda: gone in other.banned)
                 assert next(args for command, args, _ in other.sent if command == "ban" and args[0] == gone) == (
                     gone, "spam bot")
+                await fake.chat(ADMIN, "Admin", "!bans")
+                await wait_for(lambda: any(t.startswith(f"Grok {gone[:8]} (@1): banned") and "; every server" in t
+                                           for t in tells_to(fake, ADMIN)))
                 await fake.chat(ADMIN, "Admin", "!banall @1")
-                await wait_for(lambda: any(t == "Grok's ban is on every server already." for t in tells_to(fake, ADMIN)))
+                await wait_for(lambda: any(t == f"The ban on Grok {gone[:8]} is on every server already."
+                                           for t in tells_to(fake, ADMIN)))
                 await fake.chat(MOD, "Mod", "!banall @1")
                 await wait_for(lambda: any("!banall is for admins and up" in t for t in tells_to(fake, MOD)))
                 # The window's B screen does the same (E), by the name the list shows.
@@ -632,7 +653,7 @@ def test_huragoks_own_bans_are_on_every_servers_list(tmp_path: Path, run) -> Non
                                       "banned_at": int(time.time())})
                 [(where, result)] = await sup.superintendent.fleet.verb("banall", SERVER, target="zed", by="Host")
                 assert where == SERVER and result.ok and zed in other.banned
-                assert result.message.startswith("Zed's ban (by LilGremlin, for good) is on every server now")
+                assert result.message.startswith("The ban on Zed 88888888 (by LilGremlin, for good) is on every server now")
                 [(_, result)] = await sup.superintendent.fleet.verb("banall", SERVER, target="nobody", by="Host")
                 assert not result.ok and "Nothing on LG Test Server's ban list is 'nobody'" in result.message
 
@@ -668,8 +689,10 @@ def test_two_frozen_servers_hold_up_neither_a_ban_nor_the_commands(tmp_path: Pat
                 await wait_for(lambda: BRAVO in other.banned)
                 assert time.monotonic() - started < 3  # not behind the frozen servers' 4 s apiece
                 await wait_for(lambda: all(f.named("ban") for f in frozen))  # each tried, side by side
-                await fake.chat(FACULTY, "Faculty", f"!unban {BRAVO}")  # asks the others about their own bans: 6 s at most
-                await wait_for(lambda: any("Frozen 1, Frozen 2 didn't answer" in t for t in tells_to(fake, FACULTY)), 15)
+                await fake.chat(FACULTY, "Faculty", f"!unban {BRAVO}")  # every server's, the frozen ones' as they thaw: not waited on
+                await wait_for(lambda: any(t.startswith("Bravo dddddddd (") and t.endswith(" is unbanned on every server.")
+                                           for t in tells_to(fake, FACULTY)), 15)
+                await wait_for(lambda: BRAVO not in other.banned)
                 assert not sup.runners["commands"]._failures
             finally:
                 for name in ("Other", "Frozen 1", "Frozen 2"):
@@ -759,19 +782,18 @@ def test_banall_holds_to_the_ranks_and_a_name_ending_rcon_isnt_the_console(tmp_p
                 await fake.chat(ADMIN, "Admin", f"!banall {FACULTY}")
                 await wait_for(lambda: any("you can't do that to them" in t for t in tells_to(fake, ADMIN)))
                 await fake.chat(ADMIN, "Admin", f"!banall {gone}")
-                await wait_for(lambda: any(t == "Grok's ban has run out: there's nothing to put on every server."
+                await wait_for(lambda: any(t == f"The ban on Grok {gone[:8]} has run out: there's nothing to put on every server."
                                            for t in tells_to(fake, ADMIN)))
                 assert FACULTY not in other.banned and gone not in other.banned
                 assert not sup.runners["commands"]._failures
-                # A player on the server called "Mallory (RCON)" bans the moderator with the game's own /ban.
+                # A player on the server called "Mallory (RCON)" bans a fellow admin with the game's own /ban: the
+                # game lets only its admins ban, so Mallory is one, and an admin's ban of an admin stays its server's.
                 state = sup.superintendent.states[SERVER]
                 state.players[9] = Player(9, "Mallory (RCON)", "9" * 64)
-                sup.bus.emit("rcon.ban", SERVER, id=MOD, name="Mod", by="Mallory (RCON)", reason="", expires=0)
+                sup.bus.emit("rcon.ban", SERVER, id=ADMIN, name="Admin", by="Mallory (RCON)", reason="", expires=0)
                 await asyncio.sleep(0.5)
-                assert MOD not in other.banned
-                assert sup.vergil.roles.role_of(None, Player(0, "Mod", MOD)) == "moderator"
-                # The console itself, named the same way by a player who isn't on: every server's.
-                del state.players[9]
+                assert ADMIN not in other.banned
+                # Of a moderator, it's every server's, as any admin's ban is (the host's call, 21 November 2026).
                 sup.bus.emit("rcon.ban", SERVER, id=MOD, name="Mod", by="Mallory (RCON)", reason="", expires=0)
                 await wait_for(lambda: MOD in other.banned)
             finally:
@@ -784,7 +806,8 @@ def test_banall_holds_to_the_ranks_and_a_name_ending_rcon_isnt_the_console(tmp_p
 def test_a_pardon_an_admin_and_an_unmute_are_every_servers_or_this_ones(tmp_path: Path, run) -> None:
     """The second audit (25 October): a kick through Huragok keeps the player off every server, so its pardon,
     wherever it's typed (or sent from the window), lets them back on every server; an admin made or unmade through
-    the console some other way than !admin is every server's too; !unmute, like !mute, is this server's."""
+    the console some other way than !admin is every server's too; !unmute, like !mute, acts where they are (the host's
+    call, 21 November 2026: up to then someone on another server was that server's to unmute)."""
     async def scenario() -> None:
         async with running(tmp_path) as (sup, fake, _):
             await everyone_joins(fake)
@@ -805,11 +828,12 @@ def test_a_pardon_an_admin_and_an_unmute_are_every_servers_or_this_ones(tmp_path
                 await wait_for(lambda: other.named("kick"))  # kicked from Other as they join
                 # On Other, !kicks shows the kick keeping them off it, and !pardon lifts it where it was given.
                 sup.bus.emit("rcon.chat", "Other", channel="all", name="Mod", id=MOD, text="!kicks")
-                await wait_for(lambda: "@1 Bravo (kicked " in told_on_other())
+                await wait_for(lambda: "Bravo dddddddd (@1)" in told_on_other() and ": kicked " in told_on_other())
                 assert " on LG Test Server by Mod: spamming; out " in told_on_other()
                 sup.bus.emit("rcon.chat", "Other", channel="all", name="Mod", id=MOD, text="!pardon @1")
-                await wait_for(lambda: "Pardoned on LG Test Server, where the kick was given: they can join every "
-                                       "server again." in told_on_other())
+                await wait_for(lambda: "is let back on every server (the kick was given on LG Test Server)."
+                                       in told_on_other())
+                assert "Bravo dddddddd (@1)" in told_on_other()
                 assert [c["args"] for c in fake.named("pardon")] == [[BRAVO]]
                 assert not [k for k in part.recent_kicks() if k.id == BRAVO]
                 sup.bus.emit("rcon.join", "Other", number=3, name="Bravo", id=BRAVO, ip="", admin=False)
@@ -831,10 +855,12 @@ def test_a_pardon_an_admin_and_an_unmute_are_every_servers_or_this_ones(tmp_path
                 await wait_for(lambda: ALICE not in other.admins)
                 assert not part.every_server("admin", ALICE)
 
-                # !unmute, like !mute, is this server's: someone on another server is unmuted there.
+                # !unmute, like !mute, acts where they are: someone on another server is unmuted there.
                 await fake.chat(MOD, "Mod", f"!unmute {ZED}")
-                await wait_for(lambda: any(t == f"{ZED[:8]} is on Other, not this server." for t in tells_to(fake, MOD)))
-                assert not fake.named("unmute") and not other.named("unmute")
+                assert (await wait_for(lambda: other.named("unmute")))[0] == (ZED,)
+                await wait_for(lambda: any(t.startswith("Zed 99999999 (") and t.endswith(" is unmuted on every server.")
+                                           for t in tells_to(fake, MOD)))
+                assert not fake.named("unmute")
             finally:
                 sup.superintendent.states.pop("Other", None)
                 sup.superintendent.clients.pop("Other", None)
@@ -843,9 +869,9 @@ def test_a_pardon_an_admin_and_an_unmute_are_every_servers_or_this_ones(tmp_path
 
 
 def test_the_hosts_calls_on_ranks_roles_unbans_and_old_bans(tmp_path: Path, run) -> None:
-    """The host's calls after the second audit (25 October): A, only a ban through Huragok takes roles away (a /ban
-    is that server's); B, a target's rank is the highest they hold on any server; D, !unban leaves another server's
-    own /ban and says where it is; E, the bans servers shared before 0.5.0 go on Huragok's list, once."""
+    """The host's calls after the second audit (25 October), as they stand since 21 November 2026: B, a target's rank
+    is the highest they hold on any server; E, the bans servers shared before 0.5.0 go on Huragok's list, once. A and D
+    were undone: the game's own /ban is every server's, takes the roles as any ban does, and !unban lifts every ban."""
     old = "5" * 64
     (tmp_path / "bans.json").write_text(json.dumps({"players": [
         {"id": old, "name": "Oldie", "reason": "griefing", "banned_by": "LilGremlin", "banned_at": 1},
@@ -871,23 +897,23 @@ def test_the_hosts_calls_on_ranks_roles_unbans_and_old_bans(tmp_path: Path, run)
             try:
                 # B: Alice is an admin on Other only; from here she's still an admin: an admin can't !ban her.
                 await fake.chat(ADMIN, "Admin", "!ban alice 1d spam")
-                await wait_for(lambda: any(t == "Alice is an admin; you can't do that to them." for t in
-                                           tells_to(fake, ADMIN)))
+                await wait_for(lambda: any(t == "Alice cccccccc (#3) [LG Test Server] is an admin; you can't do that to them."
+                                           for t in tells_to(fake, ADMIN)))
                 assert not [c for c in fake.named("ban") if c["args"][0] == ALICE]
                 await fake.chat(MOD, "Mod", "!roles")
-                await wait_for(lambda: "(on Other)" in " ".join(tells_to(fake, MOD)))
+                await wait_for(lambda: "(on Other's list)" in " ".join(tells_to(fake, MOD)))
                 # …and faculty's !demote takes her admin role off where she has it, not here.
                 await fake.chat(FACULTY, "Faculty", "!demote alice")
-                await wait_for(lambda: any(t == "Alice is a moderator now (was an admin)." for t in
-                                           tells_to(fake, FACULTY)))
+                await wait_for(lambda: any(t == "Alice cccccccc (#3) [LG Test Server] is a moderator now (was an admin)."
+                                           for t in tells_to(fake, FACULTY)))
                 assert ALICE not in other.admins and not [c for c in fake.named("admin") if c.get("args")]
 
-                # A: the game's own /ban of a moderator is that server's: the role stays.
+                # A, undone: the game's own /ban of a moderator is every server's, and the role goes with it.
                 sup.bus.emit("rcon.ban", SERVER, id=MOD, name="Mod", by="LilGremlin", reason="", expires=0)
-                await asyncio.sleep(0.3)
-                assert MOD in sup.settings.permissions.members.get("moderator", set())
+                await wait_for(lambda: MOD in other.banned)
+                await wait_for(lambda: MOD not in sup.settings.permissions.members.get("moderator", set()))
 
-                # D: !unban lifts Huragok's ban everywhere, and leaves Other's own /ban of them, saying where.
+                # D, undone: !unban lifts Huragok's ban everywhere, and Other's own /ban of them too.
                 await fake.chat(FACULTY, "Faculty", "!ban bravo 7d cheating")
                 await wait_for(lambda: BRAVO in other.banned)
                 other.banned.append(ZED)
@@ -897,9 +923,8 @@ def test_the_hosts_calls_on_ranks_roles_unbans_and_old_bans(tmp_path: Path, run)
                 await fake.chat(FACULTY, "Faculty", f"!unban {BRAVO}")
                 await wait_for(lambda: BRAVO not in other.banned)
                 await fake.chat(FACULTY, "Faculty", f"!unban {ZED}")
-                await wait_for(lambda: f"Still banned on Other by LilGremlin (/ban: spam): a /ban is that server's "
-                                       f"own; !unban on that server lifts it." in " ".join(tells_to(fake, FACULTY)))
-                assert ZED in other.banned and (ZED,) not in other.named("unban")
+                await wait_for(lambda: ZED not in other.banned)
+                await wait_for(lambda: any(t.endswith(" is unbanned on every server.") for t in tells_to(fake, FACULTY)))
             finally:
                 sup.superintendent.states.pop("Other", None)
                 sup.superintendent.clients.pop("Other", None)
@@ -922,7 +947,8 @@ def test_whois_says_where_someone_is_banned_now(tmp_path: Path, run) -> None:
             try:
                 await fake.chat(FACULTY, "Faculty", "!ban bravo 7d cheating")  # every server's
                 await wait_for(lambda: BRAVO in other.banned)
-                # A /ban on Other only, and one on a server that's stopped now (its list can't be read).
+                # A ban on Other's own list only (from before 0.7.0), and a /ban on a server that's stopped now (its
+                # list can't be read): every server's, as any ban someone gives is.
                 other.banned.append(ALICE)
                 other.details[ALICE] = {"banned_by": "LilGremlin", "reason": "spam",
                                         "expires": int(time.time()) + 3 * 86400 + 600}
@@ -932,7 +958,7 @@ def test_whois_says_where_someone_is_banned_now(tmp_path: Path, run) -> None:
 
                 def now_line(who: str) -> str:
                     text = " ".join(tells_to(fake, MOD))
-                    text = text[text.index(f"{who} ("):]
+                    text = text[text.index(f"{who} {({'Bravo': BRAVO, 'Alice': ALICE})[who][:8]}"):]
                     return text[text.index("Now: "):text.index("Record: ")].strip()
 
                 await fake.chat(MOD, "Mod", "!whois bravo")
@@ -941,10 +967,7 @@ def test_whois_says_where_someone_is_banned_now(tmp_path: Path, run) -> None:
                 await fake.chat(MOD, "Mod", "!whois alice")
                 await wait_for(lambda: " ".join(tells_to(fake, MOD)).count("Record: ") == 2)
                 now = now_line("Alice")
-                assert "kicked off Other, 3d left (/ban by LilGremlin: spam)" in now
-                assert "banned on Stopped, for good (/ban by LilGremlin: griefing; from the record: Stopped's list " \
-                       "can't be read now)" in now
-                assert "every server" not in now and "LG Test Server" not in now
+                assert now == "Now: banned on every server, for good (by LilGremlin: griefing)"  # said once
 
                 # A server that was down when a ban came off Huragok's list: taken off its list as it connects
                 # again, but only the entry Huragok put there.
@@ -955,7 +978,7 @@ def test_whois_says_where_someone_is_banned_now(tmp_path: Path, run) -> None:
                 sup.superintendent.states["Other"].connected = True
                 sup.bus.emit("rcon.connected", "Other", version="0.9.22")
                 await wait_for(lambda: BRAVO not in other.banned)
-                assert ALICE in other.banned  # its own /ban stays
+                assert ALICE in other.banned  # her ban for good is every server's
             finally:
                 for name in ("Other", "Stopped"):
                     sup.superintendent.states.pop(name, None)
@@ -983,7 +1006,7 @@ def test_someone_on_another_server_is_said_to_be_there(tmp_path: Path, run) -> N
 
     async def scenario() -> None:
         await _chat(bus, MOD, "!poke zed")
-        assert _tells(client)[-1] == "Zed is on Other Server, not this server." and poked == []
+        assert _tells(client)[-1] == f"Zed {ZED[:8]} (@1) [Other Server] is on another server, not this one." and poked == []
         await _chat(bus, FACULTY, "!poke")  # (faculty: no cooldown between uses)
         assert _tells(client)[-1] == "Use: !poke <player>"
         await _chat(bus, FACULTY, "!poke bravo")
@@ -1007,31 +1030,32 @@ def test_names_with_spaces_need_no_quotes(tmp_path: Path, run) -> None:
             await fake.join(8, "O'Neil Jr", oneil)
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 8)
             await fake.chat(MOD, "Mod", "!mute nate higgers 30m being rude")
-            assert (await wait_for(lambda: fake.named("mute")))[0]["args"] == [nate, "30m", "being rude"]
+            assert (await wait_for(lambda: fake.named("mute")))[0]["args"] == [nate, "30m", "being rude (every server)"]
             await fake.chat(MOD, "Mod", "!mute NATE 10m spamming")  # the shorter name: a time follows it
             await wait_for(lambda: len(fake.named("mute")) == 2)
-            assert fake.named("mute")[1]["args"] == [natey, "10m", "spamming"]
+            assert fake.named("mute")[1]["args"] == [natey, "10m", "spamming (every server)"]
             await fake.chat(MOD, "Mod", "!kick o'neil jr it's spam, isn't it")  # apostrophes stay as typed
-            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [oneil, "it's spam, isn't it"]
+            assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [oneil, "it's spam, isn't it (every server)"]
             await fake.chat(MOD, "Mod", '!warn "Nate Higgers" "last warning"')  # quotes work, as on the console
             await wait_for(lambda: any(c["args"] == [nate, "[o_o] OBEY POSTED LIMITS! Warning from Mod: last warning"]
                                        for c in fake.named("tell")))
             await fake.chat(FACULTY, "Faculty", "!ban long gone larry 7d cheating")  # seen: by their ID while away
-            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [gone, "7d", "cheating"]
+            assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [gone, "7d", "cheating (every server)"]
             await fake.chat(MOD, "Mod", "!kick nate higgins spam")  # a typo: never the shorter name's player
-            await wait_for(lambda: any(t.startswith("'nate higgins…' could be #7 Nate (on ") and "1b1b1b1b); #6 Nate "
-                                       "Higgers (on " in t and t.endswith("1a1a1a1a). Use the #number.")
-                                       for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t == "'nate higgins…' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
+            assert any(t.startswith("Nate 1b1b1b1b (#7) [LG Test Server]: on ") for t in tells_to(fake, MOD))
+            assert any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD))
             await fake.chat(MOD, "Mod", "!kick nate spam")
-            await wait_for(lambda: any(t.startswith("'nate spam…' could be #7 Nate (") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t == "'nate spam…' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
             assert len(fake.named("kick")) == 1
             await fake.chat(MOD, "Mod", "!whois long gone larry")  # someone who left, by a name they used
-            await wait_for(lambda: any(t.startswith("Long Gone Larry (1e1e1e1e): last here ") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Long Gone Larry 1e1e1e1e (@") and "): last here " in t
+                                       for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!whois nate hig")  # looking is harmless: one name on starts so
-            await wait_for(lambda: any(t.startswith("Nate Higgers (1a1a1a1a)") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on now") for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!players nate")  # a busy server lists more than one answer shows
-            await wait_for(lambda: any(t.startswith("#7 Nate 1b1b1b1b (on ") for t in tells_to(fake, MOD)))
-            assert any(t.startswith("#6 Nate Higgers 1a1a1a1a (on ") for t in tells_to(fake, MOD))
+            await wait_for(lambda: any(t.startswith("Nate 1b1b1b1b (#7) [LG Test Server]: on ") for t in tells_to(fake, MOD)))
+            assert any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD))
             await fake.chat(FACULTY, "Faculty", "!players zz")
             await wait_for(lambda: any(t == "Nobody on has 'zz' in their name." for t in tells_to(fake, FACULTY)))
             await fake.chat(ADMIN, "Admin", "!team o'neil jr red")
@@ -1039,7 +1063,7 @@ def test_names_with_spaces_need_no_quotes(tmp_path: Path, run) -> None:
             await fake.chat(ADMIN, "Admin", "!startvote kick nate higgers")
             assert (await wait_for(lambda: fake.named("startvote")))[0]["args"] == ["kick", nate]
             await fake.chat(ADMIN, "Admin", "!startvote kick faculty")  # a vote on someone above them: no
-            await wait_for(lambda: any("Faculty is faculty; you can't do that to them." in t
+            await wait_for(lambda: any("is faculty; you can't do that to them." in t
                                        for t in tells_to(fake, ADMIN)))
             assert len(fake.named("startvote")) == 1
 
@@ -1059,23 +1083,23 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             def role() -> str:
                 return sup.vergil.roles.role_of(sup.superintendent.states[SERVER], bravo)
 
-            def said(who: str, text: str) -> Any:
-                return wait_for(lambda: any(text in t for t in tells_to(fake, who)))
+            def said(who: str, text: str) -> Any:  # a long answer comes in pieces of 120 characters
+                return wait_for(lambda: text in " ".join(tells_to(fake, who)))
 
             # Up: a moderator makes members and probationary moderators, an admin moderators, faculty admins; never
             # past the caller's own.
             await fake.chat(MOD, "Mod", "!promote bravo")
             await wait_for(lambda: role() == "member")
             assert f'"{BRAVO}",  # Bravo: promoted by Mod on' in path.read_text(encoding="utf-8")
-            await said(BRAVO, "[^_^] WELCOME! ACCESS GRANTED! Mod made you a member here.")
+            await said(BRAVO, "[^_^] WELCOME! ACCESS GRANTED! Mod made you a member on every server.")
             await fake.chat(MOD, "Mod", "!promote bravo")
             await wait_for(lambda: role() == "probationary-moderator")
             text = path.read_text(encoding="utf-8")
             assert f'"{BRAVO}",  # Bravo: a probationary moderator (promoted by Mod on' in text and text.count(BRAVO) == 1
             assert "[probationary" not in text  # listed as a member: an older Huragok reads the file
-            await said(BRAVO, "Mod made you a probationary moderator here.")
+            await said(BRAVO, "Mod made you a probationary moderator on every server.")
             await fake.chat(MOD, "Mod", "!promote bravo")
-            await said(MOD, "Bravo would be a moderator, and you can promote players only to the role below yours "
+            await said(MOD, "Bravo dddddddd (#4) [LG Test Server] would be a moderator, and you can promote players only to the role below yours "
                             "(a probationary moderator at most).")
             await fake.chat(ADMIN, "Admin", "!promote bravo")
             await wait_for(lambda: role() == "moderator")
@@ -1089,27 +1113,27 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             await wait_for(lambda: role() == "admin" and BRAVO in fake.admins)
             await wait_for(lambda: BRAVO not in sup.settings.permissions.members["moderator"])  # the file read back
             await fake.chat(FACULTY, "Faculty", "!promote bravo")
-            await said(FACULTY, "Bravo is an admin: as high as a promotion goes")
+            await said(FACULTY, "Bravo dddddddd (#4) [LG Test Server] is an admin: as high as a promotion goes")
             # Down: one step, only by someone above them.
             await fake.chat(ADMIN, "Admin", "!demote bravo")
-            await said(ADMIN, "Bravo is an admin; you can't demote them.")
+            await said(ADMIN, "Bravo dddddddd (#4) [LG Test Server] is an admin; you can't demote them.")
             await fake.chat(FACULTY, "Faculty", "!demote bravo")
             await wait_for(lambda: role() == "moderator" and BRAVO not in fake.admins)
-            await said(FACULTY, "Bravo is a moderator now (was an admin).")
+            await said(FACULTY, "Bravo dddddddd (#4) [LG Test Server] is a moderator now (was an admin).")
             await fake.chat(MOD, "Mod", "!demote bravo")
-            await said(MOD, "Bravo is a moderator; you can't demote them.")
+            await said(MOD, "Bravo dddddddd (#4) [LG Test Server] is a moderator; you can't demote them.")
             await fake.chat(ADMIN, "Admin", "!demote bravo")
             await wait_for(lambda: role() == "probationary-moderator")
             await fake.chat(MOD, "Mod", "!demote bravo")
             await wait_for(lambda: role() == "member")
             await fake.chat(MOD, "Mod", "!demote bravo")
             await wait_for(lambda: role() == "player")
-            await said(MOD, "Bravo has no role now (was a member).")
+            await said(MOD, "Bravo dddddddd (#4) [LG Test Server] has no role now (was a member).")
             await fake.chat(MOD, "Mod", "!demote bravo")
-            await said(MOD, "Bravo has no role to lose.")
+            await said(MOD, "Bravo dddddddd (#4) [LG Test Server] has no role to lose.")
             assert BRAVO not in path.read_text(encoding="utf-8")
             await fake.chat(FACULTY, "Faculty", "!demote faculty")
-            await said(FACULTY, "Faculty is faculty: faculty are changed only in commands.toml.")
+            await said(FACULTY, "Faculty aaaaaaaa (#1) [LG Test Server] is faculty: faculty are changed only in commands.toml.")
             # !admin is the faculty's, on the same ladder: add makes an admin, remove a moderator.
             await fake.chat(ADMIN, "Admin", "!admin add bravo")
             await said(ADMIN, "!admin is for faculty and up")
@@ -1118,8 +1142,8 @@ def test_one_role_each_moved_a_step_at_a_time(tmp_path: Path, run) -> None:
             await fake.chat(FACULTY, "Faculty", "!admin remove bravo")
             await wait_for(lambda: role() == "moderator")
             await fake.chat(MOD, "Mod", "!roles")
-            await said(MOD, "faculty (1): Faculty (aaaaaaaa)")
-            await said(MOD, "moderators (2): Mod (bbbbbbbb), Bravo (dddddddd)")
+            await said(MOD, "faculty (1): Faculty aaaaaaaa (#1) [LG Test Server]")
+            await said(MOD, "moderators (2): Mod bbbbbbbb (#2) [LG Test Server], Bravo dddddddd (#4) [LG Test Server]")
 
     run(scenario())
 
@@ -1135,7 +1159,7 @@ def test_a_ban_takes_every_role_away(tmp_path: Path, run) -> None:
             await wait_for(lambda: ALICE in sup.settings.permissions.members["moderator"])
             await fake.chat(ADMIN, "Admin", "!ban alice spam")
             await wait_for(lambda: ALICE not in sup.settings.permissions.members["moderator"])
-            await wait_for(lambda: any("Alice's moderator role goes with the ban." in t for t in tells_to(fake, ADMIN)))
+            await wait_for(lambda: any("Their moderator role goes with the ban." in t for t in tells_to(fake, ADMIN)))
             # Only faculty can ban an admin; the console's admins lose them, dedicated.toml's are named.
             await fake.chat(ADMIN, "Admin", "!ban mod")  # an admin can't ban an admin, but can a moderator
             await wait_for(lambda: MOD not in sup.settings.permissions.members["moderator"])

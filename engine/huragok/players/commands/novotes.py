@@ -66,7 +66,7 @@ class NoVotes(CommandsBase):
             from ..roles import a_role
 
             if why := self.outranked_by(call, was["by_role"], was["by"], "!novote", a_role):  # a new time lifts it
-                await call.reply(f"{target.name}'s votes are away already. {why.replace('lifting it', 'changing it')}")
+                await call.reply(f"{call.tag(target)} has their votes away already. {why.replace('lifting it', 'changing it')}")
                 return
         self._lift_no_votes(target.id, call.server, by=call.player.name)  # a new time replaces the old one
         now = time.time()
@@ -76,22 +76,30 @@ class NoVotes(CommandsBase):
                              now + seconds_of(length) if length else None, describe_time(length) if length else None,
                              call.role))
         spoken = f"for {describe_time(length)}" if length else FOR_GOOD
-        self.log.info("[%s] %s took %s's votes away %s%s (%snovote)", call.server, call.player.name, target.name,
-                      spoken, f": {reason}" if reason else "", call.prefix)
-        before = f"{target.name}'s votes were already away ({_away_for(was, now)}); now {spoken}." if was else ""
-        if not target.number:
+        self.log.info("[%s] %s took %s's votes away %s%s (%snovote)", call.server, call.player.name,
+                      self.ctx.names.describe(target), spoken, f": {reason}" if reason else "", call.prefix)
+        before = f"Their votes were already away ({_away_for(was, now)}); now {spoken}." if was else ""
+        # Where they are now: another server's players read it there (it only looked at the caller's, and told the
+        # caller they weren't on: the player identity audit, 21 November 2026).
+        server, there = self.ctx.names.on(target.id)
+        if there is not None and server != call.server and not self._across():
+            there = None  # each server's own: their votes here, when they come here
+        if there is None:
             where = "" if self._across() else " here"
-            await call.reply(f"{target.name} isn't on now: any vote they call{where} once they're back is cancelled, "
+            await call.reply(f"{call.tag(target)} isn't on{'' if self._across() else ' this server'} now: any vote they "
+                             f"call{where} once they're back is cancelled, "
                              + (f"for {describe_time(length)} from now." if length else f"{FOR_GOOD}.")
                              + (f" {before}" if before else ""))
             return
-        line = callout("no votes", f"{call.player.name} took {target.name}'s votes away {spoken}"
+        line = callout("no votes", f"{call.player.name} took away the votes of {self.ctx.names.public(target)} {spoken}"
                        + (f": {reason}" if reason else "") + ". Any vote they call is cancelled.")
         if self.ctx.dry_run:  # nothing is cancelled, so nobody is told it will be
             await call.reply(f"Dry run: their votes are only logged, not cancelled. Players would read: {line}")
         else:
             try:
-                await self.ctx.say(call.server, line)
+                await self.ctx.say(server, line)
+                if server != call.server:
+                    await call.reply(f"{call.tag(target)} can't call votes now {spoken}.")
             except RconError:
                 await call.reply(line)  # the console wouldn't take a [Server] line: the moderator reads it at least
         if before:
@@ -104,7 +112,7 @@ class NoVotes(CommandsBase):
         assert target is not None
         row = self._no_vote_row(target.id, call.server)
         if row is None:
-            await call.reply(f"{target.name} can call votes already.")
+            await call.reply(f"{call.tag(target)} can call votes already.")
             return
         from ..roles import a_role
 
@@ -112,13 +120,14 @@ class NoVotes(CommandsBase):
             await call.reply(f"Not given back: {why}")
             return
         self._lift_no_votes(target.id, call.server, by=call.player.name)
-        self.log.info("[%s] %s gave %s's votes back (%sallowvote)", call.server, call.player.name, target.name,
-                      call.prefix)
-        await call.reply(f"{target.name} can call votes again.")
-        if target.number:
+        self.log.info("[%s] %s gave %s's votes back (%sallowvote)", call.server, call.player.name,
+                      self.ctx.names.describe(target), call.prefix)
+        await call.reply(f"{call.tag(target)} can call votes again.")
+        server, there = self.ctx.names.on(target.id)  # wherever they are: it told only someone on the caller's server
+        if there is not None:
             try:
-                await self.ctx.tell(call.server, target, callout("votes back", f"{call.player.name} gave your votes "
-                                                                               "back: you can call votes again."))
+                await self.ctx.tell(server, there, callout("votes back", f"{call.player.name} gave your votes "
+                                                                         "back: you can call votes again."))
             except RconError:
                 pass
 
@@ -133,11 +142,13 @@ class NoVotes(CommandsBase):
             note = (f"votes away {_away_for(row, now)}, by {row['by']} {ago(now - row['time'])} ago"
                     + (f" on {row['server']}" if row["server"] != call.server else "")
                     + (f": {row['reason']}" if row["reason"] else ""))
-            entries.append(Candidate(str(row["target"]), player.name if player else str(row["name"] or "?"),
-                                     number=player.number if player else 0, note=note))
+            target = str(row["target"])
+            entries.append(Candidate(target, player.name if player else self.ctx.names.name(target, str(row["name"] or "")),
+                                     number=player.number if player else 0, note=note,
+                                     where="" if player else self.ctx.names.on(target)[0]))
         if not entries:
-            await call.reply(f"Everyone here can call votes: nobody's votes are away ({call.prefix}novote "
-                             "<player> [time]).")
+            await call.reply(f"Everyone{'' if self._across() else ' here'} can call votes: nobody's votes are away "
+                             f"({call.prefix}novote <player> [time]).")
             return
         lines = await offer(call, entries)
         await call.reply("\n".join([*lines, f"{call.prefix}allowvote @number gives one their votes back."]))

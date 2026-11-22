@@ -101,7 +101,7 @@ def test_a_name_with_a_word_that_only_reports_asks_the_staff(tmp_path: Path, run
             # In lines game chat takes: the last of them too, which a slow runner (CI's Windows) hadn't had yet
             await wait_for(lambda: "bans the name" in " ".join(tells_to(rcon, MOD)), timeout=15)
             told = " ".join(tells_to(rcon, MOD))
-            assert "xXRudewordXx joined with a name" in told and "!banname #4 bans the name" in told
+            assert "xXRudewordXx dddddddd (#4)" in told and "joined with a name" in told and "!banname #4 bans the name" in told
             assert not rcon.named("kick") and not tells_to(rcon, BRAVO) and not rcon.named("say")
             await wait_for(lambda: posts_in(fake, STAFF), timeout=15)
             card = posts_in(fake, STAFF)[-1]

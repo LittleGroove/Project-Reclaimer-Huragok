@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ..players.targets import ID_START
 from .cards import clean
 
 log = logging.getLogger(__name__)
@@ -108,19 +109,22 @@ class Links:
                                 (code, player_id, player_name, now, now + minutes * 60))
                 return code
 
-    def peek(self, typed: str) -> str:
-        """The name of the player a fresh code is for, without using it: "" for no such code."""
+    def peek(self, typed: str) -> tuple[str, str]:
+        """(their ID, their name) of the player a fresh code is for, without using it: ("", "") for no such code."""
         code = tidy_code(typed)
-        rows = self.db.query("SELECT player_name FROM discord_link_codes WHERE code = ? AND expires > ?", (code, self.clock())) if code else []
-        return str(rows[0]["player_name"]) if rows else ""
+        rows = self.db.query("SELECT player_id, player_name FROM discord_link_codes WHERE code = ? AND expires > ?", (code, self.clock())) if code else []
+        return (str(rows[0]["player_id"]), str(rows[0]["player_name"])) if rows else ("", "")
 
     def find_players(self, typed: str) -> list[Any]:
-        """The links of a player: by their whole ID, or by their name in game (as linked, or as last seen). More than one
-        by a name: whoever asks gives the ID (second audit, 8.5: the first was taken)."""
+        """The links of a player: by their whole ID, the start of it (8 characters or more, as every tag shows), or by
+        their name in game (as linked, or as last seen). More than one by a name: whoever asks gives the ID (second
+        audit, 8.5: the first was taken)."""
         text = typed.strip()
         if found := self.of_player(text):
             return [found]
         rows = self.db.query("SELECT * FROM discord_links")
+        if ID_START.fullmatch(text) and (started := [row for row in rows if str(row["player_id"]).lower().startswith(text.lower())]):
+            return started
         return [row for row in rows if text.casefold() in {str(row["player_name"] or "").casefold(), self.player_name(row).casefold()}]
 
     def use_code(self, typed: str, member: str, member_name: str) -> tuple[str, str, str]:

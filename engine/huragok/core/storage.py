@@ -26,6 +26,15 @@ ACTING_ID: ContextVar[str] = ContextVar("huragok_acting_id", default="")
 # Their rank as they acted (players.roles' names): what lifting it takes later (the host's call, 2 Nov 2026). "" for
 # Vergil's own, a vote's, the server's: anyone who can lift can lift those.
 ACTING_ROLE: ContextVar[str] = ContextVar("huragok_acting_role", default="")
+# How the players a command named were picked: player ID -> "#4" or "@2", as typed (players/targets.py). Kept with the
+# action it leads to (actions.picked_as), so a card can say "picked as #4" (plans/player-identity-audit).
+PICKED: ContextVar[dict[str, str] | None] = ContextVar("huragok_picked", default=None)
+
+
+def picked_as(player_id: Any) -> str:
+    """How the command being run picked this player: "#4", "@2", or "" (by name or ID, or no command)."""
+    picked = PICKED.get()
+    return picked.get(str(player_id or "").lower(), "") if picked else ""
 
 
 @contextmanager
@@ -86,6 +95,12 @@ CORE_MIGRATIONS = [
     # 2 Nov 2026). NULL: before this version, or Vergil's own, a vote's, the server's.
     """
     ALTER TABLE actions ADD COLUMN by_role TEXT;
+    """,
+    # 7 (0.7.0): how the player was picked ("#4", "@2") and the server they were on as it was done, so a record names
+    # them as the one who did it saw them (plans/player-identity-audit). NULL: before this version, or nobody on.
+    """
+    ALTER TABLE actions ADD COLUMN picked_as TEXT;
+    ALTER TABLE actions ADD COLUMN on_server TEXT;
     """,
 ]
 
@@ -272,12 +287,16 @@ class Storage:
     def record_action(self, *, kind: str, server: str | None, target_id: str | None, target_name: str | None,
                       by: str, source: str, reason: str = "", duration: str | None = None,
                       evidence: str | None = None, dry_run: bool = False, ok: bool = True,
-                      reply: str = "", when: float | None = None) -> int:
+                      reply: str = "", when: float | None = None, on_server: str | None = None) -> int:
+        """One action in the ledger. Who acted and how they picked the player come from the command being run
+        (ACTING_ID, ACTING_ROLE, PICKED); `on_server`: the server the player was on as it was done."""
         cursor = self.db.execute(
             "INSERT INTO actions (time, server, kind, target_id, target_name, by, source, reason, duration, "
-            "evidence, dry_run, ok, reply, by_id, by_role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "evidence, dry_run, ok, reply, by_id, by_role, picked_as, on_server) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (when or time.time(), server, kind, target_id, target_name, by, source, reason, duration,
-             evidence, int(dry_run), int(ok), reply, ACTING_ID.get() or None, ACTING_ROLE.get() or None))
+             evidence, int(dry_run), int(ok), reply, ACTING_ID.get() or None, ACTING_ROLE.get() or None,
+             picked_as(target_id) or None, on_server or None))
         return int(cursor.lastrowid or 0)
 
     def actions_for(self, player_id: str, limit: int = 20) -> list[sqlite3.Row]:
@@ -355,6 +374,72 @@ def recent_players(path: Path | None, limit: int = 15) -> list[tuple[str, str, f
     except sqlite3.Error:
         return []
     return [(str(r[0]), str(r[1]), float(r[2])) for r in rows]
+
+
+def _reading(path: Path | None) -> sqlite3.Connection | None:
+    """Huragok's records opened read-only, for a reader beside the supervising window (the window, a second one,
+    `check`): None when there are none yet or they can't be opened. Nothing is ever written through it."""
+    from urllib.request import pathname2url
+
+    if path is None or not path.is_file():
+        return None
+    try:
+        return sqlite3.connect(f"file:{pathname2url(str(path))}?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+
+
+def last_names(path: Path | None, player_ids: Iterable[str]) -> dict[str, str]:
+    """The name each of these players was last seen under, read-only from Huragok's records (the window, `check`),
+    by player ID in lower case. Those never seen, or all of them when the records can't be read, aren't in it."""
+    wanted = sorted({str(p).lower() for p in player_ids if p})
+    db = _reading(path) if wanted else None
+    if db is None:
+        return {}
+    try:
+        try:
+            found: dict[str, str] = {}
+            for start in range(0, len(wanted), 500):  # SQLite's limit on ?s in one statement
+                part = wanted[start:start + 500]
+                rows = db.execute(f"SELECT id, last_name FROM players WHERE id IN ({','.join('?' * len(part))})",
+                                  part).fetchall()
+                found.update((str(r[0]), str(r[1])) for r in rows)
+            return found
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return {}
+
+
+def seen_players(path: Path | None, text: str, limit: int = 10) -> list[PlayerRecord]:
+    """Players seen by an ID (all of it, or its first 8 characters or more) or a name they've used, in any case, as
+    PlayerHistory.find, read-only from Huragok's records (the window finds players with it). Their names come
+    latest first; their addresses are left out. [] when there are no records or they can't be read."""
+    text = text.strip()
+    db = _reading(path) if text else None
+    if db is None:
+        return []
+    try:
+        try:
+            wanted = text.lower()
+            by_id = db.execute("SELECT id FROM players WHERE id >= ? AND id < ? ORDER BY last_seen DESC LIMIT ?",
+                               (wanted, wanted + "￿", limit)).fetchall() if ID_START.fullmatch(text) else []
+            by_name = db.execute("SELECT p.id FROM player_names n JOIN players p ON p.id = n.id WHERE n.folded = ? "
+                                 "GROUP BY p.id ORDER BY p.last_seen DESC LIMIT ?", (text.casefold(), limit)).fetchall()
+            found: list[PlayerRecord] = []
+            for player_id in list(dict.fromkeys(str(r[0]) for r in [*by_id, *by_name]))[:limit]:
+                row = db.execute("SELECT id, first_seen, last_seen, last_name, visits FROM players WHERE id = ?",
+                                 (player_id,)).fetchone()
+                if row is None:
+                    continue
+                names = [str(r[0]) for r in db.execute("SELECT name FROM player_names WHERE id = ? "
+                                                       "ORDER BY last_seen DESC", (player_id,)).fetchall()]
+                found.append(PlayerRecord(str(row[0]), float(row[1]), float(row[2]), str(row[3]), int(row[4]), names))
+            return found
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return []
 
 
 class PlayerHistory:

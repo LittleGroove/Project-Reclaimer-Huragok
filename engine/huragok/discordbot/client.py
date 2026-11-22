@@ -21,6 +21,7 @@ import discord
 from discord import app_commands
 
 from . import features, records, rest, tidy
+from .cards import Shown
 from .config import add_faculty, set_guild
 from .outbox import ANSWER
 from .ranks import Someone, rank_of
@@ -502,10 +503,10 @@ class HuragokCommands(app_commands.Group):
         add_faculty(self.part.path, str(interaction.user.id), interaction.user.name)
         log.info("%s claimed the bot from Discord: faculty now", interaction.user.name)
         await self.part.reload(force=True)
-        self.part.audit("setup", say(self.part.file, "audit.claim", who=interaction.user.name))
+        self.part.audit("setup", Shown(say(self.part.file, "audit.claim", who=self.part.who(interaction.user))))  # by their name here, as everywhere: not their username
         player = await self.part.links.faculty_claimed(str(interaction.user.id))  # linked already: faculty in game too
-        if player:
-            self.part.audit("link", say(self.part.file, "audit.faculty", player=player))
+        if player and (link := self.part.links.of_member(str(interaction.user.id))) is not None:  # which player, by their tag: a name says nothing of which
+            self.part.audit("link", Shown(say(self.part.file, "audit.faculty", player=self.part.tag(str(link["player_id"]), player))))
         await answer(interaction, "You're faculty on this bot now" + (f", and {player} is faculty in game" if player else "")
                      + ". `/huragok setup` is next.")
 

@@ -3,6 +3,11 @@
 A card is `feed` and `kind`, which together name its line in [messages]: where it goes, its colour, whether it posts. Staff feeds show names, reasons and chat
 lines; no card ever shows an address (`clean()`). Every time in a card is a Discord timestamp, which each reader's Discord counts down by itself. A card's words
 are a text key, rewordable in [text]. Headings in the lore voice are the Superintendent's own words (lore.NOTICES).
+
+A card says how far what it's about reaches, never only where it began (the host's call, 21 November 2026): "Every server" for a mute, kick or ban someone
+gave (players/reach.py) and for the word lists and banned names; "<server> only" for what stays on one server (a vote's kick, the server's own, every action
+with across_servers off); nothing for what's the player's (a strike, clearing strikes); the server's name for what happened on it (a crash, a join, a word
+heard there).
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ..core import tags
 from ..core.events import Event
 from ..core.text import describe_seconds, TIME, describe_time
 from ..lore import NOTICES
@@ -31,14 +37,41 @@ def no_addresses(value: Any) -> str:
     return ADDRESS.sub("(hidden)", str(value or ""))
 
 
+class Shown(str):
+    """Words made for Discord already: cleaned, with formatting of their own (a player's tag, its ID in a code box), so
+    clean() leaves them as they are. Cleaning twice put a backslash before every _ in a name (the identity audit of 21
+    November 2026)."""
+
+    __slots__ = ()
+
+
 def clean(value: Any, *, for_a_channel: bool = True) -> str:
     """Text from a player or a server as it may be posted: no addresses, ever, and no formatting of their own, so nothing they type can look like the bot's own heading or hide a link behind words. Not `for_a_channel`: an answer that can't ping anyone, where @1 has to stay copyable."""
+    if isinstance(value, Shown):
+        return value
     text = re.sub(r"([*_~`|>\\\[\]])", r"\\\1", no_addresses(value))
     text = LINE_START.sub(lambda found: f"{found[1]}\\{found[2]}", text)
     return text.replace("@", "@​") if for_a_channel else text
 
 
 HURAGOK, PEOPLE = "huragok", "people"  # who a ticket is the doing of
+EVERY, ONLY, PLAYERS = "every", "only", "players"  # a card's reach: every server; `server` alone; the player's, no server's
+
+
+def where(card: Card) -> str:
+    """How far a card's news reaches, as its footer and its compact line start with it: "Every server", "<server> only",
+    the server's name, or "" for what's the player's."""
+    if card.reach == EVERY:
+        return "Every server"
+    if card.reach == PLAYERS or not card.server:
+        return ""
+    return f"{clean(card.server)} only" if card.reach == ONLY else clean(card.server)
+
+
+def reach_of(event: Event) -> str:
+    """A moderation event's reach (the ledger says it: players/ledger.py), as a card's."""
+    reach = str(event.get("reach") or "")
+    return EVERY if reach == "every server" else ONLY if reach == "server" else ""
 
 
 @dataclass
@@ -64,6 +97,8 @@ class Card:
     problem: str = ""  # the server whose ongoing problem this is: one ticket, added to
     rule: str = ""  # the automod rule a strike was on, for pardoning it from its card
     components: list[dict[str, Any]] = field(default_factory=list)  # a post's own buttons (a Carnage report's Kill feed)
+    reach: str = ""  # how far it reaches: EVERY, ONLY, PLAYERS; "" for what happened on `server` (its name is shown)
+    case: int = 0  # the ledger's case it's about: its record is what came before it
 
     @property
     def message(self) -> str:
@@ -75,12 +110,33 @@ def heading(config: DiscordConfig, notice: str, plain: str) -> str:
     return plain if config.data["voice"] == "plain" else f"{plain} · {NOTICES[notice]}"
 
 
-def player(event: Event, id_key: str = "target_id", name_key: str = "target_name") -> str:
-    name = clean(event.get(name_key) or "")
-    if name:
-        return f"**{name}**"
-    player_id = str(event.get(id_key) or "")
-    return f"`{player_id[:8]}…`" if player_id else "someone"
+def tagged(name: Any, player_id: Any, server: Any = "", *, handle: str = "", bold: bool = False) -> Shown:
+    """A player as Discord writes one (core/tags.py): "Nate `1a2b3c4d` [HugeGrass]", the ID in a code box, the name
+    cleaned. `bold`: the name in bold, as a card's line has whoever it's about."""
+    shown = clean(tags.shown_name(name))
+    return Shown(tags.tag(f"**{shown}**" if bold and shown else shown, player_id, handle=clean(handle), server=clean(tags.shown_name(server)), code=True))
+
+
+def player(event: Event, id_key: str = "target_id", name_key: str = "target_name", *, server: str | None = None) -> str:
+    """Who a card is about, the one way (core/tags.py): their name in bold, the start of their ID, and the server they
+    were on as it happened: `on_server`, which the feeds fill in (`server`, for what happened on the event's own). No
+    #number: nobody types into a card."""
+    where = event.get("on_server") if server is None else server
+    return tagged(event.get(name_key) or "", event.get(id_key) or "", where or "", bold=True)
+
+
+def picked(config: DiscordConfig, event: Event) -> str:
+    """" · picked as #4": how whoever acted picked them, when it was by a number, which may have meant someone else
+    than they thought."""
+    handle = str(event.get("picked_as") or "")
+    return say(config, "moderation.picked", handle=clean(handle)) if handle else ""
+
+
+def actor(event: Event, default: str = "someone") -> str:
+    """Whoever did it: `by_shown` when the feeds have written them the one way (their name in this Discord, with their
+    player's tag; or the tag of whoever did it in game), else the name the record has."""
+    shown = event.get("by_shown")
+    return shown if isinstance(shown, Shown) and shown else clean(event.get("by") or default)
 
 
 def _reason(event: Event) -> str:
@@ -118,14 +174,15 @@ SOURCE_NAMES = {"commands": "!", "in game": "/", "automod": "vergil", "vote": "v
                 "window": "window"}
 MODERATION_NOTICES = {"kick": "crime", "ban": "crime", "mute": "clean", "warn": "clean"}
 VERBS = {kind: f"moderation.{kind}" for kind in ("kick", "ban", "mute", "unmute", "unban", "pardon", "warn")}
+HEADINGS = {"pardon": "Let back"}  # one word for each thing (the host's call, 21 November 2026): "pardon" is the command's name only
 
 
 def moderation(config: DiscordConfig, event: Event) -> Card | None:
     kind = shown_kind(event.get("kind") or "", event.get("duration"), event.get("reason"))
     if kind not in VERBS or event.get("dry_run"):  # what Vergil would have done is vergil-would's
         return None
-    values = dict(by=clean(event.get("by") or "someone"), player=player(event), lasting=_lasting(event), reason=_reason(event))
-    line = say(config, VERBS[kind], **values)
+    values = dict(by=actor(event), player=player(event), lasting=_lasting(event), reason=_reason(event))
+    line = say(config, VERBS[kind], **values) + picked(config, event)
     if not event.get("ok", True):
         why = clean(event.get("text") or "")
         line = say(config, "moderation.failed", what=line, why=f" ({why})" if why else "")
@@ -133,8 +190,9 @@ def moderation(config: DiscordConfig, event: Event) -> Card | None:
     fields: list[tuple[str, str]] = []
     if event.get("pending"):
         fields.append((say(config, "moderation.when"), say(config, "moderation.pending")))
-    return Card("moderation", kind, line, heading(config, MODERATION_NOTICES.get(kind, "citizens"), kind.title()), fields,
-                footer=f"{say(config, 'moderation.case')} {case}" if case else "", server=event.server,
+    return Card("moderation", kind, line, heading(config, MODERATION_NOTICES.get(kind, "citizens"), HEADINGS.get(kind, kind.title())), fields,
+                footer=f"{say(config, 'moderation.case')} {case}" if case else "", server=event.server, reach=reach_of(event),
+                case=int(case) if isinstance(case, int) else 0,
                 source="discord" if str(event.get("by_id") or "").startswith("discord:") else SOURCE_NAMES.get(str(event.get("source") or ""), str(event.get("source") or "")), merge=True,
                 subject=str(event.get("target_id") or ""), subject_name=str(event.get("target_name") or ""), owner=PEOPLE, decided=True)
 
@@ -143,21 +201,32 @@ def moderation(config: DiscordConfig, event: Event) -> Card | None:
 
 
 def strike(config: DiscordConfig, event: Event) -> Card:
+    """A strike is the player's, not a server's: no server on it, and its punishment in words with how far it reaches ("strike 1 of 2 for slurs: muted for 7 days on every
+    server, from when they next join"). Vergil's own, caught on a server, keeps where it was heard in what they said."""
     dry = bool(event.get("dry_run"))
-    values = dict(player=player(event, "player_id", "player_name"), rule=clean(event.get("rule")), number=event.get("strike"),
-                  action=clean(event.get("action")))
+    across = event.get("across")
+    action = clean(event.get("does") or event.get("action"))
+    if event.get("does") and not dry:  # Huragok's words, then how far: a strike from before 0.7.0 has only `action`
+        action += say(config, "vergil.everywhere") if across is not False else say(config, "vergil.here", server=clean(event.server))
+        if event.get("pending"):
+            action += say(config, "vergil.when_back")
+        elif event.get("away"):
+            action += say(config, "vergil.nobody_on")
+    values = dict(player=player(event, "player_id", "player_name"), rule=clean(event.get("rule")), number=clean(str(event.get("of") or "").removeprefix("strike ")) or event.get("strike"),  # "1 of 2"
+                  action=action)
     manual = bool(event.get("manual"))
-    by = clean(event.get("by") or "")
+    by = actor(event, "")
     evidence = str(event.get("evidence") or "")
     note = evidence.partition(": ")[2] if manual and ": " in evidence else "" if manual else evidence  # a moderator's says who, and it's on the line
     fields = [(say(config, "vergil.why" if manual else "vergil.said"), clean(note)[:MAX_FIELD])] if note else []
     key = "vergil.would" if dry else "vergil.strike_by" if manual and by else "vergil.strike"
-    line = say(config, key, by=by, **values)
+    line = say(config, key, by=by, **values) + (picked(config, event) if manual else "")
     if not dry and not event.get("ok", True):
         line = say(config, "moderation.failed", what=line, why="")
     return Card("vergil", "would" if dry else "strike", line,
                 heading(config, "hero", "Would have" if dry else "Strike"), fields, server=event.server, merge=dry,
-                subject="" if dry else str(event.get("player_id") or ""), subject_name=str(event.get("player_name") or ""), rule=str(event.get("rule") or ""))
+                subject="" if dry else str(event.get("player_id") or ""), subject_name=str(event.get("player_name") or ""), rule=str(event.get("rule") or ""),
+                reach="" if dry or (not manual and not event.get("does")) else PLAYERS if event.get("across") is not False else ONLY)
 
 
 def heard(config: DiscordConfig, event: Event) -> Card:
@@ -178,24 +247,27 @@ def name_asked(config: DiscordConfig, event: Event) -> Card:
 def vergil_line(kind: str, key: str, **names: str) -> Callable[[DiscordConfig, Event], Card]:
     def build(config: DiscordConfig, event: Event) -> Card:
         values = {name: clean(event.get(source)) for name, source in names.items()}
-        values["by"] = clean(event.get("by") or "someone")
-        about = kind == "name-kick"  # the rest are changes to Vergil's lists, with nobody to act on
+        if "player" in names:  # whoever it's about, the one way, as every card has them
+            values["player"] = player(event, "player_id", names["player"])
+        values["by"] = actor(event)
+        about = kind == "name-kick"  # the rest are changes to Vergil's lists, with nobody to act on: every server's
         return Card("vergil", kind, say(config, key, **values), heading(config, "citizens", kind.replace("-", " ").title()), server=event.server,
-                    subject=str(event.get("player_id") or "") if about else "", subject_name=str(event.get("player_name") or "") if about else "", owner=HURAGOK if about else PEOPLE)
+                    subject=str(event.get("player_id") or "") if about else "", subject_name=str(event.get("player_name") or "") if about else "", owner=HURAGOK if about else PEOPLE,
+                    reach="" if about else EVERY)
 
     return build
 
 
 def words_banned(config: DiscordConfig, event: Event) -> Card:
     words = ", ".join(f"`{clean(word)}`" for word in event.get("words") or [])
-    return Card("vergil", "word-ban", say(config, "vergil.words_banned", by=clean(event.get("by")), words=words, rule=clean(event.get("rule"))),
-                heading(config, "citizens", "Words banned"), server=event.server)
+    return Card("vergil", "word-ban", say(config, "vergil.words_banned", by=actor(event, ""), words=words, rule=clean(event.get("rule"))),
+                heading(config, "citizens", "Words banned"), server=event.server, reach=EVERY)
 
 
 def pardon(config: DiscordConfig, event: Event) -> Card:
-    return Card("vergil", "pardon", say(config, "vergil.pardon", by=clean(event.get("by")), strikes=counted(int(event.get("strikes") or 0), "strike"),
+    return Card("vergil", "pardon", say(config, "vergil.pardon", by=actor(event, ""), strikes=counted(int(event.get("strikes") or 0), "strike"),
                                         player=player(event, "player_id", "player_name"), reason=_reason(event)),
-                heading(config, "citizens", "Pardon"), server=event.server)
+                heading(config, "citizens", "Strikes cleared"), server=event.server, reach=PLAYERS)
 
 
 # Votes --------------------------------------------------------------------------------------------------------------
@@ -322,8 +394,10 @@ JOIN_TEXTS = {"first": "join.first", "joined": "join.joined", "left": "join.left
 
 def join(config: DiscordConfig, event: Event, kind: str, *, name: str = "") -> Card:
     """The join's own `name`: on 0.10, where the console's join names nobody, the one that came after it (Feeds waits for
-    it, and fills in what's known if it never comes); with none known, their short ID."""
-    return Card("joins", kind, say(config, JOIN_TEXTS[kind], player=player(event, "id", "name"), reason=clean(event.get("reason")), old=clean(name)),
+    it, and fills in what's known if it never comes); with none known, their short ID. The server is the one they
+    joined or left, as they were on it; one turned away was never on it."""
+    on = "" if kind == "refused" else event.server or ""
+    return Card("joins", kind, say(config, JOIN_TEXTS[kind], player=player(event, "id", "name", server=on), reason=clean(event.get("reason")), old=clean(name)),
                 heading(config, "welcome", "Joins"), server=event.server, merge=True)
 
 
@@ -337,7 +411,7 @@ def minutes_words(seconds: float) -> str:
 def watch(config: DiscordConfig, event: Event, kind: str, key: str, **values: Any) -> Card:
     """About a join, its name filled in as join()'s is."""
     subject ="" if kind == "first-time-quiet" else str(event.get("id") or "").lower()  # someone new is only for the record
-    return Card("watch", kind, say(config, key, player=player(event, "id", "name"), **values), heading(config, "hero", "Keep an eye out"), server=event.server,
+    return Card("watch", kind, say(config, key, player=player(event, "id", "name", server=event.server or ""), **values), heading(config, "hero", "Keep an eye out"), server=event.server,
                 subject=subject, subject_name=str(event.get("name") or ""), problem=f"watch:{kind}:{subject}" if subject else "")  # joining again is the same story, on the same card
 
 
@@ -349,13 +423,14 @@ def flagged(config: DiscordConfig, event: Event, flag: str, why: str, colour: st
 
 
 def cheat(config: DiscordConfig, event: Event) -> Card:
-    return Card("watch", "anti-cheat", say(config, "watch.cheat", player=player(event, "id", "name"), action=clean(event.get("action")), detail=clean(event.get("detail"))),
+    return Card("watch", "anti-cheat", say(config, "watch.cheat", player=player(event, "id", "name", server=event.server or ""), action=clean(event.get("action")), detail=clean(event.get("detail"))),
                 heading(config, "crime", "Anti-cheat"), server=event.server, subject=str(event.get("id") or "").lower(), subject_name=str(event.get("name") or ""))
 
 
-def called(config: DiscordConfig, server: str, name: str, why: str, recent: list[str]) -> Card:
+def called(config: DiscordConfig, server: str, name: str, why: str, recent: list[str], player_id: str = "") -> Card:
+    """Whoever called, as they were on the server they called from: who it's about is for staff to pick (Who's this about?)."""
     fields = [(say(config, "calls.recent"), "\n".join(recent)[:MAX_FIELD])] if recent else []
-    return Card("calls", "called", say(config, "calls.called", player=f"**{clean(name)}**", why=f": {clean(why)}" if why else ""),
+    return Card("calls", "called", say(config, "calls.called", player=tagged(name, player_id, server, bold=True), why=f": {clean(why)}" if why else ""),
                 heading(config, "hero", "A call for an admin"), fields, server=server, urgent=True, owner=PEOPLE)
 
 
@@ -365,27 +440,34 @@ def seeding(config: DiscordConfig, server: str, players: int) -> Card:
 
 def request(config: DiscordConfig, event: Event) -> Card:
     key = "requests.ban_asked" if event.get("needs") else "requests.asked"  # a moderator's strike that bans: an admin confirms it
-    return Card("requests", "asked", say(config, key, by=clean(event.get("by")), what=clean(event.get("what")), slot=event.get("slot") or event.get("number")), heading(config, "citizens", "A request"), server=event.server,
+    return Card("requests", "asked", say(config, key, by=actor(event, ""), what=clean(event.get("what")), slot=event.get("slot") or event.get("number")), heading(config, "citizens", "A request"), server=event.server,
                 subject=str(event.get("target_id") or "").lower(), subject_name=str(event.get("target_name") or ""), owner=PEOPLE, problem=f"request:{event.get('number')}")
 
 
+def _named(who: str) -> str:
+    """Someone named in a line: as they've been written already (a tag), or their name in bold."""
+    return who if isinstance(who, Shown) else f"**{clean(who)}**"
+
+
 def reported(config: DiscordConfig, reporter: str, record: str, player_id: str, player_name: str, server: str | None, why: str, said: list[str], problem: str, mention: str = "") -> Card:
+    """`server`: the one the reported player is on, if any: their tag says it. `{on}` is kept for a host's own words."""
     fields = [(say(config, "moderation.said"), "\n".join(clean(line) for line in said)[:MAX_FIELD])] if said else []
-    return Card("reports", "made", say(config, "reports.made", reporter=f"**{clean(reporter)}**{mention}", record=record, on=f" on {clean(server)}" if server else "", player=f"**{clean(player_name)}**", why=f": {clean(why)}" if why else ""), heading(config, "citizens", "A report"), fields,
+    return Card("reports", "made", say(config, "reports.made", reporter=_named(reporter) + mention, record=record, on=f" on {clean(server)}" if server else "", player=tagged(player_name, player_id, server or "", bold=True), why=f": {clean(why)}" if why else ""), heading(config, "citizens", "A report"), fields,
                 server=server, subject=player_id, subject_name=player_name, owner=PEOPLE, problem=problem)
 
 
 def enough_reports(config: DiscordConfig, people: int, player: str, minutes: str, ticket: str) -> Card:
-    return Card("reports", "many", say(config, "reports.many", people=people, player=f"**{clean(player)}**", minutes=minutes, ticket=ticket), heading(config, "hero", "A report"), owner=PEOPLE)
+    return Card("reports", "many", say(config, "reports.many", people=people, player=_named(player), minutes=minutes, ticket=ticket), heading(config, "hero", "A report"), owner=PEOPLE)
 
 
-def message_reported(config: DiscordConfig, reporter: str, record: str, author: str, channel: str, link: str, quoted: str, why: str, mention: str = "") -> Card:
+def message_reported(config: DiscordConfig, reporter: str, record: str, author: str, channel: str, link: str, quoted: str, why: str, mention: str = "", author_mention: str = "") -> Card:
     fields = [(say(config, "reports.the_message"), clean(quoted)[:MAX_FIELD] or say(config, "reports.no_text"))]
-    return Card("reports", "message", say(config, "reports.message", reporter=f"**{clean(reporter)}**{mention}", record=record, author=f"**{clean(author)}**", channel=f"#{clean(channel)}", link=link, why=f": {clean(why)}" if why else ""),
+    return Card("reports", "message", say(config, "reports.message", reporter=_named(reporter) + mention, record=record, author=_named(author) + author_mention, channel=f"#{clean(channel)}", link=link, why=f": {clean(why)}" if why else ""),
                 heading(config, "citizens", "A report"), fields, owner=PEOPLE)
 
 
-def appeal(config: DiscordConfig, member: str, about: str, player_id: str, player_name: str, server: str | None, case: str, said: list[str], answers: list[tuple[str, str]], *, came_with: str = "", also: list[str] | None = None, mention: str = "") -> Card:
+def appeal(config: DiscordConfig, member: str, about: str, player_id: str, player_name: str, server: str | None, case: str, said: list[str], answers: list[tuple[str, str]], *, came_with: str = "", also: list[str] | None = None, mention: str = "", on_server: str = "") -> Card:
+    """`server`: where what's appealed was given. `on_server`: where the player is now, which their tag says."""
     fields = [(question[:MAX_FIELD_NAME], clean(words)[:MAX_FIELD]) for question, words in answers if words]
     if case:
         fields.append((say(config, "appeals.the_case"), case[:MAX_FIELD]))
@@ -393,17 +475,18 @@ def appeal(config: DiscordConfig, member: str, about: str, player_id: str, playe
         fields.append((say(config, "appeals.also"), ", ".join(say(config, f"appeals.about_{kind}") for kind in also)))
     if said:
         fields.append((say(config, "moderation.said"), "\n".join(clean(line) for line in said)[:MAX_FIELD]))
-    return Card("appeals", "made", say(config, "appeals.made", member=f"**{clean(member)}**{mention}", what=say(config, f"appeals.about_{about}"), player=f"**{clean(player_name)}**") + (f" {came_with}" if came_with else ""), heading(config, "citizens", "An appeal"), fields,
+    return Card("appeals", "made", say(config, "appeals.made", member=_named(member) + mention, what=say(config, f"appeals.about_{about}"), player=tagged(player_name, player_id, on_server, bold=True)) + (f" {came_with}" if came_with else ""), heading(config, "citizens", "An appeal"), fields,
                 server=server, subject=player_id, subject_name=player_name, owner=PEOPLE, problem=f"appeal:{player_id}")
 
 
 def contacted(config: DiscordConfig, member: str, category: str, text: str, problem: str, mention: str = "") -> Card:
-    return Card("contact", "opened", say(config, "contact.opened", member=f"**{clean(member)}**{mention}", category=f" ({clean(category)})" if category else ""), heading(config, "citizens", "Someone needs the staff"),
+    return Card("contact", "opened", say(config, "contact.opened", member=_named(member) + mention, category=f" ({clean(category)})" if category else ""), heading(config, "citizens", "Someone needs the staff"),
                 [(say(config, "contact.what"), clean(text)[:MAX_FIELD])] if text else [], owner=PEOPLE, problem=problem)
 
 
 def opened_by_hand(config: DiscordConfig, who: str, player_id: str, name: str, server: str) -> Card:
-    return Card("tickets", "opened", say(config, "ticket.opened", who=clean(who), player=f"**{clean(name)}**"), heading(config, "citizens", "A ticket"), server=server or None, subject=player_id, subject_name=name, owner=PEOPLE)
+    """`server`: the one they're on, if any."""
+    return Card("tickets", "opened", say(config, "ticket.opened", who=clean(who), player=tagged(name, player_id, server, bold=True)), heading(config, "citizens", "A ticket"), server=server or None, subject=player_id, subject_name=name, owner=PEOPLE)
 
 
 def notify_players(config: DiscordConfig, server: str, players: int) -> Card:
@@ -424,6 +507,7 @@ def workshop_waiting(config: DiscordConfig, event: Event) -> Card:
 
 
 def audit(kind: str, text: str, config: DiscordConfig, server: str | None = None) -> Card:
+    """`text` as it's given: cleaned here, unless it's been written for Discord already (Shown)."""
     return Card("audit", kind, clean(text), heading(config, "citizens", "Audit"), server=server)
 
 
@@ -431,13 +515,13 @@ def audit(kind: str, text: str, config: DiscordConfig, server: str | None = None
 
 
 def compact(card: Card) -> str:
-    where = f"{clean(card.server)} · " if card.server else ""
-    return f"{where}{card.line}" + (f" · {card.footer}" if card.footer else "")
+    reach = where(card)
+    return (f"{reach} · " if reach else "") + card.line + (f" · {card.footer}" if card.footer else "")
 
 
 def embed(card: Card, colour: int) -> dict[str, Any]:
     """A card, as Discord's embed."""
-    footer = " · ".join(part for part in (clean(card.server) if card.server else "", card.footer) if part)[:MAX_FOOTER]
+    footer = " · ".join(part for part in (where(card), card.footer) if part)[:MAX_FOOTER]
     heading = card.heading[:240]
     room = MAX_CARD - len(heading) - len(footer)  # Discord refuses a card over 6,000 characters in all, so the line goes first and what's after it gets what's left
     line = card.line[:min(MAX_DESCRIPTION, room)]
@@ -468,4 +552,5 @@ def merged(cards: list[Card]) -> Card:
     lines = [card.line for card in cards]
     shown = lines[:30]
     text = "\n".join(shown) + (f"\n…and {len(lines) - len(shown)} more" if len(lines) > len(shown) else "")
-    return Card(first.feed, first.kind, text, first.heading, server=first.server, source=first.source)
+    return Card(first.feed, first.kind, text, first.heading, server=first.server, source=first.source,
+                reach=first.reach if all(card.reach == first.reach and card.server == first.server for card in cards) else "")

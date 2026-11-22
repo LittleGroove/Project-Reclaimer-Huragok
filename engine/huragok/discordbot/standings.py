@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from ..core import tags
 from ..servers import leaderboards
 from ..servers.leaderboards import Board, Card, words_of
 from .cards import Card as FeedCard
@@ -356,7 +357,8 @@ def record_of(part: DiscordPart, card: Card, *, mine: bool = False) -> dict[str,
     if official is not None and str(official["title"] or ""):
         grade = f" grade {official['grade']}" if official["grade"] else ""
         fields.append(("Project Reclaimer rank", f"{clean(official['title'])}{grade} · {official['exp']} EXP · as of <t:{int(official['as_of'])}:R>"))
-    return {"title": f"Service record · {clean(name)}", "description": line, "color": colour_value(part.file, COLOUR),
+    title = tags.tag(clean(name), card.player_id)  # whose: the start of their ID tells two of a name apart (core/tags.py)
+    return {"title": f"Service record · {title}", "description": line, "color": colour_value(part.file, COLOUR),
             "fields": [{"name": title, "value": value[:1024], "inline": True} for title, value in fields][:25],
             "footer": {"text": "From every game these servers reported"},
             **({"timestamp": _iso(card.last)} if card.last else {})}

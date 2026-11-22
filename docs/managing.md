@@ -337,10 +337,12 @@ isn't connected (player ID, address or range, with a time and a reason), `pardon
 remove`, no restart), and the VPN block (`vpn`, `vpn <address>`, `vpnallow`,
 `vpnrevoke`). Everything goes through the console with your name on it, so a ban,
 an unban and an admin added or removed here reach every server, as Huragok's own
-(`[automod] across_servers`). Every server keeps a ban list of its own: an in-game
-`/ban` is that server's alone. **E** puts one of this server's bans on every
-server's (on Huragok's list, so a new server gets it too), by the player ID,
-address or name the list shows: what `!banall` does in game. On a stopped server
+(`[automod] across_servers`). Every server keeps a ban list of its own, and with
+`across_servers` on every ban on one goes on the others, an in-game `/ban` too
+(one from before 0.7.0 at Huragok's next look, every 10 minutes). **E** puts one of
+this server's bans on every server's at once (on Huragok's list, so a new server
+gets it too), by the player ID, address or name the list shows: what `!banall`
+does in game. On a stopped server
 it shows the ban list from its folder (`dedicated bans`).
 
 ## Updates: U

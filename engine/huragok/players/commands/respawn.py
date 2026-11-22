@@ -91,7 +91,7 @@ class RespawnCommands(CommandsBase):
         own = target.id == call.player.id
         player = state.player_by_id(target.id)
         if player is None:
-            await call.reply(f"{target.name} isn't on this server now.")
+            await call.reply(f"{call.tag(target)} isn't on this server now.")
             return
         who = "you" if own else player.name
         now = time.monotonic()
@@ -157,7 +157,7 @@ class RespawnCommands(CommandsBase):
             respawn.sent = time.monotonic()
             return True
         if respawn.step == 1:
-            await respawn.call.reply(f"Couldn't respawn {'you' if respawn.own else respawn.player.name}: {reply_text}")
+            await respawn.call.reply(f"Couldn't respawn {'you' if respawn.own else respawn.call.tag(respawn.player)}: {reply_text}")
         else:
             await self._respawn_left_away(server, respawn, reply_text)
         return False
@@ -180,7 +180,7 @@ class RespawnCommands(CommandsBase):
         if not event.get("ok", True):
             self._respawn_over(server)
             if respawn.step == 1:
-                await respawn.call.reply(f"Couldn't respawn {'you' if respawn.own else respawn.player.name}: {why}")
+                await respawn.call.reply(f"Couldn't respawn {'you' if respawn.own else respawn.call.tag(respawn.player)}: {why}")
             else:
                 await self._respawn_left_away(server, respawn, why)
             return
@@ -209,8 +209,9 @@ class RespawnCommands(CommandsBase):
         # A player's own words aren't said to everyone as a [Server] line: unfiltered, it was a way round the word
         # list (audit 2026-11, 5.11). A reason staff give respawning someone else is said.
         why = f": {respawn.reason}" if respawn.reason and not respawn.own else ""
-        line = callout("respawn", f"{respawn.player.name} respawned on {team} team{why}." if respawn.own else
-                       f"{respawn.by} respawned {respawn.player.name} on {team} team{why}.")
+        who = self.ctx.names.public(respawn.player)  # everyone there reads it: their #number, no @number
+        line = callout("respawn", f"{who} respawned on {team} team{why}." if respawn.own else
+                       f"{respawn.by} respawned {who} on {team} team{why}.")
         try:
             await self.ctx.say(server, line)
         except RconError:
@@ -227,6 +228,6 @@ class RespawnCommands(CommandsBase):
         """The move back was refused: they're on the other team now, and the caller reads how to put them back."""
         self.log.warning("[%s] %s was left on %s: the move back to %s was refused: %s", server, respawn.player.name,
                          respawn.away, respawn.home, why)
-        await respawn.call.reply(f"{'You' if respawn.own else respawn.player.name} respawned, but on "
+        await respawn.call.reply(f"{'You' if respawn.own else respawn.call.tag(respawn.player)} respawned, but on "
                                  f"{respawn.away.capitalize()} team: the server wouldn't move "
                                  f"{'you' if respawn.own else 'them'} back ({why}).")

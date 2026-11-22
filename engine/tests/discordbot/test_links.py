@@ -84,7 +84,7 @@ def test_a_code_told_in_game_links_them_here(tmp_path: Path, run: Any, fake: Fak
             await wait_for(lambda: "Only you can see this" in everything() and "/link " + code in everything(),
                            timeout=10)
             _, token = fake.command("link", user=OTHER, code=code.lower().replace("-", " "))  # however they type it
-            assert "Linked: **Alice** is you" in await answer_text(fake, token)
+            assert "Linked: **Alice `cccccccc`" in await answer_text(fake, token)
             assert part.links.of_player(ALICE)["member"] == OTHER
             await wait_for(lambda: told(rcon, "stats show under that name"), timeout=10)  # and told in game
             _, token = fake.command("link", user=SOMEONE, code=code)
@@ -151,7 +151,7 @@ def test_the_stats_show_them_as_they_choose(tmp_path: Path, run: Any, fake: Fake
                 here = links.of_member(OTHER)["member_name"]  # as Discord says it is now: /link sees it again
                 assert links.shown_name(ALICE, "Alice") == {"both": f"{here} (Alice)", "game": "Alice"}[how], how
             _, token = fake.command("link", user=OTHER)
-            assert "You're linked to **Alice**" in await answer_text(fake, token) and "your name in game" in await answer_text(fake, token)
+            assert "You're linked to **Alice `cccccccc`" in await answer_text(fake, token) and "your name in game" in await answer_text(fake, token)
             assert not links.show(OTHER, "hidden") or links.how_shown(links.of_member(OTHER)) != "hidden"  # nobody's off the boards
             links.seen(OTHER, "Buck the Great")
             links.show(OTHER, "")
@@ -167,7 +167,7 @@ def test_unlinking_puts_the_game_name_back(tmp_path: Path, run: Any, fake: FakeD
             part = await up(huragok)
             part.links.use_code(part.links.new_code(ALICE, "Alice"), OTHER, "Buck")
             _, token = fake.command("unlink", user=OTHER)
-            assert "Unlinked from **Alice**" in await answer_text(fake, token)
+            assert "Unlinked from **Alice `cccccccc`" in await answer_text(fake, token)
             assert part.links.of_player(ALICE) is None and part.links.shown_name(ALICE, "Alice") == "Alice"
             _, token = fake.command("unlink", user=OTHER)
             assert "aren't linked" in await answer_text(fake, token)
@@ -188,7 +188,7 @@ def test_only_staff_unlink_when_the_setting_says_so(tmp_path: Path, run: Any, fa
             assert part.links.of_player(ALICE) is not None
             part.links.use_code(part.links.new_code(BRAVO, "Bravo"), FACULTY_USER, "the host")
             _, token = fake.command("unlink", user=FACULTY_USER)  # faculty is staff
-            assert "Unlinked from **Bravo**" in await answer_text(fake, token)
+            assert "Unlinked from **Bravo `dddddddd`" in await answer_text(fake, token)
 
     run(scenario())
 

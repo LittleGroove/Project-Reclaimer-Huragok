@@ -188,7 +188,7 @@ in the same place. `discord.toml` is read again within seconds of changing, with
   servers = ["Server 1"]
   ```
 
-  On those servers it's that rank. A look (`/whois`, `/server`) only needs the rank somewhere, but what reaches every server takes the rank they hold on all of them: `/ban`, `/unban`, `/banall`, `/promote`, `/demote`, `/admin`, the word and name lists, `/clearstrikes`, `/confirm`, `/deny` and a kick with a time. Their ban belongs in that server's console: a `ban` line typed for one server stays that server's.
+  With `across_servers` in `[automod]` on, as it is unless you change it, a rank on one server is a rank on every server, in Discord as in game: a role scoped like this counts on every server, as someone on one server's admin list is an admin on all of them. With it off, it's that rank on those servers only. A look (`/whois`, `/server`) only needs the rank somewhere, but what reaches every server takes the rank they hold on all of them: `/ban`, `/unban`, `/banall`, `/promote`, `/demote`, `/admin`, the word and name lists, `/clearstrikes`, `/confirm`, `/deny` and a kick with a time.
 
 ## 6. Choose where each message goes
 Every kind of message the bot posts has its own line in `[messages]` in `discord.toml`:
@@ -236,6 +236,22 @@ A card on the board reads **Online**, **Full**, **Restarting**, **Offline** (it 
 13. Have someone who isn't faculty try `/huragok setup`. They should be told no.
 
 ## What's what
+
+**How a player is written.** Everywhere the bot names a player (a card, a line in the logs,
+a choice in a list, an answer, a form's title) it's the same as in game:
+**Nate Higgers** `1a2b3c4d` [HugeGrass]. That's the name they go by now, the first 8
+characters of their player ID, and the server they're on (none when they're on no server).
+Choices in a player box and the ticket's **Now** line add their `#number` on that server,
+`(#4)`, which staff there can type. A card made from something a staff member picked by
+number says so: "picked as #4". Something done under an older name says "as Alpha". Players
+with one name are always told apart: `/appeal` and `/stats` ask which one when several
+fit, and `/report` lists each with their server. Everyone sees the 8 characters, as the
+game's own vote list shows the start of an ID; the whole ID is still only for admins
+(and `moderators_see_ids`). Staff are named one way too: their name in this Discord, with
+their player's when their account is linked: "Buck (Rookie `1a2b3c4d` [HugeGrass])".
+Probationary moderators' requests are "request 3" (`!confirm 3` as before), notes are
+"Note 3" and tickets "Ticket 12": `#` means a player, nothing else.
+
 | In Discord | |
 | --- | --- |
 | `/huragok claim <code>` | become faculty, with the window's code |
@@ -253,7 +269,7 @@ with a code), and only the person using it sees the answers.
 
 - **A box for each thing it takes,** with players suggested as you type: only who it could do anything to, saying how they stand. `/unban` lists who's banned, `/letback` who's kicked or banned, `/unmute` who's muted, `/allowvote` who's lost their votes, `/clearstrikes` who has strikes and `/demote` who has a rank; `/ban`, `/mute` and `/novote` leave out who it already stands for; `/warn`, `/team` and `/respawn` only offer who's in a game. Each reads under the name they were last seen with, with an old name if that's what you typed. That's only what's offered: anyone can still be typed in, by name or by their whole player ID, as someone who's forgotten an old name may only have that. What you write in one box can't be read as another, so a reason starting "7d" is only a reason. The word list's commands have a box for each part of a line, in any order: `/banword` takes `words`, `mutes`, `kicks`, `bans` and `listname`, `/changebanword` a `listname` and its new steps, `/unbanword` `words` or a `listname` (alone, the whole list, after asking). `listname` suggests the lists, and `/unbanname` the banned names. `/respawn` only asks who.
 - **Exactly the game's command:** the same rank from `commands.toml`, the same rule that nobody acts on their own rank or above, and a probationary moderator's are requests. It runs as `!kick` would, so what reaches every server still does. Someone who's left can be kicked with a time, picked from the list as you type.
-- **Which server:** if none's named, a command about each server answers for them all, and one that changes something goes where the player is, or asks rather than guessing.
+- **Which server:** if none's named, a command about each server answers for them all, and one that changes something goes where the player is, or asks rather than guessing. With `across_servers` in `[automod]` on, for a mute, kick, ban, strike, unban, letting back or taking votes away, the server is only where it's sent from: what it does reaches every server, and the box says so. `/mutes` and `/novotes` then answer once, as those lists are every server's.
 - **Answers** are only the asker's unless `public` in `[commands]` lists the command; those go from the channel after a while. Anything in `confirm` under `[console]` asks first here too.
 - **Who's shown what:** the list is long, so staff's commands only show to members with the Discord permission in `staff_permission` (Manage Messages unless you change it, on the **Commands** panel). So do `/note`, `/flag`, `/ticket`, `/case`, `/server` and `/tickets`. `/huragok check` says if a role you've given a rank wouldn't see them. Showing a command gives nobody the right to use it: your rank decides.
 - **The word list and the banned names,** `/bannedwords` and `/bannednames`, come whole however long they are: every list, every word and what each strike does, every name and the names the staff allowed, over as many messages as it takes.
@@ -289,21 +305,22 @@ Superintendent, Vergil and Huragok for plain words and the bot's own name.
 
 - **Ticket:** one incident and its card, with buttons. Its number is in the footer. What's done on it updates it, and it becomes the record: no more cards are posted about it. A **Now** field says where the player is and how they stand, while it's live.
 - **Case:** one action on a player's record. A ticket can hold several. `/case` takes this number, which is on a card's lines and in `!whois`.
+- **How far:** a card's footer starts with how far what it's about reaches: "Every server · ticket 413 · case 415" for a mute, kick or ban someone gave, and for the word lists, banned names and rules; "Server 1 only · ticket 412" for what stays on one server (a vote's kick, the server's own, everything with `across_servers` off); nothing for a strike or clearing strikes, which are the player's. A compact line starts with the same words, and `/case` says "On every server" or "On Server 1 only". A card about what happened on a server (a crash, a join) names it. A card's **Their record** is what came before it: its own action isn't counted, Vergil's own actions aren't either, and strikes are ("2 strikes, 1 kick").
+- **Let back** is lifting a kick (`!pardon`, `/letback`), and **clearing strikes** is `!pardonplayer` and `/clearstrikes`: cards and buttons use those words (a **Let back** card, a **Strikes cleared** card, the **Clear strikes** button). "Pardon" is only in the game's command names.
 - **Log channels:** `logs` and `huragok-logs`, where finished tickets go. Their buttons still work, and pressing one brings the ticket back.
 
 **What the buttons do.** Pressing one says nothing unless it failed or the card moved: the card's the answer. What your rank can't do is refused at the press, before any form; a time over your limit is refused when you send the form. If someone else acted on that player in the last minute, it says who and does nothing: press again if you still mean it.
 
 | Button | Shows on | What it does | What the player reads |
 | --- | --- | --- | --- |
-| **Mute** | a player's ticket; greyed out if they're banned and gone | asks how long (needed) and why. Nobody hears or reads them. Someone who's left is muted as they next join. It doesn't count towards their strikes: **Strike** does | everyone: `Bravo was muted by <you>`, and they read why |
-| **Unmute** | instead of Mute while muted | at once | their mute ends |
-| **Kick** | a player's ticket; greyed out if they're banned and gone | asks how long and why. Empty: the server's own 10, 30, 60, then 120 minutes, and they must be on. A time: off every server that long (a moderator's is 1 day at most, `moderators_kick_at_most` in `[automod]`). `perm` is a ban | everyone: `was kicked by <you>`. With a time the server says they were banned, as it's the server's timed ban underneath. At the door: how long is left, and why |
+| **Mute** | a player's ticket; greyed out if they're banned and gone | asks how long (needed) and why. Nobody hears or reads them, on every server. Someone who's left is muted as they next join, on any server. It doesn't count towards their strikes: **Strike** does | everyone: `Bravo was muted by <you>`, and they read why, ending "(every server)" |
+| **Unmute** | instead of Mute while muted | at once, every server | their mute ends |
+| **Kick** | a player's ticket; greyed out if they're banned and gone | asks how long and why. Empty: the server's own 10, 30, 60, then 120 minutes, off every server as long, and they must be on. A time: off every server that long (a moderator's is 1 day at most, `moderators_kick_at_most` in `[automod]`). `perm` is a ban | everyone: `was kicked by <you>`. With a time the server says they were banned, as it's the server's timed ban underneath. At the door: how long is left, and why ("Kicked off every server for 7 days: …") |
 | **Let back** | instead of Kick while they're kept out, or beside it if they're on another server | at once: they can join every server. A moderator can only lift what a moderator could have given | nothing: they find out by joining |
 | **Ban** | a player's ticket | asks why (needed). For good, every server: ID, address, device | everyone: `was banned by <you>`. At the door: why, and how to appeal if you set that |
-| **Unban** | instead of Ban | at once, every server. Another server's own `/ban` stays | nothing |
-| **Ban everywhere** | someone banned on another server joining | puts that ban on every server | as for a ban |
-| **Strike** | a report, or wherever `buttons` says | asks which rule and why. It goes on the word list's ladder, for what the word list can't hear, like voice | as for what the ladder does next |
-| **Pardon strike** | a strike from Vergil, or a strike that joined a card | asks why. Clears every strike on that rule, or on each rule the card's strikes are on if it has several (never a strike from before the card), and lifts what they did: unmuting alone leaves it counting | nothing |
+| **Unban** | instead of Ban | at once, every server: every ban on them, a server's own `/ban` too | nothing |
+| **Strike** | a report, or wherever `buttons` says | asks which rule and why. It goes on the word list's ladder, for what the word list can't hear, like voice, whatever Vergil is on that server | as for what the ladder does next, on every server |
+| **Clear strikes** | a strike from Vergil, or a strike that joined a card | asks why. Clears every strike on that rule, or on each rule the card's strikes are on if it has several (never a strike from before the card), and lifts what they did: unmuting alone leaves it counting | nothing |
 | **Warn** | a report, while they're on | asks why (needed) | a private warning |
 | **Whois** | a player's ticket | their record, for you alone | nothing |
 | **Said** | wherever `buttons` says | their last lines of chat, for you alone | nothing |
@@ -323,9 +340,9 @@ Superintendent, Vergil and Huragok for plain words and the bot's own name.
 | **Contact the staff** | a channel everyone reads | opens a private thread with staff | |
 | **Join** | the status board | opens the server's join page | |
 
-Which of Mute, Kick, Ban, Strike, Warn, Whois, Said and Add note a card has is `buttons` in `[tickets]`, and for a report `buttons` in `[reports]`: the file's job. An appeal or a request has its own answers in place of Mute, Kick, Ban, Strike and Warn. "Every server" here and below holds with `across_servers` in `[automod]` on, as it is unless you change it. Off, what's done stays on the server it's done on.
+Which of Mute, Kick, Ban, Strike, Warn, Whois, Said and Add note a card has is `buttons` in `[tickets]`, and for a report `buttons` in `[reports]`: the file's job. An appeal or a request has its own answers in place of Mute, Kick, Ban, Strike and Warn. "Every server" here and below holds with `across_servers` in `[automod]` on, as it is unless you change it. Off, what's done stays on the server it's done on. A card from before 0.7.0 can still have **Ban everywhere**, which put a ban from one server's list on every server's: new cards don't, as every ban is every server's now.
 
-A probationary moderator's press is a request, as their command is: it's written on the card, with a card of its own for someone to confirm. How it goes is written on the card they asked from, and they're told by DM. They can look and write notes freely. Scoped ranks count on the card's own server, as above.
+A probationary moderator's press is a request, as their command is: it's written on the card, with a card of its own for someone to confirm. How it goes is written on the card they asked from, and they're told by DM. They can look and write notes freely. Scoped ranks count as above: on every server with `across_servers` on, else on the card's own server.
 
 **Staff tools.** Switch these on in **F**, and choose where each goes in **E**:
 
@@ -334,8 +351,8 @@ A probationary moderator's press is a request, as their command is: it's written
 - **What the bot says only to you goes by itself:** a word about what happened after 10 minutes, and a command's answer or something you asked to read after 14, the most Discord allows (`[answers]`). What everyone can see is only there if you've asked for it.
 - **`/server [name]`** (with the `commands` feature) shows a server's state, seen only by you, for anyone with a staff rank. Those with `power_rank` (admins and above, unless you change it) also get its power buttons: Start, Stop, Restart, Restart after the game, Restart when empty, Cancel, Check for updates. Each asks first, with a **Yes, and say why** that everyone on will read, and goes in the audit log, and a press from an alert goes on that alert; Check for updates only asks GitHub, so it does neither. `power_buttons` says which there are (the **Commands** panel). **Refresh** looks again. A ticket in `alerts` has a **Server** button that opens it. **`/status`** lists the servers, for anyone.
 - **The typed console** (`console`, in `/huragok setup` → Console) lets staff type in a console channel. A line starting with `!` is one of Huragok's commands, as your rank allows in game, and on probation it's a request. Anything else is a console line (`players`, `say hello`), with the same checks as the relay: `raw_rank` says who can (`moderator`, `admin`, `faculty`, or `off` for nobody; admins and above unless you change it), and nobody acts on someone of their own rank or above.
-  - **Answers** come back as a reply, or in a thread; long ones as a file, or in pieces. Everyone with a rank reads this channel, so answers never show an address, or a whole ID unless `moderators_see_ids` is on, whoever asked. Lines in `confirm` ask "Send `line` to **server**?" first.
-  - **Everyone else's lines** are ignored, or deleted if you choose. A line starting with `ignore_prefix` (`//`, say) is ignored from anyone, so staff can talk there. `audit` says which lines go in the audit log.
+  - **Answers** come back as a reply, or in a thread; long ones as a file, or in pieces. Everyone with a rank reads this channel, so answers never show an address, or a whole ID unless `moderators_see_ids` is on, whoever asked. Lines in `confirm` ask "Send `line` to **server**?" first, or "to **every server**?" for what reaches every server: the lists and roles, and with `across_servers` on a mute, kick, ban, strike, unban or letting back, with `!` or without (a console `ban` line is passed on to every server too).
+  - **Everyone else's lines** are ignored, or deleted if you choose. A line starting with `ignore_prefix` (`//`, say) is ignored from anyone, so staff can talk there. `audit` says which lines go in the audit log, as "Mod: !mute Bravo 1d spam" by their name here and the player's, with " (on Server 1)" after a line that's only that server's.
   - **A password** typed there is deleted at once, if the bot has Manage Messages.
   - **It clears itself:** once nothing's been said or pressed for `clear_after_minutes` (10, unless you change it on the Console panel, and at least 5), what was there goes to the logs as a file and the channel's emptied, all but the menu and anything pinned, ready to use again; the server each person picked is forgotten too (`forget_server`). What was in the channel before the console first looked at it is never touched, and nothing's removed unless the file got there. Without **Manage Messages** in that channel, or if it's also used for something else, nothing happens at all, and `/huragok check` says so.
   - **It needs Message Content Intent** in the developer portal (the **Bot** page, under **Privileged Gateway Intents**, then **Save Changes**). The bot notices the switch by itself within a few minutes, and signs in again; no new invite for that. It asks for messages only while the console, or Contact's transcripts, are on.
@@ -358,7 +375,7 @@ A probationary moderator's press is a request, as their command is: it's written
 - With the `commands` feature, **`/status [server]`** is for anyone, and **`/case <number>`** shows staff a case by its number on a card or in `!whois`, which isn't the ticket's number. **`/tickets`** lists what's live, for staff alone: what someone's waiting on first, then what's wrong, then the rest, each with what was last done; if it's long, it's a file. Staff can drop clips and screenshots into a card's thread: they stay with it.
 - **`/ticket <player>`** (with the `commands` feature, for those who can close a ticket) posts a card with the buttons for anyone, any time.
 - **A probationary moderator's request** (`feed.requests`) is a ticket in `reports` with **Confirm** and **Deny**, however they asked, in game or with a slash command. Either decision, here or typed in game, is written on the card and closes it to `logs`.
-- **Vergil's strikes** (`feed.vergil`) are one live card per player, in `staff`: a later strike adds a line, and **Acknowledge** clears the lot. A strike on someone with an open report goes on the report's card too.
+- **Vergil's strikes** (`feed.vergil`) are one live card per player, in `staff`: a later strike adds a line, and **Acknowledge** clears the lot. A strike on someone with an open report goes on the report's card too. A staff strike is one incident with what came just before it: it goes on the player's live card, or on the card someone's mute, kick or ban of them made in the last 30 minutes, rather than opening another. Its line says what it did and how far, with no server: "Mod gave **Bravo** strike 1 of 2 for slurs: muted for 7 days on every server, from when they next join".
 - **A word from a list that only reports** (`vergil-heard`) is a line on that same card, or a card of its own, with what they said: nothing was done in game, so it's the staff's to decide, with the usual buttons. **A name with one of those words** (`vergil-name-asked`) is a card with two buttons, **Ban the name** and **Allow name**, for whoever may use `/banname`: either closes it. See [automod.md](automod.md#lists-that-only-report).
 - **Problems with a server** are one ticket in `alerts` each, added to while it lasts and closed when it's over: a crash when the server's back, a slow server when the watchdog says it's healthy, a failed update when one works. A stop by someone closes it too. A FAULTED server's card says when it tries again. So `alerts` holds what's wrong now, but for two things: nothing says a relay lockout or a part switched off is over, so those need **Acknowledge**, and anything left untouched finishes after `stale_after_days`.
 - **What has nothing to act on** (votes, joins, servers starting) is one line in a log channel.
@@ -366,7 +383,8 @@ A probationary moderator's press is a request, as their command is: it's written
 - **The watch list** (`feed.watch`) tells staff about someone back soon after a kick (within
   `back_after_kick_minutes` of the server's block ending, unless they were pardoned), a name
   made to look like a moderator's or faculty's (`0livia` for Olivia), someone new on a nearly empty
-  server, someone banned on another of your servers, and the server's anti-cheat acting.
+  server, someone banned on another of your servers (only with `across_servers` off: on,
+  every ban is every server's), and the server's anti-cheat acting.
   Each is its own line under `[messages]`, so any of them can go elsewhere or be turned off.
 - **Notes and flags** (`notes`) are what staff write about a player. `/note add` (`days` says when it's dropped), `/note list`
   and `/note remove`; `/flag set`, `/flag list` and `/flag clear`. They show on `!whois` and on tickets. With the
@@ -385,7 +403,7 @@ A probationary moderator's press is a request, as their command is: it's written
 
 | Setting | What it does |
 | --- | --- |
-| `[feeds] servers` | which servers the feeds are about: `"*"`, or a list of names |
+| `[feeds] servers` | which servers the feeds are about: `"*"`, or a list of names. What reaches every server, and what's the player's (a strike), is every feed's |
 | `[feeds] style` | `card` or `compact` (one line), for what's a post, not a ticket |
 | `[feeds] also` | webhook addresses to post copies to, a partner's Discord say. Copies have no buttons |
 | `[feeds] merge_seconds` | a burst of one kind of post becomes one when it's over |

@@ -232,6 +232,9 @@ class DiscordConfig:
     warnings: list[str] = field(default_factory=list)
     digest: str = ""
     says_mode: bool = True  # whether the file names a mode. One that doesn't is empty, or being written, or gone
+    # () -> whether a rank on one server is a rank on all of them ([automod] across_servers, which the bot sets as it
+    # reads the file); None: each server's, as a file read on its own is
+    everywhere: Any = field(default=None, repr=False, compare=False)
 
     @property
     def mode(self) -> str:

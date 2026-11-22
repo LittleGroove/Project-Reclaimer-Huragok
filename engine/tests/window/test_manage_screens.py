@@ -111,13 +111,37 @@ def test_multi_line_values_are_replaced_whole(tmp_path: Path) -> None:
 def test_events_as_console_lines() -> None:
     assert describe_event(Event("rcon.chat", "S", {"channel": "all", "name": "Alice", "text": "gg"})).endswith(" Alice: gg")
     assert "[team] Bo: go" in describe_event(Event("rcon.chat", "S", {"channel": "team", "name": "Bo", "text": "go"}))
-    assert "+ Cy joined (#3)" in describe_event(Event("rcon.join", "S", {"name": "Cy", "number": 3}))
+    assert "+ Cy (#3) [S] joined" in describe_event(Event("rcon.join", "S", {"name": "Cy", "number": 3}))
     assert "* kick Dee by Alice: camping" in describe_event(Event("rcon.kick", "S", {"name": "Dee", "by": "Alice",
                                                                                       "reason": "camping"}))
     assert "vote passed: kick Dee" in describe_event(Event("rcon.vote", "S", {"state": "passed", "subject": "kick Dee"}))
     assert "game: playing Guardian Slayer" in describe_event(Event("rcon.phase", "S", {"phase": "playing", "map": "Guardian",
                                                                                         "mode": "Slayer"}))
     assert describe_event(Event("rcon.kill", "S", {"killer": "1", "victim": "2"})) is None
+
+
+def test_console_lines_write_every_player_as_their_tag() -> None:
+    """Each player the one way (core/tags.py), with the #number they had on that server: what the host's own `kick #3`
+    was, a 0.10 join before its name, the name as it comes in, a leave that names nobody, an address ban."""
+    from huragok.window.whoswho import Known
+
+    cy, dee, alice = "c" * 64, "d" * 64, "a" * 64
+    rows = [{"name": "S", "online": [{"number": 3, "name": "Dee", "id": dee}]}]
+    known = Known(lambda: rows, None)
+    line = lambda kind, **data: describe_event(Event(kind, "S", data), known)  # noqa: E731
+    assert "+ (no name yet) cccccccc (#2) [S] joined" in line("rcon.join", number=2, id=cy, name="")  # 0.10
+    assert "= Cy cccccccc (#2) [S]: their name came in" in line("state.named", number=2, id=cy, name="Cy")
+    known.learn(cy, "Cy")
+    assert "- Cy cccccccc (#2) [S] left" in line("rcon.leave", number=2, id=cy, name="")
+    assert "[team] Cy cccccccc (#2) [S]: go" in line("rcon.chat", channel="team", number=2, id=cy, name="Cy", text="go")
+    # The kick the host typed as `kick #3`: who #3 was, and who did it by their tag too.
+    assert "* kick Dee dddddddd (#3) [S] by Alice aaaaaaaa: camping" in line(
+        "rcon.kick", id=dee, name="Dee", by="Alice", by_id=alice, reason="camping")
+    assert "* ban 203.0.113.4 by Alice" in line("rcon.ban", ip="203.0.113.4", by="Alice")  # no name: the address
+    assert "* unban Gone by the Superintendent" in line("rcon.unban", target="Gone", by="the Superintendent")
+    assert "* role moderator given to Dee dddddddd (#3) [S] by Alice" in line("rcon.role_added", id=dee, role="moderator",
+                                                                               by="Alice")
+    assert "* a role taken from Dee dddddddd (#3) [S]" in line("rcon.role_removed", id=dee, name="Dee")
 
 
 def test_the_manage_screens(tmp_path: Path, run) -> None:
@@ -193,6 +217,37 @@ def test_enter_at_a_new_value_leaves_the_setting_and_passwords_stay_hidden(tmp_p
     # Emptying a list is still possible, after a yes.
     edit("folder", "admins", ["ENTER", "Y", "x"])
     assert read_toml(config)["admins"] == []
+
+
+def test_the_admins_lists_show_who_each_is(tmp_path: Path, run) -> None:
+    """dedicated.toml's admins and vote_kick_immune are bare player IDs: shown with the name Huragok's records have
+    (in the list, their tags; where the list is typed again, each whole). The file keeps the IDs alone."""
+    import io
+
+    from huragok.core.storage import Storage
+
+    settings_path = manage_root(tmp_path)
+    database = tmp_path / "huragok.sqlite3"
+    settings_path.write_text(settings_path.read_text(encoding="utf-8").replace(
+        'database = ""', f'database = "{database.as_posix()}"'), encoding="utf-8")
+    storage = Storage(database)
+    storage.record_join("a" * 64, "Alice", None)
+    storage.close()
+    controller = ManageController(settings_path)
+    settings = controller.refresh_settings()
+    server = settings.servers[0]
+    set_top_key(server.config_path, "admins", ["a" * 64, "e" * 64])
+    terminal = FakeTerminal()
+    terminal.transcript = io.StringIO()
+    menu = Menu(controller, terminal, StrictKeyboard(["ENTER", "N", "x"]), RecentLog())  # type: ignore[arg-type]
+    admins = setting("admins", "folder")
+    assert menu._setting_text(admins, ["a" * 64, "e" * 64]) == "Alice aaaaaaaa, (no name yet) eeeeeeee"
+    s, v, w = next((e, v, w) for e, v, w in catalogue(server.config_path, server.name) if e is admins or
+                   (e.key, e.scope) == ("admins", "folder"))
+    run(menu._edit_setting(settings, server, controller.rows()[0], s, v, w))
+    shown = "".join(terminal.output)
+    assert f"Alice {'a' * 64}" in shown and "now the 2 above" in shown
+    assert read_toml(server.config_path)["admins"] == ["a" * 64, "e" * 64]
 
 
 def test_console_lines_that_set_a_password_are_masked() -> None:

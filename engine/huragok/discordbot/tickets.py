@@ -84,6 +84,7 @@ QUESTIONS = ("reports-", "appeals-", "requests-", "contact-", "tickets-", "calls
 NAME_ASKED = "vergil-name-asked"  # a name with a word of a list that only reports: its two answers are its only buttons
 BUTTONS_PER_ROW = 5
 CARD_OPENS_AFTER_SECONDS = 10  # a strike's card opens this long after the strike at most
+SAME_INCIDENT_SECONDS = 1800  # a staff strike this soon after a person's act on the same player goes on that act's card
 
 
 class Tickets:
@@ -150,7 +151,7 @@ class Tickets:
         log_in = place if shape == LOG else "logs" if card.owner == PEOPLE else "huragok-logs"
         now = self.clock()
         stored = json.dumps({"feed": card.feed, "kind": card.kind, "line": card.line, "heading": card.heading, "fields": card.fields, "footer": card.footer, "server": card.server,
-                             "source": card.source, "colour": card.colour, "rule": card.rule})
+                             "source": card.source, "colour": card.colour, "rule": card.rule, "reach": card.reach, "case": card.case})
         cursor = self.db.execute("INSERT INTO discord_tickets (opened, touched, kind, owner, state, player_id, player_name, server, problem, card, persona, open_in, log_in, place, channel, message, thread) "
                                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')",
                                  (now, now, card.message, card.owner, state, card.subject, card.subject_name, card.server or "", card.problem, stored,
@@ -176,6 +177,17 @@ class Tickets:
         if roles and ticket["message"]:
             text = f"{mention}{card.line} {say(self.config, 'ticket.number', number=number)}: {self.link(ticket)}"
             self.part.poster.post(str(ticket["persona"]), message(text[:1900], silent=False, ping_roles=roles), channel=str(ticket["channel"]), priority=ALERT, what="a server that's got worse", tag=f"channel:{ticket['channel']}")
+
+    def latest_of(self, player_id: str, seconds: float = SAME_INCIDENT_SECONDS) -> int:
+        """The card a staff member's strike on this player belongs to, if there is one: their live card (a kick's, Vergil's strikes, a watch), or the card a
+        person's act on them made in the last `seconds` (30 minutes), wherever it's filed. A kick that brought someone into Discord, then the strike for it,
+        is one incident: punishments stack on its ticket (the host's call, 21 November 2026). Not an appeal, which is theirs; 0 if there's none."""
+        if not player_id:
+            return 0
+        rows = self.db.query("SELECT number FROM discord_tickets WHERE player_id = ? AND problem NOT LIKE 'appeal:%' AND problem NOT LIKE 'contact:%' AND "
+                             "(state IN (?, ?) OR (owner = ? AND kind LIKE 'moderation-%' AND state != ? AND opened >= ?)) ORDER BY number DESC LIMIT 1",
+                             (player_id.lower(), OPEN, ACTIVE, PEOPLE, CLOSED, self.clock() - seconds))
+        return int(rows[0]["number"]) if rows else 0
 
     def ongoing(self, problem: str) -> int:
         """The live ticket for this one incident: 0 if there isn't one."""
@@ -211,7 +223,7 @@ class Tickets:
         if ticket is None or not message_id:
             return
         config, channel = self.config, str(ticket["channel"])
-        name = f"{say(config, 'ticket.number', number=number)}: {ticket['player_name'] or ticket['kind']}"[:100]
+        name = f"{say(config, 'ticket.number', number=number)}: {self.named(ticket)}"[:100]
 
         async def send() -> Any:
             return await to_thread(rest.start_thread, config.token, channel, message_id, name)
@@ -228,6 +240,12 @@ class Tickets:
             return True
 
         self.part.outbox.put(send, priority=STATUS, bucket=f"channel:{channel}", what=f"ticket {number}'s thread", on_done=started, on_fail=failed)
+
+    def named(self, ticket: Any) -> str:
+        """What a ticket's thread is called after its number: who it's about, in plain words (part.label), or its kind."""
+        if ticket["player_id"]:
+            return self.part.label(str(ticket["player_id"]), str(ticket["player_name"] or ""))
+        return str(ticket["player_name"] or ticket["kind"])
 
     def _close_thread(self, ticket: Any, closed: bool) -> None:
         """Locked and hidden as it finishes, and back if someone acts on the card again. The bot needs Manage Threads: without it the thread only stays as it is."""
@@ -389,7 +407,9 @@ class Tickets:
 
     def request_decided(self, event: Event) -> None:
         """A probationary moderator's request, decided here or in game: on its card, which is finished; on the card they asked from, as that's where someone would look; and to them, if they asked from Discord."""
-        who = cards.clean(str(event.get("by") or ""))
+        # Its by_id is whoever asked (_tell_asker); whoever decided is decided_by_id (0.7.0), written as the part writes anyone who acts.
+        decider = str(event.get("decided_by_id") or "")
+        who = self.part.actor(decider, str(event.get("by") or "")) if decider else cards.clean(str(event.get("by") or ""))
         why = cards.clean(event.get("why"))
         said = say(self.config, "ticket.confirmed", who=who, what=cards.clean(event.get("what"))) if event.get("status") == "confirmed" else say(self.config, "ticket.denied", who=who, why=f": {why}" if why else "")
         for row in self.db.query("SELECT number FROM discord_tickets WHERE problem = ? AND state IN (?, ?)", (f"request:{event.get('number')}", OPEN, ACTIVE)):
@@ -529,20 +549,26 @@ class Tickets:
         if player_id and ticket["state"] in LIVE and (now := self._now_words(player_id)):
             fields.append((say(config, "ticket.now"), now))
         if player_id and options.get("record", True):
-            fields.append((say(config, "moderation.record"), self.part.record_of(player_id) or say(config, "record.none")))
+            # What came before this incident: before its case, or before what opened it (a strike's has no case, and its card opens a few seconds on)
+            record = self.part.record_of(player_id, str(kept.get("case") or ""),
+                                         until=None if kept.get("case") else float(ticket["opened"]) - CARD_OPENS_AFTER_SECONDS - 1)
+            fields.append((say(config, "moderation.record"), record or say(config, "record.none")))
         if player_id and features.BY_KEY["notes"].is_on(config):
             noted = self.part.noted(player_id, int(config.section("notes").get("note_lines", 3) or 0))
             if noted:
                 fields.append((say(config, "moderation.notes"), noted[:cards.MAX_FIELD]))
         footer = " · ".join(part for part in (say(config, "ticket.number", number=ticket["number"]), kept.get("footer") or "") if part)
         taken = sum(len(name) + min(len(value), cards.MAX_FIELD) for name, value in fields) + len(footer) + len(str(kept.get("heading") or "")) + len(str(kept.get("line") or ""))
-        card = Card(kept.get("feed") or "", kept.get("kind") or "", self._story(ticket, kept.get("line") or "", CARD_ROOM - taken), kept.get("heading") or "", fields, footer, kept.get("server"), kept.get("source") or "")
+        card = Card(kept.get("feed") or "", kept.get("kind") or "", self._story(ticket, kept.get("line") or "", CARD_ROOM - taken), kept.get("heading") or "", fields, footer, kept.get("server"), kept.get("source") or "",
+                    reach=str(kept.get("reach") or ""))
         return cards.embed(card, self._colour(ticket, kept))
 
     def _now_words(self, player_id: str) -> str:
-        """Where they are and how they stand: the footer is only where it began, and they may have moved on."""
+        """Who they are now and how they stand: their tag where they're on, with their #number there, which staff on that
+        server can type ("Bravo `1a2b3c4d` (#4) [Alpha] · muted"); the card's line is who they were as it began, and they
+        may have moved on, or changed their name."""
         standing = self.standing(player_id)
-        where = [f"on {cards.clean(name)} as #{player.number}" for name, state in self.part.ctx.servers.items() if state.connected and (player := state.player_by_id(player_id.lower()))]
+        where = [self.part.tag(player.id, player.name, server=str(name), handle=f"#{player.number}") for name, state in self.part.ctx.servers.items() if state.connected and (player := state.player_by_id(player_id.lower()))]
         return " · ".join([*where, *[word for word, on in (("muted", standing["muted"]), ("kicked", standing["kicked"]), ("banned", standing["banned"])) if on]])
 
     def _story(self, ticket: Any, line: str, room: int) -> str:
@@ -617,8 +643,8 @@ class Tickets:
             names += after
             if not asking and not appealing and (str(ticket["kind"]) == "vergil-strike" or (str(ticket["kind"]) == "vergil-heard" and self.struck_on_card(ticket))):
                 names.append("pardonstrike")  # a strike Vergil got wrong. Unmuting alone leaves it counting
-            if str(ticket["kind"]) == "watch-banned-elsewhere":
-                names.append("banall")  # usually what this card is for
+            # No "Ban everywhere" (up to 0.7.0, on this card): with across_servers on every ban is every server's, and with it off there's
+            # no every-server list to put one on (!banall says so). Old cards keep theirs, and it says why if it can't.
         if str(ticket["kind"]).startswith("alerts-") and ticket["server"]:
             names.append("server")  # the power buttons, for whoever may use them, seen by them alone
         if not live and str(ticket["problem"]).startswith("appeal:") and self.part.appeals.still_kept_out(number):
@@ -631,12 +657,13 @@ class Tickets:
             names.append("acknowledge" if ticket["owner"] == HURAGOK else "close")
         buttons = [{"type": 2, "style": BUTTON_STYLES.get(name, 2), "label": say(config, f"button.{name}")[:80], "custom_id": f"huragok:t:{number}:{name}", **({"disabled": True} if name in greyed else {})} for name in dict.fromkeys(names)]  # a name twice in the file is one button
         rows = [{"type": 1, "components": buttons[start:start + BUTTONS_PER_ROW]} for start in range(0, len(buttons), BUTTONS_PER_ROW)]
-        if ticket["kind"] == "calls-called" and live:  # it stays, as the first pick can be wrong: its names are told apart by number and ID
+        if ticket["kind"] == "calls-called" and live:  # it stays, as the first pick can be wrong: each by their tag, with their #number there (staff on it type that)
             state = self.part.ctx.servers.get(str(ticket["server"]))
             players = list(state.players.values())[:25] if state is not None else []
             if players:
                 rows.insert(0, {"type": 1, "components": [{"type": 3, "custom_id": f"huragok:t:{number}:about", "placeholder": say(config, "ticket.about")[:150],
-                                                           "options": [{"label": f"{player.name} · #{player.number} · {str(player.id)[:8]}"[:100], "value": self.part.opaque(str(player.id)), "default": str(player.id) == player_id} for player in players]}]})
+                                                           "options": [{"label": self.part.label(str(player.id), player.name, server=str(ticket["server"]), handle=f"#{player.number}")[:100],
+                                                                        "value": self.part.opaque(str(player.id)), "default": str(player.id) == player_id} for player in players]}]})
         return rows
 
     def _undecided_request(self, ticket: Any) -> bool:

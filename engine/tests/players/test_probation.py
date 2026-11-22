@@ -32,42 +32,42 @@ def test_a_request_waits_for_a_moderator_and_happens_as_theirs(tmp_path: Path, r
         async with running(tmp_path) as (sup, fake, _):
             await on_probation(sup, fake)
             await fake.chat(ALICE, "Alice", "!players")  # looking works as for a moderator
-            await heard(fake, ALICE, "#4 Bravo")
+            await heard(fake, ALICE, "Bravo dddddddd (#4) [LG Test Server]")
             await fake.chat(ALICE, "Alice", "!kick bravo spamming")
-            await heard(fake, ALICE, "Sent for review as #1: !kick Bravo spamming.")
-            staff_line = ("[o_o] BE A HERO! REPORT VIOLATORS! Alice (probationary moderator) asks, #1 on "
-                          f"{SERVER}: !kick Bravo spamming. !confirm 1 or !deny 1")
-            for who in (MOD, ADMIN, FACULTY):
-                await heard(fake, who, staff_line)
+            await heard(fake, ALICE, "Sent for review as request 1: !kick Bravo dddddddd (#4) [LG Test Server] spamming.")
+            staff_line = ("[o_o] BE A HERO! REPORT VIOLATORS! Alice (probationary moderator) asks, request 1 on "
+                          f"{SERVER}: !kick Bravo dddddddd [{SERVER}] spamming. !confirm 1 or !deny 1")
+            for who in (MOD, ADMIN, FACULTY):  # a long line comes in pieces: 120 characters each
+                await wait_for(lambda: staff_line in " ".join(tells_to(fake, who)))
             await asyncio.sleep(0.3)
             assert not fake.named("kick") and not tells_to(fake, BRAVO)[-1:] == [staff_line]
             assert not any("Alice" in t for t in tells_to(fake, BRAVO))  # the player named reads nothing
             await fake.chat(ALICE, "Alice", "!mute bravo 30m rude")
-            await heard(fake, ALICE, "Sent for review as #2: !mute Bravo 30m rude.")
+            await heard(fake, ALICE, "Sent for review as request 2: !mute Bravo dddddddd (#4) [LG Test Server] 30m rude.")
             await fake.chat(ALICE, "Alice", "!confirm 1")  # never their own (nor anyone's)
             await heard(fake, ALICE, "!confirm is for moderators")
             await fake.chat(MOD, "Mod", "!requests")
-            await heard(fake, MOD, "Alice asks !mute Bravo 30m rude")
+            await heard(fake, MOD, "Alice asks !mute Bravo dddddddd (#4) [LG Test Server] 30m rude")
             await fake.chat(MOD, "Mod", "!confirm 1")
             kick = await wait_for(lambda: fake.named("kick"))
             assert kick[0]["args"][0] == BRAVO and kick[0]["by"] == "Mod"  # the confirmer's own kick
-            await heard(fake, MOD, "Confirmed #1.")
-            await heard(fake, ALICE, "[^_^] YOUR TAX DOLLARS AT WORK! Mod confirmed your request #1, !kick Bravo "
-                                     "spamming.")
+            await heard(fake, MOD, "Confirmed request 1: !kick Bravo dddddddd")
+            await heard(fake, ALICE, "[^_^] YOUR TAX DOLLARS AT WORK! Mod confirmed your request 1, !kick Bravo "
+                                     "dddddddd spamming.")
             row = sup.storage.actions_for(BRAVO)[0]
-            assert row["kind"] == "kick" and row["by"] == "Mod" and row["evidence"] == "requested by Alice (#1)"
+            assert row["kind"] == "kick" and row["by"] == "Mod" and row["evidence"] == "requested by Alice (request 1)"
             # #1 is free again: the next request takes it.
             await fake.chat(ALICE, "Alice", "!warn bravo watch it")
-            await heard(fake, ALICE, "Sent for review as #1: !warn Bravo watch it.")
+            await heard(fake, ALICE, "Sent for review as request 1: !warn Bravo dddddddd")
             await fake.chat(MOD, "Mod", "!deny 2 too harsh")
-            await heard(fake, ALICE, "Mod turned down your request #2, !mute Bravo 30m rude: too harsh")
+            await heard(fake, ALICE, "Mod turned down your request 2, !mute Bravo dddddddd 30m rude: too harsh")
             assert not fake.named("mute")
             # Another action instead: a mute for an hour, not the warning asked for.
             await fake.chat(ADMIN, "Admin", "!confirm 1 mute 1h language")
             mute = await wait_for(lambda: fake.named("mute"))
             assert mute[0]["args"][:2] == [BRAVO, "1h"] and mute[0]["by"] == "Admin"
-            await heard(fake, ALICE, "Admin confirmed your request #1, !warn Bravo watch it (!mute Bravo 1h language "
-                                     "instead).")
+            await wait_for(lambda: "Admin confirmed your request 1, !warn Bravo dddddddd watch it (!mute Bravo dddddddd 1h "
+                                   "language instead)." in " ".join(tells_to(fake, ALICE)))  # in pieces of 120 characters
             await fake.chat(MOD, "Mod", "!requests")
             await heard(fake, MOD, "No requests are waiting.")
             await fake.chat(MOD, "Mod", "!whois alice")
@@ -81,22 +81,23 @@ def test_no_lapsing_a_player_who_left_is_dealt_with_as_they_come_back(tmp_path: 
         async with running(tmp_path) as (sup, fake, _):
             await on_probation(sup, fake)
             await fake.chat(ALICE, "Alice", "!kick bravo griefing")
-            await heard(fake, ALICE, "Sent for review as #1")
+            await heard(fake, ALICE, "Sent for review as request 1")
             await fake.chat(ALICE, "Alice", "!warn bravo no spawn killing")
-            await heard(fake, ALICE, "Sent for review as #2")
+            await heard(fake, ALICE, "Sent for review as request 2")
             await fake.leave(4)
             await wait_for(lambda: 4 not in sup.superintendent.states[SERVER].players)
             await fake.chat(MOD, "Mod", "!confirm 1")
-            await heard(fake, MOD, "Confirmed #1 (Bravo isn't on: from now, as they come back).")
+            await heard(fake, MOD, "(they aren't on: from now, as they come back).")
+            await heard(fake, MOD, "Confirmed request 1: ")
             await fake.chat(MOD, "Mod", "!confirm 2")
-            await heard(fake, MOD, "Confirmed #2")
+            await heard(fake, MOD, "Confirmed request 2")
             assert not fake.named("kick")  # nobody to kick yet
             kicks = sup.storage.actions_for(BRAVO)
             assert {r["kind"] for r in kicks} == {"kick", "warn"} and all("requested by Alice" in r["evidence"]
                                                                           for r in kicks)
             await fake.join(6, "Bravo", BRAVO)  # back within the kick's time: kicked as they join
             kick = await wait_for(lambda: fake.named("kick"))
-            assert kick[0]["args"][0] == BRAVO and "Kicked from" in kick[0]["args"][1]
+            assert kick[0]["args"][0] == BRAVO and "Kicked off every server by" in kick[0]["args"][1]
             await heard(fake, BRAVO, "[o_o] OBEY POSTED LIMITS! Warning from Mod: no spawn killing")
 
     run(scenario())
@@ -107,13 +108,13 @@ def test_the_probationary_moderator_hears_how_it_went_when_they_come_back(tmp_pa
         async with running(tmp_path) as (sup, fake, _):
             await on_probation(sup, fake)
             await fake.chat(ALICE, "Alice", "!mute bravo 10m")
-            await heard(fake, ALICE, "Sent for review as #1")
+            await heard(fake, ALICE, "Sent for review as request 1")
             await fake.leave(3)
             await wait_for(lambda: 3 not in sup.superintendent.states[SERVER].players)
             await fake.chat(MOD, "Mod", "!deny 1 not needed")
-            await heard(fake, MOD, "Turned down #1.")
+            await heard(fake, MOD, "Turned down request 1: ")
             await fake.join(7, "Alice", ALICE)
-            await heard(fake, ALICE, "Mod turned down your request #1, !mute Bravo 10m: not needed")
+            await heard(fake, ALICE, "Mod turned down your request 1, !mute Bravo dddddddd 10m: not needed")
 
     run(scenario())
 
@@ -123,9 +124,9 @@ def test_the_rank_guards_and_a_promotion_by_request(tmp_path: Path, run) -> None
         async with running(tmp_path) as (sup, fake, _):
             await on_probation(sup, fake)
             await fake.chat(ALICE, "Alice", "!kick mod")  # never someone of their rank or above
-            await heard(fake, ALICE, "Mod is a moderator; you can't do that to them.")
+            await heard(fake, ALICE, "Mod bbbbbbbb (#2) [LG Test Server] is a moderator; you can't do that to them.")
             await fake.chat(ALICE, "Alice", "!promote bravo")
-            await heard(fake, ALICE, "Sent for review as #1: !promote Bravo.")
+            await heard(fake, ALICE, "Sent for review as request 1: !promote Bravo dddddddd (#4) [LG Test Server].")
             bravo = sup.superintendent.states[SERVER].players[4]
             assert sup.vergil.roles.role_of(sup.superintendent.states[SERVER], bravo) == "player"
             await fake.chat(MOD, "Mod", "!confirm 1")
@@ -168,7 +169,7 @@ def test_five_requests_wait_at_most_and_a_demotion_drops_them(tmp_path: Path, ru
             await on_probation(sup, fake)
             for number in range(1, MOST_WAITING + 1):
                 await fake.chat(ALICE, "Alice", f"!warn bravo number {number}")
-                await heard(fake, ALICE, f"Sent for review as #{number}:")
+                await heard(fake, ALICE, f"Sent for review as request {number}:")
                 await asyncio.sleep(3.1)  # past the 3 s a player has between uses of one command
             await fake.chat(ALICE, "Alice", "!warn bravo one more")
             await heard(fake, ALICE, f"You have {MOST_WAITING} requests waiting already")
@@ -182,6 +183,6 @@ def test_five_requests_wait_at_most_and_a_demotion_drops_them(tmp_path: Path, ru
             dropped = sup.storage.query("SELECT why FROM commands_requests WHERE status = 'dropped'")
             assert len(dropped) == MOST_WAITING and dropped[0]["why"] == "they aren't a probationary moderator any more"
             await fake.chat(MOD, "Mod", "!confirm 1")
-            await heard(fake, MOD, "No request #1 is waiting.")
+            await heard(fake, MOD, "No request 1 is waiting.")
 
     run(scenario())

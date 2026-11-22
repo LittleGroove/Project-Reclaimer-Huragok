@@ -42,6 +42,7 @@ from typing import Any, Iterable
 
 from .files import mtime, read_text, replace
 from .part import CommandSpec
+from .tags import tag
 from .text import STORED_ID
 
 
@@ -368,6 +369,27 @@ def player_notes(path: Path) -> dict[str, str]:
     return {m.group(1).lower(): m.group("note") or "" for m in (ENTRY.match(line) for line in lines) if m}
 
 
+# Where the name in a listed player's note ends: "Bravo: promoted by Alice on 2026-10-18" (players/commands/roles.py,
+# the window, the Discord bot's claim). A name can have a ":" in it, so it ends where one of these goes on.
+NOTE_GOES_ON = re.compile(r":\s*(?=(?:added|promoted|demoted|made|a probationary moderator|faculty|member|moderator)\b)")
+
+
+def note_name(note: str, names: Iterable[str] = ()) -> tuple[str, str]:
+    """A listed player's note as (the name it gives them, the rest): ("Bravo", "promoted by Alice on 2026-10-18");
+    ("", the note) when it names nobody. `names`: the names Huragok has seen them under, the surest way to tell where a
+    name with a ":" in it ends."""
+    note = note.strip()
+    for name in sorted({str(n) for n in names if n}, key=len, reverse=True):
+        if note.startswith(f"{name}:"):
+            return name, note[len(name) + 1:].strip()
+    if (goes_on := NOTE_GOES_ON.search(note)) and note[:goes_on.start()].strip():
+        return note[:goes_on.start()].strip(), note[goes_on.end():].strip()
+    who, colon, how = note.partition(":")
+    if colon and who.strip():
+        return who.strip(), how.strip()
+    return "", note
+
+
 def _checked(path: Path, change: Any, what: str) -> None:
     """Make the change on a copy beside the file, read the copy as Huragok reads commands.toml, and only then put
     it in place (in one step). A PermissionsError says why it wasn't, and the file is as it was."""
@@ -416,7 +438,7 @@ def add_player(path: Path, role: str, player_id: str, note: str) -> list[str]:
                 remove_from_list(copy, name, "players", player_id)
         add_to_list(copy, TITLES.get(role, role), "players", player_id, note)
 
-    _checked(path, change, f"{player_id[:8]} as {role}")
+    _checked(path, change, f"{tag(note_name(note)[0], player_id)} as {role}")
     return moved
 
 
@@ -425,9 +447,10 @@ def remove_player(path: Path, role: str, player_id: str) -> bool:
     from .tomledit import remove_from_list
 
     removed: list[bool] = []
+    who = tag(note_name(player_notes(path).get(player_id.lower(), ""))[0], player_id)
     _checked(path, lambda copy: removed.extend(remove_from_list(copy, name, "players", player_id.lower())
                                                for name in _names_of(TITLES.get(role, role))),
-             f"{player_id[:8]} out of {role}")
+             f"{who} out of {role}")
     return any(removed)
 
 

@@ -40,7 +40,7 @@ def test_a_pardon_lets_back_someone_the_servers_kick_removed_before_a_mute(tmp_p
             await fake.leave(4)  # the kick, as the server does it
             await wait_for(lambda: BRAVO not in {p.id for p in huragok.superintendent.states[SERVER].players.values()}, timeout=10)
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo")
-            await wait_for(lambda: "cleared" in told(fake, FACULTY))
+            await wait_for(lambda: "cleared their strikes" in told(fake, FACULTY))
             await wait_for(lambda: fake.named("pardon"), timeout=10)
             assert "can rejoin now" in told(fake, FACULTY), told(fake, FACULTY)
             # Struck while on no server: the mute waits for them, and nobody was kicked to let back.
@@ -50,7 +50,7 @@ def test_a_pardon_lets_back_someone_the_servers_kick_removed_before_a_mute(tmp_p
             row = huragok.storage.query("SELECT waiting FROM automod_strikes WHERE pardoned IS NULL")
             assert [r["waiting"] for r in row] == [1]
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo")
-            await wait_for(lambda: told(fake, FACULTY).count("cleared") == 2)
+            await wait_for(lambda: told(fake, FACULTY).count("cleared their strikes") == 2)
             await asyncio.sleep(1)
             assert len(fake.named("pardon")) == before
 
@@ -109,11 +109,11 @@ def test_a_pardon_names_a_list_as_banword_does_or_one_taken_off(tmp_path: Path, 
                 return sorted(r["grp"] for r in huragok.storage.query("SELECT grp FROM automod_strikes WHERE pardoned IS NULL"))
 
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo slur misheard")
-            await wait_for(lambda: "cleared" in told(fake, FACULTY))
-            assert "1 strike cleared (slurs)" in told(fake, FACULTY) and standing() == ["rude", "spam"]
+            await wait_for(lambda: "cleared their strikes" in told(fake, FACULTY))
+            assert "strikes: 1 (slurs)" in told(fake, FACULTY) and standing() == ["rude", "spam"]
             await asyncio.sleep(3.5)
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo spam an old list")
-            await wait_for(lambda: told(fake, FACULTY).count("cleared") == 2)
+            await wait_for(lambda: told(fake, FACULTY).count("cleared their strikes") == 2)
             assert standing() == ["rude"]
 
     run(scenario())
@@ -143,10 +143,10 @@ def test_a_pardon_word_that_isnt_a_list_is_refused_and_a_near_miss_asked_about(t
             await asyncio.sleep(3.5)
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo he apologised")
             await wait_for(lambda: "no list called he" in told(fake, FACULTY))
-            assert "pardonplayer Bravo all <why> clears every strike" in told(fake, FACULTY) and standing() == 2
+            assert "pardonplayer dddddddd all <why> clears every strike" in told(fake, FACULTY) and standing() == 2
             await asyncio.sleep(3.5)
             await fake.chat(FACULTY, "Faculty", "!pardonplayer bravo all he apologised")
-            await wait_for(lambda: "2 strikes cleared" in told(fake, FACULTY))
+            await wait_for(lambda: "strikes: 2 (" in told(fake, FACULTY))
             assert standing() == 0
 
     run(scenario())
@@ -165,9 +165,9 @@ def test_a_moderators_strike_that_would_ban_goes_to_the_admins(tmp_path: Path, r
             await wait_for(lambda: "slurs strike 1 of 1, muted for 1 day" in told(fake, MOD))
             await asyncio.sleep(3.5)
             await fake.chat(MOD, "Mod", "!strike bravo slurs again")
-            await wait_for(lambda: "Sent to the admins as #1" in told(fake, MOD))
+            await wait_for(lambda: "Sent to the admins as request 1" in told(fake, MOD))
             assert not fake.named("ban") and len(huragok.storage.query("SELECT 1 FROM automod_strikes")) == 1
-            await wait_for(lambda: "asks an admin, #1" in told(fake, ADMIN))  # the admins are told after the moderator
+            await wait_for(lambda: "asks an admin, request 1" in told(fake, ADMIN))  # the admins are told after the moderator
             assert "asks an admin" not in told(fake, MOD).replace("Sent to the admins", "")
             assert any(e.name == "commands.request" and e.get("needs") == "admin" for e in seen)
             await asyncio.sleep(3.5)
@@ -179,7 +179,7 @@ def test_a_moderators_strike_that_would_ban_goes_to_the_admins(tmp_path: Path, r
             assert not fake.named("ban")
             await fake.chat(ADMIN, "Admin", "!confirm 1")
             await wait_for(lambda: fake.named("ban"), timeout=10)
-            assert "Confirmed #1" in told(fake, ADMIN)
+            assert "Confirmed request 1" in told(fake, ADMIN)
             assert len(huragok.storage.query("SELECT 1 FROM automod_strikes WHERE action = 'ban'")) == 1
             # An admin's own strike that bans just bans.
             huragok.storage.execute("UPDATE automod_strikes SET pardoned = 1")

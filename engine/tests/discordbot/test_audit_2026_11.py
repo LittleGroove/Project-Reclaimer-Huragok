@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from conftest import ALICE, BRAVO
 from test_bot_running import OTHER, answer_text
 from test_tickets import ADMIN_ROLE, MOD_ROLE, MOD_USER, PROBATION_ROLE, REPORTS, STAFF, buttons_of, edited, form_of, posts_in, requests_file, row_of, said_back, up
@@ -55,14 +57,21 @@ def test_a_time_anywhere_in_a_kick_takes_the_rank_held_everywhere() -> None:
     assert not times_a_kick(["Alice", "never", "again"])  # "never" starts a reason
 
 
-def test_a_one_server_moderator_cant_confirm_a_kick_off_every_server_from_the_card(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+ACROSS_OFF = "[automod]\nacross_servers = false\n"  # each server's moderation, and ranks, its own
+
+
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_one_server_moderator_cant_confirm_a_kick_off_every_server_from_the_card(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """With [automod] across_servers off, a rank is each server's: a moderator's role scoped to one server can't confirm
+    a kick with a time, which reaches every server (audit 2026-11, 6.8). With it on (the default), a rank on one server
+    is a rank on all of them (the host's call, 21 November 2026), so the same Confirm goes through."""
     async def scenario() -> None:
         from huragok.discordbot.config import set_switch
 
         path = scoped(tickets_file(tmp_path))
         set_switch(path, ("feed", "requests"), "enabled", True)
         scoped_roles(fake)
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             await consoles[FIRST].join(3, "Alice", ALICE)
             await wait_for(lambda: huragok.superintendent.states[FIRST].player_by_id(ALICE), timeout=10)
@@ -70,21 +79,32 @@ def test_a_one_server_moderator_cant_confirm_a_kick_off_every_server_from_the_ca
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             post = posts_in(fake, REPORTS)[-1]
             fake.press(buttons_of(post)["Confirm"], post, user=MOD_USER, roles=(SCOPED_ROLE,))
+            kicked = "SELECT 1 FROM actions WHERE target_id = ? AND kind = 'ban' AND ok = 1"
+            if across:
+                statuses = lambda: [row["status"] for row in huragok.storage.query("SELECT status FROM commands_requests")]  # noqa: E731
+                await wait_for(lambda: statuses() != ["open"], timeout=10)
+                assert statuses() == ["confirmed"] and huragok.storage.query(kicked, (ALICE,))
+                return
             await asyncio.sleep(2)
-            assert not huragok.storage.query("SELECT 1 FROM actions WHERE target_id = ? AND kind = 'ban' AND ok = 1", (ALICE,))
+            assert not huragok.storage.query(kicked, (ALICE,))
             assert [row["status"] for row in huragok.storage.query("SELECT status FROM commands_requests")] == ["open"]
 
     run(scenario())
 
 
-def test_a_one_server_rank_cant_reach_every_server_from_the_console_or_the_player_box(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_a_one_server_rank_cant_reach_every_server_from_the_console_or_the_player_box(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
+    """With [automod] across_servers off, a role scoped to one server can't give a kick with a time (or a ban for good,
+    "perm"), which reaches every server, from the console or with the time typed in the player box (audit 2026-11, 6.8).
+    With it on (the default), a rank on one server is a rank on all of them (the host's call, 21 November 2026): the
+    same console lines act, on every server's list."""
     from test_console import bot_file as console_file
     from test_console import reply_to
 
     async def scenario() -> None:
         scoped(console_file(tmp_path), admin=True)
         scoped_roles(fake)
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             await consoles[FIRST].join(3, "Alice", ALICE)
             await consoles[FIRST].join(4, "Bravo", BRAVO)
@@ -93,6 +113,13 @@ def test_a_one_server_rank_cant_reach_every_server_from_the_console_or_the_playe
             await reply_to(fake, line)
             line = fake.message(STAFF, f"{FIRST}: !kick Bravo perm cheating", roles=(SCOPED_ADMIN,), user="3555")
             await reply_to(fake, line)
+            if across:
+                kicks = "SELECT target_id, duration FROM actions WHERE server = ? AND kind = 'ban' AND ok = 1 AND dry_run = 0 ORDER BY number"
+                await wait_for(lambda: len(huragok.storage.query(kicks, (FIRST,))) >= 2, timeout=10)
+                assert [(row["target_id"], row["duration"]) for row in huragok.storage.query(kicks, (FIRST,))] == [(ALICE, "1h"), (BRAVO, None)]
+                listed = {row["target"] for row in huragok.storage.query("SELECT target FROM commands_every_server WHERE kind = 'ban' AND lifted IS NULL")}
+                assert {ALICE, BRAVO} <= listed  # on every server's list, put on each one as they join
+                return
             _, token = fake.command("kick", user=MOD_USER, roles=(SCOPED_ROLE,), player="Alice 1h", server=FIRST)
             assert "reaches every server" in await said_back(fake, token)
             _, token = fake.command("kick", user="3555", roles=(SCOPED_ADMIN,), player="Bravo perm", server=FIRST)
@@ -302,9 +329,14 @@ def test_a_clip_that_cant_be_posted_keeps_its_link(tmp_path: Path, run: Any, fak
 # 6.12 ----------------------------------------------------------------------------------------------------------------------
 
 
-def test_shortening_by_someone_admin_on_one_server_lifts_nothing(tmp_path: Path, run: Any, fake: FakeDiscord) -> None:
+@pytest.mark.parametrize("across", [False, True], ids=["across_off", "across_on"])
+def test_shortening_by_someone_admin_on_one_server_lifts_nothing(tmp_path: Path, run: Any, fake: FakeDiscord, across: bool) -> None:
     """Judged at their highest rank, Let back went through, the new kick (which reaches every server) was refused, and
-    the player was let back with nothing against them. It's refused before anything's lifted now."""
+    the player was let back with nothing against them. It's refused before anything's lifted now.
+
+    That's with [automod] across_servers off, where a rank is each server's. With it on (the default) a rank on one
+    server is a rank on all of them (the host's call, 21 November 2026): the one-server admin is an admin everywhere, and
+    what refuses them is that faculty gave the kick, still before anything's lifted."""
     from conftest import FACULTY
     from test_appeals import appeal
     from test_appeals import bot_file as appeals_file
@@ -314,18 +346,22 @@ def test_shortening_by_someone_admin_on_one_server_lifts_nothing(tmp_path: Path,
         path = appeals_file(tmp_path, **{"for": ["ban", "kick"]})  # kicks can be appealed
         path.write_text(path.read_text(encoding="utf-8") + f'\n[[ranks.scoped]]\nrole = "{SCOPED_ADMIN}"\nrank = "admin"\nservers = ["{FIRST}"]\n', encoding="utf-8")
         scoped_roles(fake)
-        async with fleet(tmp_path, up=(FIRST, SECOND)) as (huragok, consoles):
+        async with fleet(tmp_path, up=(FIRST, SECOND), body="" if across else ACROSS_OFF) as (huragok, consoles):
             await up(huragok)
             rcon = consoles[FIRST]
             await rcon.join(3, "Alice", ALICE)
             await rcon.join(1, "Faculty", FACULTY)
             await wait_for(lambda: len(huragok.superintendent.states[FIRST].players) == 2, timeout=10)
-            await rcon.chat(FACULTY, "Faculty", "!kick Alice 3d spawn killing")  # a kick with a time: its Let back stays on the one server
+            # A kick with a time: with across_servers off its Let back stays on the one server; on, it's every server's.
+            await rcon.chat(FACULTY, "Faculty", "!kick Alice 3d spawn killing")
             await wait_for(lambda: rcon.named("ban"), timeout=15)
             await wait_for(lambda: posts_in(fake, LOGS), timeout=15)
             post = await appeal(fake)
             sent = await fill(fake, "Shorten it", post, {"How long from now": "12h"}, user="3555", roles=(SCOPED_ADMIN,))  # within a moderator's limit
-            assert "takes moderator on all of them. Nothing was done" in await said_back(fake, sent)
+            if across:
+                assert await said_back(fake, sent) == "Not let back: Faculty gave that kick, and lifting it takes faculty or above."
+            else:
+                assert "takes moderator on all of them. Nothing was done" in await said_back(fake, sent)
             await asyncio.sleep(1)
             assert not rcon.named("unban") and not consoles[SECOND].named("unban") and not rcon.named("pardon")
             assert huragok.storage.query("SELECT 1 FROM actions WHERE target_id = ? AND kind IN ('unban', 'pardon') AND ok = 1", (ALICE,)) == []

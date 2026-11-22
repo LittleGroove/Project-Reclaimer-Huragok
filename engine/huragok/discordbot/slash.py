@@ -29,9 +29,9 @@ from ..players.targets import FULL_ID, NUMBER, PICK, ago
 from ..servers.state import Player
 from . import cards, tidy
 from .client import ANOTHER_DISCORD, SaysWhatWentWrong, acting_as, answer, elsewhere, named, part_of, someone_from
-from .ranks import Someone, as_they_may_see, can_act, game_rank, highest_rank, in_game, rank_to_run, times_a_kick
+from .ranks import WHOLE_ID, Someone, as_they_may_see, can_act, game_rank, highest_rank, in_game, rank_to_run, times_a_kick
 from .speakers import say
-from .staff import as_choices, matching, name_shown, server_choices
+from .staff import as_choices, choice_label, matching, server_choices
 
 if TYPE_CHECKING:
     from ..core.part import CommandSpec
@@ -48,6 +48,19 @@ MOST_SHOWN = 1900
 # What's asked of the whole of Huragok, so no server's needed; and what's about each server, so leaving it out answers for them all.
 EVERYWHERE = {"mods", "rules", "bannames", "roles", "requests", "confirm", "deny", "banword", "unbanword", "changebanword", "admin", "whois", "said", "promote", "demote", "banname", "unbanname", "pardonplayer", "season", "newseason", "endseason"}
 EACH_SERVER = {"players", "health", "kicks", "bans", "mutes", "novotes"}
+# What's sent to the server they're on (or any) but reaches every server, with [automod] across_servers on: moderation (players/reach.py). A warning is
+# told to them where they are; the rest (a respawn, a team, a restart) is that server's.
+MODERATING = {"ban", "unban", "kick", "pardon", "mute", "unmute", "strike", "novote", "allowvote", "banall"}
+
+
+def every_server(part: DiscordPart, spec: CommandSpec) -> bool:
+    """Whether what this command does reaches every server, whichever one it's sent to: what the cards, the audit line and the question before it say."""
+    return spec.name in EVERYWHERE or (spec.name in MODERATING and part.across())
+
+
+def where_words(part: DiscordPart, spec: CommandSpec, servers: list[str]) -> str:
+    """Where it goes, as a person reads it: "every server", or the servers it's run on (the server Huragok picked to send it from isn't where it goes)."""
+    return "every server" if every_server(part, spec) else cards.clean(", ".join(servers))
 # What to offer as you type, for the commands where that isn't everyone: who that command can do anything for. It's only what's offered: anyone can still be typed in, by name or ID, and the command says why not.
 ONLY_IF = {"unban": ("banned",), "pardon": ("kicked", "banned"), "unmute": ("muted",), "allowvote": ("novoted",), "pardonplayer": ("struck",), "demote": ("ranked",)}
 UNLESS = {"ban": ("banned",), "mute": ("muted",), "novote": ("novoted",)}
@@ -126,8 +139,8 @@ def _one(spec: CommandSpec, token: str, first: bool) -> Option:
         return Option("teams", f"How many teams, {head.replace('-', ' to ')}. Empty: shows them", required, "number")
     if "red" in words:
         return Option("team", "Which team", required, choices=tuple(words))
-    if head == "rule":
-        return Option("rule", "Which rule: its name, or all" if "all" in words else "Which rule: its name, or name to ban their name", required, "rule")
+    if head in ("rule", "list"):  # a list of the word list (once called a rule)
+        return Option("rule", "Which list: its name, or all" if "all" in words else "Which list: its name, or name to ban their name", required, "rule")
     if head == "line":
         return Option("search", "Part of a rule's name or a word. Empty: all of it", required)
     if head == "milliseconds":
@@ -190,13 +203,16 @@ def _server_for(part: DiscordPart, spec: CommandSpec, given: str, player: str, a
             return [], "A #number is different on each server: pick them from the list as you type, or use their name."
         return [part.where_to_run(player)] if servers else [], ""
     if spec.name in EACH_SERVER:
+        if spec.name in ("mutes", "novotes") and part.across() and up:  # every server's list, the same on each: once (the scope audit, B15)
+            return [next(iter(up))], ""
         return list(up) or list(servers), ""
     if player:
         if spec.name in LIFTING:
             return [part.where_it_lives(player, LIFTING[spec.name])], ""
         named = {someone.id: name for name, state in up.items() for someone in state.players.values() if someone.name.casefold() == player.casefold()}
         if len(named) > 1:
-            return [], f"More than one player on the servers goes by {cards.clean(player)}: pick the one you mean from the list as you type, or say which `server`."
+            shown = ", ".join(part.tag(player_id, player, server=str(server)) for player_id, server in list(named.items())[:8])
+            return [], f"More than one player on the servers goes by {cards.clean(player)}: {shown}. Pick the one you mean from the list as you type, or say which `server`."
         if named:
             return [next(iter(named.values()))], ""
         if on := next((name for name, state in up.items() if state.player_by_id(player.lower())), ""):
@@ -207,6 +223,42 @@ def _server_for(part: DiscordPart, spec: CommandSpec, given: str, player: str, a
     if len(servers) == 1:
         return list(servers), ""
     return [], "Which server? Pick one in the command's `server` option."
+
+
+def who_it_is(part: DiscordPart, typed: str, server: str, asker: str) -> str:
+    """Who what's in a player box (or a console line's first word) comes to, the one way, with the #number or @number
+    it was typed as: what a confirmation shows, so the right one is seen before Yes, and what an answer can't show (the
+    identity audit of 21 November 2026). `server`: where a #number is. "" when it can't be told here: the command
+    asks, or says why not."""
+    text = typed.strip().strip("\"'")
+    state = part.ctx.servers.get(server)
+    if not text:
+        return ""
+    if FULL_ID.fullmatch(text):
+        return part.tag(text)
+    if pick := PICK.fullmatch(text):
+        entry = part.ctx.pick_of(asker, int(pick[1]))
+        return part.tag(str(entry.id), str(getattr(entry, "name", "") or ""), handle=text) if not isinstance(entry, str) and getattr(entry, "id", "") else ""
+    if NUMBER.fullmatch(text) and state is not None:
+        found = state.players.get(int(NUMBER.fullmatch(text)[1]))  # type: ignore[index]
+        return part.tag(found.id, found.name, server=server, handle=f"#{found.number}") if found is not None else ""
+    on = {someone.id: (str(name), someone) for name, there in part.ctx.servers.items() if there.connected for someone in there.players.values() if someone.name.casefold() == text.casefold()}
+    if len(on) == 1:
+        where, someone = next(iter(on.values()))
+        return part.tag(someone.id, someone.name, server=where)
+    seen = [] if on else part.ctx.players.find(text)
+    return part.tag(seen[0].id, seen[0].last_name) if len(seen) == 1 else ""
+
+
+def _as_typed(line: str) -> str:
+    """A line as a confirmation shows it: a whole ID picked from a list as the start of it, which is what anyone would
+    type (and all of it is only for some to see); who it is follows it (who_it_is)."""
+    return WHOLE_ID.sub(lambda found: found[0][:8].lower(), line)
+
+
+def _resolved(shown: str) -> str:
+    """" → Nate `1a2b3c4d` (#4) [HugeGrass]" after a confirmation's question, or nothing."""
+    return f" → {shown}" if shown else ""
 
 
 def _barred(name: str, given: dict[str, Any]) -> tuple[str, str]:
@@ -249,9 +301,9 @@ def _line_of(part: DiscordPart, plan: list[Option], given: dict[str, Any], name:
 class _Sure(SaysWhatWentWrong, ui.View):
     """What the console asks before it does, asked here too."""
 
-    def __init__(self, part: DiscordPart, spec: CommandSpec, line: str, servers: list[str], private: bool, timed: bool = False) -> None:
+    def __init__(self, part: DiscordPart, spec: CommandSpec, line: str, servers: list[str], private: bool, timed: bool = False, who: str = "") -> None:
         super().__init__(timeout=120)
-        self.part, self.spec, self.line, self.servers, self.private, self.timed = part, spec, line, servers, private, timed
+        self.part, self.spec, self.line, self.servers, self.private, self.timed, self.who = part, spec, line, servers, private, timed, who
         self.sent = False
 
     @ui.button(label="Yes", style=discord.ButtonStyle.danger)
@@ -261,8 +313,8 @@ class _Sure(SaysWhatWentWrong, ui.View):
             return
         self.sent = True
         self.stop()
-        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=f"`{self.spec.name} {self.part.named_in(self.line)}`"[:300], server=cards.clean(", ".join(self.servers))), view=None)
-        await _go(self.part, interaction, self.spec, self.line, self.servers, self.private, timed=self.timed)
+        await interaction.response.edit_message(content=say(self.part.file, "console.sending", line=f"`{self.spec.name} {_as_typed(self.line)}`"[:300], server=where_words(self.part, self.spec, self.servers)) + _resolved(self.who), view=None)
+        await _go(self.part, interaction, self.spec, self.line, self.servers, self.private, timed=self.timed, who_it_was=self.who)
 
     @ui.button(label="No", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, _button: ui.Button[Any]) -> None:
@@ -317,7 +369,8 @@ async def run(part: DiscordPart, interaction: discord.Interaction, spec: Command
     if rank != PROBATION and ROLES.index(rank) < ROLES.index(needed):
         here = game_rank(part.file, someone, servers[0])
         if here in ROLES and ROLES.index(here) >= ROLES.index(needed):  # they have the rank where they are, and this goes further than that
-            await answer(interaction, f"/{shown_name} reaches every server, and your rank is only on some of them. In the console, a `{spec.name}` line stays that server's own.")
+            # (Not with across_servers on: a rank on one server is a rank on all of them then.) Up to 0.7.0 this said a console line stayed that server's own: it never did (the scope audit, A1)
+            await answer(interaction, f"/{shown_name} reaches every server, and your rank is only on some of them: it takes the rank on all of them.")
         else:
             await answer(interaction, f"/{shown_name} is for {role_plural(needed)} and up.")
         return
@@ -326,14 +379,15 @@ async def run(part: DiscordPart, interaction: discord.Interaction, spec: Command
         return
     public = {str(name) for name in options.get("public") or []}
     private = spec.name not in public and shown_name not in public  # by the name in the game, or the one here
+    who = who_it_is(part, player, servers[0], asker) if player and spec.name != "banname" else ""  # a name banned is words, not a player
     if spec.name in {str(word).lower() for word in part.file.section("console").get("confirm") or []} or whole_list:
-        shown = f"`/{shown_name} {part.named_in(line)}`".replace(" `", "`")[:300]  # what they picked from the list was an ID: they know them by name
+        shown = f"`/{shown_name} {_as_typed(line)}`".replace(" `", "`")[:300]  # as it could be typed, and who that is after it
         if spec.name in (*BARS, "unbanword"):  # as the boxes were filled in, not as bars
             shown = f"`/{shown_name} " + " ".join(f"{box}: {str(value).strip()}" for box, value in given.items() if str(value or "").strip() and box != "server").replace("`", "'")[:280] + "`"
-        await interaction.response.send_message(say(part.file, "console.sure", line=shown, server=cards.clean(", ".join(servers))), view=_Sure(part, spec, line, servers, private, timed), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await interaction.response.send_message(say(part.file, "console.sure", line=shown, server=where_words(part, spec, servers)) + _resolved(who), view=_Sure(part, spec, line, servers, private, timed, who), ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         return
     await interaction.response.defer(ephemeral=private, thinking=True)
-    await _go(part, interaction, spec, line, servers, private, timed=timed)
+    await _go(part, interaction, spec, line, servers, private, timed=timed, who_it_was=who)
 
 
 def _as_named_here(part: DiscordPart, text: str) -> str:
@@ -343,8 +397,9 @@ def _as_named_here(part: DiscordPart, text: str) -> str:
     return re.sub(r"(?<![\w/])/([a-z_]+)", lambda found: f"/{known.get(found[1], found[1])}", text)
 
 
-async def _go(part: DiscordPart, interaction: discord.Interaction, spec: CommandSpec, line: str, servers: list[str], private: bool, *, timed: bool = False) -> None:
-    """Run it on each server it's for, and say what came back. What comes back after that (a respawn's result, say) follows as it comes."""
+async def _go(part: DiscordPart, interaction: discord.Interaction, spec: CommandSpec, line: str, servers: list[str], private: bool, *, timed: bool = False, who_it_was: str = "") -> None:
+    """Run it on each server it's for, and say what came back. What comes back after that (a respawn's result, say) follows as it comes. `who_it_was`: who the player box came to,
+    for the audit line, as a #number typed says nothing a day later."""
     someone = someone_from(interaction.user)
     who = Player(0, acting_as(part, interaction.user), f"discord:{interaction.user.id}")
     part.real_names[who.id] = named(interaction.user)
@@ -370,8 +425,7 @@ async def _go(part: DiscordPart, interaction: discord.Interaction, spec: Command
             first, _, after = line.partition(" ")
             state = part.ctx.servers.get(server)
             if spec.name == "kick" and timed and FULL_ID.fullmatch(first) and state is not None and not state.player_by_id(first.lower()):  # picked from the list, so there's no doubt who: and a kick with a time needs nobody to be on
-                record = part.ctx.players.get(first.lower())
-                refused = await part.ctx.run_as("kick", Player(0, str(record.last_name) if record is not None else first[:8], first.lower()), split_words(after), server=server, player=who, role=rank, tell=tell)
+                refused = await part.ctx.run_as("kick", Player(0, part.name_of(first.lower()), first.lower()), split_words(after), server=server, player=who, role=rank, tell=tell)
             else:
                 refused = await part.ctx.run_line(spec.name, line, server=server, player=who, role=rank, tell=tell, prefix="/")
             ran = ran or refused is None
@@ -381,7 +435,11 @@ async def _go(part: DiscordPart, interaction: discord.Interaction, spec: Command
     await _say(part, interaction, "\n\n".join(blocks), private, paged=spec.name in PAGED)
     new = part.ctx.db.query("SELECT COUNT(*) AS n FROM actions WHERE number > ? AND by_id = ?", (before, who.id))[0]["n"]
     if ran and spec.name not in LOOKING and not new:  # what reached the ledger has a card of its own, and what was refused didn't happen
-        part.audit("console", say(part.file, "audit.console", who=who.name, server=", ".join(servers), line=as_they_may_see(part.file, "moderator", f"/{name_of(spec, part.file.section('commands').get('names') or {})} {line}".strip())))
+        # By their name here and the player's name (not `shown_as` and an ID cut short: the scope audit, A8), and a server only where it's that server's
+        every = every_server(part, spec)  # each piece cleaned once (a name with a _ in it showed a backslash, cleaned twice)
+        part.audit("console", cards.Shown(say(part.file, "audit.console", who=part.who(interaction.user), server=", ".join(servers),
+                                              where="" if every else f" (on {cards.clean(', '.join(servers))})",
+                                              line=cards.clean(_as_typed(f"/{name_of(spec, part.file.section('commands').get('names') or {})} {line}".strip())) + _resolved(who_it_was))))
 
 
 def pages(text: str, most: int = MOST_SHOWN) -> list[str]:
@@ -484,11 +542,13 @@ async def _player_choices(interaction: discord.Interaction, typed: str, *, comma
     def fits(now: dict[str, Any]) -> bool:
         return whole_id or ((not only or any(now.get(key) for key in only)) and not any(now.get(key) for key in unless))
 
-    def label(player_id: str, name: str, where: str = "") -> str:
+    def label(player_id: str, shown: str, on: bool = False) -> str:
+        """Their tag (staff.choice_label), always, then how they stand: "Bravo 1a2b3c4d (#4) [Alpha] · muted", or
+        "Bravo 1a2b3c4d · was Alpha · banned · seen 3h ago"."""
         now = _how_they_stand(part, player_id)
         record = part.ctx.players.get(player_id)
         last = getattr(record, "last_seen", None)
-        return " · ".join([name, *([where] if where else []), *_standing_words(now), *([f"seen {ago(max(0.0, clock - float(last)))} ago"] if last and not where else [])])
+        return " · ".join([shown, *_standing_words(now), *([f"seen {ago(max(0.0, clock - float(last)))} ago"] if last and not on else [])])
 
     found: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -499,8 +559,8 @@ async def _player_choices(interaction: discord.Interaction, typed: str, *, comma
             for player in state.players.values():
                 if (wanted in player.name.casefold() or player.id == wanted) and player.id not in seen:
                     seen.add(player.id)
-                    if fits(_how_they_stand(part, player.id)):
-                        found.append((label(player.id, player.name, f"{server} · #{player.number}"), player.id))
+                    if fits(_how_they_stand(part, player.id)):  # their #number there, as a #number with the server box filled in is them too
+                        found.append((label(player.id, part.label(player.id, player.name, server=str(server), handle=f"#{player.number}"), on=True), player.id))
     if command not in ON_NOW_ONLY or whole_id:
         if only and not whole_id:
             named = dict(matching(part, typed, MOST_LOOKED_AT)) if wanted else {}
@@ -512,7 +572,7 @@ async def _player_choices(interaction: discord.Interaction, typed: str, *, comma
                 continue
             seen.add(player_id)
             if fits(_how_they_stand(part, player_id)):
-                found.append((label(player_id, name_shown(part, player_id, matched)), player_id))
+                found.append((label(player_id, choice_label(part, player_id, matched)), player_id))
     return as_choices(part, interaction, found)
 
 
@@ -625,7 +685,9 @@ def build(part: DiscordPart, spec: CommandSpec, role: str) -> app_commands.Comma
     options = part.file.section("commands")
     plan = plan_of(spec)
     if spec.name not in EVERYWHERE:
-        hint = "Which server. Empty: all of them" if spec.name in EACH_SERVER else "Which server: where they are, if you leave it out" if any(one.kind == "player" for one in plan) else "Which server"
+        hint = ("Which server. Empty: all of them" if spec.name in EACH_SERVER
+                else "Leave it out: it's sent where they are, and reaches every server" if spec.name in MODERATING and part.across()
+                else "Which server: where they are, if you leave it out" if any(one.kind == "player" for one in plan) else "Which server")
         plan = [*plan, Option("server", hint, kind="server")]
 
     async def callback(interaction: discord.Interaction, **given: Any) -> None:

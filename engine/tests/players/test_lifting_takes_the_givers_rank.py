@@ -48,7 +48,7 @@ def test_an_admins_novote_takes_an_admin_to_give_back_or_change(tmp_path: Path, 
             await wait_for(lambda: any("Not given back: Admin gave that !novote, and lifting it takes an admin or above."
                                        in t for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!novote bravo 5m")  # a new time would lift the admin's
-            await wait_for(lambda: any("Bravo's votes are away already. Admin gave that !novote, and changing it takes"
+            await wait_for(lambda: any("has their votes away already. Admin gave that !novote, and changing it takes"
                                        in t for t in tells_to(fake, MOD)))
             assert len(sup.storage.query("SELECT 1 FROM commands_no_votes WHERE lifted IS NULL")) == 1
             await fake.chat(ADMIN, "Admin", "!allowvote bravo")
@@ -67,7 +67,7 @@ def test_an_admins_kick_takes_an_admin_to_pardon(tmp_path: Path, run) -> None:
             await fake.chat(ADMIN, "Admin", "!kick bravo cheating")
             await wait_for(lambda: fake.named("kick"))
             await fake.chat(MOD, "Mod", f"!pardon {BRAVO}")
-            await wait_for(lambda: any("Not pardoned: Admin gave that kick, and lifting it takes an admin or above."
+            await wait_for(lambda: any("Not let back: Admin gave that kick, and lifting it takes an admin or above."
                                        in t for t in tells_to(fake, MOD)))
             assert not fake.named("pardon")
 

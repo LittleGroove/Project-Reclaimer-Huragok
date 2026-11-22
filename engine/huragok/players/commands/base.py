@@ -10,7 +10,8 @@ from ...core.part import Part
 from ...core.text import describe_time, seconds_of
 from ...games.plays import console_refusal
 from ...rcon import RconError
-from ..ledger import Action
+from ..ledger import KICK_LIFTED, Action, shown_kind
+from ..reach import EVERY_SERVER, MODERATION
 from ..relay import CONTROL
 from ..router import CommandCall
 from ..targets import FOREVER, TIME
@@ -33,9 +34,12 @@ class CommandsBase(Part):
         from ..ledger import is_housekeeping
         from ..roles import a_role
 
+        # A kick with a time is the server's timed ban underneath: lifting it takes its giver's rank too (a moderator
+        # lifted an admin's 1 h kick, as only plain kicks were looked at: the scope audit, 20 November 2026, A4).
+        timed = " OR (kind = 'ban' AND duration IS NOT NULL AND duration != '')" if kind == "kick" else ""
         rows = self.ctx.db.query(
-            "SELECT by, by_role, evidence FROM actions WHERE target_id = ? AND kind = ? AND ok = 1 AND dry_run = 0 "
-            "ORDER BY number DESC LIMIT 20", (target_id.lower(), kind))
+            f"SELECT by, by_role, evidence FROM actions WHERE target_id = ? AND (kind = ?{timed}) AND ok = 1 AND "
+            "dry_run = 0 ORDER BY number DESC LIMIT 20", (target_id.lower(), kind))
         row = next((r for r in rows if not is_housekeeping(r["evidence"])
                     and not str(r["evidence"] or "").startswith(("still muted:", "kicked on "))), None)
         return self.outranked_by(call, row["by_role"] if row is not None else "", row["by"] if row is not None else "",
@@ -53,7 +57,7 @@ class CommandsBase(Part):
         most = str(self.ctx.part_option("automod", "moderators_kick_at_most", "1d")).strip().lower()
         most = most if TIME.fullmatch(most) else "1d"  # a typo in the file doesn't hand moderators the longest kick there is
         if ROLES.index(role) < ROLES.index("admin") and seconds_of(duration) > seconds_of(most):
-            return f"A moderator's kick lasts {describe_time(most)} at most here: an admin can make it longer."
+            return f"A moderator's kick lasts {describe_time(most)} at most: an admin can make it longer."
         return ""
 
     async def _reply_text(self, call: CommandCall, text: str) -> None:
@@ -63,13 +67,55 @@ class CommandsBase(Part):
             lines = lines[:limit] + [f"…and {len(lines) - limit} more lines"]
         await call.reply("\n".join(lines) or "Done.")
 
+    def reach_word(self) -> str:
+        """Where a mute, kick or ban reaches, for a reply: "every server", or "this server" with across_servers off."""
+        return EVERY_SERVER if self._across() else "this server"
+
+    @staticmethod
+    def acted_on(call: CommandCall, action: Action) -> str:
+        """Who an action was done to, as the caller reads them (core/tags.py), as they were when it was done: the
+        server they were on, and the #number or @number they were picked by. A kick has taken them off by the time
+        the reply comes, so it's the action's own picture, not the server's now. Without a player ID (an address, a
+        name banned as text), what was typed."""
+        if not action.target_id:
+            return action.target_name or action.target_shown
+        handle = action.picked_as or (f"#{action.number}" if action.number and action.on_server == call.server
+                                      else None)
+        return call.tag(action.target_id, action.target_name or "", handle=handle, server=action.on_server)
+
+    def done_text(self, action: Action, who: str = "") -> str:
+        """What a mute, kick or ban that went through did, said by Huragok, with how far it reaches (the host's call,
+        21 November 2026: say it); "" for the server's own reply (with across_servers off, as before, and a warning).
+        `who`: the player as the caller reads them (acted_on)."""
+        if not self._across():
+            return ""
+        name = who or action.target_name or action.target_shown
+        lasting = f" for {describe_time(action.duration)}" if action.duration and TIME.fullmatch(action.duration) else ""
+        if action.kind == "mute":
+            return f"{name} is muted on every server{lasting or ' until someone unmutes them'}."
+        if action.kind == "unmute":
+            return f"{name} is unmuted on every server."
+        if action.kind == "kick":
+            return f"{name} is kicked off every server: 10 minutes the first time, longer each time after."
+        if action.kind == "ban":
+            return f"{name} is kicked off every server{lasting}." if lasting else f"{name} is banned from every server for good."
+        if action.kind == "unban":
+            return f"{name} is let back on every server." if action.reason == KICK_LIFTED else f"{name} is unbanned on every server."
+        if action.kind == "pardon":
+            return f"{name} is let back on every server."
+        return ""
+
     async def _done(self, call: CommandCall, action: Action) -> None:
+        who = self.acted_on(call, action)
         if action.dry_run:
-            await call.reply(f"Dry run: would {action.kind} {action.target_name or action.target_id}.")
+            kind = shown_kind(action.kind, action.duration, action.reason)
+            await call.reply(f"Dry run: would {kind} {who}" + (f" on {self.reach_word()}." if kind in MODERATION else "."))
+        elif action.ok and action.kind == "warn":
+            await call.reply(f"{who} is warned: only they read it.")
         elif action.ok:
-            await call.reply(action.text or "Done.")
+            await call.reply(self.done_text(action, who) or action.text or "Done.")
         else:
-            await call.reply(f"Couldn't: {action.text}")
+            await call.reply(f"Couldn't {shown_kind(action.kind, action.duration, action.reason)} {who}: {action.text}")
 
     async def _rcon(self, call: CommandCall, line: str, *args: str) -> None:
         """Pass a command to the console as the caller, and show them the reply."""
@@ -129,6 +175,10 @@ class CommandsBase(Part):
     def _across_echo(self, server: str, kind: str, target: str, event: Event | None = None) -> bool:
         raise NotImplementedError("AcrossServers's")
 
+    def _spreads(self, event: Event) -> bool:
+        """Whether a kick or ban the server announces is every server's (someone's, within their rank)."""
+        raise NotImplementedError("AcrossServers's")
+
     def _across_mark(self, server: str, kind: str, target: str) -> None:
         raise NotImplementedError("AcrossServers's")
 
@@ -142,6 +192,10 @@ class CommandsBase(Part):
 
     async def _admin_on(self, server: str, verb: str, target: str, by: str, origin: str) -> bool:
         """`admin add|remove <ID>` passed on to `server` (a job of its queue): how it went."""
+        raise NotImplementedError("AcrossServers's")
+
+    def unban_everywhere(self, origin: str, target: str, by: str) -> None:
+        """An unban given on `origin`: off Huragok's list, and sent to every other server with a list of its own."""
         raise NotImplementedError("AcrossServers's")
 
     async def _pardon_elsewhere(self, server: str, target: str, by: str) -> list[str]:

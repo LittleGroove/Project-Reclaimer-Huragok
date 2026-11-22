@@ -131,12 +131,12 @@ SHARE_COMMENT_0_5_0 = [
     "# Vergil) and the admins it makes, and puts them on every server's.",
 ]
 ACROSS_COMMENT = [  # the template's, above [automod] across_servers
-    "Huragok's moderation reaches every server: a mute by a ! command or Vergil",
-    "follows the player to any server they join, a kick keeps them off every server",
-    "until its time is up, and a ban reaches servers with a ban list of their own",
-    "(servers sharing one have it already). The game's own /kick and /ban, and votes,",
-    "stay on their server; Huragok only writes them on the player's record. false:",
-    "Huragok's stay on their server too. Each server's own Vergil is on its page in D.",
+    "Moderation is every server's: a mute, kick or ban follows the player to every",
+    "server for its time, and a rank on one server is a rank on all of them, whoever",
+    "gave it (! commands, Vergil, Discord, the console, the game's own /kick and /ban).",
+    "Only a vote's kick and the server's own stay on their server. false: each",
+    "server's moderation and ranks are its own. Each server's own Vergil (what it",
+    "catches by itself) is on its page in D.",
 ]
 BETA_COMMENT = [  # the template's, above [updates] beta
     "true: beta releases too (GitHub pre-releases), to try what's coming before it's",
@@ -424,6 +424,24 @@ def across_servers(ctx: Context) -> list[str]:
     ctx.backup(ctx.settings_path)
     if not add_table_key(ctx.settings_path, "automod", "across_servers", True, ACROSS_COMMENT, after="name_match"):
         return []
+    return said
+
+
+def every_server_moderation(ctx: Context) -> list[str]:
+    """[automod] across_servers back on where a host had it off (0.7.0): moderation is every server's or each server's, never split by who gave it, and every
+    server's to start (the host's call, 21 November 2026: "defaulted, and changed on the update, to be every server"). Once: a host who turns it off again keeps
+    that. Where the file has no [automod], or no line for it, the default (on) holds already."""
+    from ..core.tomledit import set_table_key
+
+    automod = _read(ctx.settings_path).get("automod")
+    if not isinstance(automod, dict) or automod.get("across_servers", True) is not False:
+        return []
+    said = [f"{ctx.settings_path.name}: [automod] across_servers = true: moderation is every server's now, whoever gives it (a mute, kick or ban follows "
+            "the player to every server, the game's own /kick and /ban too, and a rank on one server is a rank on all of them). It's on to start with in "
+            "0.7.0; set it to false again to keep each server's own"]
+    if not ctx.dry:
+        ctx.backup(ctx.settings_path)
+        set_table_key(ctx.settings_path, "automod", "across_servers", True)
     return said
 
 
@@ -1709,6 +1727,7 @@ STEPS: list[Step] = [
     Step("0.6.0/restart-budget", "[restarts] restarts_per_hour does nothing any more", restart_budget),
     Step("0.6.0/watchdog-memory", "[watchdog] memory only warns unless turned on", watchdog_memory),
     Step("0.6.1/discord-built", "what 0.6.0 kept as notes, for what's built now, back as it was set", discord_built),
+    Step("0.7.0/every-server-moderation", "[automod] across_servers on: moderation is every server's", every_server_moderation),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.

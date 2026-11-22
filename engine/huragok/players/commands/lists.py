@@ -3,7 +3,8 @@
 look in the same lists, and ask when it's on more than one entry.
 
 The kicks are every kick the servers announce (`rcon.kick`: from the console, the relay, an admin in game, a vote),
-kept while the server keeps them out (at most two hours) and since Huragok started; a pardon takes one off.
+kept while the server keeps them out (at most two hours); a pardon takes one off. One someone gave (not a vote's or
+the server's own) keeps them off every server ([automod] across_servers).
 
 What the servers announce goes in the ledger too (history.py), for !whois.
 """
@@ -18,18 +19,26 @@ from typing import Any
 
 from ...core.events import Event
 from ...core.part import command, on
+from ...core.tags import named_then
 from ...core.text import TIME, seconds_of
 from ...rcon import ban_list
 from ...servers.state import Player
 from ..ledger import KICK_LIFTED, is_housekeeping, plain_reason
 from ..router import CommandCall
-from ..targets import FULL_ID, PICK, Candidate, ago, ask, offer, plain
-from ..who import from_console, who
+from ..targets import FULL_ID, ID_START, PICK, Candidate, ago, ask, offer, plain
+from ..reach import by_a_person
+from ..who import who
 from .base import CommandsBase
 
 KICKS_KEPT = 7200  # seconds: the server's longest kick block
 LISTED = 10  # entries in one !bans or !kicks answer
 KICK_MATCH_SECONDS = 120  # how far a ban's end in the server's list may be from its kick's in the ledger, to be that kick
+
+
+def plain_name(target: str, ctx: Any) -> str:
+    """Who a lift is for, by name: the one they were last seen with, else what was typed."""
+    record = ctx.players.get(target.lower()) if FULL_ID.fullmatch(target) else None
+    return str(record.last_name) if record is not None and record.last_name else target
 
 
 @dataclass(frozen=True)
@@ -41,17 +50,21 @@ class Kick:
     by: str
     reason: str
     seconds: float  # how long the server keeps them out
-    through_console: bool = False  # a ! command's, Vergil's, the relay's (the server names who "Alice (RCON)")
+    through_console: bool = False  # someone's, not a vote's or the server's: it keeps them off every server (the name
+    # is from when only the console's did, up to 0.7.0: the database's column is still `console`)
     everywhere: bool = False  # given while they were away (a confirmed request): every server keeps them off, that one too
 
-    def candidate(self, now: float, here: str = "") -> Candidate:
+    def candidate(self, now: float, here: str = "", names: Any = None) -> Candidate:
+        """An entry of !kicks: who they are now (`names`: players/naming.py), and the kick, with the name it was
+        given under when that's another (the host's call, 21 November 2026: "kicked as Alpha")."""
         left = self.time + self.seconds - now
-        how = "" if self.through_console or self.by in ("a vote", "the server") else " in game"
         where = f" on {self.server}" if here and self.server != here else ""
-        note = f"kicked {ago(now - self.time)} ago{where} by {self.by}{how}" + (f": {self.reason}" if self.reason
-                                                                                 else "")
+        name = names.name(self.id, self.name) if names is not None else self.name
+        then = named_then(self.name, name)
+        note = (f"kicked {ago(now - self.time)} ago{where}" + (f" as {then}" if then else "") + f" by {self.by}"
+                + (f": {self.reason}" if self.reason else ""))
         note += f"; out {ago(left)} more" if left > 0 else "; can come back"
-        return Candidate(self.id, self.name, note=note)
+        return Candidate(self.id, name, note=note, where=names.on(self.id)[0] if names is not None else "")
 
 
 class KeptKicks:
@@ -106,12 +119,15 @@ class KeptKicks:
         return len(self.kicks)
 
 
-def ban_note(entry: dict[str, Any], now: float) -> str:
+def ban_note(entry: dict[str, Any], now: float, then: str = "") -> str:
+    """What a ban list's entry says: kicked or banned, how long ago, under which name if it isn't theirs now (`then`),
+    by whom, why, and how long is left."""
     at = entry.get("banned_at")
     at = at / 1000 if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 1e11 else at
     expires = entry.get("expires")
     timed = isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0  # one with a time is a kick, whatever the server's list calls it
     note = ("kicked" if timed else "banned") + (f" {ago(now - at)} ago" if isinstance(at, (int, float)) and at else "")
+    note += f" as {then}" if then else ""
     note += f" by {who(entry.get('banned_by'))}" if entry.get("banned_by") else ""
     reason = plain_reason(entry.get("reason"))
     note += f": {reason}" if reason else ""
@@ -172,9 +188,17 @@ class ListCommands(CommandsBase):
             return "; every server" if str(entry.get("id") or entry.get("ip") or "").lower() in everywhere \
                 else "; this server"
 
-        return [Candidate(str(e["id"]).lower(), str(e.get("name") or str(e["id"])[:8]), note=ban_note(e, now) + where(e))
-                if e.get("id") else Candidate("", str(e["ip"]), note=ban_note(e, now) + where(e), target=str(e["ip"]))
-                for e in data]
+        names = self.ctx.names
+
+        def entry(e: dict[str, Any]) -> Candidate:
+            if not e.get("id"):
+                return Candidate("", str(e["ip"]), note=ban_note(e, now) + where(e), target=str(e["ip"]))
+            player_id = str(e["id"]).lower()
+            name = names.name(player_id, str(e.get("name") or ""))
+            return Candidate(player_id, name, note=ban_note(e, now, named_then(e.get("name"), name)) + where(e),
+                             where=names.on(player_id)[0])
+
+        return [entry(e) for e in data]
 
     @command("bans", usage="[name]", help="The bans in force, newest first, with who and why; @numbers for !unban",
              role="admin")
@@ -205,17 +229,25 @@ class ListCommands(CommandsBase):
         if not target:
             return
         action = await self.ctx.moderation.unban(call.server, target, by=call.player.name)
-        await self._done(call, action)
-        # Huragok's ban comes off every server; another server's own /ban stays that server's: said where.
         if action.dry_run:
+            await self._done(call, action)
             return
+        if self._across():  # every ban on them comes off every server (across.py, as this server announces it)
+            if action.ok:
+                await self._done(call, action)
+                return
+            self.unban_everywhere(call.server, target, call.player.name)  # this server didn't have it: no announcement
+            await call.reply(f"Not on this server's list ({action.text}): every other server is told to lift any ban "
+                             f"it has on {self.acted_on(call, action)}.")
+            return
+        await self._done(call, action)
+        # With across_servers off, each server's bans are its own: said where they still stand.
         still, silent = await self._banned_elsewhere(call.server, target)
         if still:
-            await call.reply("Still banned on " + "; ".join(still) + f": a /ban is that server's own; {call.prefix}"
-                             "unban on that server lifts it.")
+            await call.reply("Still banned on " + "; ".join(still) + f": with [automod] across_servers off, each "
+                             f"server's bans are its own ({call.prefix}unban on that server lifts it).")
         if silent:
-            await call.reply(f"{', '.join(silent)} didn't answer, so a /ban of their own there isn't known (Huragok's "
-                             "own ban comes off there as each answers).")
+            await call.reply(f"{', '.join(silent)} didn't answer, so a ban of their own there isn't known.")
 
     async def _listed(self, call: CommandCall, text: str, entries_of: Any) -> str:
         """What to send for `text`: an @number's entry (its player ID, or an address), the one entry with that name,
@@ -226,10 +258,23 @@ class ListCommands(CommandsBase):
             if isinstance(got, str):
                 await call.reply(got)
                 return ""
+            if got.id:
+                call.picked[got.id] = f"@{pick[1]}"  # what the reply, and the ledger, say they were picked by
             return got.target or got.id
         if FULL_ID.fullmatch(text):
             return text.lower()
         entries = await entries_of(call)
+        if ID_START.fullmatch(text):  # the start of an ID, as every tag shows it: an entry's, else someone seen here
+            start = text.lower()
+            hits = [c for c in entries or [] if c.id.startswith(start)]
+            if len(hits) > 1:
+                await ask(call, f"'{text}'", hits)
+                return ""
+            if hits:
+                return hits[0].id
+            seen = [r for r in self.ctx.players.find(text) if str(r.id).startswith(start)]
+            if len(seen) == 1:
+                return str(seen[0].id)
         named = [c for c in entries or [] if plain(c.name) == plain(text)]
         if len(named) > 1:
             await ask(call, f"'{text}'", named)
@@ -253,10 +298,9 @@ class ListCommands(CommandsBase):
         seconds = event.get("seconds")
         seconds = float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else 600.0
         by = str(event.get("by") or "").strip()
-        console = from_console(by, self.ctx.servers, event.server)
         name = str(event.get("name") or player_id[:8])
         self._kicks_list().append(Kick(time.time(), event.server, player_id, name, who(by),
-                                       str(event.get("reason") or ""), seconds, console))
+                                       plain_reason(event.get("reason")), seconds, by_a_person(by)))
 
     @on("moderation.action")
     async def _kicks_pardoned(self, event: Event) -> None:
@@ -335,9 +379,9 @@ class ListCommands(CommandsBase):
         elsewhere = [k for k in self.recent_kicks() if across and k.server != call.server and k.through_console
                      and k.time + k.seconds > now]
         timed = [k for k in self._timed_kicks() if not any(other.id == k.id for other in [*self.recent_kicks(call.server), *elsewhere])]
-        return [k.candidate(now, call.server) for k in self.recent_kicks(call.server) + elsewhere + timed]
+        return [k.candidate(now, call.server, self.ctx.names) for k in self.recent_kicks(call.server) + elsewhere + timed]
 
-    @command("kicks", help="Who's been kicked lately (here, or off every server by a ! kick), with who and why; "
+    @command("kicks", help="Who's been kicked lately (here, or off every server by a kick on another), with who and why; "
                            "@numbers for !pardon", role="moderator")
     async def kicks(self, call: CommandCall) -> None:
         entries = await self._kick_entries(call)
@@ -349,7 +393,7 @@ class ListCommands(CommandsBase):
         await call.reply("\n".join([*lines, f"{call.prefix}pardon @number lets one back in now."]))
 
     @command("pardon", usage="<@number | name | player ID | IP>",
-             help="Let a kicked player back in now (a ! kick's: on every server)", role="moderator")
+             help="Let a kicked player back on every server now", role="moderator")
     async def pardon(self, call: CommandCall) -> None:
         text = call.text.strip()
         if not text:
@@ -360,14 +404,14 @@ class ListCommands(CommandsBase):
         if not target:
             return
         if why := self.lift_outranked(call, target, "kick", "kick"):  # a player ID; a name or an address: no row
-            await call.reply(f"Not pardoned: {why}")
+            await call.reply(f"Not let back: {why}")
             return
         if running := self._kick_running(target):  # the server's timed ban underneath, so its unban, at a pardon's rank: it's still a kick. What a moderator could have given, they can lift
             if too_long := self.kick_too_long(call.role, running):
                 await call.reply(too_long.replace("an admin can make it longer", "an admin can lift a longer one"))
                 return
             if besides := await self._bans_besides(call.server, target, self._kick_ends(target)[1]):
-                await call.reply(f"Not pardoned: {besides}.")
+                await call.reply(f"Not let back: {besides}.")
                 return
             await self._done(call, await self.ctx.moderation.unban(call.server, target, reason=KICK_LIFTED, by=call.player.name))
             return
@@ -377,9 +421,9 @@ class ListCommands(CommandsBase):
         here = any(k.time + k.seconds > now and (k.id == target.lower() or plain(k.name) == plain(target))
                    for k in self.recent_kicks(call.server))
         if lifted and not here:
-            await call.reply(f"Pardoned on {', '.join(lifted)}, where the kick was given: they can join every server "
-                             "again.")
+            who = call.tag(target) if FULL_ID.fullmatch(target) else plain_name(target, self.ctx)
+            await call.reply(f"{who} is let back on every server (the kick was given on {', '.join(lifted)}).")
             return
         await self._done(call, await self.ctx.moderation.pardon(call.server, target, by=call.player.name))
         if lifted:
-            await call.reply(f"Also pardoned on {', '.join(lifted)}, where a kick kept them off every server.")
+            await call.reply(f"The kick given on {', '.join(lifted)}, which kept them off every server, is lifted too.")

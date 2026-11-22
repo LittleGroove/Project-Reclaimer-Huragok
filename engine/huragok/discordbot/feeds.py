@@ -46,6 +46,9 @@ NAMED_BY_ID = {"rcon.leave", "rcon.refused", "rcon.cheat"}  # the player as `id`
 # Every event a feed cares about, and who makes its card. The ones that need more than the event are methods below.
 ABOUT_SOMEONE = (("target_id", "target_name"), ("player_id", "player_name"))
 NAME_IS_THE_NEWS = {"automod.name"}
+HAPPENED_THERE = {"automod.heard", "automod.name", "automod.name_asked"}  # said, or joined with a name, on the event's server: they were on it
+ACTED = {"moderation.action", "moderation.seen", "commands.request", *(f"automod.{kind}" for kind in (
+    "strike", "pardon", "name", "name_banned", "name_allowed", "words_banned", "word_allowed", "rule_changed"))}  # someone did it: by_shown
 SIMPLE: dict[str, Callable[[DiscordConfig, Event], Card | None]] = {
     "rcon.cheat": cards.cheat,
     "commands.request": cards.request,
@@ -167,9 +170,23 @@ class Feeds:
         changes = {name_key: now for id_key, name_key in ABOUT_SOMEONE if (player_id := str(event.get(id_key) or "")) and (now := self.part.name_of(player_id, str(event.get(name_key) or ""))) != event.get(name_key)}
         return Event(event.name, event.server, {**event.data, **changes}, event.time) if changes else event
 
+    def shown(self, event: Event) -> Event:
+        """An event as its card shows it, the one way (core/tags.py): whoever it's about by the name they go by, and the
+        server they were on as it happened (`on_server`: what the event says, else the server it happened on for what
+        was heard or seen there, else where they are now); whoever did it as part.actor writes them (`by_shown`). Only
+        for reading: what's kept stays as the event has it."""
+        event = self._by_name_now(event)
+        changes: dict[str, Any] = {}
+        player_id = next((str(event.get(id_key) or "") for id_key, _ in ABOUT_SOMEONE if event.get(id_key)), "")
+        if player_id and "on_server" not in event.data:
+            changes["on_server"] = (event.server or "") if event.name in HAPPENED_THERE else self.part.on_server(player_id)
+        if event.name in ACTED and (event.get("by") or event.get("by_id")):
+            changes["by_shown"] = self.part.actor(str(event.get("by_id") or ""), str(event.get("by") or ""))
+        return Event(event.name, event.server, {**event.data, **changes}, event.time) if changes else event
+
     def card_for(self, event: Event) -> Card | None:
         config = self.config
-        event = self._by_name_now(event)
+        event = self.shown(event)
         name = event.name
         if name == "rcon.connected":
             self.part.tickets.signed_in(event.server or "")
@@ -212,11 +229,6 @@ class Feeds:
             return self._join(event)
         return None
 
-    def _by_real_name(self, event: Event) -> Event:
-        """On a card, someone acting from Discord goes by their name there. `shown_as` is for what players read."""
-        real = self.part.real_names.get(str(event.get("by_id") or ""))
-        return Event(event.name, event.server, {**event.data, "by": real}, event.time) if real else event
-
     def _news_over(self, server: str) -> None:
         """What was said in `info` about this server that isn't so any more goes, rather than stay until its time's up."""
         for kind in NEWS_THAT_GOES:
@@ -242,7 +254,7 @@ class Feeds:
             return card
         card.owner, card.decided = PEOPLE, True
         pressed = tickets.take(Event("moderation.action", event.server, {"target_id": player_id, "by_id": event.get("by_id")}))
-        number = pressed or reported
+        number = pressed or reported or tickets.latest_of(player_id)  # the incident's card: a kick, then the strike for it, is one ticket (H6)
         if not number:
             return card
         written = card.fields[0][1] if card.fields else ""
@@ -256,7 +268,7 @@ class Feeds:
         """A name Vergil asked about, banned or allowed however it was (its card's buttons, /banname, in game): its card is done."""
         tickets = self.part.tickets
         if number := tickets.ongoing(str(event["key"])):
-            who = self.part.real_names.get(str(event.get("by_id") or "")) or str(event.get("by") or "someone")
+            who = event.get("by_shown") or self.part.actor(str(event.get("by_id") or ""), str(event.get("by") or "someone"))
             tickets.close(number, who, key="ticket.name_banned" if event.name == "automod.name_banned" else "ticket.name_allowed")
 
     def _case(self, event: Event) -> Card | None:
@@ -269,7 +281,7 @@ class Feeds:
         on_a_report, on_an_appeal = self.part.reports.case(event, pressed), self.part.appeals.case(event, pressed)  # both: one act can answer a report and an appeal
         if pressed or on_a_report or on_an_appeal:  # that card's, as it's the one incident
             return None
-        card = cards.moderation(self.config, self._by_real_name(event))
+        card = cards.moderation(self.config, event)  # shown already (card_for)
         if card is None:
             return None
         options = self.config.section("tickets")
@@ -332,28 +344,39 @@ class Feeds:
                     found.append(cards.flagged(config, event, str(row["flag"]), str(row["why"]), str(colours.get(row["flag"]) or "")))
         kicked = self.part.kicked_lately(player_id, float(options.get("back_after_kick_minutes", 15) or 0) * 60, event.time)
         if kicked is not None:
-            found.append(cards.watch(config, event, "back-after-kick", "watch.back", minutes=cards.minutes_words(event.time - float(kicked["time"])), by=cards.clean(kicked["by"]),
+            found.append(cards.watch(config, event, "back-after-kick", "watch.back", minutes=cards.minutes_words(event.time - float(kicked["time"])), by=self._kicked_by(kicked),
                                      reason=f": {cards.clean(kicked['reason'])}" if kicked["reason"] else ""))
         name = str(event.get("name") or "")
         staff = self._lookalike(player_id, name)
-        if staff:
-            found.append(cards.watch(config, event, "staff-lookalike", "watch.lookalike", staff=cards.clean(staff)))
+        if staff:  # the staff member's ID beside theirs: a name can be anyone's
+            found.append(cards.watch(config, event, "staff-lookalike", "watch.lookalike", staff=cards.tagged(staff[1], staff[0])))
         if not gone and self.part.last_visit(player_id) is None and len(self.part.players_on(event.server or "")) <= int(options.get("quiet_players", 2) or 0):
             found.append(cards.watch(config, event, "first-time-quiet", "watch.quiet", players=len(self.part.players_on(event.server or ""))))
-        elsewhere = self.part.banned_elsewhere(player_id, event.server or "")
+        # With across_servers on a ban is every server's, and Huragok puts it on this one as they join (across.py): only
+        # with it off is a ban on another server news to whoever's on this one.
+        elsewhere = [] if self.part.across() else self.part.banned_elsewhere(player_id, event.server or "")
         if elsewhere:
             found.append(cards.watch(config, event, "banned-elsewhere", "watch.banned", where=cards.clean(", ".join(elsewhere))))
         return found
 
-    def _lookalike(self, player_id: str, name: str) -> str:
-        """A staff member's name this is close to, or the same as, when it isn't them. Names can't be trusted: IDs can."""
+    def _kicked_by(self, kicked: Any) -> str:
+        """Whoever kicked them, the one way (part.actor), from their kick's row in the ledger."""
+        try:
+            by_id = str(kicked["by_id"] or "")
+        except (KeyError, IndexError):  # a row without it
+            by_id = ""
+        return self.part.actor(by_id, str(kicked["by"] or "")) if by_id else cards.clean(kicked["by"])
+
+    def _lookalike(self, player_id: str, name: str) -> tuple[str, str] | None:
+        """(ID, name) of a member of staff whose name this is close to, or the same as, when it isn't them. Names can't
+        be trusted: IDs can."""
         wanted = skeleton(name)
         if not wanted:
-            return ""
+            return None
         for staff_id, staff_name in self.part.staff_names():
             if staff_id != player_id and difflib.SequenceMatcher(None, wanted, skeleton(staff_name)).ratio() >= LOOKALIKE:
-                return staff_name
-        return ""
+                return staff_id, staff_name
+        return None
 
     def _recovered(self, event: Event) -> Card | None:
         problem = self.problems.pop(event.server or "", None)
@@ -425,8 +448,8 @@ class Feeds:
             return None
         options = {**self.config.data["feeds"], **self.config.section(*feature.table)}
         servers = options.get("servers", "*")
-        if card.server and servers != "*" and "*" not in servers and card.server not in servers:
-            return None
+        if card.server and servers != "*" and "*" not in servers and card.server not in servers and card.reach not in (cards.EVERY, cards.PLAYERS):
+            return None  # another server's: what reaches every server, or is the player's, is every server's feed's
         sources = options.get("sources")
         if isinstance(sources, list) and "*" not in sources and card.source and card.source not in sources:
             return None
@@ -723,7 +746,7 @@ def sample_cards(config: DiscordConfig) -> list[Card]:
              cards.message_reported(config, "Bravo", say(config, "reports.first"), "Alice", "general", "https://discord.com/channels/", "come and fight me", ""),
              cards.appeal(config, "Alice (Discord)", "ban", "", "Alice", "Server 1", say(config, "appeals.case", number=1432, what="ban", by="Mod", when="<t:0:R>", why=": slurs in voice"), ["get out of my spawn"], [("What happened?", "I got carried away"), ("Why should the ban be lifted?", "It won't happen again")]),
              cards.contacted(config, "Alice", "Question", "How do I get on the server list?", ""),
-             cards.audit("console", say(config, "audit.console", who="Admin", server="Server 1", line="players"), config)]
+             cards.audit("console", say(config, "audit.console", who="Admin", server="Server 1", where=" (on Server 1)", line="players"), config)]
     made += [cards.audit("settings", say(config, "audit.file"), config), cards.audit("setup", say(config, "audit.setup", who="Host", what="the staff channel is #admin-log"), config)]
     made.append(Card("console", "cleared", say(config, "console.cleared", channel="console", count=41, who="Alice, Bravo", first="20:02:11", last="20:41:07"), "Console"))
     return [card for card in made if card is not None]

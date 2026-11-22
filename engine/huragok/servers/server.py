@@ -1525,9 +1525,15 @@ class ServerManager:
             detail = "  |  ".join(bits)
         players = ""
         names = ""
+        online: list[dict[str, Any]] = []
         if phase in UP or phase == "countdown":
             players = str(len(state.players)) + (f"/{state.max_players}" if state.max_players else "")
-            names = ", ".join(p.name for p in sorted(state.players.values(), key=lambda p: p.number))
+            # Each player on, apart (`online`: the P list and the window's player finder; a name can have a comma in
+            # it). `names` stays, joined, for the dashboard's column and what an older version reads in live.json.
+            ordered = sorted(state.players.values(), key=lambda p: p.number)
+            names = ", ".join(p.name or "?" for p in ordered)
+            online = [{"number": p.number, "name": p.name, "id": p.id, "team": p.team or "", "admin": p.admin,
+                       "muted": p.muted, "joined": p.joined} for p in ordered]
         game = ""
         if phase in UP or phase == "countdown":
             phase_word = {"no_game": "lobby:", "playing": "playing", "round_over": "round over:",
@@ -1542,7 +1548,7 @@ class ServerManager:
         return {
             "index": index, "name": self.name, "slug": self.server.slug, "port": self.server.game_port,
             "autostart": self.server.autostart, "phase": phase, "status": status, "color": color,
-            "players": players, "names": names, "game": game, "detail": detail, "plays": self.server.plays,
+            "players": players, "names": names, "online": online, "game": game, "detail": detail, "plays": self.server.plays,
             "next": state.next_game or "", "picked": state.picked or "", "overrides": state.picked_overrides,
             "ballot_playlist": state.ballot_playlist or "", "voting": bool(state.playlist_vote),
             "reload": list(state.last_reload) if state.last_reload else None,

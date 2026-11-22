@@ -9,6 +9,7 @@ from typing import Any
 import discord
 from discord import app_commands
 
+from ..players.targets import FULL_ID, ID_START
 from ..servers import leaderboards
 from ..servers.leaderboards import Board, words_of
 from . import standings
@@ -34,19 +35,25 @@ async def _show(part: Any, interaction: discord.Interaction, form: dict[str, Any
         await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
 
-async def _player(part: Any, typed: str) -> tuple[str, str]:
-    """(their ID, their name) for a name they've played under, the one with the most games if several have. Found
-    through the names Huragok keeps (indexed), not by reading every stats row: 8 s on a busy year (audit 0.6.1, 2.3)."""
-    wanted = typed.strip()
-    found = part.ctx.players.named(wanted)
+async def _player(part: Any, typed: str) -> tuple[str, str, list[tuple[str, str]]]:
+    """(their ID, their name, and everyone with stats it could be when that's more than one) for what was picked (a
+    choice: who it stands for), their ID or the start of it (8 characters or more), or a name they've played under.
+    Which of several is never guessed: the one with the most games was shown, and 29 of 30 "Player"s couldn't be
+    looked up (the identity audit of 21 November 2026). Found through the names Huragok keeps (indexed), not by
+    reading every stats row: 8 s on a busy year (audit 0.6.1, 2.3)."""
+    wanted = part.meant(typed).strip()
+    if FULL_ID.fullmatch(wanted):
+        return wanted.lower(), part.name_of(wanted.lower()), []
+    found = list(dict(part.ctx.players.named(wanted)).items()) or ([(str(record.id), str(record.last_name)) for record in part.ctx.players.find(wanted)] if ID_START.fullmatch(wanted) else [])
     if len(found) > 1:
-        games = {player_id: _games(part, player_id) for player_id, _ in found}
-        found = sorted(found, key=lambda one: -games[one[0]])
+        found = [one for one in found if _games(part, one[0])] or found  # only who has stats is anyone's to pick
+    if len(found) > 1:
+        return "", wanted, found
     if found:
-        return found[0]
+        return (*found[0], [])
     # Someone in the stats Huragok never saw join (games read in from elsewhere): the long way, in a thread (5.2).
     rows = await leaderboards.read_soon(part.ctx.db, _by_stats_name, wanted)
-    return (str(rows[0]["player_id"]), str(rows[0]["name"])) if rows else ("", wanted)
+    return (str(rows[0]["player_id"]), str(rows[0]["name"]), []) if rows else ("", wanted, [])
 
 
 def _by_stats_name(db: Any, wanted: str) -> list[Any]:
@@ -61,18 +68,20 @@ def _games(part: Any, player_id: str) -> int:
 
 
 async def _players_with_stats(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
+    """Each player with stats whose name has this in it, once, by their tag: thirty "Player"s were one choice, and
+    only the busiest could be reached. What's picked stands for them (part.opaque): a whole ID isn't everyone's."""
     part = part_of(interaction)
     # The names Huragok keeps, those with stats: a keystroke read every stats row (audit 0.6.1, 2.3).
     rows = part.ctx.db.query(
         "SELECT n.id AS player_id, n.name FROM player_names n JOIN stats_people people ON people.player_id = n.id "
         "WHERE n.folded LIKE '%' || ? || '%' ESCAPE '\\' ORDER BY n.last_seen DESC LIMIT ?",
         (typed.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"), MOST_CHOICES * 4))
-    names = []
+    found: dict[str, str] = {}
     for row in rows:
         if getattr(part.ctx, "name_unfit", lambda _: False)(str(row["name"])):  # 5.4
             continue
-        names.append(str(row["name"]))
-    return [app_commands.Choice(name=name[:100], value=name[:100]) for name in dict.fromkeys(names)][:MOST_CHOICES]
+        found.setdefault(str(row["player_id"]), str(row["name"]))
+    return [app_commands.Choice(name=part.label(player_id, name)[:100], value=part.opaque(player_id)) for player_id, name in found.items()][:MOST_CHOICES]
 
 
 async def _stats_choices(interaction: discord.Interaction, typed: str) -> list[app_commands.Choice[str]]:
@@ -106,7 +115,11 @@ async def stats_command(interaction: discord.Interaction, player: str = "") -> N
     await interaction.response.defer(ephemeral=bool(part.file.section("stats").get("private", True)), thinking=True)  # 5.2
     mine = part.links.of_member(str(interaction.user.id)) if part.links.takes() else None
     if player.strip():
-        player_id, name = await _player(part, player)
+        player_id, name, several = await _player(part, player)
+        if several:  # each by their tag, to tell them apart: the start of an ID is everyone's to see (H2)
+            shown = ", ".join(part.tag(one, one_name) for one, one_name in several[:10])
+            await answer(interaction, f"More than one player has played as {clean(name)}: {shown}. Pick the one you mean from the list as you type, or give the start of their ID.")
+            return
     elif mine is not None:
         player_id, name = str(mine["player_id"]), part.links.player_name(mine)
     else:
