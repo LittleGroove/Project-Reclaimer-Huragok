@@ -142,6 +142,57 @@ def test_two_refusals_in_a_row_stop_it_for_that_server(tmp_path: Path, run) -> N
     run(scenario())
 
 
+def test_a_lookups_404_is_the_services_answer_never_a_refusal(tmp_path: Path, run) -> None:
+    """0.10.9 asks the service GET /v1/unlocks/revision as it starts, which it answers 404: 0.6.x took two of those for
+    refused reports and stopped standing in the middle for good, on every server (the live servers, 22 November
+    2026). Only a game's report turned down counts."""
+    async def scenario() -> None:
+        async with FakeService(status=404) as service:
+            config = dedicated(tmp_path / "one", service.url)
+            capture = StatsCapture(tmp_path / "records", lambda s, d: None, Scrubber(b"k" * 32))
+            await capture.apply(["One"], {"One": (config, None)})
+            url = configured(config)[1]
+            for _ in range(3):
+                assert (await request(url, "GET", "/v1/unlocks/revision"))[0] == 404  # passed back as it is
+            assert configured(config)[1] == url and not any("stopped for good" in n for n in capture.notes)
+            assert (await post(url, b"{}"))[0] == 404 and (await post(url, b"{}"))[0] == 404  # two games turned down
+            assert configured(config) == (True, service.url) and "stopped for good" in capture.notes[-1]
+            assert capture.saved["servers"]["One"]["refused"] == "POST /v1/matches"
+            await capture.close()
+
+    run(scenario())
+
+
+def test_a_give_up_0_6_made_on_a_404_is_taken_back_once(tmp_path: Path, run) -> None:
+    """Records 0.6.x left: one stopped on a 404 with nothing saying it was a game's report goes back on, its service
+    learned again from the server's own log (it has reported there itself since); one stopped on a refused game
+    (422: the service couldn't read the report) stays stopped."""
+    async def scenario() -> None:
+        async with FakeService() as service:
+            one, two = dedicated(tmp_path / "one", ""), dedicated(tmp_path / "two", "")
+            log = tmp_path / "one" / "server.log"
+            log.write_text(f"[host] Project Reclaimer 0.10.9 (rcl-engine)\n[stats] reporting to {service.url} as k=\n",
+                           encoding="utf-8")
+            records = tmp_path / "records"
+            records.mkdir()
+            why = "the service turned down 2 reports in a row that came through Huragok"
+            (records / "temp-stats-capture.json").write_text(json.dumps({"servers": {
+                "One": {"original": "", "upstream": "http://203.0.113.1:8792", "port": None, "config": str(one),
+                        "gave_up": f"{why} (404)", "told": True},
+                "Two": {"original": "", "upstream": service.url, "port": None, "config": str(two),
+                        "gave_up": f"{why} (422)", "told": True}}}), encoding="utf-8")
+            capture = StatsCapture(records, lambda s, d: None, Scrubber(b"k" * 32))
+            assert any(n.startswith("[One] stats capture: back on") for n in capture.notes)
+            await capture.apply(["One", "Two"], {"One": (one, log), "Two": (two, None)})
+            url = configured(one)[1]
+            assert url and url.startswith("http://127.0.0.1:") and capture.saved["servers"]["One"]["upstream"] == service.url
+            assert (await post(url, b"{}"))[0] == 201 and service.received  # to where the server says it reports
+            assert configured(two) == (True, "") and "Two" not in capture.listeners  # stays aside
+            await capture.close()
+
+    run(scenario())
+
+
 def test_two_huragoks_reach_for_different_ports(tmp_path: Path) -> None:
     one = StatsCapture(tmp_path / "a" / "records", lambda s, d: None, None, home=tmp_path / "a")
     two = StatsCapture(tmp_path / "b" / "records", lambda s, d: None, None, home=tmp_path / "b")
@@ -226,6 +277,17 @@ async def post(url: str, body: bytes) -> tuple[int, bytes]:
     writer.close()
     status = int(answer.split(b" ", 2)[1])
     return status, answer.split(b"\r\n\r\n", 1)[1]
+
+
+async def request(url: str, method: str, path: str) -> tuple[int, bytes]:
+    """A lookup as a server makes one (no body)."""
+    host, port = url.removeprefix("http://").split(":")
+    reader, writer = await asyncio.open_connection(host, int(port))
+    writer.write(f"{method} {path} HTTP/1.1\r\nHost: {url}\r\nContent-Length: 0\r\n\r\n".encode())
+    await writer.drain()
+    answer = await reader.read()
+    writer.close()
+    return int(answer.split(b" ", 2)[1]), answer.split(b"\r\n\r\n", 1)[1]
 
 
 def dedicated(folder: Path, stats: str | None) -> Path:

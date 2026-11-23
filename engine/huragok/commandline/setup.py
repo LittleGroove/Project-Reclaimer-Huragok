@@ -582,6 +582,10 @@ def add_parsers(commands: Any, load: Callable[[str], Settings], launcher: str) -
     # new and use are gone (0.7.0): still taken, to say where they went
     playlist.add_argument("action", nargs="?", default="list", choices=["list", "show", "new", "use"])
     playlist.add_argument("name", nargs="?", help="show: the playlist, its file or its name in playlists/")
+    # 0.6's options for new, taken and not shown, so an old command line gets "is gone" rather than argparse's error
+    for option in ("--maps", "--games", "--vote-seconds"):
+        playlist.add_argument(option, help=argparse.SUPPRESS)
+    playlist.add_argument("--replace", action="store_true", help=argparse.SUPPRESS)
     playlist.set_defaults(func=bind(cmd_playlist))
 
     variant = commands.add_parser("variant", help="A server's saved custom games (game variants): list, show, check")

@@ -158,6 +158,12 @@ class Superintendent:
         self.settings.servers[:] = [s for s in self.settings.servers if s.name != name]
         self.huragok.refresh_problems()
 
+    def hands_off_recorded(self) -> None:
+        """The 0.7.0 update step's record written while running (it's a settled step: 150 s after the first start,
+        after the servers were added): each server's used-to-set warning raised now, not at the next start."""
+        for server in list(self.settings.servers):
+            self._used_to_set(server)
+
     def _used_to_set(self, server: ServerConfig) -> None:
         """What Huragok had set in the server's folder before 0.7.0 (the 0.7.0 update step's record): said once, as
         information, until the host dismisses it. Nothing there is changed back."""

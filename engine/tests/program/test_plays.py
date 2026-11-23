@@ -45,8 +45,11 @@ def test_playlist_use_and_new_are_gone_and_show_is_the_programs_own(tmp_path, ca
     before = server.config_path.read_text(encoding="utf-8"), bad.read_text(encoding="utf-8")
     assert cli.main(["-c", str(settings_path), "playlist", "use", "nowhere"]) == 2
     assert cli.main(["-c", str(settings_path), "playlist", "new", "Night Shift"]) == 2
+    # 0.6's whole command line, its options too: still "is gone", not argparse's "unrecognized arguments"
+    assert cli.main(["-c", str(settings_path), "playlist", "new", "Night Shift", "--maps", "Guardian,Valhalla",
+                     "--games", "Slayer", "--vote-seconds", "20", "--replace"]) == 2
     said = capsys.readouterr()
-    assert said.err.count("is gone: Huragok no longer makes playlists or changes what a server plays") == 2
+    assert said.err.count("is gone: Huragok no longer makes playlists or changes what a server plays") == 3
     assert (server.config_path.read_text(encoding="utf-8"), bad.read_text(encoding="utf-8")) == before
     assert not (server.folder / "playlists" / "night-shift.playlist.json").exists()
     assert cli.main(["-c", str(settings_path), "playlist", "show", "playlists/nowhere.playlist.json"]) == 1

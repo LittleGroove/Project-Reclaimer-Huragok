@@ -1755,7 +1755,45 @@ def hands_off(ctx: Context) -> list[str]:
     _record_what_huragok_set(ctx, workshop)
     for action in actions:
         action()
+    _refresh_settings_notes(ctx)
     return said
+
+
+def _refresh_settings_notes(ctx: Context) -> None:
+    """settings.toml's notes as this version writes them, again: the notes step ran as Huragok started, before a
+    settled step (hands_off) took keys out or renamed them, so the notes beside those are brought into line here."""
+    from .notes import NotesError, read, refresh_text
+
+    try:
+        text = read(ctx.settings_path, "settings.toml")
+        result = refresh_text("settings.toml", text)
+        if result.text != text:
+            write_atomic(ctx.settings_path, result.text)
+    except (NotesError, OSError) as error:  # the settings themselves are right; only a note is left as it was
+        log.warning("Couldn't bring settings.toml's notes into line after 0.7.0's changes: %s", error)
+
+
+# 0.6.x's line as it listed a Workshop copy a server's [workshop] items didn't (content/workshopmods.py list_unlisted)
+LISTED_LINE = re.compile(r"\[(?P<server>[^\]]+)\] (?P<title>.+?)(?: \(Workshop \d+\))? is in its content folder "
+                         r"\(Mods/Workshop/(?P<item>\d+)\) but wasn't in \[workshop\] items")
+
+
+def _listed_by_huragok(ctx: Context) -> list[tuple[str, str, str]]:
+    """(server, item, title) for each Workshop item 0.6.x put in a server's [workshop] items by itself, from its own
+    log (huragok.log and the five kept before it): it kept no other record of them."""
+    data = _read(ctx.settings_path)
+    log_file = ctx.home / str(data.get("log_file") or "logs/huragok.log")
+    found: list[tuple[str, str, str]] = []
+    for path in [log_file, *(log_file.with_name(f"{log_file.name}.{n}") for n in range(1, 6))]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in LISTED_LINE.finditer(text):
+            entry = (match.group("server"), match.group("item"), match.group("title"))
+            if entry not in found:
+                found.append(entry)
+    return found
 
 
 def _record_what_huragok_set(ctx: Context, workshop: dict[str, Any]) -> None:
@@ -1784,6 +1822,10 @@ def _record_what_huragok_set(ctx: Context, workshop: dict[str, Any]) -> None:
             servers.setdefault(str(entry["server"]), []).append(
                 f"Workshop item {entry['item']} ({entry.get('title') or 'a mod'}) in [workshop] items, for a copy put "
                 "in by hand")
+    for server, item, title in _listed_by_huragok(ctx):  # 0.6.x listed the program's own copies with no record
+        if not any(f"Workshop item {item} " in line for line in servers.get(server, [])):
+            servers.setdefault(server, []).append(f"Workshop item {item} ({title}) in [workshop] items, for a copy "
+                                                  "in its content folder")
     record = {"every": every, "folders": folders, "servers": servers}
     try:
         ctx.records.mkdir(parents=True, exist_ok=True)
@@ -1902,7 +1944,10 @@ STEPS: list[Step] = [
     Step("0.6.0/watchdog-memory", "[watchdog] memory only warns unless turned on", watchdog_memory),
     Step("0.6.1/discord-built", "what 0.6.0 kept as notes, for what's built now, back as it was set", discord_built),
     Step("0.7.0/every-server-moderation", "[automod] across_servers on: moderation is every server's", every_server_moderation),
-    Step("0.7.0/hands-off", "settings Huragok no longer uses out, and 0.7.0's new ones in", hands_off),
+    # settled: 0.6.x stops at a section it doesn't know ([stats]), so a 0.7.0 that fails to start (its start loop puts
+    # the old version back), or a host going back by hand in its first minutes, would leave a settings.toml the old
+    # version can't read. 0.7.0 reads the old form meanwhile (core/settings.py OUTGOING, RETIRED, install = "off").
+    Step("0.7.0/hands-off", "settings Huragok no longer uses out, and 0.7.0's new ones in", hands_off, settled=True),
     Step("discord-moved", "settings in discord.toml by the names they have now", discord_moved, always=True),
     Step("discord-lines", "new settings in discord.toml", discord_lines, always=True),
     # Once for each version (the one key that changes with it), after the steps above have added what they add.

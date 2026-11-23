@@ -34,6 +34,36 @@ def test_what_huragok_set_in_the_servers_folders_is_recorded_for_their_warnings(
     assert hands_off_lines(tmp_path / "nowhere", SimpleNamespace(folder=alpha, name="Alpha")) == []
 
 
+def test_workshop_items_0_6_listed_by_itself_are_found_in_its_log(tmp_path: Path) -> None:
+    """0.6.x put the program's own Workshop copies in a server's [workshop] items with no record but its log line (the
+    simulation, 22 November 2026: LG Backend Test's Albatross Battle wasn't in its warning). Read from huragok.log and
+    the five kept before it; one already recorded as adopted isn't said twice."""
+    settings_path = host(tmp_path)
+    root = settings_path.parent
+    records, logs = root / "records", root / "logs"
+    records.mkdir(exist_ok=True)
+    logs.mkdir(exist_ok=True)
+    line = ("{when} INFO    content.workshopmods: [{server}] {title} (Workshop {item}) is in its content folder "
+            "(Mods/Workshop/{item}) but wasn't in [workshop] items: the server loads it all the same, so it's listed "
+            "now and kept up to date. To stop using it: G -> the server -> Workshop and mods -> R\n")
+    (logs / "huragok.log").write_text(line.format(when="2026-11-08 05:58:20,606", server="Bravo",
+                                                  title="Albatross Battle", item=2898980746), encoding="utf-8")
+    (logs / "huragok.log.2").write_text(
+        line.format(when="2026-11-02 23:25:09,644", server="Alpha", title="HugeGrass Rebalance", item=3820687243)
+        + line.format(when="2026-11-02 23:25:10,000", server="Alpha", title="Albatross Battle", item=2898980746),
+        encoding="utf-8")
+    (records / "workshop-mods.json").write_text(json.dumps(
+        {"adopted": [{"server": "Alpha", "item": 2898980746, "title": "Albatross Battle"}]}), encoding="utf-8")
+    up_to_date(settings_path)
+    servers = json.loads((records / HANDS_OFF_RECORD).read_text(encoding="utf-8"))["servers"]
+    assert servers["Bravo"] == ["Workshop item 2898980746 (Albatross Battle) in [workshop] items, for a copy in its "
+                                "content folder"]
+    assert servers["Alpha"] == ["Workshop item 2898980746 (Albatross Battle) in [workshop] items, for a copy put in "
+                                "by hand",
+                                "Workshop item 3820687243 (HugeGrass Rebalance) in [workshop] items, for a copy in its "
+                                "content folder"]
+
+
 def test_a_hosts_own_values_are_kept_as_comments_and_check_hours_becomes_minutes(tmp_path: Path) -> None:
     settings_path = host(tmp_path)
     text = settings_path.read_text(encoding="utf-8")

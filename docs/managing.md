@@ -569,9 +569,10 @@ report on to the real service unchanged, passes the answer back the same way, an
 keeps a copy. Players' ranks are recorded as before. When Huragok stops, every
 server's `stats_server` goes back to what it was (`records/temp-stats-capture.json`
 keeps it), so a server restarted meanwhile reports straight to the service; Huragok
-points it at itself again as it starts. If the service ever turns down two reports
-in a row that came through Huragok, Huragok puts that server's `stats_server` back
-for good: players' ranks come first. A server set to report nowhere (`"off"`) isn't
+points it at itself again as it starts. If the service ever turns down two game
+reports in a row that came through Huragok, Huragok puts that server's `stats_server`
+back for good: players' ranks come first. (Only a game's report counts: the service's
+"not found" to a lookup, such as 0.10.9's unlocks, is passed back as it is.) A server set to report nowhere (`"off"`) isn't
 touched.
 
 With `relay = false`, every server's own `stats_server` goes back as it was at once,

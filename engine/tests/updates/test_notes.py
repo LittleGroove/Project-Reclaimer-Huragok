@@ -294,7 +294,7 @@ def test_once_a_version_with_a_copy_of_each_file_and_the_log_says_so(tmp_path: P
 def test_a_file_that_cant_be_read_is_left_and_tried_again(tmp_path: Path, caplog) -> None:
     settings_path = host(tmp_path)
     root = settings_path.parent
-    up_to_date(settings_path, notes=False)
+    up_to_date(settings_path, settled=False, notes=False)  # as it starts (the settled hands-off step does settings.toml's)
     names = root / "names.txt"
     names.write_bytes("caf\u00e9\n".encode("cp1252"))  # ANSI
     with caplog.at_level(logging.INFO):

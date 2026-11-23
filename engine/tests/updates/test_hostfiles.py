@@ -59,6 +59,38 @@ AUTOMOD_ORDER = "automod.txt: Huragok's notes as this version writes them, the m
 SETUP_RETIRED_0_7_0 = ("share", "packages_folder", "auto_update", "download_game_files")
 
 
+# What 0.7.0's hands-off step changes in 0.4.0's settings.toml: once the version has settled, since 0.6.x stops
+# at a section it doesn't know ([stats]) and a 0.7.0 that fails to start is put back by the old version
+HANDS_OFF_0_7_0 = [
+    "settings.toml: [workshop_updates] restart = true added: a server is restarted to put in a mod update its map "
+    "in use holds up (new in 0.7.0)",
+    "settings.toml: [server_updates] check_hours = 1 is check_minutes = 15 now",
+    "settings.toml: [server_updates] install taken out: each server installs its own releases (its auto_update); "
+    "Huragok never does (0.7.0)",
+    "settings.toml: [server_updates] fallback taken out: Huragok no longer installs releases: a server left behind "
+    "is warned about (0.7.0)",
+    "settings.toml: [workshop_updates] install taken out: Huragok only restarts a server for a mod update "
+    "([workshop_updates] restart) (0.7.0)",
+    "settings.toml: [workshop_updates] check_minutes taken out: each server's own [workshop] update_check_minutes "
+    "decides; Huragok no longer writes it (0.7.0)",
+    "settings.toml: [workshop_updates] adopt taken out: a mod copied in by hand is warned about: list it in "
+    "[workshop] items (0.7.0)",
+    "settings.toml: [workshop_updates] layouts taken out: a mod's own layouts are copied into content/Maps when you "
+    "ask (G → 4 → L) (0.7.0)",
+    "settings.toml: [setup] share taken out: each server uses the game and content folders its own dedicated.toml "
+    "names; Huragok no longer shares folders between servers (0.7.0)",
+    "settings.toml: [setup] packages_folder taken out: packages are gone: a new server is the program's own init "
+    "(0.7.0)",
+    "settings.toml: [setup] auto_update taken out: a new server is the program's own init; each server's own "
+    "auto_update decides (0.7.0)",
+    "settings.toml: [setup] download_game_files taken out: game files are fetched only when you ask (I, or "
+    "start.cmd repair) (0.7.0)",
+    "settings.toml: [stats] relay = true added: Huragok's stats relay, now with a switch (new in 0.7.0)",
+    "settings.toml: follow_renames = true added: a server renamed in its dedicated.toml stays the same server (new "
+    "in 0.7.0)",
+]
+
+
 def still_retired(retired: list[str]) -> list[str]:
     """What a host's file has that does nothing, but for the [setup] settings 0.7.0 retired."""
     return [line for line in retired
@@ -142,34 +174,10 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "since 0.6.0",
         "settings.toml: [watchdog] memory = \"watch\": it only warns unless you turn it on (\"act\"), and counts growth "
         "past memory_mb once a run has settled (new in 0.6.0)",
-        "settings.toml: [workshop_updates] restart = true added: a server is restarted to put in a mod update its map "
-        "in use holds up (new in 0.7.0)",
-        "settings.toml: [server_updates] check_hours = 1 is check_minutes = 15 now",
-        "settings.toml: [server_updates] install taken out: each server installs its own releases (its auto_update); "
-        "Huragok never does (0.7.0)",
-        "settings.toml: [server_updates] fallback taken out: Huragok no longer installs releases: a server left behind "
-        "is warned about (0.7.0)",
-        "settings.toml: [workshop_updates] install taken out: Huragok only restarts a server for a mod update "
-        "([workshop_updates] restart) (0.7.0)",
-        "settings.toml: [workshop_updates] check_minutes taken out: each server's own [workshop] update_check_minutes "
-        "decides; Huragok no longer writes it (0.7.0)",
-        "settings.toml: [workshop_updates] adopt taken out: a mod copied in by hand is warned about: list it in "
-        "[workshop] items (0.7.0)",
-        "settings.toml: [workshop_updates] layouts taken out: a mod's own layouts are copied into content/Maps when you "
-        "ask (G → 4 → L) (0.7.0)",
-        "settings.toml: [setup] share taken out: each server uses the game and content folders its own dedicated.toml "
-        "names; Huragok no longer shares folders between servers (0.7.0)",
-        "settings.toml: [setup] packages_folder taken out: packages are gone: a new server is the program's own init "
-        "(0.7.0)",
-        "settings.toml: [setup] auto_update taken out: a new server is the program's own init; each server's own "
-        "auto_update decides (0.7.0)",
-        "settings.toml: [setup] download_game_files taken out: game files are fetched only when you ask (I, or "
-        "start.cmd repair) (0.7.0)",
-        "settings.toml: [stats] relay = true added: Huragok's stats relay, now with a switch (new in 0.7.0)",
-        "settings.toml: follow_renames = true added: a server renamed in its dedicated.toml stays the same server (new "
-        "in 0.7.0)",
         *(f"{name}: Huragok's notes as this version writes them"
           for name in ("settings.toml", "commands.toml", "names.txt")),
+        # 0.7.0's hands-off step waits until this version has settled (0.6.x can't read [stats])
+        *HANDS_OFF_0_7_0,
         AUTOMOD_ORDER, *FACULTY, *new_command_lines()]  # no starter packages since 0.7.0
     assert f"Brought up to date for Huragok {__version__}" in caplog.text
     text = settings_path.read_text(encoding="utf-8")
@@ -381,7 +389,10 @@ def test_huragok_brings_the_files_up_to_date_as_it_starts(tmp_path: Path, monkey
     args = cli.build_parser().parse_args(["-c", str(settings_path), "start"])
     settings = load(settings_path)
     fresh = run_module.bring_files_up_to_date(args, settings)
-    assert fresh is not settings and "restart" in read_toml(settings_path)["workshop_updates"]  # brought up to date
+    data = read_toml(settings_path)
+    assert fresh is not settings and data["process"]["priority"] == "high"  # brought up to date
+    # but not 0.7.0's hands-off changes: a 0.6.x put back by the start loop would stop at [stats]
+    assert "stats" not in data and "follow_renames" not in data and "restart" not in data["workshop_updates"]
 
     def broken(*args: object) -> list[str]:
         raise RuntimeError("a bug in a step")
@@ -434,11 +445,11 @@ def test_a_new_command_waits_until_the_new_version_has_stayed(tmp_path: Path, mo
     records, packages = settings_path.parent / "records", settings_path.parent / "PACKAGES"
     pending = migrate.pending(settings_path, records, packages)
     assert pending == [line + " (2.5 minutes after it starts: the version before can't read it)"
-                       for line in [AUTOMOD_ORDER, *FACULTY, *new_command_lines()]]
+                       for line in [*HANDS_OFF_0_7_0, AUTOMOD_ORDER, *FACULTY, *new_command_lines()]]
     assert load_permissions(commands).role_for(all_commands()["banword"]) == "admin"  # meanwhile: its default
     # Once this version has stayed up: the running Huragok lists them.
-    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == [AUTOMOD_ORDER, *FACULTY,
-                                                                                        *new_command_lines()]
+    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True) == [
+        *HANDS_OFF_0_7_0, AUTOMOD_ORDER, *FACULTY, *new_command_lines()]
     data = tomllib.loads(commands.read_text(encoding="utf-8"))
     assert {"banword", "unbanword", "banname"} <= set(data["admin"]["commands"])
     assert migrate.pending(settings_path, records, packages) == []
@@ -455,6 +466,25 @@ def test_the_running_huragok_lists_new_commands_once_it_has_stayed(tmp_path: Pat
 
             await wait_for(lambda: "banword" in sup.settings.permissions.roles)  # written, and read again
             assert sup.settings.permissions.roles["unbanword"] == "admin"
+
+    run(scenario())
+
+
+def test_the_used_to_set_warning_comes_in_the_session_that_updates(tmp_path: Path, run, monkeypatch) -> None:
+    """The 0.7.0 hands-off step is settled: it writes its record once Huragok has been up a while, after the servers
+    were added. The warning listing what Huragok used to set comes then, not at the next start (the simulation,
+    22 November 2026: none in the session that ran the update)."""
+    from testkit.running import SERVER, running
+
+    monkeypatch.setattr(migrate, "SETTLED_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        async with running(tmp_path, "[workshop_updates]\ncheck_minutes = 7\n") as (sup, _, _):
+            from conftest import wait_for
+
+            warning = await wait_for(lambda: next((w for w in sup.superintendent.warnings.of(SERVER)
+                                                   if w.rule.id == "used-to-set"), None))
+            assert "[workshop] update_check_minutes = 7" in warning.text
 
     run(scenario())
 
@@ -525,7 +555,7 @@ def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_s
     assert not any(line.startswith("automod.txt") for line in changed)
     assert words.read_text(encoding="utf-8") == old  # the version before still reads it as it did
     records, packages = root / "records", root / "PACKAGES"
-    pending = migrate.pending(settings_path, records, packages)
+    pending = [line for line in migrate.pending(settings_path, records, packages) if line.startswith("automod.txt")]
     turned = (f"automod.txt: the mutes come first now ({PARTS}): the hate, slurs, rude and spam lines and line 49 "
               "rewritten so, the strikes that came before the mutes now before the kicks; Huragok's notes as this "
               "version writes them")
@@ -538,8 +568,8 @@ def test_a_word_list_from_before_gets_the_mutes_first_once_the_new_version_has_s
                            "for the staff on Discord)" + later]
 
     # Once it has stayed: the lines in the new layout, reading as they did meanwhile, and this version's notes.
-    assert migrate.bring_up_to_date(settings_path, records, packages, settled=True)[:2] == [
-        line.removesuffix(later) for line in pending[:2]]
+    assert [line for line in migrate.bring_up_to_date(settings_path, records, packages, settled=True)
+            if line.startswith("automod.txt")][:2] == [line.removesuffix(later) for line in pending[:2]]
     text = words.read_text(encoding="utf-8")
     assert not kicks_first(text) and text.startswith(template_text("automod.txt"))
     assert text[len(template_text("automod.txt")):].splitlines() == [

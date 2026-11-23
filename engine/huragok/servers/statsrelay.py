@@ -101,6 +101,19 @@ def readable(body: bytes, headers: list[tuple[str, str]]) -> dict[str, Any]:
         return {"text": text}
 
 
+def is_report(method: str, path: str) -> bool:
+    """A finished game's report (POST <service>/v1/matches), not a lookup (a player's rank, 0.10.9's unlocks)."""
+    return method.upper() == "POST" and path.split("?", 1)[0].rstrip("/").endswith("/matches")
+
+
+def lookup_give_up(entry: Any) -> bool:
+    """A give-up 0.6.x recorded on a 404, with nothing saying it was a game's report: 0.6.x counted lookups' answers too,
+    and the service answers 0.10.9's GET /v1/unlocks/revision 404 (the live servers' relay stopped so, 22 November
+    2026). 0.7.0 takes it back once; a game's report turned down twice sets it again, with what was refused."""
+    return isinstance(entry, dict) and bool(entry.get("gave_up")) and not entry.get("refused") \
+        and str(entry["gave_up"]).endswith("(404)")
+
+
 def relayed(url: str | None) -> bool:
     """An address Huragok's relay gives a server (http://127.0.0.1:<one of PORTS>): never the real service, even when this
     Huragok has no record of it (its records/ lost, or a server folder copied from another install)."""
@@ -182,9 +195,9 @@ class StatsCapture:
         self.record = record  # the copy, with stand-ins for player IDs
         self.on_report = on_report  # (server, path, what it sent, the answer's status, the answer): as they were, for the stats
         self.scrub = scrub
+        self.notes: list[str] = []
         self.saved = self._load()
         self.listeners: dict[str, Any] = {}
-        self.notes: list[str] = []
         self.refused: dict[str, int] = {}
         self.current: set[str] = set()  # the servers Huragok runs now, by name
         # Where this Huragok starts looking for ports, by its folder: two on one machine don't reach for the same.
@@ -195,7 +208,19 @@ class StatsCapture:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        return data if isinstance(data, dict) and isinstance(data.get("servers"), dict) else {"servers": {}}
+        if not isinstance(data, dict) or not isinstance(data.get("servers"), dict):
+            return {"servers": {}}
+        for name, entry in data["servers"].items():
+            if lookup_give_up(entry):
+                for key in ("gave_up", "told"):
+                    entry.pop(key, None)
+                if not entry.get("original"):  # the program's own service: where this version reports, from its log
+                    entry.pop("upstream", None)
+                log.info("[%s] stats capture: back on: 0.6's relay stopped on a lookup's answer (404), not a game's "
+                         "report", name)
+                self.notes.append(f"[{name}] stats capture: back on (0.6 stopped it on a lookup the service answers "
+                                  "404, not a refused game); its reports go through Huragok again from its next start")
+        return data
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -423,11 +448,12 @@ class StatsCapture:
                 writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
                 await writer.drain()
             body = await self._body(reader, low)
+            report = is_report(method, path)
             if not upstream:
                 status, reason, answer_headers, answer = 502, "Bad Gateway", [], b"Huragok doesn't know the service"
             else:
                 try:
-                    lane = REPORTS if path.split("?", 1)[0].rstrip("/").endswith("/matches") else FORWARDS
+                    lane = REPORTS if report else FORWARDS
                     status, reason, answer_headers, answer = await asyncio.get_running_loop().run_in_executor(
                         lane, forward, upstream + path, method, headers, body)
                 except (OSError, ValueError) as error:
@@ -437,7 +463,8 @@ class StatsCapture:
             out += [f"Content-Length: {len(answer)}", "Connection: close", "", ""]
             writer.write("\r\n".join(out).encode("latin-1") + answer)
             await writer.drain()
-            self._answered(name, status)
+            if report:  # a lookup's 4xx is the service's answer (no such player, no unlocks yet): never a refusal
+                self._answered(name, status, f"{method} {path.split('?', 1)[0]}")
             sent, answered = readable(body, headers), readable(answer, answer_headers)
             # Counted first, and each on its own: a copy that couldn't be written (its folder moved, a full disk) lost
             # the game from the stats for good, as the server, answered, never sends it again (audit 0.6.1, 1.2).
@@ -460,10 +487,12 @@ class StatsCapture:
         finally:
             writer.close()
 
-    def _answered(self, name: str, status: int) -> None:
-        """Two reports in a row the service turned down (a 4xx: not "busy" or "too many"): stop standing in the middle
-        for this server, for good, and put its stats_server back. One that can't be reached (502 here) doesn't count:
-        it would turn the server's own report down too."""
+    def _answered(self, name: str, status: int, what: str = "POST /v1/matches") -> None:
+        """Two game reports in a row the service turned down (a 4xx: not "busy" or "too many"): stop standing in the
+        middle for this server, for good, and put its stats_server back. One that can't be reached (502 here) doesn't
+        count: it would turn the server's own report down too. Only a game's report counts (is_report): 0.6.x counted
+        lookups too, and 0.10.9's GET /v1/unlocks/revision, which the service answers 404, stopped it on every server
+        as it started (the live servers, 22 November 2026)."""
         if 200 <= status < 300:
             self.refused.pop(name, None)
             return
@@ -476,6 +505,7 @@ class StatsCapture:
         if not isinstance(entry, dict):
             return
         entry["gave_up"] = f"the service turned down {REFUSALS} reports in a row that came through Huragok ({status})"
+        entry["refused"] = what  # a game's report (0.7.0): a give-up without it may have been a lookup's answer
         entry["told"] = True
         self._save()
         path = entry.get("config")

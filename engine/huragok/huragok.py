@@ -197,6 +197,7 @@ class Huragok:
             return
         if changed:
             self.vergil.check_files(force=True)
+            self.superintendent.hands_off_recorded()  # the 0.7.0 step's record, if it just wrote it
 
     # Requests from the window, the typed console, or outside -------------------------------------------------
 
