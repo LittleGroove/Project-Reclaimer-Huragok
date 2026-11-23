@@ -331,7 +331,7 @@ def test_a_name_that_only_looks_like_it_is_asked_about_never_acted_on(tmp_path: 
             await fake.chat(MOD, "Mod", "!kick zulu spam")
             await wait_for(lambda: any(t == "Nobody here is called 'zulu'. This looks like it; use the #number:"
                                        for t in tells_to(fake, MOD)))
-            assert any(t.startswith("ᴢᴜʟᴜ 8e8e8e8e (#7) [LG Test Server]") for t in tells_to(fake, MOD))
+            await wait_for(lambda: any(t.startswith("ᴢᴜʟᴜ 8e8e8e8e (#7) [LG Test Server]") for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!kick bravo spam")  # Bravo (#4) and ΒRΑVΟ (#6) both on
             await wait_for(lambda: any(t == "'Bravo' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
             await wait_for(lambda: any(t.startswith("Bravo dddddddd (#4) [LG Test Server]") for t in tells_to(fake, MOD)))
