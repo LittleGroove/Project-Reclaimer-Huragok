@@ -44,7 +44,7 @@ def test_a_kick_with_a_time_is_the_servers_timed_ban_with_the_reason_saying_so(t
             await wait_for(lambda: rcon.named("ban"), timeout=10)
             assert rcon.named("ban")[0]["args"] == [ALICE, "7d", "Kicked off every server for 7 days: team killing"]
             assert rcon.named("kick") == []
-            row = rows_of(huragok, "ban")[0]
+            row = (await wait_for(lambda: rows_of(huragok, "ban")))[0]  # written after the ban is sent
             assert row["duration"] == "7d" and row["reason"] == "team killing"  # the record has the reason alone
             await wait_for(lambda: any("is kicked off every server for 7 days" in line for line in tells_to(rcon, FACULTY)), timeout=10)
 
@@ -81,7 +81,7 @@ def test_kicks_lists_it_and_pardon_lifts_it_at_a_pardons_rank(tmp_path: Path, ru
             await rcon.chat(MOD, "Mod", f"!pardon {ALICE}")  # a moderator can't !unban: this is a kick
             await wait_for(lambda: rcon.named("unban"), timeout=10)
             assert rcon.named("unban")[0]["args"] == [ALICE]
-            assert rows_of(huragok, "unban")[0]["reason"] == "their kick, lifted early"
+            assert (await wait_for(lambda: rows_of(huragok, "unban")))[0]["reason"] == "their kick, lifted early"
 
     run(scenario())
 
@@ -137,7 +137,7 @@ def test_a_kick_for_good_is_a_ban_and_takes_a_bans_rank(tmp_path: Path, run: Any
             await rcon.chat(FACULTY, "Faculty", "!kick Alice perm cheating")
             await wait_for(lambda: rcon.named("ban"), timeout=10)
             assert rcon.named("ban")[0]["args"] == [ALICE, "cheating (every server)"] and rcon.named("kick") == []
-            assert rows_of(huragok, "ban")[0]["duration"] is None
+            assert (await wait_for(lambda: rows_of(huragok, "ban")))[0]["duration"] is None
 
     run(scenario())
 

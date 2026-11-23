@@ -110,7 +110,7 @@ def test_a_mute_after_the_servers_own_kick_starts_when_theyre_back(tmp_path: Pat
             await fake.chat(BRAVO, "Bravo", "quietword")
             await wait_for(lambda: any(kick["args"][0] == BRAVO for kick in fake.named("kick")))
             db = sup.storage
-            row = db.query("SELECT * FROM automod_strikes WHERE player_id = ?", (BRAVO,))[0]
+            row = (await wait_for(lambda: db.query("SELECT * FROM automod_strikes WHERE player_id = ?", (BRAVO,))))[0]
             assert row["action"] == "mute" and row["duration"] == "10m" and row["waiting"] == 1
             # The server kept them out half an hour: the strike was then.
             db.execute("UPDATE automod_strikes SET time = time - 1800, expires = expires - 1800 WHERE number = ?", (row["number"],))
@@ -122,7 +122,8 @@ def test_a_mute_after_the_servers_own_kick_starts_when_theyre_back(tmp_path: Pat
             await wait_for(lambda: [m for m in fake.named("mute") if m["args"][0] == BRAVO], timeout=10)
             mute = [m for m in fake.named("mute") if m["args"][0] == BRAVO][-1]
             assert 590 <= int(str(mute["args"][1]).rstrip("s")) <= 600  # the whole 10 minutes, from now
-            row = db.query("SELECT * FROM automod_strikes WHERE player_id = ?", (BRAVO,))[0]
+            row = (await wait_for(lambda: [r for r in db.query("SELECT * FROM automod_strikes WHERE player_id = ?",
+                                                                (BRAVO,)) if r["waiting"] == 0]))[0]  # after the mute
             assert row["waiting"] == 0 and row["expires"] > time.time() + 500
 
     run(scenario())
