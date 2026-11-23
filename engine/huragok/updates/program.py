@@ -406,7 +406,8 @@ class ProgramUpdateService:
         for name in sorted(self.self_updating() - (skip or set())):
             if self.restarting.get(name) == version or not self.lifecycle.is_up(name) or not self.behind(name, version):
                 continue
-            if seen is not None and self.since.get(name, 0.0) > seen:
+            # >=: Windows' clock moves in steps of ~16 ms, so a start in the same step as the look reads as the same time
+            if seen is not None and self.since.get(name, 0.0) >= seen:
                 continue
             if await self._restart_for(name, version):
                 restarted.append(name)

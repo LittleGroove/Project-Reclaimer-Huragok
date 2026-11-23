@@ -179,7 +179,7 @@ def test_a_moderators_strike_that_would_ban_goes_to_the_admins(tmp_path: Path, r
             assert not fake.named("ban")
             await fake.chat(ADMIN, "Admin", "!confirm 1")
             await wait_for(lambda: fake.named("ban"), timeout=10)
-            assert "Confirmed request 1" in told(fake, ADMIN)
+            await wait_for(lambda: "Confirmed request 1" in told(fake, ADMIN))  # told after the ban is sent
             assert len(huragok.storage.query("SELECT 1 FROM automod_strikes WHERE action = 'ban'")) == 1
             # An admin's own strike that bans just bans.
             huragok.storage.execute("UPDATE automod_strikes SET pardoned = 1")

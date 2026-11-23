@@ -61,9 +61,12 @@ def test_commands_ambiguous_names_and_admin_commands(tmp_path: Path, run) -> Non
             await fake.chat(FACULTY, "Faculty", "!kick alice")
             # Two players with one name: each with what tells them apart (how long they've been on, the start of
             # their player ID), and the #number to use.
-            await wait_for(lambda: "'Alice' could be 2 players. Use the #number:" in tells_to(fake, FACULTY))
+            header = "'Alice' could be 2 players. Use the #number:"
+            # the header and both players' lines, each told on its own (GitHub's Windows runners are slow)
+            await wait_for(lambda: header in tells_to(fake, FACULTY)
+                           and len(tells_to(fake, FACULTY)) >= tells_to(fake, FACULTY).index(header) + 3)
             said = tells_to(fake, FACULTY)  # one player a line, written the one way (core/tags.py)
-            start = said.index("'Alice' could be 2 players. Use the #number:")
+            start = said.index(header)
             assert re.fullmatch(rf"Alice cccccccc \(#3\) \[{SERVER}\]: on \d+s", said[start + 1]), said
             assert re.fullmatch(rf"Alice 99999999 \(#6\) \[{SERVER}\]: on \d+s", said[start + 2]), said
             assert not fake.named("kick")
