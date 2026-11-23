@@ -73,6 +73,9 @@ def test_in_game_it_opens_a_card_for_staff_and_thanks_them(tmp_path: Path, run: 
             await up(huragok)
             await on(huragok, rcon, ALICE_ON, BRAVO_ON)
             await rcon.chat(ALICE, "Alice", "come and fight me")
+            # kept before the report reads it: the line's moments before, never in the same instant (slow runners)
+            await wait_for(lambda: huragok.storage.query("SELECT 1 FROM commands_chat WHERE text = ?",
+                                                         ("come and fight me",)), timeout=15)
             await rcon.chat(BRAVO, "Bravo", "!report Alice camping the spawn")
             await wait_for(lambda: posts_in(fake, REPORTS), timeout=15)
             post = posts_in(fake, REPORTS)[0]
