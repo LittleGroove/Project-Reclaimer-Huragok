@@ -235,6 +235,7 @@ def test_strikes_offered_on_a_dry_run_server_count_as_the_strike_would(tmp_path:
             said = await said_back(fake, token)
             assert "slurs strike 1 of 4, muted for 1 day" in said and "dry run" not in said, said
             await wait_for(lambda: rcon.named("mute"), timeout=15)
+            await wait_for(lambda: huragok.storage.query("SELECT 1 FROM automod_strikes WHERE dry_run = 0"))  # after the mute
             assert len(huragok.storage.query("SELECT 1 FROM automod_strikes WHERE dry_run = 0")) == 1
             assert offer == "slurs · Strike 1: muted for 1 day", offer  # what was offered is what the strike did
 

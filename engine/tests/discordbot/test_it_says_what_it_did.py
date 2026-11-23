@@ -288,7 +288,8 @@ def test_what_a_moderator_writes_on_a_strike_goes_where_it_says(tmp_path: Path, 
             await wait_for(lambda: huragok.storage.query("SELECT 1 FROM automod_strikes"), timeout=15)
             await wait_for(lambda: any("slurring in voice" in line for line in lines_on(huragok, number)), timeout=15)  # on the card
             await wait_for(lambda: any("slurring in voice" in str(call) for call in rcon.named("mute")), timeout=15)  # and what they read
-            row = huragok.storage.query("SELECT by_id FROM actions WHERE target_id = ? AND kind = 'mute'", (ALICE,))[0]
+            row = (await wait_for(lambda: huragok.storage.query(  # written after the mute is sent
+                "SELECT by_id FROM actions WHERE target_id = ? AND kind = 'mute'", (ALICE,))))[0]
             assert str(row["by_id"]).startswith("discord:")  # and the record knows it wasn't Vergil's own
 
     run(scenario())

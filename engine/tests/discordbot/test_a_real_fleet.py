@@ -86,7 +86,8 @@ def test_banning_someone_who_left_goes_to_a_server_thats_up(tmp_path: Path, run:
             opened, token = fake.command("ban", player=ALICE, time="perm", reason="testing")
             await saying_yes(fake, opened, token)
             await wait_for(lambda: consoles[FIRST].named("ban") or consoles[SECOND].named("ban"), timeout=15)
-            rows = huragok.storage.query("SELECT server, ok, reply FROM actions WHERE kind = 'ban' AND target_id = ? AND (evidence IS NULL OR evidence NOT LIKE 'kicked on %')", (ALICE,))
+            # the record is written after the ban is sent (GitHub's Windows runners are slow)
+            rows = await wait_for(lambda: huragok.storage.query("SELECT server, ok, reply FROM actions WHERE kind = 'ban' AND target_id = ? AND (evidence IS NULL OR evidence NOT LIKE 'kicked on %')", (ALICE,)), timeout=15)
             assert rows and rows[0]["ok"] and rows[0]["server"] != STOPPED, [dict(row) for row in rows]
             await wait_for(lambda: consoles[FIRST].named("ban") and consoles[SECOND].named("ban"), timeout=15)  # and it's on every server that's up
 

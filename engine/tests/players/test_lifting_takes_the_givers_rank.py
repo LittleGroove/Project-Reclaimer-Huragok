@@ -23,7 +23,8 @@ def test_an_admins_mute_takes_an_admin_to_lift(tmp_path: Path, run) -> None:
             await wait_for(lambda: len(sup.superintendent.states[SERVER].players) == 5)
             await fake.chat(ADMIN, "Admin", "!mute bravo 1h spam")
             await wait_for(lambda: fake.named("mute"))
-            row = sup.storage.query("SELECT by_role FROM actions WHERE kind = 'mute' AND target_id = ?", (BRAVO,))[0]
+            row = (await wait_for(lambda: sup.storage.query(  # written after the mute is sent
+                "SELECT by_role FROM actions WHERE kind = 'mute' AND target_id = ?", (BRAVO,))))[0]
             assert row["by_role"] == "admin"
             await fake.chat(MOD, "Mod", "!unmute bravo")
             await wait_for(lambda: any("Not unmuted: Admin gave that mute, and lifting it takes an admin or above."

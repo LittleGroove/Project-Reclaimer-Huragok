@@ -307,7 +307,8 @@ def test_a_number_alone_isnt_guessed_when_several_servers_are_up(tmp_path: Path,
             opened, token = fake.command("ban", player="#4", time="perm", reason="spam", server=SECOND)
             await saying_yes(fake, opened, token)
             await wait_for(lambda: consoles[SECOND].named("ban"), timeout=15)
-            assert huragok.storage.query("SELECT target_id FROM actions WHERE kind = 'ban'")[0]["target_id"] == BRAVO
+            rows = await wait_for(lambda: huragok.storage.query("SELECT target_id FROM actions WHERE kind = 'ban'"))  # after the ban
+            assert rows[0]["target_id"] == BRAVO
 
     run(scenario())
 
