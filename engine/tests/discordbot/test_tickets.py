@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -523,8 +524,17 @@ def test_an_edit_refused_for_now_catches_up_and_never_posts_another(tmp_path: Pa
             part.tickets.show(1)
             await wait_for(lambda: part.tickets.dirty == {1}, timeout=15)
             assert len(posts_in(fake, STAFF)) == 1
-            part.tickets.sweep()
-            await wait_for(lambda: any("a line it can't show yet" in str(edit) for edit in fake.edits), timeout=15)
+            # Swept until it catches up, as the bot's own sweep does: on a slow machine (GitHub's Windows runners) the
+            # card can be dirty before the refused edit has even gone out, and one sweep then only meets the refusal.
+            for _ in range(150):
+                if any("a line it can't show yet" in str(edit) for edit in fake.edits):
+                    break
+                if part.tickets.dirty:
+                    part.tickets.sweep()
+                await asyncio.sleep(0.1)
+            else:
+                raise AssertionError("the card never caught up")
+            assert not fake.refuse_next  # Discord did refuse an edit on the way
             assert len(posts_in(fake, STAFF)) == 1 and not part.tickets.dirty
 
     run(scenario())

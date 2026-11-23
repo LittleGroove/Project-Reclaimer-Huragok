@@ -46,7 +46,7 @@ jobs:
           printf '[rcon]\npassword = "xxxxxxxx"\n[[server]]\nname = "Test"\nport = 49176\n' > SERVERS/Test/dedicated.toml
           /tmp/plain/bin/huragok -c /tmp/root/settings.toml init --force --backend attach
           for file in settings.toml commands.toml automod.txt names.txt; do test -s "$file" || { echo "missing $file"; exit 1; }; done
-          ls PACKAGES/*/package.toml
+          test ! -e PACKAGES || { echo "init made PACKAGES/: packages are gone since 0.7.0"; exit 1; }
           /tmp/plain/bin/huragok -c /tmp/root/settings.toml check
 
   start-script:

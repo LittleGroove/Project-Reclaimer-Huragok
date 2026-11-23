@@ -159,7 +159,9 @@ def test_a_kicks_reason_cant_change_what_it_does(tmp_path: Path, run: Any, fake:
             await fill(fake, "Kick", post, {"Why (they'll read this)": why}, user=FACULTY_USER)
             await wait_for(lambda: consoles[FIRST].named("kick"), timeout=15)
             assert consoles[FIRST].named("ban") == []
-            rows = huragok.storage.query("SELECT kind, duration, reason FROM actions WHERE target_id = ?", (ALICE,))
+            # the record is written after the kick is sent: waited for (GitHub's Windows runners are slow)
+            rows = await wait_for(lambda: huragok.storage.query(
+                "SELECT kind, duration, reason FROM actions WHERE target_id = ?", (ALICE,)), timeout=15)
             assert (rows[0]["kind"], rows[0]["duration"], rows[0]["reason"]) == ("kick", None, why)
 
     run(scenario())
@@ -174,7 +176,9 @@ def test_a_bans_reason_is_only_its_reason(tmp_path: Path, run: Any, fake: FakeDi
             post = await card_for(fake, part, FIRST)
             await fill(fake, "Ban", post, {"Why (they'll read this)": "2h of slurs"}, user=FACULTY_USER)
             await wait_for(lambda: consoles[FIRST].named("ban"), timeout=15)
-            rows = huragok.storage.query("SELECT duration, reason FROM actions WHERE kind = 'ban' AND target_id = ?", (ALICE,))
+            # the record is written after the ban is sent: waited for (GitHub's Windows runners are slow)
+            rows = await wait_for(lambda: huragok.storage.query(
+                "SELECT duration, reason FROM actions WHERE kind = 'ban' AND target_id = ?", (ALICE,)), timeout=15)
             assert (rows[0]["duration"], rows[0]["reason"]) == (None, "2h of slurs")
 
     run(scenario())
