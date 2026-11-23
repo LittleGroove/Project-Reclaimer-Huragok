@@ -334,8 +334,8 @@ def test_a_name_that_only_looks_like_it_is_asked_about_never_acted_on(tmp_path: 
             assert any(t.startswith("ᴢᴜʟᴜ 8e8e8e8e (#7) [LG Test Server]") for t in tells_to(fake, MOD))
             await fake.chat(MOD, "Mod", "!kick bravo spam")  # Bravo (#4) and ΒRΑVΟ (#6) both on
             await wait_for(lambda: any(t == "'Bravo' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
-            assert any(t.startswith("Bravo dddddddd (#4) [LG Test Server]") for t in tells_to(fake, MOD))
-            assert any(t.startswith("ΒRΑVΟ 9f9f9f9f (#6) [LG Test Server]") for t in tells_to(fake, MOD))
+            await wait_for(lambda: any(t.startswith("Bravo dddddddd (#4) [LG Test Server]") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("ΒRΑVΟ 9f9f9f9f (#6) [LG Test Server]") for t in tells_to(fake, MOD)))
             assert not fake.named("kick")
             await fake.chat(MOD, "Mod", "!kick #6 spam")  # picked by number
             assert (await wait_for(lambda: fake.named("kick")))[0]["args"] == [fake_bravo, "spam (every server)"]
@@ -413,7 +413,7 @@ def test_bans_and_kicks_are_lists_to_lift_from_by_number(tmp_path: Path, run) ->
             fake.ban_list.append({"id": one, "name": "Bob", "reason": "again", "banned_at": now})
             await fake.chat(ADMIN, "Admin", "!unban bob")  # two bans with that name: asked, nothing lifted
             await wait_for(lambda: any(t == "'bob' could be 2 players. Use the @number:" for t in tells_to(fake, ADMIN)))
-            assert any(t.startswith(f"Bob {one[:8]} (@2): banned") for t in tells_to(fake, ADMIN))  # still @2: they stick
+            await wait_for(lambda: any(t.startswith(f"Bob {one[:8]} (@2): banned") for t in tells_to(fake, ADMIN)))  # still @2: they stick
             assert len(fake.named("unban")) == 1
             await fake.chat(ADMIN, "Admin", "!unban @1")
             await wait_for(lambda: len(fake.named("unban")) == 2)
@@ -589,7 +589,8 @@ def test_whois_is_a_rap_sheet_of_everything_however_it_was_given(tmp_path: Path,
             await wait_for(lambda: 7 in sup.superintendent.states[SERVER].players)
             await fake.chat(FACULTY, "Faculty", "!whois player 2")
             await wait_for(lambda: any(t == "'player 2' could be 2 players. Use the #number:" for t in tells_to(fake, FACULTY)))
-            assert any(t.startswith("Player 7b7b7b7b (#7) [LG Test Server]") for t in tells_to(fake, FACULTY))
+            await wait_for(lambda: any(t.startswith("Player 7b7b7b7b (#7) [LG Test Server]")  # each its own line
+                                       for t in tells_to(fake, FACULTY)))
             await wait_for(lambda: any(t == "A number after the player is how many lines: !whois #number 2."
                                        for t in tells_to(fake, FACULTY)))
 
@@ -1043,8 +1044,8 @@ def test_names_with_spaces_need_no_quotes(tmp_path: Path, run) -> None:
             assert (await wait_for(lambda: fake.named("ban")))[0]["args"] == [gone, "7d", "cheating (every server)"]
             await fake.chat(MOD, "Mod", "!kick nate higgins spam")  # a typo: never the shorter name's player
             await wait_for(lambda: any(t == "'nate higgins…' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
-            assert any(t.startswith("Nate 1b1b1b1b (#7) [LG Test Server]: on ") for t in tells_to(fake, MOD))
-            assert any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD))
+            await wait_for(lambda: any(t.startswith("Nate 1b1b1b1b (#7) [LG Test Server]: on ") for t in tells_to(fake, MOD)))
+            await wait_for(lambda: any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!kick nate spam")
             await wait_for(lambda: any(t == "'nate spam…' could be 2 players. Use the #number:" for t in tells_to(fake, MOD)))
             assert len(fake.named("kick")) == 1
@@ -1055,7 +1056,7 @@ def test_names_with_spaces_need_no_quotes(tmp_path: Path, run) -> None:
             await wait_for(lambda: any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on now") for t in tells_to(fake, MOD)))
             await fake.chat(MOD, "Mod", "!players nate")  # a busy server lists more than one answer shows
             await wait_for(lambda: any(t.startswith("Nate 1b1b1b1b (#7) [LG Test Server]: on ") for t in tells_to(fake, MOD)))
-            assert any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD))
+            await wait_for(lambda: any(t.startswith("Nate Higgers 1a1a1a1a (#6) [LG Test Server]: on ") for t in tells_to(fake, MOD)))
             await fake.chat(FACULTY, "Faculty", "!players zz")
             await wait_for(lambda: any(t == "Nobody on has 'zz' in their name." for t in tells_to(fake, FACULTY)))
             await fake.chat(ADMIN, "Admin", "!team o'neil jr red")

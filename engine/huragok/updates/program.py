@@ -23,6 +23,7 @@ Which release a program file is, and GitHub's latest, are program/releases.py's.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import re
 import time
@@ -103,6 +104,11 @@ class ProgramUpdateService:
         self.put_in_place: dict[str, str] = {}  # server -> the release its own updater said it put in place
         self._told: dict[str, tuple[str, str]] = {}  # server -> (said, release) logged once
         self.since: dict[str, float] = {}  # each server's start as seen from here: its own updater looks then
+        # The same, and the look that first saw each release, in the order they came: whether a server started after
+        # the look is a matter of order, which times can't tell on Windows, whose clock moves in ~16 ms steps (CI)
+        self._order = itertools.count()
+        self.since_order: dict[str, int] = {}
+        self.seen_order: dict[str, int] = {}
         self.updater: dict[str, str] = {}  # what each server's console said about its own updater (on / off)
         self.failed: dict[str, str] = {}  # the reason each server's own update last failed
         self.updated_itself: set[str] = set()  # "Update installed" seen; its `dedicated` runs from the old file
@@ -208,6 +214,7 @@ class ProgramUpdateService:
     def _on_started(self, event: Event) -> None:
         if event.server:
             self.since[event.server] = time.time()
+            self.since_order[event.server] = next(self._order)
 
     def _on_phase(self, event: Event) -> None:
         """When the game it plays began, for "stopped its game N minutes in" (rounds don't start it again)."""
@@ -301,6 +308,7 @@ class ProgramUpdateService:
         if not said:
             return
         self.since.setdefault(name, time.time())
+        self.since_order.setdefault(name, next(self._order))
         installed = self.put_in_place.pop(name, None)
         server = self._server(name)
         if installed and server is not None and releases.readable(installed):
@@ -401,13 +409,12 @@ class ProgramUpdateService:
         and if it's still behind, its own update didn't happen (warned)."""
         if not self.restarts_for_releases():
             return []
-        seen = self.first_seen.get(version)
+        seen = self.seen_order.get(version)
         restarted = []
         for name in sorted(self.self_updating() - (skip or set())):
             if self.restarting.get(name) == version or not self.lifecycle.is_up(name) or not self.behind(name, version):
                 continue
-            # >=: Windows' clock moves in steps of ~16 ms, so a start in the same step as the look reads as the same time
-            if seen is not None and self.since.get(name, 0.0) >= seen:
+            if seen is not None and self.since_order.get(name, -1) > seen:
                 continue
             if await self._restart_for(name, version):
                 restarted.append(name)
@@ -571,6 +578,7 @@ class ProgramUpdateService:
         if self.announced == pulled:
             self.announced = None
         self.first_seen.pop(pulled, None)
+        self.seen_order.pop(pulled, None)
 
     def running_versions(self) -> dict[str, str]:
         """Each running server's release (version_of: 0.10.1 is 0.10.1 here, though its console says 0.10.0)."""
@@ -641,6 +649,7 @@ class ProgramUpdateService:
         self._identify_again()  # before anyone is judged behind: a server may say an older version than it runs
         self._follow_latest(release)
         self.first_seen.setdefault(release.version, time.time())
+        self.seen_order.setdefault(release.version, next(self._order))
         await asyncio.to_thread(self._read_files)
         newer = self.is_newer(release)
         known = [self.known_version(s.name) for s in self.settings.servers]
