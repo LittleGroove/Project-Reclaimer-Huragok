@@ -73,18 +73,12 @@ HANDS_OFF_0_7_0 = [
     "([workshop_updates] restart) (0.7.0)",
     "settings.toml: [workshop_updates] check_minutes taken out: each server's own [workshop] update_check_minutes "
     "decides; Huragok no longer writes it (0.7.0)",
-    "settings.toml: [workshop_updates] adopt taken out: a mod copied in by hand is warned about: list it in "
-    "[workshop] items (0.7.0)",
-    "settings.toml: [workshop_updates] layouts taken out: a mod's own layouts are copied into content/Maps when you "
-    "ask (G → 4 → L) (0.7.0)",
     "settings.toml: [setup] share taken out: each server uses the game and content folders its own dedicated.toml "
     "names; Huragok no longer shares folders between servers (0.7.0)",
     "settings.toml: [setup] packages_folder taken out: packages are gone: a new server is the program's own init "
     "(0.7.0)",
     "settings.toml: [setup] auto_update taken out: a new server is the program's own init; each server's own "
     "auto_update decides (0.7.0)",
-    "settings.toml: [setup] download_game_files taken out: game files are fetched only when you ask (I, or "
-    "start.cmd repair) (0.7.0)",
     "settings.toml: [stats] relay = true added: Huragok's stats relay, now with a switch (new in 0.7.0)",
     "settings.toml: follow_renames = true added: a server renamed in its dedicated.toml stays the same server (new "
     "in 0.7.0)",
@@ -145,7 +139,6 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
     with caplog.at_level(logging.INFO):
         changed = up_to_date(settings_path)
     assert changed == [
-        "settings.toml: [setup] download_game_files = true added (new in 0.4.1)",
         "settings.toml: the comment above [setup] steamcmd says it gets Halo 3's files too",
         "settings.toml: [updates] install_on_server_restart is auto_update now (= false)",
         "settings.toml: [updates] auto_update = false added: true installs new versions of Huragok by themselves "
@@ -166,10 +159,6 @@ def test_0_4_0s_settings_are_brought_up_to_date_once(tmp_path: Path, caplog) -> 
         "full releases (new in 0.5.0)",
         "discord.toml: new, for the Discord bot; it's off until you set it up (J in the window)",
         "settings.toml: [automod] moderators_kick_at_most = \"1d\" added: the longest kick with a time a moderator can give (new in 0.6.0)",
-        "settings.toml: [workshop_updates] adopt = true added: a mod copied into a server's content by hand that names a "
-        "Workshop item is kept up to date too (new in 0.6.0)",
-        "settings.toml: [workshop_updates] layouts = true added: the Forge layouts mods ship are copied into "
-        "content/Maps and kept in step with each new version (new in 0.6.0)",
         "settings.toml: [restarts] restarts_per_hour taken out: automatic restarts aren't held to a number an hour "
         "since 0.6.0",
         "settings.toml: [watchdog] memory = \"watch\": it only warns unless you turn it on (\"act\"), and counts growth "
@@ -341,11 +330,12 @@ def test_a_file_that_cant_be_read_is_never_touched(tmp_path: Path, caplog) -> No
         assert not [line for line in up_to_date(settings_path) if line.startswith("settings.toml")]
     assert settings_path.read_text(encoding="utf-8") == broken and "tried again at the next start" in caplog.text
     record = json.loads((settings_path.parent / "records" / "files.json").read_text(encoding="utf-8"))
-    assert "0.4.1/download-game-files" not in record["steps"]  # not done: tried again once the file is fixed
+    assert "0.4.2/auto-update" not in record["steps"]  # not done: tried again once the file is fixed
     pending = migrate.pending(settings_path, settings_path.parent / "records", settings_path.parent / "PACKAGES")
     assert any(line.startswith("can't yet: ") for line in pending)
     settings_path.write_text(broken.replace("[setup\n", "[setup]\n", 1), encoding="utf-8")
-    assert "settings.toml: [setup] download_game_files = true added (new in 0.4.1)" in up_to_date(settings_path)
+    assert "settings.toml: [updates] install_on_server_restart is auto_update now (= false)" in up_to_date(
+        settings_path)
 
 
 def test_new_commands_are_listed_under_their_default_role(tmp_path: Path) -> None:
@@ -405,8 +395,8 @@ def test_check_says_what_the_next_start_brings_up_to_date(tmp_path: Path, capsys
     settings_path = host(tmp_path)
     cli.main(["-c", str(settings_path), "check"])
     out = capsys.readouterr().out
-    assert "Brought up to date at the next start" in out and "download_game_files = true added" in out
-    assert "download_game_files" not in read_toml(settings_path)["setup"]  # check changes nothing
+    assert "Brought up to date at the next start" in out and "install_on_server_restart is auto_update now" in out
+    assert "install_on_server_restart" in read_toml(settings_path)["updates"]  # check changes nothing
 
 
 def test_the_edits_steps_make(tmp_path: Path) -> None:
@@ -478,8 +468,12 @@ def test_the_used_to_set_warning_comes_in_the_session_that_updates(tmp_path: Pat
 
     monkeypatch.setattr(migrate, "SETTLED_SECONDS", 0.2)
 
+    def written_by_0_6(_settings: object) -> None:  # 0.6.x wrote it into every server's file
+        with (tmp_path / "server" / "dedicated.toml").open("a", encoding="utf-8") as file:
+            file.write("\n[workshop]\nupdate_check_minutes = 7\n")
+
     async def scenario() -> None:
-        async with running(tmp_path, "[workshop_updates]\ncheck_minutes = 7\n") as (sup, _, _):
+        async with running(tmp_path, "[workshop_updates]\ncheck_minutes = 7\n", adjust=written_by_0_6) as (sup, _, _):
             from conftest import wait_for
 
             warning = await wait_for(lambda: next((w for w in sup.superintendent.warnings.of(SERVER)

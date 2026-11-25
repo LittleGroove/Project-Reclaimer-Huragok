@@ -46,6 +46,11 @@ def test_the_phase_reads_as_the_console_names_it() -> None:
     assert console_phase({"state": "finished"}) == "finished"
     assert console_phase({"phase": "in_game"}) == "playing" and console_phase({"phase": "post_game"}) == "finished"
     assert console_phase({"phase": "vote"}) == "no_game"
+    # 0.10.9's own words (the beta.2 tests, 25 November 2026): its "post-game" is the console's finished
+    assert console_phase({"state": "countdown", "phase": "countdown"}) == "no_game"
+    assert console_phase({"state": "loading"}) == "no_game"
+    assert console_phase({"state": "post-game", "phase": "post_game"}) == "finished"
+    assert console_phase({"state": "voting"}) == "voting"  # one it doesn't know: as it is
 
 
 def test_a_fresh_status_file_is_a_connection_and_its_changes_are_the_consoles_events(tmp_path: Path) -> None:
@@ -85,7 +90,10 @@ def test_a_stale_file_or_a_dead_process_is_a_lost_connection(tmp_path: Path) -> 
     _write(server)
     client.poll()
     assert client.connected
-    _write(server, updated=time.time() - 60)  # not rewritten for a minute: stopped, or frozen
+    _write(server, updated=time.time() - 60)  # 0.10.9 rewrites it about once a minute: still up
+    client.poll()
+    assert client.connected
+    _write(server, updated=time.time() - 300)  # not rewritten for five minutes: stopped, or frozen
     client.poll()
     assert not client.connected and seen[-1].name == "rcon.disconnected"
     _write(server, pid=2 ** 30)  # fresh, but its process is gone (what a killed server leaves behind)
@@ -104,6 +112,7 @@ def test_status_and_players_are_answered_from_the_file_and_anything_else_is_refu
         client.poll()
         status = await client.command("status")
         assert status.ok and status.data["map"] == "Guardian"
+        assert status.data["phase"] == "playing"  # the console's word, as the state's refresh reads it
         players = await client.command("players")
         assert [p["name"] for p in players.data["players"]] == ["Alice"] and players.data["max_players"] == 16
         with pytest.raises(RconUnavailable, match="no console"):

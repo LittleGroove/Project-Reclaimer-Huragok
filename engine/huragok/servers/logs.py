@@ -91,7 +91,10 @@ SEE = r"(?: See .*)?$"
 #   no_results   0.10.6: a game that ended with no results, twice with players in it, is passed over
 GAME_LINES: list[tuple[str, re.Pattern[str]]] = [
     ("skip_ended", re.compile(r"^(?P<game>.+?) is skipped no more: its skip for failed loads ran out\.?$")),
-    ("load_failed", re.compile(r"^(?P<game>.+?) could not be loaded \((?P<reason>.*)\): the server starts again\.?$")),
+    # 0.10.9: "a game change failed: Slayer on X could not be loaded (Halo 3's error 11: TheFailBoat): the server starts
+    # again" (the beta.2 tests, 25 November 2026): the words before the game aren't its name
+    ("load_failed", re.compile(r"^(?:a game change failed: )?(?P<game>.+?) could not be loaded \((?P<reason>.*)\): the "
+                               r"server starts again\.?$")),
     ("no_results", re.compile(r"^(?P<game>.+?) ended with no results (?P<times>\d+) times in a row with players in "
                               r"it: the playlist goes on without it\.?$")),
     *((what, re.compile(rf'^"(?P<server>[^"]+)": {pattern}{SEE}')) for what, pattern in GAME_SKIPS),

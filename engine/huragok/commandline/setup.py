@@ -3,7 +3,7 @@
 
 They work without the window (files and the server program's own commands), so a host
 running at boot with no dashboard has them too. A new server appears in a running
-window within seconds and is started from here when one is running.
+window once its dedicated.toml has been left alone a minute, and is started from here when one is running.
 """
 
 from __future__ import annotations
@@ -140,7 +140,8 @@ def cmd_new(args: argparse.Namespace, load: Callable[[str], Settings], launcher:
     if not steps:
         out.note(f"Its quick actions, each shown before it's written: {launcher} new <name> --one-server --free-ports "
                  "--console (or --all) as a folder is made; for this one now, the window (D → Q).")
-    out.note("Huragok picks it up within seconds and starts it once its ports are free on this PC."
+    out.note("Huragok picks it up once its dedicated.toml has been left alone a minute, and starts it once its ports "
+             "are free on this PC."
              if lock.running_supervisor(settings) else f"Start Huragok to run it: {launcher}")
     return code
 

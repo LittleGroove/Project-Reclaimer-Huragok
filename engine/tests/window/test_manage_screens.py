@@ -388,7 +388,7 @@ def test_one_server_updating_itself_brings_the_others_along(tmp_path: Path, run,
         run(scenario())
     text = caplog.text
     assert "installed a new release by itself (auto_update)" in text and "now on Project Reclaimer 0.9.19" in text
-    assert "Following Alpha onto Project Reclaimer 0.9.19: Beta restart after their game" in text
+    assert "Following Alpha onto Project Reclaimer 0.9.19: Beta restarts after its game" in text
 
 
 def test_with_follow_off_no_server_is_restarted_for_a_release(tmp_path: Path, monkeypatch, run) -> None:

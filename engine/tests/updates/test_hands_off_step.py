@@ -78,3 +78,36 @@ def test_a_hosts_own_values_are_kept_as_comments_and_check_hours_becomes_minutes
     program = after[after.index("\n[server_updates]\n"):after.index("\n[workshop_updates]\n")]
     assert "\ncheck_minutes = 120\n" in program and "\ncheck_hours" not in program  # [updates]' own stays
     assert up_to_date(settings_path) == [] or all("0.7.0" not in line for line in up_to_date(settings_path))
+
+
+def test_a_new_hosts_files_gain_nothing_retired_and_its_servers_hear_of_nothing_huragok_set(tmp_path: Path) -> None:
+    """A new host (this version's own init, then a start): the 0.4.1 and 0.6.0 steps added settings 0.7.0 retired, which
+    Huragok warned did nothing until the hands-off step took them out again, and every server was told Huragok had set
+    update_check_minutes = 5 in its file (the beta.2 tests, 25 November 2026)."""
+    from huragok.commandline import cli
+
+    root = tmp_path / "huragok"
+    root.mkdir()
+    settings_path = root / "settings.toml"
+    cli.main(["-c", str(settings_path), "init"])
+    changed = up_to_date(settings_path)
+    assert not [line for line in changed if re.search(r"download_game_files|adopt|layouts|taken out", line)]
+    assert not re.search(r"(?m)^\s*(download_game_files|adopt|layouts)\s*=", settings_path.read_text(encoding="utf-8"))
+    kept = root / "records" / HANDS_OFF_RECORD  # nothing to take out, so no record: no server has lines
+    assert not kept.exists() or json.loads(kept.read_text(encoding="utf-8"))["every"] == []
+    assert hands_off_lines(root / "records", SimpleNamespace(folder=root / "SERVERS" / "A", name="A")) == []
+
+
+def test_update_check_minutes_is_said_only_for_a_server_whose_file_has_it(tmp_path: Path) -> None:
+    """0.6.x wrote it into every server's file; a server folder added since never had it from Huragok."""
+    settings_path = host(tmp_path)
+    records = settings_path.parent / "records"
+    up_to_date(settings_path)
+    line = "[workshop] update_check_minutes = 5 (from settings.toml's [workshop_updates] check_minutes)"
+    old, new = tmp_path / "SERVERS" / "Old", tmp_path / "SERVERS" / "New"
+    for folder, workshop in ((old, "[workshop]\nupdate_check_minutes = 5\n"), (new, "")):
+        folder.mkdir(parents=True)
+        (folder / "dedicated.toml").write_text(f'game = "game"\n{workshop}', encoding="utf-8")
+    assert hands_off_lines(records, SimpleNamespace(folder=old, name="Old", config_path=old / "dedicated.toml")) \
+        == [line]
+    assert hands_off_lines(records, SimpleNamespace(folder=new, name="New", config_path=new / "dedicated.toml")) == []

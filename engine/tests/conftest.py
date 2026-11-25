@@ -424,9 +424,13 @@ class ProgramLifecycle:
         self.cancelled: list[str] = []
         self.told: dict[str, str] = {}  # server -> what players read while it waits for the game to end
         self.console: set[str] = set()  # servers whose restart may go through their own console (started elsewhere)
+        self.phases: dict[str, str] = {}  # a server's phase where a test sets one; else running
 
     def is_up(self, name: str) -> bool:
         return name in self.up
+
+    def phase(self, name: str) -> str | None:
+        return self.phases.get(name, "running")
 
     async def restart(self, server: str, *, when: str, reason: str, by: str | None = None,
                       countdown: float | None = None, tell: str = "", console: bool = False) -> Any:

@@ -475,6 +475,49 @@ def test_a_stopped_servers_folder_renamed_by_hand_is_picked_up_where_it_is_now(t
     run(scenario())
 
 
+def test_a_folder_dropped_in_waits_until_its_file_is_left_alone_and_a_rename_never_does(tmp_path: Path, run,
+                                                                                          caplog) -> None:
+    """A folder made with the program's own `dedicated init` has two servers on 49176 and 49177 until the host edits it,
+    and was picked up within seconds (the host, 25 November 2026). The loop picks a new folder up once its dedicated.toml
+    has been left alone a minute; a rename is followed at once, so a stopped server is never forgotten meanwhile."""
+    from huragok.superintendent import NEW_FOLDER_SETTLE
+
+    async def scenario() -> None:
+        root = tmp_path / "reclaimer"
+        write_server_folder(root / "SERVERS" / "Lobby", 46397, name="Old Name")  # nothing answers: stopped
+        path = write_settings(root, None, commands=staff())
+        with open(path, "a", encoding="utf-8") as file:  # kept stopped: a rename of one mid-start waits for it to stop
+            file.write('\n[[server]]\nname = "Old Name"\nautostart = false\n')
+        settings = load(path)
+        supervisor = Huragok(settings)
+        task = asyncio.ensure_future(supervisor.run())
+        try:
+            sup = supervisor.superintendent
+            await wait_for(lambda: "Old Name" in sup.fleet.managers)
+            dropped = root / "SERVERS" / "Dropped"
+            write_server_folder(dropped, 46396, name="Recomp Slayer")  # just written
+            sup.discover(settle=NEW_FOLDER_SETTLE)
+            sup.discover(settle=NEW_FOLDER_SETTLE)
+            assert "Recomp Slayer" not in sup.fleet.managers
+            assert caplog.text.count("picked up once its dedicated.toml has been left alone for a minute") == 1
+            write_server_folder(root / "SERVERS" / "Lobby", 46397, name="New Name")  # a rename: not held up
+            sup.discover(settle=NEW_FOLDER_SETTLE)
+            assert "New Name" in sup.fleet.managers and "Old Name" not in sup.fleet.managers
+            old = time.time() - NEW_FOLDER_SETTLE - 5
+            os.utime(dropped / "dedicated.toml", (old, old))  # left alone a minute
+            sup.discover(settle=NEW_FOLDER_SETTLE)
+            assert "Recomp Slayer" in sup.fleet.managers
+            write_server_folder(root / "SERVERS" / "Made By N", 46395, name="Fresh")
+            sup.discover()  # the window, after N: at once
+            assert "Fresh" in sup.fleet.managers
+        finally:
+            supervisor.stop()
+            await asyncio.wait_for(task, 10)
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+
+
 def test_a_server_renamed_in_its_dedicated_toml_stays_the_same_server(tmp_path: Path, run) -> None:
     """0.7.0, answers 32 and 39: the same folder and game port under a new name is the same server. Huragok's own block
     for it in settings.toml, its records and its history follow it; its folder isn't touched."""

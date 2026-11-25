@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -47,6 +48,9 @@ POLL_SECONDS = 10.0  # each server's files are looked at this often (sizes and t
 SETTLE_SECONDS = 5.0  # a change is checked by the program once its files have been still this long
 SAME_LINE_SECONDS = 15.0  # one game's line said twice (its console and its server.log) within this counts once
 RELOAD = "plays-reload"  # the warnings catalogue's source for a refused reload
+# The program refusing a reload because the server's own [[server]] block has another name now (or is gone): Huragok
+# follows a rename at its next start, so there's nothing in the file to put right (the beta.2 tests, 25 Nov 2026)
+RENAMED_AWAY = re.compile(r'RECLAIMER_DEDICATED_ONLY: "[^"]*" names no \[\[server\]\]')
 
 
 def fingerprint(server: ServerConfig, config_name: str = "dedicated.toml") -> tuple[Any, ...]:
@@ -123,7 +127,7 @@ class PlaysWatch:
         bus.subscribe("rcon.control", self._on_reload)
         bus.subscribe("server.reloaded", self._on_reload)
         bus.subscribe("log.reload", self._on_reload)
-        bus.subscribe("server.started", self._on_started)
+        bus.subscribe("server.starting", self._on_program_start)
 
     # Reading -------------------------------------------------------------------------------------------------------
 
@@ -260,6 +264,8 @@ class PlaysWatch:
             return
         now = self.clock()
         skips = self.skips(name)
+        if game.isdigit():  # 0.10.9's supervisor names a playlist's game by its number ("its game 1")
+            game = _named(skips, int(game), now)
         if what == "skip_ended":
             self._skips[name] = [SkipSeen(s.what, s.game, s.at, s.reason, s.times, s.skip, False)
                                  if s.active and s.game.casefold() == game.casefold() else s for s in skips]
@@ -283,9 +289,13 @@ class PlaysWatch:
             if server is not None:
                 self.refresh(server)
 
-    def _on_started(self, event: Event) -> None:
-        """A server started again: the program's skips start afresh (it keeps them in memory)."""
+    def _on_program_start(self, event: Event) -> None:
+        """The program itself started (Huragok started it): its skips start afresh (it keeps them in memory), and it
+        reads its files afresh, so a reload refused before is over (one carried over a rename said so for good). Not
+        each start of its game: the program's own supervisor starts that again after a failed load and keeps its
+        skips, where a skip for 30 minutes was said for 2 seconds (the beta.2 tests, 25 November 2026)."""
         name = event.server or ""
+        self.warnings.clear(name, "plays-reload-refused")
         skips = self.skips(name)
         if any(s.active for s in skips):
             self._skips[name] = keep_skips(self.settings.records, name,
@@ -302,7 +312,10 @@ class PlaysWatch:
         if event.name == "rcon.control":
             if str(event.get("action") or "") not in ("reload", "reload_applied"):
                 return
-            if event.get("ok", True) is False:
+            if event.get("ok", True) is False and RENAMED_AWAY.search(str(event.get("text") or "")):
+                log.info("[%s] its reload was refused because its [[server]] block has another name in its "
+                         "dedicated.toml now: nothing to put right; Huragok follows a rename at its next start", name)
+            elif event.get("ok", True) is False:
                 server = self._server(name)
                 self.warnings.set(name, "plays-reload-refused", source=RELOAD,
                                   about=server.config_path if server is not None else None,
@@ -313,6 +326,17 @@ class PlaysWatch:
             self.warnings.clear(name, "plays-reload-refused")
         self._force.add(name)
         self._again(name)
+
+
+NAMED_WITHIN = 120.0  # seconds: a failed load the game's own line named, taken for the supervisor's "game <n>"
+
+
+def _named(skips: list[SkipSeen], number: int, now: float) -> str:
+    """A game the program's supervisor gave by its number in the playlist, by its name: the game's own line about its
+    failed load, just before, names it ("Slayer on Guardian could not be loaded"). Else "game <n> of its playlist",
+    never "1" alone (the beta.2 tests: "1's map failed to load", "1 was skipped")."""
+    named = [s for s in skips if s.what == "load_failed" and now - s.at <= NAMED_WITHIN and not s.game.isdigit()]
+    return max(named, key=lambda s: s.at).game if named else f"game {number} of its playlist"
 
 
 __all__ = ["PlaysWatch", "POLL_SECONDS", "SETTLE_SECONDS", "fingerprint"]

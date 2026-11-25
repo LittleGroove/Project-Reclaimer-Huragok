@@ -353,7 +353,8 @@ setting with what it does and the warnings beside it
 ## A server folder from somewhere else
 Any folder in `SERVERS/` with a `dedicated.toml` in it is a server folder: drop one
 in (made by hand with `dedicated init`, copied from another PC or another Huragok
-folder) and it shows on the dashboard within seconds. Each `[[server]]` block in it
+folder) and it shows on the dashboard once its `dedicated.toml` has been left alone a
+minute (so a folder still being edited isn't started half-made). Each `[[server]]` block in it
 is a server of its own, with its own row, started, stopped and restarted on its own.
 Huragok changes nothing in it; what it lacks is a warning, and the server is still
 listed and started where it can be:

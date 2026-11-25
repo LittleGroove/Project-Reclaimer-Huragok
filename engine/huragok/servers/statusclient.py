@@ -2,8 +2,8 @@
 
 0.7.0 (plan-0.7.0.md answer 7, 4.6): a server without a console is still started and kept on, and Huragok warns,
 naming the lines to add. Without a console Huragok can't tell players anything, moderate, or ask the server
-anything; it can still read what the server writes every 2 seconds: whether it's up (status.json rewritten by its
-running process), its phase, map, mode and players. This client takes RconClient's place for such a server:
+anything; it can still read what the server writes in status.json, as anything changes and about once a minute
+otherwise: whether it's up (the file rewritten by its running process), its phase, map, mode and players. This client takes RconClient's place for such a server:
 
 - connected while status.json is fresh, written by a process that's alive;
 - what changes in it becomes the console's own events (rcon.phase, rcon.join, rcon.leave), so the manager's "after
@@ -32,10 +32,17 @@ from .logs import read_status
 
 log = logging.getLogger(__name__)
 
-POLL_SECONDS = 2.0  # 0.10 rewrites status.json every 2 s
-FRESH_SECONDS = 15.0  # written this recently, by a process still running: the server is up
+POLL_SECONDS = 2.0  # a change is in status.json at once
+# Written this recently, by a process still running: the server is up. 0.10.9 rewrites the file as anything changes
+# and about once a minute otherwise, not every 2 s: at 15 s a server with no console was lost and found again every
+# minute, and the watchdog had it not answering (the beta.2 tests, 25 November 2026). A frozen one: keepalive
+FRESH_SECONDS = 150.0
 NO_CONSOLE = "it has no console: there's no [rcon] password in its dedicated.toml"
-STATE_PHASES = {"lobby": "no_game"}  # status.json's state, in the console's words
+# status.json's words in the console's (no_game, playing, finished), as 0.10.9 writes them: state lobby, countdown,
+# playing, post-game; phase lobby, countdown, in_game, post_game (the beta.2 tests). A word not here (voting, say)
+# is taken as it is. "post-game" was taken as it was, so a game's end was only seen once the lobby came back
+STATE_PHASES = {"lobby": "no_game", "countdown": "no_game", "loading": "no_game", "post-game": "finished",
+                "post_game": "finished"}
 SERVER_PHASES = {"in_game": "playing", "post_game": "finished"}  # its own phase, when there's no state
 
 
@@ -158,8 +165,8 @@ class StatusFileClient:
                       timeout: float | None = None) -> Reply:
         word = command.split()[0].lower() if command.strip() else ""
         if self._connected and self._status is not None:
-            if word == "status":
-                return Reply(True, "", dict(self._status), {})
+            if word == "status":  # its phase in the console's words, as a console's status gives it
+                return Reply(True, "", {**self._status, "phase": console_phase(self._status)}, {})
             if word == "players":
                 return Reply(True, "", {"players": list(_players(self._status).values()),
                                         "max_players": self._status.get("max_players")}, {})

@@ -204,7 +204,7 @@ class RemoteController:
         return self.settings
 
     def discover(self) -> None:
-        pass  # the supervising window finds new folders by itself within 10 s
+        pass  # the supervising window finds a new folder by itself, once its dedicated.toml is left alone a minute
 
     def watch(self, server: str, listener: Callable[[Any], None]) -> Callable[[], None]:
         return lambda: None  # a second window has no connection of its own; the supervising window shows events

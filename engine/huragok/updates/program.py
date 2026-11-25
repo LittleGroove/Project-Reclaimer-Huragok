@@ -59,6 +59,10 @@ REVIEW_SECONDS = 60.0  # how often the servers' releases are looked at again (no
 
 OLD_FILE_WARN = 3600.0  # still running from the old program file this long after a self-update: warned
 
+COMING_UP = {"launch", "preparing", "booting", "restarting"}  # no restart can be planned yet: it's waited out
+OLD_FILE_UP_SECONDS = 5.0  # how often a server coming up is looked at again before its old-file restart is planned
+OLD_FILE_UP_WAITS = 120  # ten minutes of it (a start is allowed five: [restarts] ready_seconds)
+
 
 OLD_JOB = "program-old"
 
@@ -376,6 +380,13 @@ class ProgramUpdateService:
         background(self._plan_off_the_old_file(name), f"[{name}] restarting on its new program file", log)
 
     async def _plan_off_the_old_file(self, name: str) -> None:
+        # Restarted for a release, a server updates itself as it starts, so Huragok sees its new version while it's
+        # still coming up, when no restart can be planned: wait until it's up. It used to give up, leaving the
+        # program's own supervisor on project-reclaimer.exe.old (the live servers on 0.10.10, 24 Nov 2026)
+        for _ in range(OLD_FILE_UP_WAITS):
+            if self.lifecycle.phase(name) not in COMING_UP:
+                break
+            await asyncio.sleep(OLD_FILE_UP_SECONDS)
         if not await self._plan(name, "when_empty", "its own update left `dedicated` running from the old program "
                                                     "file; restarting on the new one"):
             self.old_file.pop(name, None)  # not one Huragok can restart: no warning that it isn't
@@ -399,8 +410,7 @@ class ProgramUpdateService:
         game, so they install it as they start instead of within the hour."""
         restarted = await self._restart_behind(version, skip={updated})
         if restarted:
-            log.info("Following %s onto Project Reclaimer %s: %s restart after their game", updated, version,
-                     ", ".join(restarted))
+            log.info("Following %s onto Project Reclaimer %s: %s", updated, version, _after_their_game(restarted))
         return restarted
 
     async def _restart_behind(self, version: str, *, skip: set[str] | None = None) -> list[str]:
@@ -489,8 +499,8 @@ class ProgramUpdateService:
             return []
         restarted = await self._restart_behind(self.newest.version)
         if restarted:
-            log.info("Project Reclaimer %s is out: %s restart after their game to install it as they start",
-                     self.newest.version, ", ".join(restarted))
+            log.info("Project Reclaimer %s is out: %s to install it as %s start", self.newest.version,
+                     _after_their_game(restarted), "it" if len(restarted) == 1 else "they")
         return restarted
 
     async def _review_loop(self) -> None:
@@ -767,7 +777,7 @@ def _clock(when: float) -> str:
     return time.strftime("%d %b %H:%M", local).lstrip("0")
 
 
-STATUS_FRESH = 30.0  # seconds: 0.10 writes status.json every 2 s; older, it is a stopped process's
+STATUS_FRESH = 150.0  # seconds: 0.10.9 rewrites status.json about once a minute; older, a stopped process's
 
 
 def status_release(path: Path, pid: int | None = None) -> str | None:
@@ -792,6 +802,13 @@ def status_release(path: Path, pid: int | None = None) -> str | None:
     if not isinstance(updated, (int, float)) or isinstance(updated, bool) or abs(time.time() - updated) > STATUS_FRESH:
         return None
     return version
+
+
+def _after_their_game(names: list[str]) -> str:
+    """"Beta restarts after its game", "Beta, Gamma restart after their game" (one read "B2 Update restart after their
+    game": the beta.2 tests, 25 November 2026)."""
+    return f"{names[0]} restarts after its game" if len(names) == 1 else \
+        f"{', '.join(names)} restart after their game"
 
 
 def _same_line(said: str, release: str) -> bool:

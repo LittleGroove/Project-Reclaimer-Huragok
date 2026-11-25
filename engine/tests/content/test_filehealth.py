@@ -332,7 +332,9 @@ def test_a_game_skipped_is_seen_until_its_skip_ends_or_the_server_starts(alpha: 
     assert "plays-game-skipped" not in ids(warnings, server.name)
     bus.emit("server.game_skip", server.name, what="unplayable", game="Forge on Big", reason="too big")
     assert "plays-game-unplayable" in ids(warnings, server.name)
-    bus.emit("server.started", server.name, pid=1)
+    bus.emit("server.started", server.name, pid=1)  # its game started again by the program's own supervisor
+    assert "plays-game-unplayable" in ids(warnings, server.name)  # which keeps its skips (the beta.2 tests)
+    bus.emit("server.starting", server.name, pid=1)  # the program itself, started by Huragok: its skips start afresh
     watch.refresh(server)
     assert not ids(warnings, server.name) & {"plays-game-unplayable", "plays-game-skipped"}
     kept = filehealth.load_skips(settings.records, server.name)
@@ -355,6 +357,65 @@ def test_a_retry_passes_and_a_refused_reload_lasts_until_one_goes_through(alpha:
     assert "plays-reload-refused" in ids(warnings, server.name)
     bus.emit("rcon.control", server.name, action="reload", ok=True, text="applied")
     assert "plays-reload-refused" not in ids(warnings, server.name)
+
+
+def test_a_reload_refused_for_a_rename_is_no_warning_and_a_start_ends_one(alpha: Any) -> None:
+    """Renamed in its dedicated.toml while it ran, the server's own reload is refused (its process was started for the
+    old name). Huragok follows the rename at its next start, so that's nothing to put right; the warning said so, and
+    went over to the new name for good (the beta.2 tests, 25 November 2026)."""
+    settings, server = alpha
+    watch, warnings, bus = watch_on(settings)
+    bus.emit("rcon.control", server.name, action="reload", ok=False,
+             text='Configuration not reloaded; the servers keep their settings. | RECLAIMER_DEDICATED_ONLY: '
+                  f'"{server.name}" names no [[server]]')
+    assert "plays-reload-refused" not in ids(warnings, server.name)
+    bus.emit("rcon.control", server.name, action="reload", ok=False, text="playlists/x.playlist.json: game 2: …")
+    assert "plays-reload-refused" in ids(warnings, server.name)
+    bus.emit("server.starting", server.name, pid=1)  # it reads its files afresh as it starts
+    assert "plays-reload-refused" not in ids(warnings, server.name)
+
+
+def test_0_10_9s_own_lines_name_the_game_and_its_skip_lasts_past_its_games_restart(alpha: Any) -> None:
+    """The lines 0.10.9 wrote as a mod map failed to load three times (the beta.2 tests, 25 November 2026): its
+    supervisor gives the game by its number in the playlist, the game's own line by its name; between the tries its
+    supervisor starts the game again (server.started), keeping the skip. Huragok said "1's map failed to load" and
+    "1 was skipped", and took the skip back 2 seconds later."""
+    from huragok.servers.logs import parse_console_line, parse_log_line
+
+    settings, server = alpha
+    clock = [1000.0]
+    watch, warnings, bus = watch_on(settings)
+    watch.clock = lambda: clock[0]
+    lines = [
+        ("log", "[server] a game change failed: Slayer on Albatross Battle Sandtrap could not be loaded (Halo 3's "
+                "error 11: TheFailBoat): the server starts again"),
+        ("console", f'11:34:06 [server] "{server.name}": the map of its game 1 failed to load (a map\'s load failed, so '
+                    "its game ended), 1 of 3 times in a row: starting it again in 1 s. See C:\\x\\server.log."),
+        ("console", f'11:34:07 [server] "{server.name}" on port 46940: Slayer on Albatross Battle Sandtrap (pid 42)'),
+        ("log", "[server] a game change failed: Slayer on Albatross Battle Sandtrap could not be loaded (Halo 3's "
+                "error 11: TheFailBoat): the server starts again"),
+        ("console", f'11:39:48 [server] "{server.name}": the map of its game 1 failed to load 3 times in a row (a map\'s '
+                    "load failed, so its game ended): starting the next game; it is skipped for 30 minutes. See "
+                    "C:\\x\\server.log."),
+        ("console", f'11:39:49 [server] "{server.name}" on port 46940: Slayer on Guardian (pid 43)'),
+    ]
+    def told(of: list[tuple[str, str]]) -> dict[str, str]:
+        for kind, line in of:
+            parsed = parse_log_line(line) if kind == "log" else parse_console_line(line)
+            assert parsed is not None, line
+            event, data = parsed
+            data.pop("server", None)
+            bus.emit(event, server.name, **data)
+            clock[0] += 2
+        return {w.rule.id: w.text for w in warnings.of(server.name)}
+
+    texts = told(lines[:3])  # the first failed load, its retry, and the game started again: still said
+    assert texts["plays-game-load-failed"].startswith("Slayer on Albatross Battle Sandtrap couldn't be loaded at ")
+    assert texts["plays-game-retried"].startswith("Slayer on Albatross Battle Sandtrap's map failed to load at ")
+    texts = told(lines[3:])  # the third: skipped, which the game started again doesn't take back
+    assert texts["plays-game-skipped"].startswith("Slayer on Albatross Battle Sandtrap was skipped at ")
+    bus.emit("log.game_skip", server.name, what="skip_ended", game="Slayer on Albatross Battle Sandtrap")
+    assert "plays-game-skipped" not in ids(warnings, server.name)  # its name, as the skip's end gives it
 
 
 def test_skips_round_trip() -> None:

@@ -22,9 +22,24 @@ def hands_off_lines(records: Path, server: Any) -> list[str]:
     if not isinstance(record, dict):
         return []
     folder = os.path.normcase(str(server.folder))
-    lines = list(record.get("every") or [])
+    lines = [line for line in record.get("every") or [] if _still_there(line, server)]
     for where, found in (record.get("folders") or {}).items():
         if os.path.normcase(str(where)) == folder:
             lines += found
     lines += (record.get("servers") or {}).get(server.name, [])
     return [str(line) for line in lines]
+
+
+def _still_there(line: Any, server: Any) -> bool:
+    """A setting 0.6.x wrote into every server's file is said only for a server whose file has it: one added since
+    (a folder dropped in after the update) never had it from Huragok (the beta.2 tests, 25 November 2026)."""
+    if not str(line).startswith("[workshop] update_check_minutes"):
+        return True
+    import tomllib
+
+    try:
+        data = tomllib.loads(Path(server.config_path).read_text(encoding="utf-8"))
+    except (OSError, AttributeError, TypeError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return True  # can't tell: as the record says
+    workshop = data.get("workshop")
+    return isinstance(workshop, dict) and "update_check_minutes" in workshop

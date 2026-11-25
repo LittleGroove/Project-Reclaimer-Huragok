@@ -95,12 +95,6 @@ AUTO_UPDATE_COMMENT = [
 ]
 RENAMED_TO_AUTO_UPDATE = ("Renamed auto_update in 0.4.2, which Huragok set to this value: true now installs a new\n"
                           "version as soon as it's found, rather than at the next server restart.")
-DOWNLOAD_GAME_FILES_COMMENT = [
-    "A server that's missing Halo 3's files (one copied in without the game/ it shared,",
-    "say) gets them by itself: copied from MCC when it's on this PC, otherwise downloaded",
-    "with SteamCMD (about 9.3 GB for multiplayer, 5.8 GB kept). false: nothing is",
-    "downloaded without you; the server waits, and I gets them.",
-]
 NAME_MATCH_COMMENT = [  # the template's, above [automod] name_match
     "How a word from automod.txt catches a player's name. \"anywhere\": anywhere in",
     "it, so hitler catches Hitler, DasHitler and xXhitlerXx; a short word catches",
@@ -259,24 +253,10 @@ def old_repository(ctx: Context) -> list[str]:
 
 
 def download_game_files(ctx: Context) -> list[str]:
-    from ..core.tomledit import add_table_key
-
-    setup = _read(ctx.settings_path).get("setup")
-    if isinstance(setup, dict) and "download_game_files" in setup:
-        return []
-    try:
-        text = ctx.settings_path.read_text(encoding="utf-8")
-    except OSError:
-        return []
-    if commented_in(text, "setup", "download_game_files"):
-        return []  # written as a comment by the host: their choice to leave it to its default
-    if ctx.dry:
-        return [f"{ctx.settings_path.name}: [setup] download_game_files = true added (new in 0.4.1)"]
-    ctx.backup(ctx.settings_path)
-    if not add_table_key(ctx.settings_path, "setup", "download_game_files", True, DOWNLOAD_GAME_FILES_COMMENT,
-                         after="steam_username"):
-        return []
-    return [f"{ctx.settings_path.name}: [setup] download_game_files = true added (new in 0.4.1)"]
+    """Nothing, since 0.7.0: [setup] download_game_files is retired (game files are fetched only when the host asks),
+    and 0.7.0's hands-off step would take the line out again. Until then a new host's second start added it and
+    warned for two and a half minutes that it did nothing (the beta.2 tests, 25 November 2026)."""
+    return []
 
 
 def steamcmd_comment(ctx: Context) -> list[str]:
@@ -452,49 +432,11 @@ KICK_LIMIT_COMMENT = [  # the template's, above [automod] moderators_kick_at_mos
 ]
 
 
-ADOPT_COMMENT = [  # the template's, above [workshop_updates] adopt
-    "Mods copied into a server's content folder by hand that name a Workshop item (their",
-    "ModInfo.json does) are never updated by the server program. true: Huragok fetches",
-    "the Workshop's own copy while the server runs, then after a game (at once when nobody",
-    "is on) puts it in the hand copy's place, keeps the hand copy in \"content set aside\"",
-    "beside the content folder and lists the item in [workshop] items. A copy the program",
-    "installed that isn't listed any more is listed again: the server loads it all the same.",
-]
-LAYOUTS_COMMENT = [  # the template's, above [workshop_updates] layouts
-    "The Forge layouts each mod ships (\"Project Reclaimer Layouts\") copied into",
-    "content/Maps/<mod> and kept in step with its new versions. A layout changed there by",
-    "hand is left as it is.",
-]
-
-
 def workshop_adopt(ctx: Context) -> list[str]:
-    """[workshop_updates] adopt and layouts (0.6.0): on by default, so the lines show the host what Huragok now does
-    with the Workshop mods it finds. Only added where the file has [workshop_updates]."""
-    from ..core.tomledit import add_table_key
-
-    table = _read(ctx.settings_path).get("workshop_updates")
-    if not isinstance(table, dict):
-        return []
-    try:
-        text = ctx.settings_path.read_text(encoding="utf-8")
-    except OSError:
-        return []
-    wanted = [(key, comment, after, words) for key, comment, after, words in (
-        ("adopt", ADOPT_COMMENT, "check_minutes", "a mod copied into a server's content by hand that names a Workshop "
-                                                  "item is kept up to date too"),
-        ("layouts", LAYOUTS_COMMENT, "adopt", "the Forge layouts mods ship are copied into content/Maps and kept in "
-                                              "step with each new version"))
-        if key not in table and not commented_in(text, "workshop_updates", key)]
-    said = [f"{ctx.settings_path.name}: [workshop_updates] {key} = true added: {words} (new in 0.6.0)"
-            for key, _, _, words in wanted]
-    if ctx.dry or not said:
-        return said
-    ctx.backup(ctx.settings_path)
-    done = []
-    for (key, comment, after, _), line in zip(wanted, said):
-        if add_table_key(ctx.settings_path, "workshop_updates", key, True, comment, after=after):
-            done.append(line)
-    return done
+    """Nothing, since 0.7.0: [workshop_updates] adopt and layouts (0.6.0) are retired (Huragok warns about a hand copy
+    and copies a mod's layouts only when asked), and 0.7.0's hands-off step would take the lines out again. Until then
+    a new host's second start added them and its notes for nothing (the beta.2 tests, 25 November 2026)."""
+    return []
 
 
 def moderators_kick_at_most(ctx: Context) -> list[str]:
@@ -1803,7 +1745,10 @@ def _record_what_huragok_set(ctx: Context, workshop: dict[str, Any]) -> None:
 
     every: list[str] = []
     minutes = workshop.get("check_minutes", 5)
-    if isinstance(minutes, int) and not isinstance(minutes, bool) and minutes > 0:
+    # Only where a Huragok from before 0.7.0 ran: its [workshop_updates] had install and check_minutes. A new host's
+    # file has neither, and every server of theirs was told Huragok had set it (the beta.2 tests, 25 November 2026)
+    before = "install" in workshop or "check_minutes" in workshop
+    if before and isinstance(minutes, int) and not isinstance(minutes, bool) and minutes > 0:
         every.append(f"[workshop] update_check_minutes = {minutes} (from settings.toml's [workshop_updates] "
                      "check_minutes)")
     folders: dict[str, list[str]] = {}

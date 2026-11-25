@@ -21,6 +21,7 @@ import json
 import os
 import logging
 import sqlite3
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 DISCOVER_SECONDS = 10.0  # server folders added or removed while running are found this often
+# A folder that turns up while Huragok runs is picked up once its dedicated.toml has been left alone this long: one
+# just made with the program's own `dedicated init` has two servers on 49176 and 49177 (where live servers often
+# are) until the host edits it, and was started within seconds (the host, 25 November 2026). A rename isn't held
+# up, and the window's N (finished before the folder takes its name) is picked up at once.
+NEW_FOLDER_SETTLE = 60.0
 CRASH_LOOP = 3  # crashes in a row (the program's supervision.json) that make a warning
 
 
@@ -93,6 +99,7 @@ class Superintendent:
         self.keepalive = Keepalive(settings.keepalive, self.lifecycle, self.states, bus)
         self.listeners: list[ServerListener] = []
         self.folder_problems: list[str] = [str(p) for p in settings.problems]
+        self._settling: set[str] = set()  # new servers waiting for their dedicated.toml to be left alone
         for problem in self.folder_problems:
             log.error("Server folders: %s", problem)
         self._server_tasks: dict[str, list[Any]] = {}
@@ -216,8 +223,10 @@ class Superintendent:
                  for problem in self.backend.problems(server)]
         return found + self.folder_problems
 
-    def discover(self) -> None:
-        """Server folders added or removed while running."""
+    def discover(self, *, settle: float = 0.0) -> None:
+        """Server folders added or removed while running. `settle`: a new server (not a rename) is picked up only once
+        its dedicated.toml hasn't changed for that many seconds (the loop's NEW_FOLDER_SETTLE; 0, at once: the window
+        after N, which is done with the folder)."""
         left_out: list[FolderProblem] = []
         try:
             found = discover_servers(self.settings, left_out)
@@ -243,6 +252,14 @@ class Superintendent:
             if server.name in handled:
                 continue
             if server.name not in current:
+                if settle > 0 and _changed_within(server, settle):
+                    if server.name not in self._settling:
+                        self._settling.add(server.name)
+                        log.info("[%s] new server folder: %s; picked up once its %s has been left alone for %s",
+                                 server.name, server.folder, server.config_path.name,
+                                 "a minute" if settle == 60 else f"{settle:.0f} s")
+                    continue
+                self._settling.discard(server.name)
                 log.info("[%s] new server folder: %s", server.name, server.folder)
                 self.add_server(server)
                 continue
@@ -295,7 +312,7 @@ class Superintendent:
     async def _discover_loop(self) -> None:
         while True:
             await asyncio.sleep(DISCOVER_SECONDS)
-            self.discover()
+            self.discover(settle=NEW_FOLDER_SETTLE)
             self.crash_loops()
 
     def crash_loops(self) -> None:
@@ -415,6 +432,14 @@ def _warn_by_players(server: ServerConfig) -> None:
     lines = retired_warning(server.folder, server.name)
     if lines:
         log.warning("[%s] %s", server.name, "\n    ".join(lines))
+
+
+def _changed_within(server: ServerConfig, seconds: float) -> bool:
+    """Its dedicated.toml written in the last `seconds` (one that can't be read for its time: as if just written)."""
+    try:
+        return time.time() - server.config_path.stat().st_mtime < seconds
+    except OSError:
+        return True
 
 
 def _where(server: ServerConfig) -> str:

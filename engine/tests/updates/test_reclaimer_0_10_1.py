@@ -331,7 +331,7 @@ def test_a_status_from_before_the_restart_or_from_09_says_nothing(tmp_path: Path
     root = root_on(tmp_path, OLD)
     service, _, _ = service_for(root, ("Alpha",))
     status = service.settings.server("Alpha").status_path
-    write_status(status, pid=4312, updated=time.time() - 120, health={"version": "0.10.1"})  # a stopped process's
+    write_status(status, pid=4312, updated=time.time() - 600, health={"version": "0.10.1"})  # a stopped process's
     assert service.identify("Alpha", "0.10.0") == "0.10.0"
     write_status(status, pid=4312, updated=time.time(), health={"version": "0.10.0"})
     service.states["Alpha"].pid = 5555  # restarted: the console named another process, which hasn't written yet

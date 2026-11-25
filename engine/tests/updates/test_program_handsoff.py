@@ -194,6 +194,34 @@ def test_a_server_pinned_by_its_own_file_is_said_once_calmly(tmp_path: Path, mon
     assert ("Beta", "after_game", REASON.format(version="0.10.9")) not in lifecycle.restarts
 
 
+def test_an_update_seen_while_it_comes_up_still_gets_its_restart_off_the_old_file(tmp_path: Path, run, monkeypatch,
+                                                                                    caplog) -> None:
+    """Restarted for a release, it updates as it starts, so its new version is seen while it's still booting, when no
+    restart can be planned. Huragok gave up then, and the program's own supervisor stayed on project-reclaimer.exe.old
+    (the live servers on 0.10.10, 24 November 2026; the beta.2 tests): now it waits until the server is up."""
+    monkeypatch.setattr(program_module, "OLD_FILE_UP_SECONDS", 0.01)
+    root = self_updating_root(tmp_path, "Alpha", body='backend = "process"\n')
+    service, lifecycle, bus = service_on(root)
+    lifecycle.phases["Alpha"] = "booting"
+    off_the_old_file = ("Alpha", "when_empty", "its own update left `dedicated` running from the old program file; "
+                                               "restarting on the new one")
+
+    async def scenario() -> None:
+        bus.emit("rcon.connected", "Alpha", version="0.10.9")
+        bus.emit("server.updating", "Alpha", version="0.10.10")
+        bus.emit("rcon.connected", "Alpha", version="0.10.10")  # as it comes up on the new file
+        await asyncio.sleep(0.1)
+        assert lifecycle.restarts == []  # nothing planned while it boots
+        lifecycle.phases["Alpha"] = "running"
+        await wait_for(lambda: lifecycle.restarts)
+        assert lifecycle.restarts == [off_the_old_file]
+        assert "Alpha" in service.old_file
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert "couldn't plan a restart" not in caplog.text
+
+
 def test_a_busy_server_that_never_empties_for_its_new_program_file_is_warned_about(tmp_path: Path, run) -> None:
     root = self_updating_root(tmp_path, "Alpha", body='backend = "process"\n')
     service, lifecycle, bus = service_on(root)

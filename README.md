@@ -50,7 +50,7 @@ It writes into them only for moderation, for the stats relay while `[stats] rela
 is on, and for what you ask (a quick action, a copy, a repair), each shown before
 it's written.
 
-> **Status: 0.7.0-beta.2, on its way to 1.0.** Tested against Project Reclaimer **v0.10.8** (warnings checked up to v0.10.9) on
+> **Status: 0.7.0-beta.3, on its way to 1.0.** Tested against Project Reclaimer **v0.10.8** (warnings checked up to v0.10.9) on
 > Windows 11; Linux is experimental. Up to 0.2.1 this was
 > called Reclaimer Supervisor: see [Coming from Reclaimer Supervisor 0.2.1](#coming-from-reclaimer-supervisor-021).
 

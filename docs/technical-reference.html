@@ -655,7 +655,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <h3 id="the-four-layers">The four layers</h3>
 <ol>
 <li><strong>Readers</strong> turn each server's signals into events: <code>RconClient</code> (the WebSocket console), <code>FileWatcher</code> (<code>server.log</code> and <code>status.json</code>) and the process backend (the <code>dedicated</code> console output file).</li>
-<li><strong>The bus</strong> (<code>EventBus</code>, <code>core/events.py</code>) delivers each event synchronously to every subscriber whose pattern matches (<code>rcon.chat</code>, <code>rcon.*</code>, <code>*</code>). Subscribers must not block.</li>
+<li><strong>The bus</strong> (<code>EventBus</code>, <code>core/events.py</code>) delivers each event synchronously to every subscriber whose pattern matches (<code>rcon.chat</code>, <code>rcon.*</code>, <code>*</code>). Subscribers must not block. Once bound to the running loop (<code>bind</code>, as Huragok starts), an event published from a worker thread (a check run with <code>asyncio.to_thread</code> that raises a warning) is handed to the loop and delivered there, since the parts' queues live on it (0.7.0-beta.2).</li>
 <li><strong>Deciders</strong> act on events and timers: <code>StateTracker</code> keeps the live picture, the <code>Fleet</code> ticks one <code>ServerManager</code> per server, <code>Keepalive</code> checks for hangs, and the parts (commands, automod, watchdog, eventlog, messages) each run behind their own queue.</li>
 <li><strong>Surfaces</strong> only ask: the window (<code>window/dashboard.py</code>), <code>start.cmd</code> verbs (through files in <code>records/requests/</code>), the relay for remote moderators, and the second window (reading <code>records/live.json</code>). None of them change a server directly; they call Fleet verbs.</li>
 </ol>
@@ -1171,7 +1171,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </tr>
 <tr>
 <td>A server without a console</td>
-<td>Its <code>status.json</code> read every 2 s; up while it was written in the last 15 s by a running process (<code>servers/statusclient.py</code>)</td>
+<td>Its <code>status.json</code> read every 2 s; up while it was written in the last 150 s by a running process (0.10.9 rewrites it as anything changes and about once a minute otherwise), its states in the console's words (<code>post-game</code> is <code>finished</code>, <code>countdown</code> and <code>loading</code> are <code>no_game</code>) (<code>servers/statusclient.py</code>)</td>
 </tr>
 <tr>
 <td>Folder discovery</td>
@@ -1310,7 +1310,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 </code></pre>
 <h3 id="how-servers-are-found">How servers are found</h3>
 <ul>
-<li>Every folder in <code>SERVERS/</code> that holds a <code>dedicated.toml</code> is read; folders starting with <code>.</code> or <code>_</code> are ignored (they are set aside or still being made). <code>server_folder</code> adds one more folder (the 0.1 layout). Discovery repeats every 10 s while running.</li>
+<li>Every folder in <code>SERVERS/</code> that holds a <code>dedicated.toml</code> is read; folders starting with <code>.</code> or <code>_</code> are ignored (they are set aside or still being made). <code>server_folder</code> adds one more folder (the 0.1 layout). Discovery repeats every 10 s while running. A new server found then is picked up once its <code>dedicated.toml</code> has been left alone a minute (<code>NEW_FOLDER_SETTLE</code>, 0.7.0-beta.3: a folder just made with <code>dedicated init</code> has two servers on 49176 and 49177 until it's edited); a rename isn't held up, and the window's N, done with its folder before the folder takes its name, calls <code>discover()</code> to pick it up at once.</li>
 <li>Each enabled <code>[[server]]</code> block is one server. Its name gives the slug (<code>Server 1</code> becomes <code>server-1</code>; a name with no a-z or 0-9 gets <code>server-&lt;8 hex&gt;</code>). Two names with one slug ("Big Slayer" and "Big-Slayer") would share their records, console log and FAULTED report, so the later folder is left out until one is renamed ("… would share their records and logs: Huragok names both lg-slayer …"); a running server keeps its slug, and <code>new</code> and rename refuse such a name.</li>
 <li>Its data folder is, in order: <code>[[server]] data</code> in <code>settings.toml</code>; the <code>data/*/instance.json</code> whose name matches; <code>data/&lt;slug&gt;</code>.</li>
 <li>RCON is read fresh on every connect: <code>instance.json</code>'s <code>rcon</code> block wins over <code>dedicated.toml</code>'s <code>[rcon]</code>. The RCON port is the game port unless set. <code>0.0.0.0</code> becomes <code>127.0.0.1</code>.</li>
@@ -4865,7 +4865,7 @@ Shown in the mods screen (G, 4: "Is each mod good to go?"), in <code>check</code
 <tr>
 <td><code>status.json</code></td>
 <td><code>updated</code> (Unix seconds); a file that isn't a JSON object is skipped; for a server without a console also <code>state</code>, <code>phase</code>, map, mode and players; 0.10.1's <code>health.version</code></td>
-<td>Freshness, read every 5 s; the keepalive's first signal. For a server without a console, read every 2 s in the console's place (<code>servers/statusclient.py</code>: up while written in the last 15 s by a running process; its changes become <code>rcon.phase</code>, <code>rcon.join</code>, <code>rcon.leave</code>). The release a running 0.10.1 really is</td>
+<td>Freshness, read every 5 s; the keepalive's first signal. For a server without a console, read every 2 s in the console's place (<code>servers/statusclient.py</code>: up while written in the last 150 s by a running process, as 0.10.9 rewrites it about once a minute when nothing changes; its changes become <code>rcon.phase</code>, <code>rcon.join</code>, <code>rcon.leave</code>). The release a running 0.10.1 really is</td>
 </tr>
 <tr>
 <td><code>supervision.json</code></td>
