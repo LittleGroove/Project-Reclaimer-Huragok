@@ -14,7 +14,9 @@ Names are grouped by where they come from:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -53,10 +55,21 @@ class EventBus:
 
     Listeners run inline and must not block: each part gets its own queue (see
     runner.py), so a slow part never holds up the RCON reader.
+
+    Once bound to the running loop (bind()), an event published from another thread (a check run with to_thread that
+    raises a warning) is handed to the loop and delivered there: parts' queues live on it, and a part's listener called
+    from a worker thread failed ("no current event loop", the live servers, 23 November 2026). Unbound, or with the
+    loop gone, every event is delivered inline as before.
     """
 
     def __init__(self) -> None:
         self._listeners: list[tuple[str, Listener]] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: int | None = None
+
+    def bind(self, loop: asyncio.AbstractEventLoop) -> None:
+        """The loop the listeners run on; called from it, as Huragok starts."""
+        self._loop, self._loop_thread = loop, threading.get_ident()
 
     def subscribe(self, pattern: str, listener: Listener) -> Callable[[], None]:
         entry = (pattern, listener)
@@ -69,13 +82,23 @@ class EventBus:
         return unsubscribe
 
     def publish(self, event: Event) -> Event:
+        loop = self._loop
+        if loop is not None and threading.get_ident() != self._loop_thread and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(self._deliver, event)
+                return event
+            except RuntimeError:  # the loop closing as Huragok stops: delivered here, as before
+                pass
+        self._deliver(event)
+        return event
+
+    def _deliver(self, event: Event) -> None:
         for pattern, listener in list(self._listeners):
             if matches(pattern, event.name):
                 try:
                     listener(event)
                 except Exception:
                     log.exception("A listener for %s failed on %s", pattern, event.name)
-        return event
 
     def emit(self, name: str, server: str | None = None, /, **data: Any) -> Event:
         # Positional-only: a log line's own `name` (the player's) or `server` is data, never the event's.

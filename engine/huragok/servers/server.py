@@ -477,7 +477,10 @@ class ServerManager:
                             "the Superintendent restart it", self.name, supervisor)
                 return
             taken = self.fleet.ports.in_use(self.server)
-            if not taken and self.fleet.ports.game_port_in_use(self.server) and not self._status_is_ours():
+            # Only for a server meant to start: the live servers' ports are in Windows' temporary range (49152+), which
+            # any program borrows for a moment, so a stopped one said "waiting to start" now and then (23 Nov 2026)
+            if not taken and self.record.wanted == "running" and self.fleet.ports.game_port_in_use(self.server) \
+                    and not self._status_is_ours():
                 self._wait("port", f"its game port {self.server.game_port} is in use by something else on this PC: "
                                    f"stop that, or change port = {self.server.game_port} in its [[server]] block in "
                                    f"its {self.server.config_path.name} (change its port there)")

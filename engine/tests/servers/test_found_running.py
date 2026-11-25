@@ -107,6 +107,23 @@ def test_a_game_port_taken_on_this_pc_keeps_it_waiting(world, run, monkeypatch) 
     run(scenario())
 
 
+def test_a_stopped_server_never_waits_on_its_game_port(world, run, monkeypatch) -> None:
+    """Stopped by the host: it isn't going to start, so a program borrowing its port for a moment (Windows' temporary
+    ports start at 49152, where the live servers' are) is nothing to say (the live servers, 23 November 2026)."""
+    clock, settings, backend, fleet, manager, client, state, seen = world
+    monkeypatch.setattr(fleet.ports, "in_use", lambda server: False)
+    monkeypatch.setattr(fleet.ports, "game_port_in_use", lambda server: True)
+
+    async def scenario() -> None:
+        fleet.boot()
+        manager.record.wanted = "stopped"
+        await cycle(manager, clock)
+        await cycle(manager, clock, 30)
+        assert manager.waiting_kind == "" and backend.starts == []
+
+    run(scenario())
+
+
 def test_a_server_renamed_while_it_ran_isnt_started_again_under_its_old_name(world, run) -> None:
     """Its process was started under the old name, which its dedicated.toml no longer has (0.7.0, answer 32): its next
     restart stops it and leaves it for Huragok to follow the rename and start it under the new one."""

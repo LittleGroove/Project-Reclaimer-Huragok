@@ -372,6 +372,7 @@ class Huragok:
         for line in [*settings.retired, *settings.permissions.unknown]:
             log.warning(line)
         self.running = True
+        self.bus.bind(asyncio.get_running_loop())  # events from worker threads are delivered on the loop
         self.start_parts()
         self.superintendent.start()
         self.vergil.start()
