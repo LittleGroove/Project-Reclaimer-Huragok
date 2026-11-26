@@ -303,6 +303,60 @@ def not_this_pcs_installs(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pyt
     monkeypatch.setattr(newserver, "port_free", lambda port: port not in REAL_SERVER_PORTS and real_port_free(port))
 
 
+def _socket_table_refused() -> bool:
+    """The system won't give its table of sockets (macOS, to anyone but root)."""
+    try:
+        import psutil
+
+        psutil.net_connections("tcp")
+    except Exception:  # noqa: BLE001 - AccessDenied on macOS; anything else, the same for these tests
+        return True
+    return False
+
+
+SOCKET_TABLE_REFUSED = _socket_table_refused()
+
+
+def own_ports(kind: str, *, listening: bool = False) -> frozenset[int]:
+    """The ports this test session's own processes hold (it and every process it started): macOS gives each user
+    their own processes' sockets, though not the system's table."""
+    import psutil
+
+    me = psutil.Process()
+    found: set[int] = set()
+    for process in [me, *me.children(recursive=True)]:
+        try:
+            read = getattr(process, "net_connections", None) or process.connections  # psutil 6 renamed it
+            found.update(c.laddr.port for c in read(kind)
+                         if c.laddr and (not listening or c.status == psutil.CONN_LISTEN))
+        except (psutil.Error, OSError):
+            continue
+    return frozenset(found)
+
+
+@pytest.fixture(autouse=True)
+def a_socket_table_where_the_system_refuses_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where the system refuses its socket table (macOS), Huragok finds a port taken by connecting to it in a thread,
+    and a stopped server waits a tick for the answer: right on a real Mac (a refused connect answers at once), but
+    the fake worlds' ticks are 10 ms apart and never wait for a thread. Their own processes' sockets stand in for the
+    table there, so these tests see what Linux's and Windows' do. Tests of the connect path patch it back to None."""
+    if not SOCKET_TABLE_REFUSED:
+        return
+    from huragok.servers import ports
+
+    monkeypatch.setattr(ports, "listening_ports", lambda: own_ports("tcp", listening=True))
+    monkeypatch.setattr(ports, "bound_udp_ports", lambda: own_ports("udp"))
+
+
+@pytest.fixture(autouse=True)
+def never_this_pcs_caffeinate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a Mac the start loop keeps the Mac awake with caffeinate: a launcher test's fake Popen would take it for
+    Huragok's own start. tests/test_macos.py tests it with the real function."""
+    from huragok.core import desktop
+
+    monkeypatch.setattr(desktop, "keep_mac_awake", lambda: None)
+
+
 def end_servers_recorded_in(folder: Path) -> list[int]:
     """End each process a running-servers.json under `folder` names that this test session started: still the
     same process (its start time) and this session's HURAGOK_TEST_PARENT in its environment, with whatever it

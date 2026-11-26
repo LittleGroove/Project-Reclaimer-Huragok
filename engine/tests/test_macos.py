@@ -37,6 +37,7 @@ DONE = 'tell application "Terminal" to do script "'
 # The real lookups, taken before conftest's not_this_pcs_installs hides them: these tests give them a home folder
 # of their own (Path.home), so nothing of this PC's is read.
 REAL = {"candidates": steam.candidates, "_steam_roots": steam._steam_roots, "depot_folders": steam.depot_folders}
+KEEP_MAC_AWAKE = desktop.keep_mac_awake  # conftest's never_this_pcs_caffeinate stands it down for every other test
 SIGNED_IN = '"InstallConfigStore"\n{\n\t"Accounts"\n\t{\n\t\t"host"\n\t\t{\n\t\t}\n\t}\n}\n'
 
 
@@ -199,10 +200,10 @@ def test_a_mac_stays_awake_while_huragok_runs(monkeypatch) -> None:
     monkeypatch.setattr(desktop.shutil, "which", lambda name: "/usr/bin/caffeinate" if name == "caffeinate" else None)
     started: list[list[str]] = []
     monkeypatch.setattr(desktop.subprocess, "Popen", lambda args, **_: started.append(args) or "caffeinate")
-    assert desktop.keep_mac_awake() == "caffeinate"
+    assert KEEP_MAC_AWAKE() == "caffeinate"
     assert started == [["caffeinate", "-is", "-w", str(os.getpid())]]  # ends by itself with this process
     system_as(monkeypatch, "linux")
-    assert desktop.keep_mac_awake() is None and len(started) == 1
+    assert KEEP_MAC_AWAKE() is None and len(started) == 1
 
 
 # SteamCMD -------------------------------------------------------------------------------------------------------

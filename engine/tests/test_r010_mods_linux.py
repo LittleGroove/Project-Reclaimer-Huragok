@@ -232,7 +232,9 @@ def test_the_program_copies_of_other_games_mods_are_kept_on_0_10_only(tmp_path: 
     workshopmods.look_through(content / "Mods" / "h3", version("0.10.0"))
     assert asked == []  # only Halo 3's: the program isn't asked
     (content / "Mods" / "hand" / "maps").rename(content / "Mods" / "hand" / "Maps")
-    assert modcheck.maps_folder(content / "Mods" / "hand") == content / "Mods" / "hand" / "Maps"  # Reach's spelling
+    # Reach's spelling. The same folder, not the same text: a Mac's disk, like Windows', ignores case, so "maps"
+    # finds "Maps" there, but a Mac's paths compare case and all.
+    assert modcheck.maps_folder(content / "Mods" / "hand").samefile(content / "Mods" / "hand" / "Maps")
 
 
 def test_the_mod_watch_passes_each_content_folders_program_version(tmp_path: Path, monkeypatch) -> None:
