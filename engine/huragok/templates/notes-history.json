@@ -45,7 +45,8 @@
      "# Relative paths are from this folder. Windows paths: write them in 'single quotes',",
      "# like 'D:\\Servers', or with forward slashes (\"D:/Servers\"); inside \"double quotes\" a",
      "# backslash starts an escape (\\n is a line break), so \"D:\\Servers\" can't be read.",
-     "# Where the server folders are."
+     "# Where the server folders are.",
+     "# Check everything without starting anything: start.cmd check (Linux/macOS: ./start.sh check)"
     ],
     "|server_folder": [
      "# One server folder somewhere else (the folder holding dedicated.toml), on top of the",
@@ -65,7 +66,10 @@
      "#   attach   something else (a startup task, a window you opened). Huragok watches",
      "#            and moderates, but can't restart anything.",
      "#            on. Windows runs project-reclaimer.exe itself; Linux runs its own program",
-     "#            (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine."
+     "#            (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine.",
+     "#            here, so start.cmd (Linux/macOS: ./start.sh) is how your servers start from",
+     "#            now on. Windows runs project-reclaimer.exe itself; Linux and macOS run their",
+     "#            own program (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine."
     ],
     "|servers": [
      "# Which servers, by name as in their dedicated.toml. Empty: every enabled server found."
@@ -330,7 +334,8 @@
      "# Halo 3's, and ODST's, Reach's, Combat Evolved's and Halo 2's for the servers that",
      "# play them (Reach's, CE's and Halo 2's come from MCC alone for now). Empty means",
      "# Steam's default folder; leave the line out to find it from Steam's own records.",
-     "# mcc_folder = 'D:\\SteamLibrary\\steamapps\\common\\Halo The Master Chief Collection'"
+     "# mcc_folder = 'D:\\SteamLibrary\\steamapps\\common\\Halo The Master Chief Collection'",
+     "# New servers: the window's N key, or start.cmd new \"<name>\" (Linux/macOS: ./start.sh new)."
     ],
     "setup|steamcmd": [
      "# SteamCMD, for Workshop items (the window's I key sets this up: finds or installs",
@@ -372,11 +377,13 @@
      "# the server's folder. To run it another way, give the whole command; {executable},",
      "# {config}, {folder} and {name} are filled in. Each server's process gets",
      "# RECLAIMER_DEDICATED_ONLY, so it runs that server alone.",
-     "# command = [\"{executable}\", \"dedicated\", \"run\", \"--config\", \"{config}\"]"
+     "# command = [\"{executable}\", \"dedicated\", \"run\", \"--config\", \"{config}\"]",
+     "# How it's run. Empty: the program itself (on Linux/macOS its own program, project-reclaimer,"
     ],
     "process|stop_timeout": [
      "# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux) before",
-     "# ending the process."
+     "# ending the process.",
+     "# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux/macOS) before"
     ],
     "process|stop_servers_on_exit": [
      "# false: closing Huragok leaves the servers running, so players aren't",

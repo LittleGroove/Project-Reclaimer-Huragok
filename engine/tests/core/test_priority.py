@@ -19,7 +19,7 @@ from conftest import free_port, free_ports, staff, wait_for, write_root
 from testkit.fleet import SERVER, Clock, FakeBackend, FakeClient
 
 from huragok.commandline import cli
-from huragok.core import priority
+from huragok.core import platforms, priority
 from huragok.core.events import EventBus
 from huragok.core.priority import Outcome, PriorityKeeper
 from huragok.core.settings import load
@@ -144,7 +144,8 @@ def test_the_keeper_says_each_outcome_once_a_run(monkeypatch, caplog) -> None:
         keeper.keep("Beta", 300, "high")
     assert [r.getMessage() for r in caplog.records].count(
         "[Beta] couldn't set its priority to High: access denied" + (
-            "" if os.name == "nt" else "; above normal needs root or CAP_SYS_NICE (in Docker, --cap-add SYS_NICE)")
+            "" if os.name == "nt" else
+            f"; {priority.NEEDS_ROOT_MAC if platforms.is_macos() else priority.NEEDS_ROOT}")
     ) == 1
     assert keeper.text("Beta") == "priority not set (High asked)"
     monkeypatch.setattr(priority, "apply", lambda pid, level: Outcome(4, 4, "high"))

@@ -12,8 +12,9 @@
 #   ./start.sh watch <server>         follow a server's console output
 #   ./start.sh check                  check the settings, servers and commands
 #   ./start.sh update                 look for a new version, and install it if you say yes
-#   ./start.sh start --no-menu        run with no dashboard (for a systemd unit at boot)
-# The first start sets up Python packages in engine/.venv (needs Python 3.11+).
+#   ./start.sh start --no-menu        run with no dashboard (for a systemd unit, or launchd on a Mac)
+# The first start sets up Python packages in engine/.venv (needs Python 3.11+; on a Mac
+# from python.org or Homebrew, as macOS's own python3 is older).
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$here"
@@ -36,7 +37,12 @@ if [ ! -x "$venv/bin/python" ]; then
         fi
     done
     if [ -z "$base" ]; then
-        echo "Huragok needs Python 3.11 or newer (Debian/Ubuntu: sudo apt install python3 python3-venv)." >&2
+        if [ "$(uname)" = "Darwin" ]; then
+            echo "Huragok needs Python 3.11 or newer, and macOS's own python3 is older: install Python from" >&2
+            echo "python.org (Downloads > macOS) or with Homebrew (brew install python@3.13), then start again." >&2
+        else
+            echo "Huragok needs Python 3.11 or newer (Debian/Ubuntu: sudo apt install python3 python3-venv)." >&2
+        fi
         exit 1
     fi
     echo "Setting up for the first time: Python packages go in engine/.venv"

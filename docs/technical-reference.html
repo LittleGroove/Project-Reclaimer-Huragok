@@ -1537,7 +1537,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td>Priority (0.4.4)</td>
 <td><code>[process] priority</code> (a server's own <code>[[server]] priority</code> first), default <code>high</code>: <code>core.priority.PriorityKeeper</code> sets the priority class of every process in the server's tree (<code>dedicated run</code>, the <code>dedicated run</code> it starts, <code>local-server</code>, <code>probe-engine-worker</code>, conhost), because Windows hands only idle and below normal on to a process's own processes. Each server's tree is looked at every 5 s, in a worker thread (a walk takes about 10 ms), so a new worker runs at normal for 5 s at most and a class changed by hand is put back. What each process got is read back: without administrator Windows sets <code>realtime</code> to High and says nothing, so Huragok logs it once a run, <code>check</code> warns, and V says "High priority (Realtime asked)". <code>off</code> touches nothing</td>
-<td>Nice values (realtime -20, high -10, above_normal -5, normal 0, below_normal 5), which a process does hand on; above normal needs root or <code>CAP_SYS_NICE</code> (Docker: <code>--cap-add SYS_NICE</code>), else it's logged once and left. Only the server's own tree: wineserver isn't in it</td>
+<td>Nice values (realtime -20, high -10, above_normal -5, normal 0, below_normal 5), which a process does hand on; above normal needs root or <code>CAP_SYS_NICE</code> (Docker: <code>--cap-add SYS_NICE</code>), on macOS root, else it's logged once and left. Only the server's own tree: wineserver isn't in it</td>
 </tr>
 <tr>
 <td>Server program</td>
@@ -2349,7 +2349,7 @@ figcaption { color: var(--quiet); font-size: 13px; margin-top: 6px; }
 <tr>
 <td></td>
 <td>W</td>
-<td>Start at boot: <code>Huragok.cmd</code> in the Startup folder on Windows, the <code>huragok.service</code> systemd user unit on Linux</td>
+<td>Start at boot: <code>Huragok.cmd</code> in the Startup folder on Windows, the <code>huragok.service</code> systemd user unit on Linux, the <code>io.github.littlegroove.huragok</code> LaunchAgent on macOS</td>
 </tr>
 <tr>
 <td></td>
@@ -3499,6 +3499,7 @@ Shown in the mods screen (G, 4: "Is each mod good to go?"), in <code>check</code
 <li><strong>Python</strong> 3.11 to 3.14 in CI (3.11 is the floor because of <code>tomllib</code>). Dependencies: <code>websockets</code> 13 or newer (its asyncio client and server), <code>psutil</code> 5.9 or newer, and <code>discord.py</code> 2.7 or newer, below 3, which an update installs with pip before the new version starts: if it can't, the old version's files go back and it says why.</li>
 <li><strong>Windows 10 and 11</strong> (the live host is Windows 11): console APIs through <code>ctypes</code> (<code>ReadConsoleInputW</code>, QuickEdit, Ctrl+Break, shared file opens, job objects), <code>msvcrt</code> as the keyboard's fallback.</li>
 <li><strong>Linux (on hold):</strong> the same code, and CI runs the suite on Ubuntu, but nothing is tested end to end; the server program runs through <code>wine</code>. The Docker image (<code>python:3.12-slim</code>, built as <code>huragok</code>, its files in <code>/huragok</code>, running as the user <code>huragok</code>, <code>start --no-menu</code> so a settings problem is retried) can only watch and moderate (<code>attach</code>), because it cannot start the servers' containers. 0.2.1's image used <code>/supervisor</code>: an old compose file mounting that starts with fresh files.</li>
+<li><strong>macOS (0.7.0, Apple Silicon, macOS 11 or newer, as Project Reclaimer's own macOS program needs):</strong> the POSIX code Linux runs, and CI runs the suite and start.sh on <code>macos-latest</code> (Apple Silicon); not yet run with real servers. <code>core/platforms.py</code> says which system it is (<code>system()</code>: windows, macos or linux; tests pin it with <code>testkit.system_as</code>) where macOS differs from Linux: <code>program.releases.native_download()</code> names <code>-macos-aarch64.zip</code> (none for an Intel Mac, which gets the .exe as before) and <code>is_archive</code> keeps its checksum from being remembered as the program's; W writes a LaunchAgent (below); <code>core.desktop.keep_mac_awake()</code> runs <code>caffeinate -is -w &lt;the start loop's pid&gt;</code> while the start loop runs; L, the SteamCMD sign-in and O open Terminal (<code>osascript</code>, <code>do script</code>) and <code>open -t</code>, and say what to run instead over SSH (<code>SSH_CONNECTION</code> or <code>SSH_TTY</code> set); SteamCMD comes from <code>steamcmd_osx.tar.gz</code>, is looked for in <code>~/Steam</code> too, keeps its files (config.vdf, depots) and Steam's libraries in <code>~/Library/Application Support/Steam</code>, and is an Intel program: "Bad CPU type in executable" from any SteamCMD run becomes <code>steam.needs_rosetta()</code>'s "run softwareupdate --install-rosetta --agree-to-license"; <code>add_to_path</code> writes <code>~/.zprofile</code> (zsh). psutil's table of sockets needs root on macOS, so a stopped server's game port is tried by binding it (<code>servers.ports.udp_bound</code>, at most once a second, in the loop: a bind doesn't wait). Priority above normal needs root, as on Linux.</li>
 </ul>
 <h3 id="how-older-installs-carry-over">How older installs carry over</h3>
 <ul>
@@ -3902,8 +3903,8 @@ Shown in the mods screen (G, 4: "Is each mod good to go?"), in <code>check</code
 </tr>
 <tr>
 <td>17</td>
-<td><strong>Linux gaps (on hold).</strong> Plain <code>wine</code> without Xvfb or <code>WINEDEBUG</code>; the systemd unit lacks <code>KillMode=process</code>; nothing tested end to end</td>
-<td>A systemd restart of Huragok would kill every server</td>
+<td><strong>Linux gaps (on hold).</strong> Plain <code>wine</code> without Xvfb or <code>WINEDEBUG</code> (0.9 only: 0.10 has a Linux program of its own); nothing tested end to end. The unit's <code>KillMode=process</code> came in the audit of November 2026</td>
+<td>None known beyond untested</td>
 <td>Fix when Linux comes back into scope; say 1.0 is for Windows</td>
 <td><span class='sev sev-low'>Low</span></td>
 <td></td>
@@ -4081,8 +4082,8 @@ Shown in the mods screen (G, 4: "Is each mod good to go?"), in <code>check</code
 </tr>
 <tr>
 <td></td>
-<td><code>core/lock.py</code> (209), <code>core/mailbox.py</code> (161), <code>core/logs.py</code> (54), <code>core/desktop.py</code> (211), <code>core/priority.py</code> (215), <code>core/winproc.py</code> (67)</td>
-<td>One Huragok per folder; requests from outside as files; tagged log lines and the dashboard's recent ones; folders, editors, start at boot; process priority; the Windows Ctrl+Break helper</td>
+<td><code>core/lock.py</code> (209), <code>core/mailbox.py</code> (161), <code>core/logs.py</code> (54), <code>core/desktop.py</code> (211), <code>core/priority.py</code> (215), <code>core/winproc.py</code> (67), <code>core/platforms.py</code> (38)</td>
+<td>One Huragok per folder; requests from outside as files; tagged log lines and the dashboard's recent ones; folders, editors, start at boot; process priority; the Windows Ctrl+Break helper; which system it is (Windows, macOS, Linux)</td>
 </tr>
 <tr>
 <td>Discord</td>
@@ -5256,7 +5257,11 @@ Shown in the mods screen (G, 4: "Is each mod good to go?"), in <code>check</code
 </tr>
 <tr>
 <td>Linux: <code>~/.config/systemd/user/huragok.service</code></td>
-<td><code>Description=Huragok</code>, <code>After=network-online.target</code>, <code>WorkingDirectory=&lt;root&gt;</code>, <code>ExecStart="&lt;root&gt;/start.sh" start --no-menu</code> (quoted), <code>Restart=on-failure</code>, <code>RestartSec=10</code>, <code>WantedBy=default.target</code>; no <code>KillMode=process</code>; <code>systemctl</code> runs with a 20 s limit, in a worker thread</td>
+<td><code>Description=Huragok</code>, <code>After=network-online.target</code>, <code>WorkingDirectory=&lt;root&gt;</code>, <code>ExecStart="&lt;root&gt;/start.sh" start --no-menu</code> (quoted), <code>Restart=on-failure</code>, <code>RestartSec=10</code>, <code>WantedBy=default.target</code>, <code>KillMode=process</code> (only Huragok stops with the unit, never its servers); <code>systemctl</code> runs with a 20 s limit, in a worker thread</td>
+</tr>
+<tr>
+<td>macOS: <code>~/Library/LaunchAgents/io.github.littlegroove.huragok.plist</code></td>
+<td><code>Label</code>, <code>ProgramArguments</code> <code>/bin/sh &lt;root&gt;/start.sh start --no-menu</code>, <code>WorkingDirectory</code>, <code>RunAtLoad</code>, <code>KeepAlive</code> <code>{SuccessfulExit: false}</code> (systemd's <code>Restart=on-failure</code>), <code>ThrottleInterval</code> 10, <code>AbandonProcessGroup</code> (only Huragok stops with the job), <code>ProcessType Interactive</code> (unset, launchd throttles the job and the servers it starts), <code>EnvironmentVariables PATH</code> (the host's own, then Homebrew's and the system's folders), no <code>StandardOutPath</code> (huragok.log has every line). Written with <code>plistlib</code> and never loaded at once (that would start a second Huragok): macOS loads it at the next login; <code>launchctl enable gui/&lt;uid&gt;/&lt;label&gt;</code> undoes a hand-made disable. W off removes the file</td>
 </tr>
 </tbody>
 </table></div>

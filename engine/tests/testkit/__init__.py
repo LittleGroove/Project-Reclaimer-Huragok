@@ -19,3 +19,12 @@ def os_as(name: str) -> SimpleNamespace:
     names = {key: getattr(os, key) for key in dir(os) if not key.startswith("__")}
     names["name"] = name
     return SimpleNamespace(**names)
+
+
+def system_as(monkeypatch, name: str) -> None:
+    """Pin the system huragok.core.platforms says it is ("windows", "macos", "linux"), where macOS and Linux differ.
+    A test that fakes "posix" with os_as means Linux: it pins "linux" too, or on the macOS runner it gets the Mac's
+    branch. Code that asks os.name first still needs os_as for Windows."""
+    from huragok.core import platforms
+
+    monkeypatch.setattr(platforms, "system", lambda: name)

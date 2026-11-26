@@ -80,6 +80,16 @@
 - **A server folder dropped into SERVERS is picked up once its `dedicated.toml` has been left alone a minute** (0.7.0-beta.3), not within seconds. A folder made with the program's own `dedicated init` has two servers on 49176 and 49177 (where live servers often are) until you edit it; Huragok's port check kept them from starting, but you were racing it. A rename is still followed at once, and a server made with N in the window is picked up at once.
 - **Warnings, in one catalogue.** What's wrong with a server, or worth knowing, is said in plain words with what to do, once, from one list of rules kept as data (templates/warnings.toml): refused, seen while running, to check, for your information. A server on a Project Reclaimer version newer than the rules were checked on gets one line saying so.
 
+**Huragok runs on a Mac** (Apple Silicon, macOS 11 or newer, as Project Reclaimer's own macOS program needs; plans/macos-host.md). Project Reclaimer 0.10 runs natively on a Mac, and its macOS servers are the ones it tests most; Huragok mostly took a Mac for Linux, and in places for neither:
+- **The server program:** a Mac is told of Project Reclaimer's `-macos-aarch64.zip`, not the Windows .exe, and the zip's checksum is never taken for the program's. A Mac with only the .exe is told to fetch the macOS program, not to install wine.
+- **Start at login (W):** a LaunchAgent (`~/Library/LaunchAgents/io.github.littlegroove.huragok.plist`) runs start.sh without a window when you log in, starts it again after a crash (not after a close), leaves the servers running when Huragok stops, and lets them run at full speed. For a Mac that comes back on its own after a power cut, turn on automatic login.
+- **The Mac stays awake while Huragok runs** (`caffeinate`): a sleeping Mac drops every game. With Huragok closed the servers keep running, so set System Settings > Energy to keep the Mac awake too.
+- **SteamCMD (I):** Valve's macOS download, found in ~/Steam or ~/steamcmd, and Steam's files found in ~/Library/Application Support/Steam. Valve's SteamCMD for macOS is an Intel program: on a Mac without Rosetta 2, Huragok says to run `softwareupdate --install-rosetta --agree-to-license` instead of failing with "Bad CPU type". Its PATH line goes in ~/.zprofile, which zsh reads.
+- **Windows:** the console's window (L) and the SteamCMD sign-in open in Terminal, and O opens files in the Mac's text editor; over SSH they say what to run instead.
+- **A stopped server never starts onto a game port something else holds,** on a Mac too: macOS gives its table of sockets to root alone, so the port is tried by binding it.
+- **What it says:** priority ("above normal needs root on macOS"), the firewall (macOS asks once for each program, when its firewall is on), and settings.toml's notes say macOS where they said only Linux. start.sh says how to get Python 3.11 or newer on a Mac (macOS's own python3 is older).
+- **Tested on a Mac on every change:** CI runs the tests and start.sh on Apple Silicon (macos-latest) beside Windows and Linux. Not yet run on a real Mac with real servers.
+
 ## 0.6.4
 **The watchdog's `no_joins` counts only players really trying to get in.** On 7 Nov 2026 it restarted our test server three times in 16 minutes as "nobody can join" (22:53, 22:57 and 23:09). Each time, a game was going on and players were getting in.
 

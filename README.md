@@ -41,8 +41,9 @@ shows them all, starts them, keeps them up, and gives you single-key control. It
 **Closing the window never stops the servers.** They keep running, unsupervised;
 open the window again and it picks them straight back up. If Huragok itself stops
 unexpectedly, its launcher starts it again within seconds, and it picks the servers
-up the same way. Huragok is run on Windows 11. Linux works too (the server program
-runs through `wine` there), but it's experimental and on hold: it isn't tested end
+up the same way. Huragok is run on Windows 11. A Mac (Apple Silicon) and Linux work
+too, each with Project Reclaimer's own program for it (0.10 on), but they're
+experimental: the tests run on both on every change, not yet with real servers end
 to end. It never patches the server: it uses what the server offers (its remote
 console, its files and its `dedicated` command). It never changes what a server
 plays or how it runs: you edit a server's files, and Huragok reads them and warns.
@@ -51,7 +52,7 @@ is on, and for what you ask (a quick action, a copy, a repair), each shown befor
 it's written.
 
 > **Status: 0.7.0-beta.3, on its way to 1.0.** Tested against Project Reclaimer **v0.10.8** (warnings checked up to v0.10.9) on
-> Windows 11; Linux is experimental. Up to 0.2.1 this was
+> Windows 11; macOS and Linux are experimental. Up to 0.2.1 this was
 > called Reclaimer Supervisor: see [Coming from Reclaimer Supervisor 0.2.1](#coming-from-reclaimer-supervisor-021).
 
 ```text
@@ -114,8 +115,20 @@ had (`[watchdog]`, `[automod]`, `[relay]`…).
 ## Set up
 You need Python 3.11 or newer ([python.org](https://www.python.org/downloads/);
 on Windows tick "Add python.exe to PATH", or run `winget install -e --id Python.Python.3.12`;
-Debian/Ubuntu: `sudo apt install python3 python3-venv`). On Linux you also need
-`wine`, which is how the server program runs there.
+macOS: python.org's installer, or `brew install python@3.13`, as macOS's own `python3` is
+older; Debian/Ubuntu: `sudo apt install python3 python3-venv`). On macOS and Linux the
+server program is Project Reclaimer's own for that system (`project-reclaimer`, from its
+`-macos-aarch64.zip` or `-linux-*.tar.gz`); only 0.9's `.exe` needs `wine`, on Linux.
+
+**On a Mac:** Project Reclaimer needs Apple Silicon and macOS 11 or newer. macOS blocks
+a server program downloaded in a browser until you clear it once:
+`xattr -dr com.apple.quarantine <the unzipped folder>`. Halo 3's files come from a PC
+with MCC (Steam doesn't install MCC on a Mac): copy its folder over, or let **I**
+download them with SteamCMD (which needs Rosetta 2:
+`softwareupdate --install-rosetta --agree-to-license`). Huragok keeps the Mac awake while
+it runs; for servers left running with Huragok closed, and after a power cut, set
+System Settings > Energy to keep it awake and start it again, and turn on automatic
+login (Users & Groups) so **W** brings Huragok back.
 
 1. Download `huragok-<version>.zip` from the
    [latest release](https://github.com/LittleGroove/Project-Reclaimer-Huragok/releases/latest)
@@ -229,7 +242,7 @@ on the screen is always still waiting for you.
 | **C** | a server's own `dedicated check`: game files, settings, playlists, maps, ports |
 | **O** | **open**: the root folder first, then `settings.toml`, `commands.toml`, `automod.txt`, `names.txt`, `intervalmessages.txt`, or any server's folder, `dedicated.toml`, playlists, ban list and saved game types in your editor: that's how a server is changed (the server applies most edits by itself; the result shows in the events) |
 | **U** | four things: **Huragok** itself (servers keep running), the **server program** (each server's version and `auto_update`, the newest release and the warnings; nothing is installed here: each server installs its own releases, and Huragok restarts each self-updating one after its game once a release is out), **Workshop mods** (each item's version and what each server is doing about it; **R** restarts a server whose update waits on its map) and **clean up** (what updates and mods leave behind). See [docs/managing.md](docs/managing.md#updates-u) |
-| **W** | start at boot: Windows puts a small file in the Startup folder; Linux a systemd user unit |
+| **W** | start at boot: Windows puts a small file in the Startup folder; Linux a systemd user unit; macOS a LaunchAgent |
 | **H / Q** | help: who's who, every key by part, what the colours mean; close the window. **The servers keep running**, but unsupervised |
 
 The colours follow an ODST's VISR: green is friendly (running, healthy, done), red
@@ -371,7 +384,7 @@ when the first start writes it).
 
 | Backend | For | |
 | --- | --- | --- |
-| `process` | Windows and Linux | The Superintendent runs one `dedicated` per server from its folder: `project-reclaimer.exe` itself on Windows, through `wine` on Linux (or whatever `[process] command` says). The default. |
+| `process` | Windows, macOS and Linux | The Superintendent runs one `dedicated` per server from its folder: `project-reclaimer.exe` on Windows, the system's own `project-reclaimer` on macOS and Linux (0.9's `.exe` through `wine` on Linux), or whatever `[process] command` says. The default. |
 | `docker` | Linux, the official Docker setup | The Superintendent runs `docker compose` for each server's container. Chosen when `compose.yaml` is there. |
 | `command` | systemd or your own scripts, anywhere | Your start, stop and restart commands. |
 | `attach` | Anything else | Something else starts the servers; Huragok watches and moderates but can't restart them. |
@@ -380,7 +393,10 @@ when the first start writes it).
 Press **W** in the window. Windows: a file in the Startup folder (`Huragok.cmd`)
 opens the window at login and starts every autostart server. Linux: a systemd
 user unit (`huragok.service`) runs `start.sh start --no-menu` (no window; open the
-dashboard from another terminal with `./start.sh`). Either way,
+dashboard from another terminal with `./start.sh`). macOS: a LaunchAgent
+(`~/Library/LaunchAgents/io.github.littlegroove.huragok.plist`) does the same at
+login, starts Huragok again after a crash, and leaves the servers running when it
+stops. Either way,
 `start.cmd start --no-menu` (or a Task Scheduler task / systemd unit running it)
 is the way to run it with no window at all: a plain log, each line tagged with the
 part that spoke, with typed commands. The Startup folder runs at **login**, not at

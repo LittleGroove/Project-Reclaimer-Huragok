@@ -683,7 +683,7 @@ class ProgramUpdateService:
             log.info("The newest server program release has no version number (%s)", release.version or "empty")
             return None
         self.last_error = ""
-        if release.exe_sha256 and not releases.is_archive(release.exe_name):  # Linux's own: the archive's checksum
+        if release.exe_sha256 and not releases.is_archive(release.exe_name):  # Linux or macOS: the archive's checksum
             if await asyncio.to_thread(releases.remember_release, self.settings, release.exe_sha256, release.version):
                 log.info("Project Reclaimer %s's program file is known by its checksum from now on", release.version)
         await asyncio.to_thread(self._learn_what_files_say)

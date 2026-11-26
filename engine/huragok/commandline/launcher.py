@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from ..core import lock, mailbox
+from ..core import desktop, lock, mailbox
 from ..core.files import mtime
 from ..core.lock import AlreadyRunning
 from ..core.settings import Settings, load
@@ -133,6 +133,9 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
     # (offline, or by a Huragok closed during its relaunch's wait) that hasn't yet run long enough (audit 2026-11, 3.2).
     updated_from: str | None = _unproven(home)
     code = 0
+    awake = desktop.keep_mac_awake()  # macOS: the Mac stays up while this loop runs (and so while Huragok does)
+    if awake is not None:
+        _say(settings, "INFO", "Keeping this Mac awake while Huragok runs (caffeinate)")
     try:
         while True:
             version = _version_on_disk(home)
@@ -198,6 +201,8 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
                 return code
     finally:
         _let_go(settings, held)
+        if awake is not None and awake.poll() is None:
+            awake.terminate()  # it would end with this process anyway; at once is tidier
 
 
 def _hold(settings: Settings) -> bool:

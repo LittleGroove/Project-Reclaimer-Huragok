@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from conftest import free_ports, staff, wait_for, write_root
-from testkit import FAKE, os_as
+from testkit import FAKE, os_as, system_as
 from testkit.manage import StubClient
 from testkit.mcc import fake_mcc
 from testkit.setup import TEMPLATE_COMMAND, setup_root, write_playlist
@@ -228,6 +228,7 @@ def test_steamcmds_saved_sign_in_is_found_where_linux_keeps_it(tmp_path: Path, m
     from huragok import steam
 
     monkeypatch.setattr(steam, "os", os_as("posix"))  # this module alone: never os.name itself
+    system_as(monkeypatch, "linux")  # macOS keeps it in Application Support (test_macos.py)
     monkeypatch.setattr(steam.Path, "home", lambda: tmp_path / "home")
     config = tmp_path / "home" / "Steam" / "config" / "config.vdf"
     config.parent.mkdir(parents=True)
@@ -244,9 +245,10 @@ def test_a_log_window_on_linux_takes_a_home_folder_with_a_space(tmp_path: Path, 
 
     home = tmp_path / "my servers"
     started: list[list[str]] = []
-    from testkit import os_as
+    from testkit import os_as, system_as
 
     monkeypatch.setattr(desktop, "os", os_as("posix"))
+    system_as(monkeypatch, "linux")  # a Mac opens Terminal instead (test_macos.py)
     monkeypatch.setenv("DISPLAY", ":0")
     for program in ("gnome-terminal", "xterm"):
         monkeypatch.setattr(desktop.shutil, "which", lambda name, wanted=program: name if name == wanted else None)

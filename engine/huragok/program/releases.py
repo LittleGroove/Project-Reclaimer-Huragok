@@ -12,8 +12,9 @@ after their game so they install a release as they start.
 
 The newest release is whatever GitHub says is the latest, even when that goes back (a release pulled for a fault).
 On Linux a release from 0.10 on has a program of Linux's own for each machine
-(`project-reclaimer-dedicated-v<version>-linux-x86_64.tar.gz`, or -aarch64), whose checksum GitHub lists is the
-archive's, not the program's; Windows always has the .exe.
+(`project-reclaimer-dedicated-v<version>-linux-x86_64.tar.gz`, or -aarch64), and on an Apple Silicon Mac one of
+macOS's own (`-macos-aarch64.zip`); the checksum GitHub lists for those is the archive's, not the program's. Windows
+always has the .exe.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ RELEASES = "ProjectReclaimer/project-reclaimer-releases"
 PROGRAM_PREFIX = "project-reclaimer-dedicated"
 SUMS = "SHA256SUMS.txt"
 ARCHIVE = ".tar.gz"  # Linux's own program comes in one (0.10 on)
+MAC_ARCHIVE = ".zip"  # macOS's own program (0.10 on, Apple Silicon only)
 MACHINES = {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}
 
 
@@ -59,7 +61,7 @@ class ProgramRelease:
     version: str
     page: str
     notes: str
-    exe_url: str  # the program's download: the .exe, or on Linux from 0.10 its .tar.gz
+    exe_url: str  # the program's download: the .exe, or from 0.10 Linux's .tar.gz or macOS's .zip
     exe_name: str
     sums_url: str | None = None
     published: float | None = None  # Unix seconds, GitHub's published_at
@@ -74,17 +76,23 @@ def _published(text: Any) -> float | None:
         return None
 
 
-def linux_download() -> str | None:
-    """How a release names its Linux program for this machine ("-linux-x86_64.tar.gz"); None on Windows (the .exe,
-    always) and on any other system or machine."""
-    if os.name == "nt" or not sys.platform.startswith("linux"):
+def native_download() -> str | None:
+    """How a release names this machine's own program: "-linux-x86_64.tar.gz" (or -aarch64) on Linux, and
+    "-macos-aarch64.zip" on an Apple Silicon Mac. None on Windows (the .exe, always), on an Intel Mac (Project
+    Reclaimer has no program for it) and on any other system or machine."""
+    if os.name == "nt":
         return None
     machine = MACHINES.get(platform.machine().lower())
+    if sys.platform == "darwin":
+        return f"-macos-aarch64{MAC_ARCHIVE}" if machine == "aarch64" else None
+    if not sys.platform.startswith("linux"):
+        return None
     return f"-linux-{machine}{ARCHIVE}" if machine else None
 
 
 def is_archive(path: Path | str) -> bool:
-    return str(path).lower().endswith(ARCHIVE)
+    """A download that holds the program (Linux's .tar.gz, macOS's .zip) rather than being it (the .exe)."""
+    return str(path).lower().endswith((ARCHIVE, MAC_ARCHIVE))
 
 
 def latest_program_release(repository: str = RELEASES, timeout: float = 10.0) -> ProgramRelease | None:
@@ -102,8 +110,8 @@ def latest_program_release(repository: str = RELEASES, timeout: float = 10.0) ->
     listed = [a for a in data.get("assets") or [] if isinstance(a, dict)]
     assets = {str(a.get("name", "")): str(a.get("browser_download_url", "")) for a in listed}
     exe = next((n for n in assets if n.startswith(PROGRAM_PREFIX) and n.endswith(".exe")), None)
-    ending = linux_download()
-    if ending:  # Linux: its own program when the release has one (0.10 on), else the .exe through wine (0.9)
+    ending = native_download()
+    if ending:  # Linux or a Mac: its own program when the release has one (0.10 on), else the .exe (0.9's)
         exe = next((n for n in assets if n.startswith(PROGRAM_PREFIX) and n.endswith(ending)), exe)
     if exe is None:
         return None

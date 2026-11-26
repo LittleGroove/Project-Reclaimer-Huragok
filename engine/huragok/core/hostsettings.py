@@ -99,8 +99,8 @@ SETTINGS: list[HostSetting] = [
     H("process", "executable", "str", "the server program, in each server's folder", "running",
       default="project-reclaimer.exe", backend="process"),
     H("process", "command", "words", "how it's run, as the whole command ({executable}, {config}, {folder} and "
-      "{name} are filled in); empty: the program itself (on Linux its own program, project-reclaimer, from 0.10; "
-      "0.9's .exe through wine)", "running",
+      "{name} are filled in); empty: the program itself (on Linux/macOS its own program, project-reclaimer, from "
+      "0.10; 0.9's .exe through wine)", "running",
       default=[], backend="process"),
     H("process", "stop_timeout", "float", "seconds to wait for a clean stop before ending the process", "running",
       default=30, low=1, high=3600, backend="process"),

@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from conftest import free_port
-from testkit import DATA
+from testkit import DATA, system_as
 from testkit.setup import ALPHA, SetupController, StrictKeyboard, fake_tool, make_server_folder, setup_root, write_playlist
 from testkit.window import FakeTerminal
 
@@ -600,6 +600,7 @@ def test_the_steam_sign_in_takes_only_a_steam_account_name(tmp_path: Path, monke
     found, _ = steamsetup.find_steamcmd(tmp_path, f'"{executable}"')  # a pasted, quoted path
     assert found == executable
     if os.name != "nt":
+        system_as(monkeypatch, "linux")  # a Mac signs in in Terminal instead (test_macos.py)
         monkeypatch.setattr(steamsetup.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "xterm" else None)
         monkeypatch.setenv("DISPLAY", ":0")
         steamsetup.login_window(executable, "bob")

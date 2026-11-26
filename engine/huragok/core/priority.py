@@ -10,7 +10,8 @@ every process in the server's tree, and looks again every few seconds for new on
              as administrator, and silently gives High otherwise: what each process got is read back, and said
   off        left as it starts (for a host who sets it some other way)
 
-On Linux these are nice values (NICE); above normal needs root or CAP_SYS_NICE (Docker: --cap-add SYS_NICE).
+On Linux and macOS these are nice values (NICE); above normal needs root, or on Linux CAP_SYS_NICE (Docker:
+--cap-add SYS_NICE).
 """
 
 from __future__ import annotations
@@ -24,12 +25,16 @@ from pathlib import Path
 
 import psutil
 
+from . import platforms
+
 log = logging.getLogger(__name__)
 
 PRIORITIES = ("realtime", "high", "above_normal", "normal", "below_normal", "off")
 DEFAULT = "high"
 LABELS = {"realtime": "Realtime", "high": "High", "above_normal": "Above normal", "normal": "Normal",
           "below_normal": "Below normal", "idle": "Idle"}
+NEEDS_ROOT = "above normal needs root or CAP_SYS_NICE (in Docker, --cap-add SYS_NICE)"
+NEEDS_ROOT_MAC = "above normal needs root on macOS"
 CLASSES = {"realtime": "REALTIME_PRIORITY_CLASS", "high": "HIGH_PRIORITY_CLASS",  # psutil's names, Windows only
            "above_normal": "ABOVE_NORMAL_PRIORITY_CLASS", "normal": "NORMAL_PRIORITY_CLASS",
            "below_normal": "BELOW_NORMAL_PRIORITY_CLASS", "idle": "IDLE_PRIORITY_CLASS"}
@@ -99,7 +104,7 @@ def why_short(level: str, got: str) -> str:
     if os.name == "nt" and level == "realtime":
         return "Windows only gives Realtime to a program started as administrator"
     if os.name != "nt" and RANK[level] > RANK["normal"]:
-        return "above normal needs root or CAP_SYS_NICE (in Docker, --cap-add SYS_NICE)"
+        return NEEDS_ROOT_MAC if platforms.is_macos() else NEEDS_ROOT
     return f"the system kept it at {LABELS.get(got, got)}"
 
 
@@ -120,8 +125,8 @@ def unavailable(level: str) -> str:
                                  "(start it as administrator for Realtime)")
     if RANK[level] <= RANK["normal"] or os.geteuid() == 0 or _has_sys_nice():
         return ""
-    return ("above normal needs root or CAP_SYS_NICE (in Docker, --cap-add SYS_NICE), which Huragok doesn't have "
-            "here, so the servers stay at normal")
+    return (f"{NEEDS_ROOT_MAC if platforms.is_macos() else NEEDS_ROOT}, which Huragok doesn't have here, so the "
+            "servers stay at normal")
 
 
 def _has_sys_nice() -> bool:

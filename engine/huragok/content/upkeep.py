@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core import platforms
 from ..core.files import folder_size
 from ..core.text import size_text
 from ..core.web import UpdateError, version_key
@@ -218,6 +219,10 @@ def open_firewall(commands: list[str], folder: Path) -> str:
     """Run them in an administrator PowerShell (Windows asks first), from a script in `folder` (records/), so no
     quoting can mangle them. Returns what happened, for the screen."""
     if os.name != "nt":
+        if platforms.is_macos():
+            return ("the firewall commands are for Windows; macOS's firewall is off unless it was turned on, and then "
+                    "asks once for each program: say Allow when it asks about project-reclaimer (System Settings > "
+                    "Network > Firewall)")
         return "the firewall commands are for Windows; on Linux open the same ports with ufw or firewalld"
     if not commands:
         return "nothing to open"

@@ -45,6 +45,17 @@ def bound_udp_ports() -> frozenset[int] | None:
         return None
 
 
+def udp_bound(port: int) -> bool:
+    """Something on this PC has bound the UDP port: it can't be bound now. For when the system's table of sockets
+    can't be read (macOS without root): a bind answers at once, unlike a connect, so it needs no thread."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(("0.0.0.0", port))
+    except OSError:
+        return True
+    return False
+
+
 def _connects(host: str, port: int, timeout: float) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -86,6 +97,7 @@ class PortWatch:
         self._udp: frozenset[int] | None = None
         self._looked = float("-inf")
         self._probed: dict[tuple[str, int], tuple[float, bool]] = {}  # (host, port) -> (when, answer)
+        self._bound: dict[int, tuple[float, bool]] = {}  # UDP port -> (when, answer), where the table can't be read
         self._probing: set[tuple[str, int]] = set()
 
     def in_use(self, server: ServerConfig) -> bool | None:
@@ -109,12 +121,19 @@ class PortWatch:
             self._ports = listening_ports()
             self._udp = bound_udp_ports()
 
-    def game_port_in_use(self, server: ServerConfig) -> bool | None:
-        """Something on this PC has bound the server's game port (UDP). None: the system won't say."""
+    def game_port_in_use(self, server: ServerConfig) -> bool:
+        """Something on this PC has bound the server's game port (UDP): from the system's table, or where that can't
+        be read (macOS without root) by trying to bind it, at most once a second."""
         if not server.game_port:
             return False
-        self._look(time.monotonic())
-        return None if self._udp is None else server.game_port in self._udp
+        now = time.monotonic()
+        self._look(now)
+        if self._udp is not None:
+            return server.game_port in self._udp
+        known = self._bound.get(server.game_port)
+        if known is None or now - known[0] >= self.LOOK_EVERY:
+            known = self._bound[server.game_port] = (now, udp_bound(server.game_port))
+        return known[1]
 
     async def _probe(self, key: tuple[str, int]) -> None:
         try:

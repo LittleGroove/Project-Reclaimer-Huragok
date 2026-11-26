@@ -15,7 +15,7 @@
 #                   appears in the window within seconds; remove it once it's stopped.
 # commands.toml and automod.txt apply edits within seconds. Edits to this file apply
 # when Huragok starts again (the servers keep running meanwhile).
-# Check everything without starting anything: start.cmd check (Linux: ./start.sh check)
+# Check everything without starting anything: start.cmd check (Linux/macOS: ./start.sh check)
 #
 # Relative paths are from this folder. Windows paths: write them in 'single quotes',
 # like 'D:\Servers', or with forward slashes ("D:/Servers"); inside "double quotes" a
@@ -31,9 +31,9 @@ dedicated_config = "dedicated.toml"
 
 # Who starts the servers:
 #   process  the Superintendent: one `dedicated` per server, started and restarted from
-#            here, so start.cmd (Linux: ./start.sh) is how your servers start from now
-#            on. Windows runs project-reclaimer.exe itself; Linux runs its own program
-#            (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine.
+#            here, so start.cmd (Linux/macOS: ./start.sh) is how your servers start from
+#            now on. Windows runs project-reclaimer.exe itself; Linux and macOS run their
+#            own program (project-reclaimer, from 0.10) itself, and 0.9's .exe through wine.
 #   docker   the official Docker setup: the Superintendent runs `docker compose` for each
 #            server's container (see [docker] below).
 #   command  your own commands, such as systemd units (see [command] below).
@@ -277,7 +277,7 @@ follow = true
 restart = true
 
 [setup]
-# New servers: the window's N key, or start.cmd new "<name>" (Linux: ./start.sh new).
+# New servers: the window's N key, or start.cmd new "<name>" (Linux/macOS: ./start.sh new).
 # A new server is a folder in SERVERS/ made with the server program's own
 # `dedicated init`, and nothing more: no shared folders, no password, nothing
 # else written. Its quick actions (one server only, free ports, the console) are
@@ -307,14 +307,14 @@ steam_username = ""
 [process]
 # The server program, in each server's folder.
 executable = {executable}
-# How it's run. Empty: the program itself (on Linux its own program, project-reclaimer,
+# How it's run. Empty: the program itself (on Linux/macOS its own program, project-reclaimer,
 # from 0.10; 0.9's .exe through `wine`), as `dedicated run --config dedicated.toml` in
 # the server's folder. To run it another way, give the whole command; {{executable}},
 # {{config}}, {{folder}} and {{name}} are filled in. Each server's process gets
 # RECLAIMER_DEDICATED_ONLY, so it runs that server alone.
 # command = ["{{executable}}", "dedicated", "run", "--config", "{{config}}"]
 command = []
-# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux) before
+# Seconds to wait for a clean stop (Ctrl+Break on Windows, SIGINT on Linux/macOS) before
 # ending the process.
 stop_timeout = 30
 # false: closing Huragok leaves the servers running, so players aren't

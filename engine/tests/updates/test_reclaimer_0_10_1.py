@@ -64,7 +64,7 @@ def test_githubs_checksum_of_the_program_is_read_with_the_release(monkeypatch) -
                            "digest": "sha256:56AA513E298B6B2BDA0F74ACBFCC6EC1A1C2311A3B83A1038D457E5173B1AC24"},
                           {"name": "SHA256SUMS.txt", "browser_download_url": "https://example/sums"}]}
     monkeypatch.setattr(releases, "_get", lambda *a, **k: json.dumps(listing).encode())
-    monkeypatch.setattr(releases, "linux_download", lambda: None)
+    monkeypatch.setattr(releases, "native_download", lambda: None)
     release = releases.latest_program_release()
     assert release is not None and release.version == "0.10.1"
     assert release.exe_sha256 == "56aa513e298b6b2bda0f74acbfcc6ec1a1c2311a3b83a1038d457e5173b1ac24"

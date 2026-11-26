@@ -171,9 +171,12 @@ def test_what_the_old_name_left_behind_is_still_understood(tmp_path, monkeypatch
 
     from conftest import free_port, write_root
 
+    from testkit import system_as
+
     from huragok.core import desktop
     from huragok.core.settings import load
 
+    system_as(monkeypatch, "linux")  # 0.2.1 wrote a .cmd or a systemd unit; never a Mac's LaunchAgent
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(desktop.subprocess, "run", lambda *args, **options: SimpleNamespace(returncode=0, stderr=""))

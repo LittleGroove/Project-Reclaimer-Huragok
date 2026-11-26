@@ -258,7 +258,8 @@ only with SteamCMD and a Steam account that owns MCC: an anonymous SteamCMD sign
 can't fetch MCC's items (checked). It:
 
 - finds SteamCMD: `[setup] steamcmd`, `steamcmd/` at the root, `C:\steamcmd` (the
-  folder the server's own template names), your PATH, `~/steamcmd` on Linux;
+  folder the server's own template names), your PATH, `~/steamcmd` on Linux and macOS,
+  `~/Steam` (Valve's own folder for it) on macOS;
 - **installs it** when missing, from Valve's installer, into `steamcmd/` at the root
   (kept with Huragok) or the standard folder, and runs it once so it updates
   itself (`steam install [--standard] [--path]`);
@@ -339,7 +340,7 @@ say what to write in the file instead.
 You change a server by editing its files: **O** opens any of them (a server's folder,
 its `dedicated.toml`, its own `intervalmessages.txt`, each playlist, its ban list,
 its saved game types and `.rmeg` modes), and so do **G → F / E** and **D → O**. They
-open in Notepad (Windows) or the desktop's editor (Linux). Since Project Reclaimer
+open in Notepad (Windows), the Mac's text editor, or the desktop's editor (Linux). Since Project Reclaimer
 0.9.18 the server re-checks `dedicated.toml`, the playlists and the content folder a
 couple of seconds after a save (`auto_reload = true`): most settings apply at once,
 `friendly_fire`, `team_changing` and a playlist from the next game or vote, ports

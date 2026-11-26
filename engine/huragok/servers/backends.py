@@ -31,6 +31,7 @@ from typing import Any
 
 import psutil
 
+from ..core import platforms
 from ..core.events import EventBus
 from ..core.files import write_atomic
 from ..core.priority import PriorityKeeper
@@ -427,8 +428,9 @@ class ProcessBackend(Backend):
                 found.append(f"{self.executable} is not in {server.folder} or at {self.settings.home} "
                              "(set [process] command to run it another way)")
             elif not _on_windows() and windows_program(exe) and shutil.which("wine") is None:
-                found.append(f"wine is not installed, and on Linux {exe.name} (a Windows program: Project Reclaimer "
-                             "0.9) runs through it. Project Reclaimer 0.10 has a Linux program of its own (or set "
+                system = platforms.system_name()
+                found.append(f"wine is not installed, and on {system} {exe.name} (a Windows program: Project Reclaimer "
+                             f"0.9) runs through it. Project Reclaimer 0.10 has a {system} program of its own (or set "
                              "[process] command)")
         elif "{executable}" in template[0]:  # the program itself, through whatever the words say
             if self.executable_for(server) is None:

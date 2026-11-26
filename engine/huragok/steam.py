@@ -9,7 +9,7 @@ a headless server it needs SteamCMD and an account that owns MCC: an anonymous S
 sign-in can't fetch MCC's items (checked). So the supervisor:
 
 1. finds SteamCMD: [setup] steamcmd, <root>/steamcmd/, C:\\steamcmd\\ (the folder the server's
-   own template names), PATH, ~/steamcmd (Linux);
+   own template names), PATH, ~/steamcmd (Linux and macOS), ~/Steam (Valve's own folder for it on macOS);
 2. installs it when missing, from Valve's installer, into <root>/steamcmd/ (kept with the
    project) or the standard folder, and runs it once so it updates itself;
 3. signs in: `steamcmd +login <account>` in a window of its own, where Steam asks for the
@@ -24,6 +24,10 @@ sign-in can't fetch MCC's items (checked). So the supervisor:
 cannot_fetch() says whether a server's SteamCMD can fetch anything here: a copied server can name a SteamCMD that's on
 another PC, or an account with no saved sign-in on this one. workshop_content() finds this PC's own Steam Workshop
 folder for MCC, whose mods Project Reclaimer 0.10 loads by itself.
+
+On a Mac, Steam keeps everything in ~/Library/Application Support/Steam (the app and SteamCMD alike), and Valve's
+SteamCMD for macOS is an Intel program: an Apple Silicon Mac runs it through Rosetta 2, which macOS installs only when
+asked (ROSETTA says how).
 """
 
 from __future__ import annotations
@@ -46,7 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterator
 
 from . import __version__
-from .core import closing
+from .core import closing, desktop, platforms
 from .core.files import clean_path
 from .core.web import UpdateError, fetch
 
@@ -106,10 +110,16 @@ def is_mcc_install(game: Path) -> bool:
 MCC_FOLDER = "Halo The Master Chief Collection"  # the folder Steam installs it in (its appmanifest says so)
 
 
+def mac_steam() -> Path:
+    """Where Steam keeps its files on a Mac, the app's and SteamCMD's: libraries, config, downloads."""
+    return Path.home() / "Library" / "Application Support" / "Steam"
+
+
 def _steam_roots() -> list[Path]:
     """Where Steam is, as Steam itself records it: on Windows the registry's SteamPath (and the InstallPath its
-    installer writes), and only when neither is there, Steam's own install folders; on Linux the ~/.steam links
-    Steam keeps, its data folder and Flatpak's. Each once, and only one that's there."""
+    installer writes), and only when neither is there, Steam's own install folders; on macOS its folder in
+    Application Support; on Linux the ~/.steam links Steam keeps, its data folder and Flatpak's. Each once, and only
+    one that's there."""
     roots: list[Path] = []
     if os.name == "nt":
         try:
@@ -128,6 +138,8 @@ def _steam_roots() -> list[Path]:
         if not roots:
             roots += [Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Steam",
                       Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Steam"]
+    elif platforms.is_macos():
+        roots.append(mac_steam())
     else:
         roots += [Path(p).expanduser() for p in ("~/.steam/steam", "~/.steam/root", "~/.local/share/Steam",
                                                   "~/.steam/debian-installation",
@@ -259,6 +271,9 @@ def find_mcc(hint: str | None = None) -> Path | None:
 
 WINDOWS_INSTALLER = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 LINUX_INSTALLER = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
+MAC_INSTALLER = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz"  # steamcmd.sh + an Intel program
+ROSETTA = "softwareupdate --install-rosetta --agree-to-license"  # macOS's own command for Rosetta 2
+NO_ROSETTA = "bad cpu type"  # what macOS says running an Intel program on Apple Silicon without Rosetta 2
 STANDARD_WINDOWS = Path(r"C:\steamcmd")
 MCC_APP = 976730
 USERNAME = re.compile(r"[A-Za-z0-9_]{2,64}")
@@ -316,7 +331,10 @@ def candidates(home: Path, hint: str = "") -> list[tuple[Path, str]]:
         found.append((STANDARD_WINDOWS / "steamcmd.exe", "the standard folder"))
     else:
         found.append((Path.home() / "steamcmd" / "steamcmd.sh", "~/steamcmd"))
-        found.append((Path("/usr/games/steamcmd"), "the system's package"))
+        if platforms.is_macos():
+            found.append((Path.home() / "Steam" / "steamcmd.sh", "~/Steam (Valve's folder for it on macOS)"))
+        else:
+            found.append((Path("/usr/games/steamcmd"), "the system's package"))
     on_path = shutil.which("steamcmd")
     if on_path:
         found.append((Path(on_path), "PATH"))
@@ -332,9 +350,12 @@ def find_steamcmd(home: Path, hint: str = "") -> tuple[Path | None, str]:
 
 def steam_roots(executable: Path) -> list[Path]:
     """Where SteamCMD keeps what it writes: beside it on Windows; on Linux steamcmd.sh keeps it in the Steam folder
-    in the user's home (~/Steam, or the ~/.steam/steam and ~/.local/share/Steam a Steam client uses)."""
+    in the user's home (~/Steam, or the ~/.steam/steam and ~/.local/share/Steam a Steam client uses); on macOS in
+    Steam's folder in Application Support."""
     roots = [executable.parent]
     if os.name != "nt":
+        if platforms.is_macos():
+            roots.append(mac_steam())
         roots += [Path.home() / "Steam", Path.home() / ".steam" / "steam", Path.home() / ".local" / "share" / "Steam"]
     return roots
 
@@ -414,10 +435,19 @@ def status(settings: Settings) -> SteamStatus:
     return SteamStatus(executable, where, username, accounts, configured, len(settings.server_folders))
 
 
+def needs_rosetta(output: str) -> str | None:
+    """What to do when SteamCMD couldn't start because this Mac has no Rosetta 2 (macOS: "Bad CPU type in
+    executable"), or None."""
+    if NO_ROSETTA not in output.lower():
+        return None
+    return (f"SteamCMD for macOS is an Intel program, and this Mac has no Rosetta 2 to run it: run `{ROSETTA}` in "
+            "Terminal, then try again")
+
+
 def install(target: Path, say: Callable[[str], None] = print, timeout: float = 900.0) -> Path:
     """Download Valve's installer into target/ and run SteamCMD once so it updates itself. Returns the program."""
     target.mkdir(parents=True, exist_ok=True)
-    url = WINDOWS_INSTALLER if os.name == "nt" else LINUX_INSTALLER
+    url = WINDOWS_INSTALLER if os.name == "nt" else MAC_INSTALLER if platforms.is_macos() else LINUX_INSTALLER
     say(f"downloading SteamCMD from {url}")
     try:
         data = fetch(url, 120, accept="application/octet-stream")
@@ -437,8 +467,12 @@ def install(target: Path, say: Callable[[str], None] = print, timeout: float = 9
         raise SteamSetupError(f"the installer left no {executable_name()} in {target}")
     if os.name != "nt":
         executable.chmod(0o755)
+        if (program := target / "steamcmd").is_file():  # macOS: the program steamcmd.sh starts sits beside it
+            program.chmod(0o755)
     say("running SteamCMD once so it updates itself (a minute or two the first time)")
     result = run(executable, ["+quit"], timeout=timeout)
+    if problem := needs_rosetta(result.stdout):
+        raise SteamSetupError(problem)
     if result.returncode not in (0, 7):  # 7: SteamCMD updated itself and asks to be run again
         raise SteamSetupError(f"SteamCMD didn't start: {result.stdout[-400:]}")
     say(f"SteamCMD is at {executable}")
@@ -475,6 +509,8 @@ def signed_in(executable: Path, username: str, timeout: float = 120.0) -> tuple[
         except subprocess.TimeoutExpired:
             return False, "SteamCMD waited for a password: the sign-in isn't cached"
         text = result.stdout
+        if problem := needs_rosetta(text):
+            return False, problem
         ok = "Waiting for user info...OK" in text or "Logged in OK" in text
         return ok, text[-300:]
     return False, "no cached sign-in for that account"
@@ -511,6 +547,10 @@ def login_window(executable: Path, username: str) -> str:
         return ("a Steam sign-in window opened: type the account's password and the Steam Guard code there, "
                 "then come back")
     line = f"{shlex.quote(str(executable))} +login {username} +quit"
+    if platforms.is_macos():  # Terminal keeps the window, at its shell, once SteamCMD is done: nothing to wait on
+        if desktop.mac_desktop() and desktop.mac_terminal(f"{line}; echo; echo 'Done: close this window'"):
+            return "a Steam sign-in window opened in Terminal: type the password and the Steam Guard code there"
+        return f"no window here (over SSH?); run this in another terminal, then come back: {line}"
     for program, flags in (("x-terminal-emulator", ["-e"]), ("gnome-terminal", ["--"]), ("konsole", ["-e"]),
                            ("xfce4-terminal", ["-e"]), ("xterm", ["-e"])):
         if shutil.which(program) and os.environ.get("DISPLAY"):
@@ -550,11 +590,12 @@ def add_to_path(folder: Path) -> str:
         answer = (result.stdout or result.stderr).strip()
         return f"{folder} {answer} on your PATH (new windows see it)" if result.returncode == 0 else \
             f"couldn't change PATH: {answer[-200:]}"
-    return add_to_profile(folder, Path.home() / ".profile")
+    # macOS's shell is zsh, whose login shells (each Terminal window) read ~/.zprofile, never ~/.profile
+    return add_to_profile(folder, Path.home() / (".zprofile" if platforms.is_macos() else ".profile"))
 
 
 def add_to_profile(folder: Path, profile: Path) -> str:
-    """The Linux half of add_to_path: an export line in the shell's profile, once."""
+    """The Linux and macOS half of add_to_path: an export line in the shell's profile, once."""
     line = f'export PATH="$PATH:{folder}"'
     try:
         text = profile.read_text(encoding="utf-8") if profile.exists() else ""
@@ -573,6 +614,8 @@ def workshop_download(executable: Path, username: str, item: int, timeout: float
                      timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, "SteamCMD took too long (waiting for a password?)"
+    if problem := needs_rosetta(result.stdout):
+        return False, problem
     ok = "Success" in result.stdout and "ERROR" not in result.stdout
     return ok, result.stdout[-400:]
 
@@ -595,11 +638,9 @@ def cannot_fetch(config: Path) -> str | None:
 
 
 def depot_folders(executable: Path, depot: int) -> list[Path]:
-    """Where SteamCMD puts a depot it downloaded: beside it on Windows, under the Steam folder on Linux."""
+    """Where SteamCMD puts a depot it downloaded: beside it on Windows, under the Steam folder on Linux and macOS."""
     tail = Path("steamapps") / "content" / f"app_{MCC_APP}" / f"depot_{depot}"
-    roots = [executable.parent, Path.home() / "Steam", Path.home() / ".steam" / "steam",
-             Path.home() / ".local" / "share" / "Steam"]
-    return [root / tail for root in roots]
+    return [root / tail for root in steam_roots(executable)]
 
 
 def download_depot(executable: Path, username: str, depot: int, timeout: float = DEPOT_HOURS * 3600) -> Path:
@@ -615,6 +656,8 @@ def download_depot(executable: Path, username: str, depot: int, timeout: float =
         raise SteamSetupError(f"SteamCMD was still downloading after {DEPOT_HOURS:.0f} hours: try again (I)") from None
     text = result.stdout
     lower = text.lower()
+    if problem := needs_rosetta(text):
+        raise SteamSetupError(problem)
     if "login failure" in lower or ("password" in lower and "logged in ok" not in lower):
         raise SteamSetupError(f"SteamCMD couldn't sign {username} in on its saved sign-in: press I to sign in again")
     if any(word in lower for word in ("no subscription", "access denied", "missing decryption key")):

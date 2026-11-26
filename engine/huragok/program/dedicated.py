@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 
-from ..core import closing
+from ..core import closing, platforms
 from .environment import server_environment
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from ..core.settings import Settings
 
 EXECUTABLE = "project-reclaimer.exe"
-NATIVE = "project-reclaimer"  # the program's own name on Linux (0.10 on: a program of its own, no wine)
+NATIVE = "project-reclaimer"  # the program's own name on Linux and macOS (0.10 on: a program of its own, no wine)
 WINE = ("wine", "wine64")
 SLOW = 900.0  # seconds for check and mods, which may download Workshop items
 QUICK = 120.0
@@ -118,8 +118,8 @@ def _release_order(path: Path) -> tuple[int, tuple[int, ...], str]:
 
 
 def native_name(name: str) -> str:
-    """The Linux program's file name for a configured one: project-reclaimer for project-reclaimer.exe (or any
-    Windows name), the name itself when it isn't a Windows one."""
+    """The Linux or macOS program's file name for a configured one: project-reclaimer for project-reclaimer.exe (or
+    any Windows name), the name itself when it isn't a Windows one."""
     return NATIVE if name.lower().endswith(".exe") else name
 
 
@@ -252,7 +252,8 @@ def tool_for(settings: Settings, server: ServerConfig | None = None) -> Dedicate
         program = find_program(settings.home, settings.server_folders, name, settings.setup.program,
                                template=template)
     if program is None:
-        put = f"rename it {name} and put it at the root" if os.name == "nt" else             f"put the {NATIVE} from its Linux download at the root"
+        put = f"rename it {name} and put it at the root" if os.name == "nt" else \
+            f"put the {NATIVE} from its {platforms.system_name()} download at the root"
         raise DedicatedError(
             f"the server program ({name if os.name == 'nt' else native_name(name)}) isn't in any server folder or at "
             f"{settings.home}: download the dedicated server release from "
