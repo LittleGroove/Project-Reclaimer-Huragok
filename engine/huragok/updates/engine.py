@@ -542,7 +542,9 @@ class UpdateService:
                               self.config.check_hours)
             await asyncio.sleep(self.config.check_hours * 3600)
 
-    async def check(self, *, quiet: bool = True) -> Release | None:
+    async def check(self, *, quiet: bool = True, again: bool = True) -> Release | None:
+        """quiet: a failed look said at INFO, a release already said not said again. again=False (install's look
+        just before installing): a release already said isn't said again even so, only one not said yet."""
         try:
             release = await asyncio.to_thread(latest_release, self.config.repository, beta=self.config.beta)
             newer = release is not None and is_newer(release)
@@ -557,7 +559,7 @@ class UpdateService:
                 log.info("Huragok %s is the newest version", __version__)
             return None
         self.pending = release
-        if not quiet or self.announced != release.version:
+        if (not quiet and again) or self.announced != release.version:
             self.announce(release)
             self.announced = release.version
         if self.config.auto_update and self.can_install and not self.installing and not self.failed_before(release):
@@ -608,7 +610,9 @@ class UpdateService:
         pending = self.pending
         self.installing = True  # check() starts no install of its own meanwhile (auto_update)
         try:
-            release = await self.check(quiet=False)
+            # Not said twice: auto_update's install came from the look that had just said it (the live host's log,
+            # 0.7.0-beta.2 and beta.3 announced twice in the same second)
+            release = await self.check(quiet=False, again=False)
         finally:
             self.installing = False
         if release is None and self.last_error:

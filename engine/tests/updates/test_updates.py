@@ -237,10 +237,12 @@ def test_auto_update_installs_a_new_version_as_soon_as_its_found(tmp_path: Path,
     run(scenario(svc))
     assert installed == []
     svc, installed, relaunched = service(tmp_path / "auto", monkeypatch, "[updates]\nauto_update = true")
+    caplog.clear()
     with caplog.at_level(logging.WARNING):
         run(scenario(svc))
     assert installed == [NEW] and relaunched == ["yes"]
     assert "auto_update is on: it installs now" in caplog.text
+    assert caplog.text.count("Update available: Huragok 99.0.0") == 1  # install's own look doesn't say it again
     svc, installed, _ = service(tmp_path / "old", monkeypatch, "[updates]\ninstall_on_server_restart = true")
     run(scenario(svc))
     assert installed == [NEW]  # an older file's switch still works before the start renames it

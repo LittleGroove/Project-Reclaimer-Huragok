@@ -97,10 +97,11 @@ def test_a_release_huragok_sees_restarts_each_self_updating_server_after_its_gam
         assert len(lifecycle.restarts) == 2  # once per release
         # Back on it after the restart: nothing more. One that started after Huragok saw it looked itself as it
         # started, so a third server coming up behind is warned about, never restarted again.
-        bus.emit("server.started", "Alpha")
+        bus.emit("server.starting", "Alpha")
         bus.emit("rcon.connected", "Alpha", version="0.10.9")
         service.restarting.pop("Beta")
-        bus.emit("server.started", "Beta")
+        bus.emit("server.starting", "Beta")
+        bus.emit("server.self_update", "Beta", text="automatic updates: checking now and hourly")
         assert await service.review() == []
 
     with caplog.at_level(logging.INFO):
@@ -108,6 +109,47 @@ def test_a_release_huragok_sees_restarts_each_self_updating_server_after_its_gam
     assert "Project Reclaimer 0.10.9 is out (running: Alpha 0.10.8, Beta 0.10.8): Alpha, Beta install it themselves " \
            "(auto_update), each restarted after its game to do so as it starts" in caplog.text
     assert lifecycle.jobs == {}
+
+
+def test_a_server_whose_auto_update_goes_on_while_it_runs_is_restarted_for_the_release(tmp_path: Path, monkeypatch,
+                                                                                         caplog, run) -> None:
+    """Started after Huragok saw the release, with auto_update off: it never looked, so turned on in its file it's
+    restarted after its game like the rest. It was passed over as one that "looked itself as it started", and 0.10's
+    line at every game's start counted as a start (the beta.3 tests, 26 November 2026)."""
+    root = self_updating_root(tmp_path, "Alpha", body='backend = "process"\n')
+    serve_program(monkeypatch, program_release("0.10.10", published=time.time() - 60), b"program 0.10.10")
+    service, lifecycle, bus = service_on(root, up=("Alpha",))
+    alpha = next(s for s in service.settings.servers if s.name == "Alpha")
+    alpha.auto_update = False  # pinned by its own file as it starts
+
+    async def scenario() -> None:
+        assert await service.check() is not None  # Huragok sees 0.10.10 before the server is up
+        bus.emit("server.starting", "Alpha")
+        bus.emit("rcon.connected", "Alpha", version="0.10.9")
+        bus.emit("server.started", "Alpha", game="Slayer on Guardian")  # a game's start: not the program's
+        assert await service.review() == []  # pinned
+        alpha.auto_update = True  # turned on in its dedicated.toml while it runs
+        assert await service.review() == ["Alpha"]
+        assert lifecycle.restarts == [("Alpha", "after_game", REASON.format(version="0.10.10"))]
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert "Project Reclaimer 0.10.10 is out: Alpha restarts after its game to install it as it starts" in caplog.text
+
+
+def test_one_self_updating_server_is_said_as_one(tmp_path: Path, monkeypatch, run, caplog) -> None:
+    """"B3 Update install it themselves" (the beta.3 tests)."""
+    root = self_updating_root(tmp_path, "Alpha", body='backend = "process"\n')
+    serve_program(monkeypatch, program_release("0.10.10", published=time.time() - 60), b"program 0.10.10")
+    service, _, bus = service_on(root, up=("Alpha",))
+
+    async def scenario() -> None:
+        bus.emit("rcon.connected", "Alpha", version="0.10.9")
+        await service.check()
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert "Alpha installs it itself (auto_update), restarted after its game to do so as it starts" in caplog.text
 
 
 def test_huragok_looks_every_check_minutes(tmp_path: Path, monkeypatch, run) -> None:
@@ -220,6 +262,42 @@ def test_an_update_seen_while_it_comes_up_still_gets_its_restart_off_the_old_fil
     with caplog.at_level(logging.INFO):
         run(scenario())
     assert "couldn't plan a restart" not in caplog.text
+
+
+def test_a_server_found_on_its_old_program_file_is_restarted_onto_the_new_one(tmp_path: Path, run, monkeypatch,
+                                                                             caplog) -> None:
+    """It updated itself before this Huragok started (or before Huragok updated), so no "update installed" line comes:
+    its project-reclaimer.exe.old can't be removed because its own supervisor runs from it, and it restarts onto the new
+    file once nobody is on (the live servers on 0.10.10, adopted by 0.7.0-beta.2 and beta.3, 26 November 2026). An old
+    file nothing holds is only tidied away; each folder is looked at once."""
+    root = self_updating_root(tmp_path, "Alpha", "Beta", body='backend = "process"\n')
+    held = root / "SERVERS" / "Alpha" / "project-reclaimer.exe.old"
+    held.write_bytes(b"0.10.9")
+    left = root / "SERVERS" / "Beta" / "project-reclaimer.exe.old"
+    left.write_bytes(b"0.10.9")
+    real_remove = program_module.releases.remove_old_files
+
+    def remove(folder: Path) -> list[Path]:  # Alpha's is held, as Windows holds a running program's file
+        return [] if folder == held.parent else real_remove(folder)
+
+    monkeypatch.setattr(program_module.releases, "remove_old_files", remove)
+    service, lifecycle, bus = service_on(root)
+    off_the_old_file = ("Alpha", "when_empty", "its own update left `dedicated` running from the old program file; "
+                                               "restarting on the new one")
+
+    async def scenario() -> None:
+        bus.emit("rcon.connected", "Alpha", version="0.10.10")
+        bus.emit("rcon.connected", "Beta", version="0.10.10")
+        await wait_for(lambda: lifecycle.restarts and not left.exists())
+        bus.emit("rcon.connected", "Alpha", version="0.10.10")  # its console back: not looked at again
+        await asyncio.sleep(0.05)
+
+    with caplog.at_level(logging.INFO):
+        run(scenario())
+    assert lifecycle.restarts == [off_the_old_file] and "program-old" in lifecycle.jobs["Alpha"]
+    assert "Beta" not in lifecycle.jobs and held.exists()
+    assert "[Alpha] its `dedicated` still runs from project-reclaimer.exe.old" in caplog.text
+    assert "[Beta] removed project-reclaimer.exe.old (the program from before an update)" in caplog.text
 
 
 def test_a_busy_server_that_never_empties_for_its_new_program_file_is_warned_about(tmp_path: Path, run) -> None:

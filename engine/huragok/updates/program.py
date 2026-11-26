@@ -119,6 +119,7 @@ class ProgramUpdateService:
         self.file_versions: dict[str, str] = {}  # a pinned server not signed in: its program file's release
         self.restarting: dict[str, str] = {}  # server -> the release it restarts for after its game (follow)
         self.old_file: dict[str, tuple[str, float]] = {}  # server -> (release, since when) still on the old file
+        self.looked_for_old: set[str] = set()  # servers whose folder was looked at for an old program file, once each
         self.games: dict[str, float] = {}  # server -> when the game it plays began (as seen here)
         self.downloading: dict[str, tuple[float, float | None]] = {}  # server -> (when it said so, its game's start)
         self.last_error = ""  # why the last look at GitHub gave nothing to go by ("" when it did)
@@ -129,7 +130,9 @@ class ProgramUpdateService:
         self.mistakes: set[tuple[str, str]] = set()  # (server, setting) even the newest program doesn't know
         bus.subscribe("rcon.connected", self._on_connected)
         bus.subscribe("rcon.phase", self._on_phase)
-        bus.subscribe("server.started", self._on_started)
+        # Huragok starting the program, not 0.10's "[server] "X" on port …" line, which comes at every game's start
+        # (the beta.2 tests): counted from that, a running server always "started after" a release (beta.3 tests)
+        bus.subscribe("server.starting", self._on_started)
         bus.subscribe("server.updating", self._on_updating)
         bus.subscribe("server.self_update", self._on_self_update)
         bus.subscribe("server.update_failed", self._on_update_failed)
@@ -219,6 +222,7 @@ class ProgramUpdateService:
         if event.server:
             self.since[event.server] = time.time()
             self.since_order[event.server] = next(self._order)
+            self.updater.pop(event.server, None)  # what it says about its own updater at this start
 
     def _on_phase(self, event: Event) -> None:
         """When the game it plays began, for "stopped its game N minutes in" (rounds don't start it again)."""
@@ -327,7 +331,11 @@ class ProgramUpdateService:
         updated_itself = name in self.updated_itself  # "Update installed" came first; at its start, the old
         if updated_itself:                            # version may never have signed in
             self.updated_itself.discard(name)
+            self.looked_for_old.add(name)
             self._restart_off_the_old_file(name, version)
+        elif name not in self.looked_for_old and self.holds_processes() and _in_a_loop():
+            self.looked_for_old.add(name)
+            background(self._still_on_the_old_file(name, version), f"[{name}] looking for its old program file", log)
         try:
             newer = before is not None and parse_version(version) > parse_version(before)
         except UpdateError:
@@ -379,6 +387,26 @@ class ProgramUpdateService:
             return  # the restart already planned runs the job too
         background(self._plan_off_the_old_file(name), f"[{name}] restarting on its new program file", log)
 
+    async def _still_on_the_old_file(self, name: str, version: str) -> None:
+        """Once per server, as this Huragok first hears from it: a project-reclaimer.exe.old in its folder is removed,
+        and one that can't be is held by the program's own supervisor, still running from it. Updated itself before
+        this Huragok started (or before an update of Huragok), it was never restarted onto the new file: the live
+        servers on 0.10.10, adopted by 0.7.0-beta.2 and beta.3, ran on 0.10.9's supervisor for days."""
+        server = self._server(name)
+        if server is None:
+            return
+        old = await asyncio.to_thread(lambda: sorted(server.folder.glob("*.exe.old")))
+        if not old:
+            return
+        await asyncio.to_thread(releases.remove_old_files, server.folder)
+        held = [path for path in old if path.exists()]
+        if not held:
+            log.info("[%s] removed %s (the program from before an update)", name, ", ".join(p.name for p in old))
+            return
+        log.info("[%s] its `dedicated` still runs from %s (the program from before an update): it restarts onto the "
+                 "new file once nobody is on", name, held[0].name)
+        self._restart_off_the_old_file(name, version)
+
     async def _plan_off_the_old_file(self, name: str) -> None:
         # Restarted for a release, a server updates itself as it starts, so Huragok sees its new version while it's
         # still coming up, when no restart can be planned: wait until it's up. It used to give up, leaving the
@@ -424,7 +452,10 @@ class ProgramUpdateService:
         for name in sorted(self.self_updating() - (skip or set())):
             if self.restarting.get(name) == version or not self.lifecycle.is_up(name) or not self.behind(name, version):
                 continue
-            if seen is not None and self.since_order.get(name, -1) > seen:
+            # It looked itself as it started if its own updater said so then (or said it can't: a restart won't help).
+            # One started with auto_update off says nothing, and turned on since never looked (the beta.3 tests, 26
+            # November 2026: never restarted for it)
+            if seen is not None and self.since_order.get(name, -1) > seen and name in self.updater:
                 continue
             if await self._restart_for(name, version):
                 restarted.append(name)
@@ -499,8 +530,8 @@ class ProgramUpdateService:
             return []
         restarted = await self._restart_behind(self.newest.version)
         if restarted:
-            log.info("Project Reclaimer %s is out: %s to install it as %s start", self.newest.version,
-                     _after_their_game(restarted), "it" if len(restarted) == 1 else "they")
+            log.info("Project Reclaimer %s is out: %s to install it as %s", self.newest.version,
+                     _after_their_game(restarted), "it starts" if len(restarted) == 1 else "they start")
         return restarted
 
     async def _review_loop(self) -> None:
@@ -691,9 +722,11 @@ class ProgramUpdateService:
         if self.settings.backend == "docker":
             how.append("on Docker a new image is the update")
         elif themselves:
-            how.append(f"{', '.join(themselves)} install it themselves (auto_update)" + (
-                ", each restarted after its game to do so as it starts" if self.restarts_for_releases() else
-                " within the hour"))
+            one = len(themselves) == 1  # "B3 Update install it themselves" (the beta.3 tests)
+            how.append(f"{', '.join(themselves)} {'installs it itself' if one else 'install it themselves'} "
+                       "(auto_update)" + ((", restarted after its game to do so as it starts" if one else
+                                           ", each restarted after its game to do so as it starts")
+                                          if self.restarts_for_releases() else " within the hour"))
         if pinned and self.settings.backend != "docker":
             one = len(pinned) == 1
             how.append(f"{', '.join(pinned)} {'stays on its' if one else 'stay on their'} version (auto_update off)")
@@ -748,6 +781,16 @@ def _rules() -> dict[str, Any]:
     except (RuleError, OSError) as error:
         log.error("Huragok's warnings can't be read (%s): it carries on without them", error)
         return {}
+
+
+def _in_a_loop() -> bool:
+    """Whether a background task can be started: the bus hands every event to Huragok's loop, but a caller outside one
+    (a test's plain call) would leave the task on no loop, never run."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def _older(mine: str | None, version: str | None) -> bool:

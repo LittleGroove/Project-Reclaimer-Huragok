@@ -193,6 +193,37 @@ def test_a_give_up_0_6_made_on_a_404_is_taken_back_once(tmp_path: Path, run) -> 
     run(scenario())
 
 
+def test_a_give_up_holds_only_while_the_server_reports_to_that_service(tmp_path: Path, run) -> None:
+    """Records go by server name: the live host's new LG Test Server (25 November 2026) took the name of one the public
+    0.9 service turned down on 8 November, and Huragok left its games out without a word. A server reporting to another
+    service now goes back on; one still reporting where it was turned down (0.9's address or 0.10's for it) stays aside."""
+    async def scenario() -> None:
+        async with FakeService() as service:
+            new, old = dedicated(tmp_path / "new", ""), dedicated(tmp_path / "old", "")
+            new_log, old_log = tmp_path / "new" / "server.log", tmp_path / "old" / "server.log"
+            new_log.write_text(f"[host] Project Reclaimer 0.10.10 (rcl-engine)\n[stats] reporting to {service.url} as k=\n",
+                               encoding="utf-8")
+            old_log.write_text("[host] Project Reclaimer 0.10.10 (rcl-engine)\n"
+                               "[stats] reporting to http://148.251.153.44:8792 as k=\n", encoding="utf-8")
+            records = tmp_path / "records"
+            records.mkdir()
+            why = "the service turned down 2 reports in a row that came through Huragok (422)"
+            (records / "temp-stats-capture.json").write_text(json.dumps({"servers": {
+                name: {"original": "", "upstream": "http://148.251.153.44:8790", "port": None, "config": str(path),
+                       "gave_up": why, "told": True} for name, path in (("New", new), ("Old", old))}}), encoding="utf-8")
+            capture = StatsCapture(records, lambda s, d: None, Scrubber(b"k" * 32))
+            await capture.apply(["New", "Old"], {"New": (new, new_log), "Old": (old, old_log)})
+            url = configured(new)[1]
+            assert url and url.startswith("http://127.0.0.1:") and capture.saved["servers"]["New"]["upstream"] == service.url
+            assert any(n.startswith("[New] stats capture: back on: it reports to") for n in capture.notes)
+            assert (await post(url, b"{}"))[0] == 201 and service.received
+            assert configured(old) == (True, "") and "Old" not in capture.listeners  # the same service, moved in 0.10
+            assert capture.saved["servers"]["Old"]["gave_up"] == why
+            await capture.close()
+
+    run(scenario())
+
+
 def test_two_huragoks_reach_for_different_ports(tmp_path: Path) -> None:
     one = StatsCapture(tmp_path / "a" / "records", lambda s, d: None, None, home=tmp_path / "a")
     two = StatsCapture(tmp_path / "b" / "records", lambda s, d: None, None, home=tmp_path / "b")

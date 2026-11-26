@@ -111,3 +111,23 @@ def test_update_check_minutes_is_said_only_for_a_server_whose_file_has_it(tmp_pa
     assert hands_off_lines(records, SimpleNamespace(folder=old, name="Old", config_path=old / "dedicated.toml")) \
         == [line]
     assert hands_off_lines(records, SimpleNamespace(folder=new, name="New", config_path=new / "dedicated.toml")) == []
+
+
+def test_a_workshop_item_is_said_only_for_a_server_whose_file_still_lists_it(tmp_path: Path) -> None:
+    """The record goes by server name: the live host's new LG Test Server (25 November 2026) took the name of one 0.6.x
+    had listed HugeGrass Rebalance for (it became LG Races on 7 November) and was told Huragok had set it, though its
+    own file lists HugeGrass SPR only."""
+    settings_path = host(tmp_path)
+    records = settings_path.parent / "records"
+    records.mkdir(exist_ok=True)
+    (records / "workshop-mods.json").write_text(json.dumps(
+        {"adopted": [{"server": "Test", "item": 3820687243, "title": "HugeGrass Rebalance"}]}), encoding="utf-8")
+    up_to_date(settings_path)
+    folder = tmp_path / "SERVERS" / "Test"
+    folder.mkdir(parents=True)
+    config = folder / "dedicated.toml"
+    server = SimpleNamespace(folder=folder, name="Test", config_path=config)
+    config.write_text('game = "game"\n[workshop]\nitems = [3832239928]\n', encoding="utf-8")
+    assert hands_off_lines(records, server) == []
+    config.write_text('game = "game"\n[workshop]\nitems = [3832239928, 3820687243]\n', encoding="utf-8")
+    assert [line.split(" (")[0] for line in hands_off_lines(records, server)] == ["Workshop item 3820687243"]

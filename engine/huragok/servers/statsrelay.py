@@ -253,7 +253,7 @@ class StatsCapture:
         if config_path is None or name in self.listeners:
             return
         entry = self.saved["servers"].get(name)
-        if isinstance(entry, dict) and entry.get("gave_up"):
+        if isinstance(entry, dict) and entry.get("gave_up") and (relayed(url) or not self._elsewhere_now(name, entry, url)):
             return
         try:
             # A relay's address isn't where the service is: one nobody listens on for this server (renamed, copied)
@@ -271,6 +271,11 @@ class StatsCapture:
         if value is not None and value.rstrip("/") in ours:
             self._adopt(name, value.rstrip("/"))
         entry = self.saved["servers"].get(name) or {}
+        if entry.get("gave_up") and not here:
+            now = value.rstrip("/") if value and value.strip().lower() != "off" else \
+                (heard or last_reported_to(log_path, ours))
+            if self._elsewhere_now(name, entry, now):
+                entry = self.saved["servers"].get(name) or {}
         if entry.get("gave_up"):
             self._restore(name, config_path)
             if not entry.get("told"):
@@ -313,6 +318,25 @@ class StatsCapture:
                               f"(to {upstream})")
         else:
             self.notes.append(f"[{name}] stats capture: on (to {upstream})")
+
+    def _elsewhere_now(self, name: str, entry: dict[str, Any], now: str | None) -> bool:
+        """A give-up was the service's answer: it holds while the server reports there. One reporting to another service
+        now goes back on (the live host, 25 November 2026: a new LG Test Server took the name of one the public 0.9
+        service had turned down on 8 November, and its games were left out of the stats without a word)."""
+        gave_up_on = str(entry.get("upstream") or "").rstrip("/")
+        if not now or not gave_up_on or relayed(now) or now.rstrip("/") in self._ours():
+            return False
+        if MOVED_IN_0_10.get(gave_up_on, gave_up_on) == MOVED_IN_0_10.get(now.rstrip("/"), now.rstrip("/")):
+            return False
+        kept = {key: value for key, value in entry.items() if key not in ("gave_up", "told", "refused")}
+        kept.pop("upstream", None)
+        self.saved["servers"][name] = kept
+        self._save()
+        log.info("[%s] stats capture: back on: it reports to %s now, not to %s, which turned its reports down",
+                 name, now.rstrip("/"), gave_up_on)
+        self.notes.append(f"[{name}] stats capture: back on: it reports to {now.rstrip('/')} now, not to the service "
+                          f"that turned its reports down ({gave_up_on})")
+        return True
 
     def _adopt(self, name: str, url: str) -> None:
         """A server pointed at a port kept here under another name (the live servers, 3 November 2026: one renamed while
