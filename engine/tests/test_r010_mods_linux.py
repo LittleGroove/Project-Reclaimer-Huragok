@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from conftest import free_port, write_root
-from testkit import os_as
+from testkit import os_as, system_as
 from testkit.mods import a_map, a_mod
 
 from huragok.commandline import firstrun
@@ -254,6 +254,7 @@ def as_linux(monkeypatch: pytest.MonkeyPatch, machine: str = "x86_64") -> None:
     monkeypatch.setattr(releases, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(releases, "platform", SimpleNamespace(machine=lambda: machine))
     monkeypatch.setattr(backends, "_on_windows", lambda: False)
+    system_as(monkeypatch, "linux")  # Linux, on the macOS runner too: there a Linux program is the wrong one
 
 
 def as_windows(monkeypatch: pytest.MonkeyPatch) -> None:
