@@ -260,7 +260,9 @@ settings.toml, for whoever is helping:
   loop's lines, start.sh's own lines when launchd started it (start.log), crash.log and why a server was given up
   on (faulted-*.txt)
 - `servers/<server>/`: its dedicated.toml, status.json and server.log; `records/`: what the Superintendent
-  remembers of each server and which servers it started; `mac/`: the LaunchAgent as written
+  remembers of each server and which servers it started; `mac/`: the LaunchAgent as written, what launchd says,
+  macOS's crash reports of the server program, Python and SteamCMD from the last week (`crash-reports/`) and what
+  macOS's log says of the server program in the last 6 hours (`system-log.txt`: Gatekeeper, memory pressure)
 - settings.toml and commands.toml
 
 Every password, token and key is taken out of the settings files (its value reads `"(taken out)"`). discord.toml,

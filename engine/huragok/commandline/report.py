@@ -188,8 +188,20 @@ def _servers(report: Report, settings: Settings) -> None:
                 report.file(path, f"{where}/{path.name}", tail=True)
 
 
-def _mac(report: Report) -> None:
-    """On a Mac: the LaunchAgent as written, and what launchd says of it (runs, the last exit code)."""
+CRASH_REPORTS = ("project-reclaimer", "Python", "python3", "steamcmd")  # macOS's own crash reports kept, by program
+CRASH_REPORT_DAYS = 7
+CRASH_REPORTS_KEPT = 10
+SYSTEM_LOG_HOURS = 6
+SYSTEM_LOG_LINES = 3000
+# What macOS's log says of the server program: Gatekeeper refusing it, memory pressure ending it, its crashes
+SYSTEM_LOG_PREDICATE = ('eventMessage CONTAINS[c] "project-reclaimer" OR process == "project-reclaimer" OR '
+                        '(process == "syspolicyd" AND eventMessage CONTAINS[c] "reclaimer")')
+
+
+def _mac(report: Report, *, now: float | None = None) -> None:
+    """On a Mac: the LaunchAgent as written, what launchd says of it (runs, the last exit code), macOS's own crash
+    reports of the server program, Python and SteamCMD from the last week, and what the system log says of the server
+    program in the last hours (Gatekeeper, memory pressure)."""
     if not platforms.is_macos():
         return
     from ..core import desktop
@@ -198,6 +210,24 @@ def _mac(report: Report) -> None:
     if agent is not None and agent.is_file():
         report.file(agent, f"mac/{agent.name}")
         report.text("mac/launchd.txt", sysinfo.launchd_text() + "\n")
+    folder = Path.home() / "Library" / "Logs" / "DiagnosticReports"
+    since = (now if now is not None else time.time()) - CRASH_REPORT_DAYS * 86400
+    found = []
+    for path in folder.glob("*") if folder.is_dir() else []:
+        try:
+            if path.is_file() and path.name.startswith(CRASH_REPORTS) and path.stat().st_mtime >= since:
+                found.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    for _, path in sorted(found)[-CRASH_REPORTS_KEPT:]:
+        report.file(path, f"mac/crash-reports/{path.name}", tail=True)
+    answer = sysinfo.ask("log", "show", "--last", f"{SYSTEM_LOG_HOURS}h", "--style", "compact", "--predicate",
+                         SYSTEM_LOG_PREDICATE, timeout=60)
+    if answer is None:
+        report.lines.append("macOS's log didn't answer in a minute (log show)")
+    else:
+        lines = answer[1].splitlines()
+        report.text("mac/system-log.txt", "\n".join(lines[-SYSTEM_LOG_LINES:]) + "\n")
 
 
 def cmd_report(args: argparse.Namespace) -> int:

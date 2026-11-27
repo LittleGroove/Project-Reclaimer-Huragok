@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import faulthandler
 import logging
+import os
 import signal
 import stat
 import zipfile
@@ -364,13 +365,28 @@ def test_a_report_on_a_mac_has_the_launch_agent_and_what_launchd_says(tmp_path: 
     monkeypatch.setattr(desktop.Path, "home", lambda: tmp_path / "user")
     monkeypatch.setattr(sysinfo, "facts", lambda *a, **k: [("system", "macOS 15.3")])
     monkeypatch.setattr(sysinfo, "launchd_text", lambda: "loaded: state running, runs 1")
+    asked: list[tuple[str, ...]] = []
+    monkeypatch.setattr(sysinfo, "ask", lambda *command, **_: asked.append(command) or
+                        (0, "2026-11-27 10:00:01 syspolicyd: project-reclaimer: rejected"))
     agent = desktop.startup_path()
     agent.parent.mkdir(parents=True, exist_ok=True)
     agent.write_bytes(desktop.mac_launch_agent(home))
+    reports = tmp_path / "user" / "Library" / "Logs" / "DiagnosticReports"
+    reports.mkdir(parents=True)
+    (reports / "project-reclaimer-2026-11-27-100000.ips").write_text('{"crash": "SIGSEGV"}', encoding="utf-8")
+    (reports / "Safari-2026-11-27-100000.ips").write_text("not ours", encoding="utf-8")
+    old = reports / "project-reclaimer-2026-11-01-100000.ips"
+    old.write_text("a month old", encoding="utf-8")
+    os.utime(old, (1_000_000_000, 1_000_000_000))
     written, _ = report_module.write_report(str(path))
     with zipfile.ZipFile(written) as zip_file:
+        names = set(zip_file.namelist())
         assert zip_file.read(f"mac/{agent.name}") == agent.read_bytes()
         assert zip_file.read("mac/launchd.txt").decode() == "loaded: state running, runs 1\n"
+        assert zip_file.read("mac/crash-reports/project-reclaimer-2026-11-27-100000.ips") == b'{"crash": "SIGSEGV"}'
+        assert "syspolicyd: project-reclaimer: rejected" in zip_file.read("mac/system-log.txt").decode()
+    assert not any("Safari" in name or "2026-11-01" in name for name in names)  # others' crashes, and old ones
+    assert any(command[:2] == ("log", "show") for command in asked)
 
 
 # The start loop and the LaunchAgent say what they couldn't do -----------------------------------------------------
