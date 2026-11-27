@@ -129,6 +129,9 @@ download them with SteamCMD (which needs Rosetta 2:
 it runs; for servers left running with Huragok closed, and after a power cut, set
 System Settings > Energy to keep it awake and start it again, and turn on automatic
 login (Users & Groups) so **W** brings Huragok back.
+`check`, the window and a failed start name what stops the server program on a Mac (the
+quarantine, a program not marked as one, the Linux program by mistake), and `./start.sh report`
+gathers everything to send when something goes wrong.
 
 1. Download `huragok-<version>.zip` from the
    [latest release](https://github.com/LittleGroove/Project-Reclaimer-Huragok/releases/latest)
@@ -182,6 +185,10 @@ login (Users & Groups) so **W** brings Huragok back.
    The window opens and starts every server.
 
 Check everything without starting anything: `start.cmd check` (Linux: `./start.sh check`).
+
+Something wrong you can't work out? `start.cmd report` (Linux and macOS: `./start.sh report`) writes one zip next
+to settings.toml with Huragok's logs, each server's console, what `check` says and what this computer is; send it
+to whoever is helping. Passwords, tokens and keys are taken out of the settings in it, and discord.toml is never in it.
 
 A Discord bot is yours to add whenever you like, and stays off until you do: [docs/discord.md](docs/discord.md).
 
@@ -266,6 +273,7 @@ start.cmd watch <server|huragok>      follow a server's console output, or Hurag
 start.cmd say <server|all> <text>     a [Server] chat line
 start.cmd rcon [-s server] <command>  one console command
 start.cmd check                       check the settings, servers and commands
+start.cmd report                      one zip of the logs, what check says and this computer's facts, to send for help
 start.cmd new <name> [--all]          a new server folder: the program's own init, then its quick actions (docs/setup.md)
 start.cmd repair [server…] [--yes]    what a server's folder lacks, shown, then put right when you say yes
 start.cmd content | playlist | variant | workshop | dedicated …   what a server plays (docs/setup.md)
@@ -289,7 +297,7 @@ waits as long as its work takes (an update up to 15 minutes); when the answer is
 late it says so ("It may still be doing it") rather than calling it a failure.
 `start.cmd --help` lists them grouped by part, like the window's keys:
 the Superintendent's (`status`, `stop`, `restart`, `watch`), Vergil's (`say`,
-`rcon`), Huragok's (`check`, `new`, `repair`, `content`, `playlist`, `variant`,
+`rcon`), Huragok's (`check`, `report`, `new`, `repair`, `content`, `playlist`, `variant`,
 `workshop`, `steam`, `dedicated`, `init`) and the program's (`start`, `close`,
 `update`), with the exit codes: 0 done, 1 it didn't work, 2 a settings problem or
 a name it doesn't know, 3 the first start wrote the files, 4 `start` found Huragok

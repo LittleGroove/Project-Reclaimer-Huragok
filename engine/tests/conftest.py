@@ -348,6 +348,18 @@ def a_socket_table_where_the_system_refuses_one(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(ports, "bound_udp_ports", lambda: own_ports("udp"))
 
 
+@pytest.fixture(scope="session")
+def _stand_in_appdata(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("appdata")
+
+
+@pytest.fixture(autouse=True)
+def never_this_pcs_startup_folder(monkeypatch: pytest.MonkeyPatch, _stand_in_appdata: Path) -> None:
+    """W on Windows writes Huragok.cmd into %APPDATA%'s Startup folder: a test that fakes another system and misses one
+    `os` once wrote into this PC's own. Every test gets a stand-in APPDATA."""
+    monkeypatch.setenv("APPDATA", str(_stand_in_appdata))
+
+
 @pytest.fixture(autouse=True)
 def never_this_pcs_caffeinate(monkeypatch: pytest.MonkeyPatch) -> None:
     """On a Mac the start loop keeps the Mac awake with caffeinate: a launcher test's fake Popen would take it for

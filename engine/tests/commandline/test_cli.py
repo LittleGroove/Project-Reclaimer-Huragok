@@ -318,6 +318,15 @@ def test_crashes_in_a_row_wait_longer_and_a_good_run_starts_over(loop) -> None:
     assert "exit code 0xc0000005" in lines and "ended by signal 11" in lines
 
 
+def test_a_mac_the_start_loop_cant_keep_awake_is_in_the_log(loop, monkeypatch) -> None:
+    monkeypatch.setattr(launcher_module.desktop, "keep_mac_awake",
+                        lambda: "Couldn't keep this Mac awake (caffeinate isn't on the PATH): it drops every game")
+    code, _ = loop([(0, 60)])
+    assert code == 0
+    lines = _launcher_lines(loop.settings)
+    assert " WARNING launcher: Couldn't keep this Mac awake (caffeinate isn't on the PATH)" in lines
+
+
 def test_a_request_made_during_the_wait_starts_huragok_to_answer_it(loop) -> None:
     """start.cmd stop or close while Huragok waits to start again: the wait ends, so the new one answers in time.
     A request left from before the crash doesn't end the wait."""

@@ -484,6 +484,8 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Huragok · builds and mends", [
         ("check", "check the settings, servers and commands without starting anything"),
+        ("report", "one zip of the logs, what check says and this computer's facts, to send to whoever is helping "
+                   "(passwords, tokens and keys taken out)"),
         ("new <name> [--all | --one-server --free-ports --console]", "a new server folder in SERVERS/: the program's "
                                                                      "own dedicated init and nothing more, then its "
                                                                      "quick actions, each shown before it's written"),
@@ -575,6 +577,10 @@ def build_parser() -> argparse.ArgumentParser:
     checking.add_argument("--set-aside", action="store_true",
                           help="move content files the servers can't read out of their content folders")
     checking.set_defaults(func=check.cmd_check)
+
+    from .report import add_parser as add_report
+
+    add_report(commands)
 
     stop = commands.add_parser("stop", help="Stop servers (all of them and Huragok when none is named)")
     stop.add_argument("servers", nargs="*", help="server names; none: every server, then Huragok")

@@ -31,7 +31,7 @@ from typing import Any
 
 import psutil
 
-from ..core import platforms
+from ..core import platforms, sysinfo
 from ..core.events import EventBus
 from ..core.files import write_atomic
 from ..core.priority import PriorityKeeper
@@ -181,6 +181,11 @@ class Backend:
 
     def problems(self, server: ServerConfig) -> list[str]:
         """What would stop this backend from starting the server, for `check`."""
+        return []
+
+    def program_problems(self, server: ServerConfig) -> list[str]:
+        """What stops the server program itself from running here (not marked as a program, macOS's quarantine, the
+        program for another system): said again when a server dies at once. Only the process backend knows."""
         return []
 
     async def stop_all(self) -> list[str]:
@@ -432,15 +437,26 @@ class ProcessBackend(Backend):
                 found.append(f"wine is not installed, and on {system} {exe.name} (a Windows program: Project Reclaimer "
                              f"0.9) runs through it. Project Reclaimer 0.10 has a {system} program of its own (or set "
                              "[process] command)")
+            else:
+                found.extend(sysinfo.program_problems(exe))
         elif "{executable}" in template[0]:  # the program itself, through whatever the words say
-            if self.executable_for(server) is None:
+            if (exe := self.executable_for(server)) is None:
                 found.append(f"[process] command starts with {template[0]}, but {self.executable} is "
                              f"not in {server.folder} or at {self.settings.home}")
+            else:
+                found.extend(sysinfo.program_problems(exe))
         elif shutil.which(template[0]) is None and not Path(template[0]).is_file():
             found.append(f"[process] command: {template[0]} was not found")
         if server.auto_update and not self.command_template:
             found.extend(self.auto_update_problems(server))
         return found
+
+    def program_problems(self, server: ServerConfig) -> list[str]:
+        template = self.template_for(server)
+        if template and "{executable}" not in template[0]:
+            return []  # another program starts it: the host's own words
+        exe = self.executable_for(server)
+        return sysinfo.program_problems(exe) if exe is not None else []
 
     def auto_update_problems(self, server: ServerConfig) -> list[str]:
         """auto_update replaces the program file a server runs: that file must be its alone, and writable."""
@@ -591,7 +607,8 @@ class ProcessBackend(Backend):
                 output.write(f"──── {stamp} UTC · started by the Superintendent · {' '.join(command)} ────\n".encode("utf-8"))
                 popen = self._popen(server, command, env, output)
         except OSError as error:
-            raise LifecycleError(f"couldn't run {command[0]}: {error}") from None
+            why = "; ".join(self.program_problems(server))
+            raise LifecycleError(f"couldn't run {command[0]}: {error}" + (f" ({why})" if why else "")) from None
         try:
             create_time = psutil.Process(popen.pid).create_time()
         except psutil.Error:

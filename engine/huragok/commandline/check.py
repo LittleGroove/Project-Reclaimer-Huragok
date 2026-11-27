@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from ..core import lock
+from ..core import lock, platforms, sysinfo
 from ..core.serverfolders import ServerConfig
 from ..core.settings import COMMANDS_FILE, SETTINGS_FILE, Settings
 from ..discordbot.config import FILE as DISCORD_FILE
@@ -20,6 +20,9 @@ from ..games.halo3 import label_fixes, old_labels, playlist_files
 from . import common, firstrun
 from .common import LAUNCHER, SETTINGS_PROBLEM
 from .shell import console as out
+
+
+MAC_ROWS = ("rosetta 2", "keep awake", "socket table", "launch agent", "started by")
 
 
 def _check_mods(settings: Settings) -> None:
@@ -109,7 +112,14 @@ def cmd_check(args: argparse.Namespace) -> int:
     fields.append(("Backend", settings.backend))
     if pid := lock.running_supervisor(settings):
         fields.append(("Running", f"yes (process {pid})"))
+    fields += [("Computer", sysinfo.system_line()), ("Python", sysinfo.python_line())]
     out.fields(fields)
+    if platforms.is_macos():  # what a Mac needs that a PC doesn't (`report` asks pmset, the firewall and launchd too)
+        out.heading("This Mac")
+        mac = [(name, value) for name, value in sysinfo.facts() if name in MAC_ROWS]
+        out.fields(mac)
+        if any(name == "rosetta 2" and value.startswith("not") for name, value in mac):
+            warned = True
     backend = common.backend_for(settings, EventBus(), {s.name: ServerState(s.name) for s in settings.servers})
     if backend is None:
         return SETTINGS_PROBLEM

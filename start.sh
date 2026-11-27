@@ -18,6 +18,13 @@
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$here"
+# Started by launchd (W on a Mac), nothing shows this script's own lines: they go to
+# logs/start.log, so a Mac that doesn't start Huragok after a login says why.
+if [ "${HURAGOK_STARTED_BY:-}" = launchd ]; then
+    mkdir -p "$here/logs"
+    exec 3>&1 4>&2 >>"$here/logs/start.log" 2>&1
+    echo "---- $(date '+%Y-%m-%d %H:%M:%S') started by launchd: start.sh $* ----"
+fi
 engine="$here/engine"
 venv="$engine/.venv"
 
@@ -73,5 +80,9 @@ if ! PYTHONPATH="$engine" "$venv/bin/python" -c 'import huragok, psutil, websock
 fi
 
 [ $# -eq 0 ] && set -- start
+if [ "${HURAGOK_STARTED_BY:-}" = launchd ]; then
+    echo "Python and its packages are ready: Huragok writes to logs/huragok.log from here"
+    exec 1>&3 2>&4 3>&- 4>&-
+fi
 export PYTHONPATH="$engine" HURAGOK_LAUNCHER=./start.sh
 exec "$venv/bin/python" -m huragok "$@"

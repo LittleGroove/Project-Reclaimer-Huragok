@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
-from ..core import desktop, lock, mailbox
+from ..core import desktop, lock, mailbox, sysinfo
 from ..core.files import mtime
 from ..core.lock import AlreadyRunning
 from ..core.settings import Settings, load
@@ -134,7 +134,10 @@ def start_loop(args: argparse.Namespace, settings: Settings) -> int:
     updated_from: str | None = _unproven(home)
     code = 0
     awake = desktop.keep_mac_awake()  # macOS: the Mac stays up while this loop runs (and so while Huragok does)
-    if awake is not None:
+    if isinstance(awake, str):  # a Mac it couldn't keep awake: said, never a reason not to start
+        _say(settings, "WARNING", awake)
+        awake = None
+    elif awake is not None:
         _say(settings, "INFO", "Keeping this Mac awake while Huragok runs (caffeinate)")
     try:
         while True:
@@ -282,12 +285,8 @@ def _requests_waiting(records: Path, since: float) -> bool:
 
 
 def _exit_text(code: int) -> str:
-    """An exit code as the host can look it up: Windows' own codes in hexadecimal, a Linux signal by number."""
-    if code < 0:
-        return f"ended by signal {-code}"
-    if code > 0xFFFF:
-        return f"exit code {code:#010x}"
-    return f"exit code {code}"
+    """An exit code as the host can look it up: Windows' own codes in hexadecimal, a signal by number and name."""
+    return sysinfo.exit_text(code)
 
 
 def _launcher_log(settings: Settings | None, home: Path, level: str, message: str) -> None:

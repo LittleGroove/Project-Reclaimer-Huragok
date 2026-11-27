@@ -68,6 +68,98 @@ jobs:
           sh start.sh check
           sh start.sh status || true       # nothing is running: status says so (and exits non-zero)
 
+  mac-real:
+    # GitHub's Apple Silicon Mac, as near the host's Mac mini as CI gets: Project Reclaimer's real macOS program,
+    # macOS's quarantine, caffeinate, launchd and Valve's SteamCMD, with `report`'s zips kept as the run's artifact.
+    # No server is started: there are no game files here, and a started server may list itself publicly.
+    name: a real Mac (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Huragok set up by start.sh, with one server that doesn't start
+        run: |
+          mkdir -p ~/huragok && cp -R . ~/huragok/ && cd ~/huragok
+          mkdir -p "SERVERS/Mac Test"
+          printf '[rcon]\npassword = "xxxxxxxx"\n[[server]]\nname = "Mac Test"\nport = 49176\n' > "SERVERS/Mac Test/dedicated.toml"
+          sh start.sh || test $? -eq 3     # first start: writes the files, exit code 3
+          sh start.sh init --force --backend process
+          printf '\n[[server]]\nname = "Mac Test"\nautostart = false\n' >> settings.toml
+      - name: Project Reclaimer's macOS program, as its zip unpacks
+        run: |
+          cd ~/huragok
+          gh release download -R ProjectReclaimer/project-reclaimer-releases --pattern 'project-reclaimer-dedicated-*-macos-aarch64.zip' -D /tmp/pr
+          ls /tmp/pr && unzip -q /tmp/pr/*.zip -d /tmp/pr/unzipped && find /tmp/pr/unzipped | head -20
+          cp -p "$(find /tmp/pr/unzipped -type f -name project-reclaimer | head -1)" ./project-reclaimer
+          ls -l ./project-reclaimer && file ./project-reclaimer && (xattr -l ./project-reclaimer || true)
+          sh start.sh check | tee /tmp/check.txt
+          ! grep -qE "isn.t marked as a program|is the Linux program|com.apple.quarantine" /tmp/check.txt
+          perl -e 'alarm 30; exec @ARGV' ./project-reclaimer --version
+      - name: macOS's quarantine is named before a start (and what macOS does with it)
+        run: |
+          cd ~/huragok
+          xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;" ./project-reclaimer
+          sh start.sh check | tee /tmp/check.txt || true
+          grep -q "xattr -dr com.apple.quarantine" /tmp/check.txt
+          perl -e 'alarm 30; exec @ARGV' ./project-reclaimer --version && echo "macOS ran it with the quarantine" || echo "macOS refused it with the quarantine: exit $?"
+          spctl --status || true
+          xattr -d com.apple.quarantine ./project-reclaimer
+          ! sh start.sh check | grep -q "com.apple.quarantine"
+      - name: Huragok runs without a window, keeps the Mac awake, and says on what computer
+        run: |
+          cd ~/huragok
+          sh start.sh start --no-menu > /tmp/huragok-console.txt 2>&1 &
+          for i in $(seq 1 90); do grep -q "This Mac:" logs/huragok.log 2>/dev/null && break; sleep 1; done
+          sleep 5
+          pgrep -fl "caffeinate -is -w"
+          grep -E " on macOS | This Mac: |Keeping this Mac awake" logs/huragok.log
+          sh start.sh status || true
+          sh start.sh close --wait 60
+          for i in $(seq 1 30); do pgrep -f "caffeinate -is -w" >/dev/null || break; sleep 1; done
+          ! pgrep -fl "caffeinate -is -w"   # gone with Huragok
+      - name: W, the LaunchAgent, loaded by launchd itself
+        continue-on-error: true   # a CI Mac may have no login session for launchd's gui domain
+        run: |
+          cd ~/huragok
+          engine/.venv/bin/python -c "import sys; sys.path.insert(0, 'engine'); from pathlib import Path; from huragok.core import desktop; print(desktop.enable_startup(Path('.').resolve()))"
+          plist=~/Library/LaunchAgents/io.github.littlegroove.huragok.plist
+          plutil -lint "$plist" && plutil -p "$plist"
+          launchctl bootstrap "gui/$(id -u)" "$plist"
+          for i in $(seq 1 120); do grep -q "Started by launchd" logs/huragok.log 2>/dev/null && break; sleep 1; done
+          cat logs/start.log || true
+          grep "Started by launchd" logs/huragok.log
+          launchctl print "gui/$(id -u)/io.github.littlegroove.huragok" | head -40
+          sh start.sh report
+          sh start.sh close --wait 60
+          sleep 15   # a close (exit 0) must stay closed: KeepAlive starts it again only after a crash
+          launchctl print "gui/$(id -u)/io.github.littlegroove.huragok" | grep -E "state|runs|last exit" || true
+          ! pgrep -fl "huragok start" || echo "started again after a close"
+          launchctl bootout "gui/$(id -u)/io.github.littlegroove.huragok" || true
+      - name: SteamCMD for macOS (an Intel program, through Rosetta 2)
+        continue-on-error: true
+        run: |
+          cd ~/huragok
+          arch -x86_64 /usr/bin/true && echo "Rosetta 2: installed" || echo "Rosetta 2: not installed"
+          sh start.sh steam install
+          sh start.sh steam status
+      - name: report
+        if: always()
+        run: |
+          cd ~/huragok
+          sh start.sh report
+          mkdir -p /tmp/report && cp huragok-report-*.zip /tmp/report/
+          latest=$(ls /tmp/report/*.zip | tail -1)
+          unzip -l "$latest"
+          unzip -p "$latest" computer.txt
+          ! unzip -p "$latest" '*.toml' | grep -q 'xxxxxxxx'   # the RCON password taken out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-report
+          path: /tmp/report/
+
   docker:
     name: docker image
     runs-on: ubuntu-latest

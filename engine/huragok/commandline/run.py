@@ -23,11 +23,20 @@ from .shell import console as out
 
 
 def summary(settings: Settings) -> None:
-    """What's about to run, for the window the host is looking at."""
+    """What's about to run, for the window the host is looking at (and the log's first lines: on what computer, for a
+    log read far from it)."""
+    from .. import __version__
+    from ..core import sysinfo
+
     log = logging.getLogger("superintendent")
     parts = settings.parts
     automod = parts["automod"]
     where = settings.servers_folder if settings.servers_folder else settings.single_folder
+    log.info("Huragok %s on %s · %s", __version__, sysinfo.system_line(), sysinfo.python_line())
+    if by := sysinfo.started_by():
+        log.info("Started by %s", by)
+    if mac := sysinfo.mac_summary():
+        log.info("This Mac: %s", " · ".join(mac))
     log.info("Folder %s · servers in %s", settings.home, where)
     on = ["commands"]
     if automod.enabled:
@@ -70,6 +79,27 @@ def second_window(settings: Settings) -> str:
         return "quit"
 
 
+CRASH_LOG = "crash.log"  # in logs/: a crash Python can't catch, with where each thread was
+_crash_file = None
+
+
+def keep_crash_log(settings: Settings) -> None:
+    """A crash inside a library written in C (psutil, the sockets) ends Python without a traceback in huragok.log:
+    faulthandler writes where every thread was to logs/crash.log instead. Left alone when something else has it on
+    already (pytest, `python -X faulthandler`)."""
+    import faulthandler
+
+    global _crash_file
+    if faulthandler.is_enabled():
+        return
+    try:
+        settings.logs.mkdir(parents=True, exist_ok=True)
+        _crash_file = (settings.logs / CRASH_LOG).open("a", encoding="utf-8")
+        faulthandler.enable(file=_crash_file, all_threads=True)
+    except (OSError, ValueError) as error:
+        logging.getLogger("huragok").warning("couldn't keep logs/%s for crashes: %s", CRASH_LOG, error)
+
+
 def run_huragok(args: argparse.Namespace) -> int:
     from ..huragok import Huragok
     from ..core.logs import RecentLog
@@ -80,6 +110,7 @@ def run_huragok(args: argparse.Namespace) -> int:
     menu_mode = common.want_menu(args)
     recent = RecentLog() if menu_mode else None
     logsetup.setup(settings, args.verbose, console=not menu_mode, recent=recent)
+    keep_crash_log(settings)
     try:
         held = lock.take(settings)
     except AlreadyRunning as error:

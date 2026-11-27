@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable
 
+from ..core import sysinfo
 from ..core.background import background
 from ..core.events import Event
 from ..core.files import write_atomic
@@ -659,7 +660,11 @@ class ServerManager:
             self.task_kind = ""
             self.client.wake()
         if self.backend.sees_processes and not alive:
-            self._fail("the server exited while it was starting", show_output=True)
+            # Ended at once is how macOS stops a program it won't run (signal 9): the code, and what may be why
+            code = self.backend.exit_code(self.server)
+            self._fail("the server exited while it was starting" + (f" ({sysinfo.exit_text(code)})"
+                                                                     if code is not None else ""), show_output=True)
+            self._maybe_why(code, time.monotonic() - self.phase_since)
             return
         if self.state.connected or self.client.stopped_reason:
             self._ready(now)
@@ -903,18 +908,18 @@ class ServerManager:
     def _crashed(self) -> None:
         uptime = self.uptime or 0.0
         code = self.backend.exit_code(self.server)
+        how = f" ({sysinfo.exit_text(code)})" if code is not None else ""  # a signal by name: SIGKILL, SIGSEGV
         if self.backend.sees_processes:
-            log.error("[%s] the server exited on its own after %s%s", self.name, format_duration(uptime),
-                      f" (exit code {code})" if code is not None else "")
+            log.error("[%s] the server exited on its own after %s%s", self.name, format_duration(uptime), how)
         else:  # no process to watch: its console and status.json went quiet, so it died or hung
             log.error("[%s] the server stopped answering after %s (RCON gone and status.json not written for %s): "
                       "it died or hung", self.name, format_duration(uptime), format_duration(INFERRED_ALIVE_SECONDS))
-        self.record.remember("crash", f"exited after {format_duration(uptime)}"
-                             + (f" (exit code {code})" if code is not None else ""))
-        self.fleet.bus.emit("server.crashed", self.name, why=f"exited after {format_duration(uptime)}"
-                            + (f" (exit code {code})" if code is not None else ""), uptime=uptime, exit_code=code)
+        self.record.remember("crash", f"exited after {format_duration(uptime)}{how}")
+        self.fleet.bus.emit("server.crashed", self.name, why=f"exited after {format_duration(uptime)}{how}",
+                            uptime=uptime, exit_code=code)
         for line in self.backend.last_console_lines(self.server, 4):
             log.error("[%s]   | %s", self.name, line)
+        self._maybe_why(code, uptime)
         self.backend.forget(self.server)
         self.started = None
         self.state.players.clear()
@@ -926,6 +931,14 @@ class ServerManager:
         if uptime >= float(self.setting("good_run_seconds")):
             self.record.fail_count, self.record.retries = 0, 0
         self._register_failure()
+
+    def _maybe_why(self, code: int | None, uptime: float) -> None:
+        """What may be why a server ended, for a log that's read far from the computer (the first Mac): a signal said
+        in words, and whatever stops the program itself from running (macOS's quarantine ends it with signal 9)."""
+        if hint := sysinfo.signal_hint(code, uptime):
+            log.error("[%s] %s", self.name, hint)
+        for problem in self.backend.program_problems(self.server):
+            log.error("[%s] maybe why: %s", self.name, problem)
 
     def _fail(self, why: str, *, kill: bool = False, show_output: bool = False) -> None:
         log.error("[%s] %s", self.name, why)

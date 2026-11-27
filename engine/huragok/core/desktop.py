@@ -19,7 +19,8 @@ from . import platforms
 
 STARTUP_CMD = "Huragok.cmd"
 UNIT_NAME = "huragok.service"
-LAUNCH_LABEL = "io.github.littlegroove.huragok"  # macOS: the LaunchAgent's label, and its file's name
+LAUNCH_LABEL = "io.github.littlegroove.huragok"
+STARTED_BY = "HURAGOK_STARTED_BY"  # set by the LaunchAgent (launchd)  # macOS: the LaunchAgent's label, and its file's name
 OLD_NAMES = ("Reclaimer Supervisor.cmd", "reclaimer-supervisor.service")  # what 0.2.1 and earlier wrote
 SYSTEMCTL_SECONDS = 20.0
 # Where Python and the tools usually are on a Mac (Homebrew on Apple Silicon, then on Intel and python.org's links):
@@ -44,16 +45,23 @@ def mac_terminal(line: str) -> bool:
     return True
 
 
-def keep_mac_awake() -> subprocess.Popen[bytes] | None:
+NOT_AWAKE = ("Couldn't keep this Mac awake ({why}): it drops every game when it sleeps. Set it never to sleep "
+             "(System Settings > Energy: Prevent automatic sleeping)")
+
+
+def keep_mac_awake() -> subprocess.Popen[bytes] | str | None:
     """On a Mac, keep it from sleeping while this process runs: `caffeinate -is -w <this process>`, which ends by
-    itself when this process does (a sleeping Mac drops every game). None elsewhere, or without caffeinate."""
-    if os.name == "nt" or not platforms.is_macos() or shutil.which("caffeinate") is None:
+    itself when this process does (a sleeping Mac drops every game). None elsewhere; on a Mac where caffeinate isn't
+    there or won't start, what to tell the host instead."""
+    if os.name == "nt" or not platforms.is_macos():
         return None
+    if shutil.which("caffeinate") is None:
+        return NOT_AWAKE.format(why="caffeinate isn't on the PATH")
     try:
         return subprocess.Popen(["caffeinate", "-is", "-w", str(os.getpid())], stdin=subprocess.DEVNULL,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError:
-        return None
+    except OSError as error:
+        return NOT_AWAKE.format(why=f"caffeinate wouldn't start: {error}")
 
 
 def open_path(path: Path) -> str:
@@ -273,7 +281,9 @@ def mac_launch_agent(home: Path) -> bytes:
         # Unset, launchd throttles a job's processor and disk use, and the servers it starts with it: game servers
         # must keep their frame rate, so they run as an app does.
         "ProcessType": "Interactive",
-        "EnvironmentVariables": {"PATH": mac_path()},
+        # HURAGOK_STARTED_BY: start.sh writes its own lines (no Python, packages that won't install) to logs/start.log,
+        # which nothing would show otherwise, and the log's first lines say launchd started it.
+        "EnvironmentVariables": {"PATH": mac_path(), STARTED_BY: "launchd"},
         # No StandardOutPath: --no-menu writes every log line to the console, and huragok.log already has them.
     }
     return plistlib.dumps(job)
@@ -283,13 +293,17 @@ def write_mac_startup(path: Path, home: Path) -> str:
     """A LaunchAgent in ~/Library/LaunchAgents, which macOS loads at the next login. Not loaded now: that would start
     a second Huragok beside the one running. `launchctl enable` undoes a `launchctl disable` someone ran on it."""
     path.write_bytes(mac_launch_agent(home))
+    note = ""
     try:
         uid = os.getuid()  # type: ignore[attr-defined]  # not on Windows, which never gets here
-        _launchctl("enable", f"gui/{uid}/{LAUNCH_LABEL}")
-    except (OSError, subprocess.SubprocessError, AttributeError):
-        pass  # the file alone is enough unless it was disabled by hand
+        done = _launchctl("enable", f"gui/{uid}/{LAUNCH_LABEL}")
+        if done.returncode != 0:
+            raise OSError((done.stderr or done.stdout or "").strip() or f"exit code {done.returncode}")
+    except (OSError, subprocess.SubprocessError, AttributeError) as error:
+        # The file alone is enough unless it was turned off by hand (`launchctl disable`): said, for the logs
+        note = f" (launchctl enable didn't work: {error}; that matters only if it was turned off by hand)"
     return ("Huragok will now start when you log in (macOS may say a background item was added; turn on automatic "
-            "login for a Mac that starts on its own)")
+            f"login for a Mac that starts on its own){note}")
 
 
 def disable_startup() -> str:

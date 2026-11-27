@@ -248,6 +248,26 @@ MCC on this PC, it offers to download Halo 3's files with SteamCMD (I sets it up
 and copies the new engine file in from them the same way. When the check says
 Halo 3: ODST's files aren't in the game folder, it offers to add them from MCC.
 
+## When something goes wrong: `report`
+`start.cmd report` (Linux and macOS: `./start.sh report`) writes `huragok-report-<date>-<time>.zip` next to
+settings.toml, for whoever is helping:
+
+- `computer.txt`: the system, Python, what started Huragok, free disk and memory, each server's program and what
+  stops it from running; on a Mac also Rosetta 2, caffeinate, the socket table, sleep (pmset), the firewall,
+  automatic login and what launchd says of W (its runs and last exit code)
+- `check.txt`: what `check` says
+- `logs/`: huragok.log and its older ones, each server's console, the window's transcript (window.log), the start
+  loop's lines, start.sh's own lines when launchd started it (start.log), crash.log and why a server was given up
+  on (faulted-*.txt)
+- `servers/<server>/`: its dedicated.toml, status.json and server.log; `records/`: what the Superintendent
+  remembers of each server and which servers it started; `mac/`: the LaunchAgent as written
+- settings.toml and commands.toml
+
+Every password, token and key is taken out of the settings files (its value reads `"(taken out)"`). discord.toml,
+the Discord records, the database, the ban lists and each server's stats key are never in it. The consoles and the
+log do name players and hold their chat. Settings that can't be read still give a report: the logs are what's
+needed most when nothing starts.
+
 ## SteamCMD: I in the window
 **I** (or `start.cmd steam`) shows SteamCMD and the Steam account, then every game
 folder here: its Halo 3 multiplayer maps, the campaign files, ODST's, and which
