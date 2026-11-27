@@ -109,6 +109,14 @@ def test_linux_names_the_mac_program_and_windows_and_exe_files_are_left_alone(tm
     exe = tmp_path / "project-reclaimer.exe"
     exe.write_bytes(b"MZ\x90\0")
     assert sysinfo.program_problems(exe) == []  # 0.9's .exe: wine's business, said elsewhere
+    empty = tmp_path / "empty.exe"
+    empty.write_bytes(b"")
+    assert sysinfo.program_problems(empty) == []  # named as one: no run mark needed for wine
+    odd = tmp_path / "odd.exe"
+    odd.write_bytes(MAC_PROGRAM)
+    odd.chmod(0o644)
+    assert sysinfo.program_problems(odd)[0].endswith("is the macOS program: Linux needs project-reclaimer from "
+                                                     "Project Reclaimer's -linux-<machine>.tar.gz download")
     assert sysinfo.program_problems(tmp_path / "missing") == []
     monkeypatch.setattr(sysinfo, "os", os_as("nt"))
     assert sysinfo.program_problems(mac) == []
@@ -248,6 +256,7 @@ def test_launchd_says_it_started_huragok(monkeypatch, tmp_path: Path) -> None:
 def test_the_start_says_on_what_computer_and_mac(tmp_path: Path, monkeypatch, caplog) -> None:
     settings = load(str(write_root(tmp_path, [("Alpha", free_port())])))
     caplog.set_level(logging.INFO)
+    system_as(monkeypatch, "linux")  # not a Mac first, even on the macOS runner
     run_module.summary(settings)
     assert f"on {sysinfo.system_line()} · Python " in caplog.text and "This Mac" not in caplog.text
     caplog.clear()
@@ -277,6 +286,7 @@ def test_a_crash_python_cant_catch_goes_to_logs_crash_log(tmp_path: Path, monkey
 
 def test_check_says_the_computer_and_on_a_mac_what_it_needs(tmp_path: Path, monkeypatch, capsys) -> None:
     path = write_root(tmp_path, [("Alpha", free_port())])
+    system_as(monkeypatch, "linux")  # not a Mac first, even on the macOS runner
     cli.main(["-c", str(path), "check"])
     text = capsys.readouterr().out
     assert "Computer" in text and sysinfo.system_line() in text and "This Mac" not in text

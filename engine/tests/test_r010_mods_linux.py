@@ -307,6 +307,7 @@ def test_linux_runs_its_own_program_by_itself_and_0_9s_through_wine(tmp_path: Pa
     assert any("wine is not installed" in p for p in backend.problems(server))
     (server.folder / "project-reclaimer").write_bytes(ELF)
     native = server.folder / "project-reclaimer"
+    native.chmod(0o755)  # as its tar.gz unpacks it
     assert backend.command_for(server) == [str(native), "dedicated", "run", "--config", "dedicated.toml"]
     assert backend.problems(server) == []  # no wine needed
     backend.command_template = ["wine", "{executable}", "dedicated", "run", "--config", "{config}"]

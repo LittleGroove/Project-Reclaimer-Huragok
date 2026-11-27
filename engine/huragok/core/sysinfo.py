@@ -240,8 +240,8 @@ def program_problems(path: Path) -> list[str]:
             head = file.read(4)
     except OSError as error:
         return [f"{path} can't be read: {error}"]
-    if head.startswith(WINDOWS_EXE):
-        return []
+    if head.startswith(WINDOWS_EXE) or (path.suffix.lower() == ".exe" and not head.startswith((ELF, *MACH_O))):
+        return []  # a Windows program, or named as one (an empty .exe can't say): wine runs it, no run mark needed
     found = []
     system = platforms.system()
     if system == platforms.MACOS and head.startswith(ELF):

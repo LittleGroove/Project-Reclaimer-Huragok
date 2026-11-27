@@ -117,6 +117,7 @@ def test_a_mac_runs_its_own_program_and_says_so_when_only_the_exe_is_there(tmp_p
     assert "Project Reclaimer 0.10 has a macOS program of its own" in problem and "Linux" not in problem
     native = server.folder / "project-reclaimer"
     native.write_bytes(ARM64)
+    native.chmod(0o755)  # as its zip unpacks it
     assert backend.command_for(server) == [str(native), "dedicated", "run", "--config", "dedicated.toml"]
     assert backend.problems(server) == []  # no wine needed
 
