@@ -3,7 +3,7 @@ something goes wrong on a computer nobody here can look at, like the first Mac).
 facts only; `report` also asks the system's own tools (pmset, the firewall, launchctl), each with a short time limit.
 
 And what stops a server program from running on Linux or macOS, said before it is started and again when it dies at
-once: not marked as a program, macOS's quarantine on a web browser's download (macOS ends it the moment it starts,
+once: not marked as a program, macOS's quarantine on a web browser's download (macOS may end it the moment it starts,
 with signal 9), or the program for another system."""
 
 from __future__ import annotations
@@ -254,8 +254,11 @@ def program_problems(path: Path) -> list[str]:
         found.append(f"{path.name} isn't marked as a program (unpacked without it): in a terminal, "
                      f"chmod +x \"{path}\"")
     if quarantined(path):
-        found.append(f"macOS stops {path.name} the moment it starts (signal 9): it came from a web browser's download "
-                     f"and still carries macOS's quarantine. In Terminal: xattr -dr {QUARANTINE} \"{path.parent}\"")
+        # Whether macOS then refuses it depends on the Mac (GitHub's Macs ran it): Project Reclaimer's own README says
+        # to take it off, and that's harmless either way
+        found.append(f"macOS may stop {path.name} the moment it starts (signal 9): it came from a web browser's "
+                     f"download and still carries macOS's quarantine. Take it off once, in Terminal: "
+                     f"xattr -dr {QUARANTINE} \"{path.parent}\"")
     return found
 
 

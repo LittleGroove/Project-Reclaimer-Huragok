@@ -84,9 +84,9 @@ def test_a_mac_names_the_linux_program_a_missing_run_mark_and_the_quarantine(tmp
                         "-macos-aarch64.zip download")
     mac = program(tmp_path / "mac", MAC_PROGRAM)
     found = sysinfo.program_problems(mac)
-    assert found == [f"macOS stops project-reclaimer the moment it starts (signal 9): it came from a web browser's "
-                     f"download and still carries macOS's quarantine. In Terminal: xattr -dr com.apple.quarantine "
-                     f"\"{mac.parent}\""]
+    assert found == [f"macOS may stop project-reclaimer the moment it starts (signal 9): it came from a web browser's "
+                     f"download and still carries macOS's quarantine. Take it off once, in Terminal: xattr -dr "
+                     f"com.apple.quarantine \"{mac.parent}\""]
     assert ("xattr", "-p", "com.apple.quarantine", str(mac)) in asked
     count = len(asked)
     sysinfo.program_problems(mac)
@@ -150,7 +150,7 @@ def test_a_server_killed_at_once_logs_the_signal_and_maybe_why(tmp_path: Path, m
             return -9
 
         def program_problems(self, server):
-            return ["macOS stops project-reclaimer the moment it starts (signal 9): the quarantine"]
+            return ["macOS may stop project-reclaimer the moment it starts (signal 9): the quarantine"]
 
     system_as(monkeypatch, "macos")
     clock, settings, backend, fleet, manager, client, state, seen = build_world(tmp_path, monkeypatch,
@@ -164,7 +164,7 @@ def test_a_server_killed_at_once_logs_the_signal_and_maybe_why(tmp_path: Path, m
         text = caplog.text
         assert "the server exited while it was starting (ended by signal 9" in text
         assert "macOS ends a program with signal 9 when it won't let it run" in text
-        assert "maybe why: macOS stops project-reclaimer the moment it starts" in text
+        assert "maybe why: macOS may stop project-reclaimer the moment it starts" in text
         caplog.clear()
         await cycle(manager, clock, 5)
         assert manager.phase == "booting"
@@ -176,7 +176,7 @@ def test_a_server_killed_at_once_logs_the_signal_and_maybe_why(tmp_path: Path, m
         await cycle(manager, clock, 3600)
         text = caplog.text
         assert "the server exited on its own after" in text and "(ended by signal 9" in text
-        assert "maybe why: macOS stops project-reclaimer the moment it starts" in text
+        assert "maybe why: macOS may stop project-reclaimer the moment it starts" in text
 
     caplog.set_level(logging.INFO)
     run(scenario())
