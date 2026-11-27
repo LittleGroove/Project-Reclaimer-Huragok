@@ -85,12 +85,14 @@ _crash_file = None
 
 def keep_crash_log(settings: Settings) -> None:
     """A crash inside a library written in C (psutil, the sockets) ends Python without a traceback in huragok.log:
-    faulthandler writes where every thread was to logs/crash.log instead. Left alone when something else has it on
-    already (pytest, `python -X faulthandler`)."""
+    faulthandler writes where every thread was to logs/crash.log instead. macOS and Linux only: on Windows it also
+    writes exceptions a library catches itself (a C++ exception is one), and crash.log would tell of crashes that never
+    happened (Windows keeps its own record of a real one). Left alone when something else has it on already (pytest,
+    `python -X faulthandler`)."""
     import faulthandler
 
     global _crash_file
-    if faulthandler.is_enabled():
+    if os.name == "nt" or faulthandler.is_enabled():
         return
     try:
         settings.logs.mkdir(parents=True, exist_ok=True)

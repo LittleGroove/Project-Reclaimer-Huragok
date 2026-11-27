@@ -95,7 +95,7 @@
 - **The log's first lines say on what computer:** `Huragok 0.7.0 on macOS 15.3 on Apple Silicon (arm64) · Python 3.13.1 (...)`, what started it (launchd, systemd, SSH, a terminal) and, on a Mac, Rosetta 2, caffeinate, the socket table and W in one line. `check` shows the computer and Python too, and on a Mac a "This Mac" heading.
 - **What stops the server program, said before it starts:** on Linux and macOS, `check`, the window's problems and a start that fails name a program that isn't marked as one (`chmod +x`), macOS's quarantine on a browser download (macOS may end it the moment it starts; GitHub's Macs ran it anyway, so it's said as "may": `xattr -dr com.apple.quarantine <folder>` takes it off), and the program for another system (the Linux program on a Mac, or the other way round).
 - **A server that ends by a signal says which, and maybe why:** "ended by signal 9 (SIGKILL)", not "exit code -9", whether it ran an hour or died while starting (which used to say no code at all). Signal 9 at once on a Mac adds that macOS ends a program it won't run that way, and whatever stops the program is said under it ("maybe why: ...").
-- **A crash Python can't catch** (inside a library written in C) leaves where every thread was in logs/crash.log.
+- **A crash Python can't catch** (inside a library written in C) leaves where every thread was in logs/crash.log, on macOS and Linux (on Windows it would also write exceptions a library catches itself).
 - **What a Mac couldn't do is in the log:** caffeinate missing or refused (with how to keep the Mac awake instead), `launchctl enable` refused when W is turned on, and start.sh's own lines when launchd starts it (no Python, packages that won't install), which went nowhere: logs/start.log.
 
 ## 0.6.4

@@ -266,6 +266,10 @@ def test_a_crash_python_cant_catch_goes_to_logs_crash_log(tmp_path: Path, monkey
     assert enabled == []
     monkeypatch.setattr(faulthandler, "is_enabled", lambda: False)
     monkeypatch.setattr(run_module, "_crash_file", None)
+    monkeypatch.setattr(run_module, "os", os_as("nt"))
+    run_module.keep_crash_log(settings)
+    assert enabled == []  # Windows: a library's own caught exceptions would read as crashes
+    monkeypatch.setattr(run_module, "os", os_as("posix"))
     run_module.keep_crash_log(settings)
     assert len(enabled) == 1 and Path(enabled[0].name) == settings.logs / "crash.log"
     enabled[0].close()
